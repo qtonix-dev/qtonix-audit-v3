@@ -284,7 +284,29 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/** POST /api/reports/:id/retry — re-run a failed report. */
+/** POST /api/reports/:id/remark — append a timestamped remark (never overwrites). */
+router.post('/:id/remark', requireAuth, async (req, res, next) => {
+  try {
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
+      return res.status(403).json({ error: 'This report belongs to another agent.' });
+    }
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'Remark text is required.' });
+
+    const list = Array.isArray(report.remarks) ? report.remarks : [];
+    list.push({ text: text.slice(0, 5000), time: new Date().toISOString(), author: req.user.name });
+    report.remarks = list;
+    report.changed('remarks', true);
+    await report.save();
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'report.remark',
+      target: report.domain, ip: req.ip,
+    });
+    res.json(report);
+  } catch (e) { next(e); }
+});
 router.post('/:id/retry', requireAuth, async (req, res, next) => {
   try {
     const report = await Report.findByPk(req.params.id);

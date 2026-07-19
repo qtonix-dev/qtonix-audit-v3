@@ -137,7 +137,10 @@ const Report = sequelize.define(
       defaultValue: 'new',
     },
     tags: { type: DataTypes.JSON, defaultValue: [] },   // what they asked for
-    remark: { type: DataTypes.TEXT },                    // free-text call notes
+    remark: { type: DataTypes.TEXT },                    // legacy single note (kept for back-compat)
+    // Timestamped remark history: [{ text, time, author }]. Never overwritten —
+    // each new note is appended, so the full call history is always visible.
+    remarks: { type: DataTypes.JSON, defaultValue: [] },
     followUpAt: { type: DataTypes.DATE },
 
     // ---- Customer contact details (CRM), captured before running a report ----

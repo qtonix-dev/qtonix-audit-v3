@@ -437,11 +437,25 @@ function ReportList({ isAdmin, onOpen }) {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [customerModal, setCustomerModal] = useState(null);
+  const [leadModal, setLeadModal] = useState(null);
+  const [remarkModal, setRemarkModal] = useState(null);
+  const [leadEditing, setLeadEditing] = useState(false);
 
   const saveCrm = async (id, patch) => {
     try {
       const updated = await api(`/reports/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
       setData((d) => ({ ...d, items: d.items.map((r) => (r._id === id ? { ...r, ...updated } : r)) }));
+      if (leadModal && leadModal._id === id) setLeadModal((l) => ({ ...l, ...updated }));
+      return updated;
+    } catch (e) { alert(e.message); }
+  };
+
+  const addRemark = async (id, text) => {
+    if (!text.trim()) return;
+    try {
+      const updated = await api(`/reports/${id}/remark`, { method: 'POST', body: JSON.stringify({ text }) });
+      setData((d) => ({ ...d, items: d.items.map((r) => (r._id === id ? { ...r, ...updated } : r)) }));
+      if (leadModal && leadModal._id === id) setLeadModal((l) => ({ ...l, ...updated }));
     } catch (e) { alert(e.message); }
   };
 
@@ -520,36 +534,49 @@ function ReportList({ isAdmin, onOpen }) {
                     className="rounded-full px-3 py-1 text-[10px] font-extrabold border-0 cursor-pointer text-white" style={{ background: st.color }}>
                     {STAGES.map((s) => <option key={s.id} value={s.id} style={{ background: '#fff', color: '#000' }}>{s.label}</option>)}
                   </select>
-                  <button onClick={() => setCustomerModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">Add customer details</button>
+                  <button onClick={() => setLeadModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
+                    <span aria-hidden>👤</span> View lead
+                  </button>
+                  <button onClick={() => setRemarkModal({ report: r, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
+                    <span aria-hidden>📝</span> Add remark
+                  </button>
                   {r.status === 'complete' && (
                     <>
-                      <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">View</button>
-                      <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                      <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
+                        <span aria-hidden>👁️</span> View report
+                      </button>
+                      <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1 text-xs font-bold text-white inline-flex items-center gap-1" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                        <span aria-hidden>⬇️</span> Download PDF
+                      </button>
                     </>
                   )}
                   {r.status === 'failed' && (
-                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-bold text-red-600">Retry</button>
+                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-bold text-red-600 inline-flex items-center gap-1">
+                      <span aria-hidden>🔄</span> Retry
+                    </button>
                   )}
                 </div>
               </div>
 
-              {/* CRM: what they asked + remark */}
+              {/* CRM: what they asked (dropdown) + latest remark */}
               <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">What they asked for</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {REQUESTS.map((t) => {
-                      const on = (r.tags || []).includes(t);
-                      return <button key={t} onClick={() => saveCrm(r._id, { tags: on ? r.tags.filter((x) => x !== t) : [...(r.tags || []), t] })}
-                        className={`rounded-full px-2.5 py-1 text-[9px] font-bold border transition ${on ? 'text-white border-transparent bg-[#2563EB]' : 'text-slate-500 border-slate-200 hover:border-slate-400'}`}>{t}</button>;
-                    })}
-                  </div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">What the customer asked for</div>
+                  <select value={(r.tags && r.tags[0]) || ''} onChange={(e) => saveCrm(r._id, { tags: e.target.value ? [e.target.value] : [] })}
+                    className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400">
+                    <option value="">— Select —</option>
+                    {REQUESTS.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">Remark</div>
-                  <textarea rows={2} defaultValue={r.remark || ''} placeholder="Call notes, next step, objection…"
-                    onBlur={(e) => { if (e.target.value !== (r.remark || '')) saveCrm(r._id, { remark: e.target.value }); }}
-                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">Latest remark</div>
+                  {(() => {
+                    const hist = Array.isArray(r.remarks) ? r.remarks : [];
+                    const last = hist[hist.length - 1];
+                    if (last) return <div className="text-xs text-slate-600"><span>{last.text}</span><div className="text-[10px] text-slate-400 mt-0.5">{last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{hist.length > 1 ? ` · ${hist.length} notes` : ''}</div></div>;
+                    if (r.remark) return <div className="text-xs text-slate-600">{r.remark}</div>;
+                    return <div className="text-xs text-slate-400 italic">No remarks yet — click "Add remark".</div>;
+                  })()}
                 </div>
               </div>
             </div>
@@ -574,6 +601,88 @@ function ReportList({ isAdmin, onOpen }) {
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setCustomerModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
               <button onClick={async () => { await saveCrm(customerModal._id, { customerName: customerModal.customerName, customerPhone: customerModal.customerPhone, customerEmail: customerModal.customerEmail, customerCountry: customerModal.customerCountry, customerCompany: customerModal.customerCompany }); setCustomerModal(null); }} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD REMARK popup */}
+      {remarkModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setRemarkModal(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-[#050A1F] text-lg mb-1">Add remark</h3>
+            <p className="text-xs text-slate-400 mb-4">{remarkModal.report.businessName} — {remarkModal.report.customerName}</p>
+            <textarea rows={4} autoFocus value={remarkModal.text} placeholder="Call notes, next step, objection…"
+              onChange={(e) => setRemarkModal({ ...remarkModal, text: e.target.value })}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+            <p className="text-[11px] text-slate-400 mt-1">Saved with a timestamp. Previous remarks are kept — view them under "View lead".</p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setRemarkModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={async () => { await addRemark(remarkModal.report._id, remarkModal.text); setRemarkModal(null); }} disabled={!remarkModal.text.trim()} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white disabled:opacity-40">Save remark</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW LEAD popup — all details, edit, remark history */}
+      {leadModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => { setLeadModal(null); setLeadEditing(false); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-[#050A1F] text-lg">{leadModal.businessName}</h3>
+                <p className="text-xs text-slate-400">{leadModal.domain}</p>
+              </div>
+              <button onClick={() => setLeadEditing((v) => !v)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">{leadEditing ? 'Done editing' : '✏️ Edit'}</button>
+            </div>
+
+            {/* Details */}
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              {[['customerName', 'Customer name'], ['customerPhone', 'Phone'], ['customerEmail', 'Email'], ['customerCountry', 'Country'], ['customerCompany', 'Company']].map(([k, l]) => (
+                <div key={k}>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">{l}</div>
+                  {leadEditing
+                    ? <input className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" value={leadModal[k] || ''} onChange={(e) => setLeadModal({ ...leadModal, [k]: e.target.value })} />
+                    : <div className="text-sm text-slate-700">{leadModal[k] || <span className="text-slate-300">—</span>}</div>}
+                </div>
+              ))}
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">What they asked</div>
+                {leadEditing
+                  ? <select className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" value={(leadModal.tags && leadModal.tags[0]) || ''} onChange={(e) => setLeadModal({ ...leadModal, tags: e.target.value ? [e.target.value] : [] })}><option value="">— Select —</option>{REQUESTS.map((t) => <option key={t}>{t}</option>)}</select>
+                  : <div className="text-sm text-slate-700">{(leadModal.tags && leadModal.tags[0]) || <span className="text-slate-300">—</span>}</div>}
+              </div>
+            </div>
+
+            {leadEditing && (
+              <div className="flex justify-end mb-5">
+                <button onClick={async () => { await saveCrm(leadModal._id, { customerName: leadModal.customerName, customerPhone: leadModal.customerPhone, customerEmail: leadModal.customerEmail, customerCountry: leadModal.customerCountry, customerCompany: leadModal.customerCompany, tags: leadModal.tags || [] }); setLeadEditing(false); }} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save details</button>
+              </div>
+            )}
+
+            {/* Remark history */}
+            <div className="border-t border-slate-100 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-bold text-[#050A1F]">Remark history</h4>
+                <button onClick={() => setRemarkModal({ report: leadModal, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Add remark</button>
+              </div>
+              {(() => {
+                const hist = Array.isArray(leadModal.remarks) ? [...leadModal.remarks] : [];
+                if (leadModal.remark && !hist.length) hist.push({ text: leadModal.remark, time: leadModal.createdAt, author: leadModal.agentName || '' });
+                if (!hist.length) return <p className="text-xs text-slate-400 italic">No remarks yet.</p>;
+                return <div className="space-y-2">
+                  {hist.slice().reverse().map((rm, i) => (
+                    <div key={i} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                      <div className="text-sm text-slate-700">{rm.text}</div>
+                      <div className="text-[10px] text-slate-400 mt-1">{rm.author || '—'} · {new Date(rm.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+                  ))}
+                </div>;
+              })()}
+            </div>
+
+            <div className="flex justify-end mt-5">
+              <button onClick={() => { setLeadModal(null); setLeadEditing(false); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
             </div>
           </div>
         </div>
