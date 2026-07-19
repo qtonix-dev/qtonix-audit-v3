@@ -88,9 +88,13 @@ const dialColor = (score) =>
  * Shape the raw payload into exactly what the template needs.
  * Doing this here keeps the template dumb and the logic testable.
  */
-function buildViewModel(p) {
+function buildViewModel(p, opts = {}) {
   const vm = { ...p };
 
+  // Fonts differ by target. WeasyPrint (PDF) reads local TTFs via file://.
+  // A browser cannot load file:// fonts, so the HTML view must pull them from
+  // a web source, or the page renders unstyled/broken. `forWeb` picks the right one.
+  vm.forWeb = !!opts.forWeb;
   vm.fontDir = 'file://' + FONT_DIR;
 
   // --- dials, each with a plain-English verdict for the scorecard table
@@ -304,10 +308,10 @@ function buildViewModel(p) {
   return vm;
 }
 
-async function renderHtml(payload) {
+async function renderHtml(payload, opts = {}) {
   const tplSrc = await fs.readFile(path.join(__dirname, '../templates/report.hbs'), 'utf8');
   const tpl = Handlebars.compile(tplSrc);
-  return tpl(buildViewModel(payload));
+  return tpl(buildViewModel(payload, opts));
 }
 
 async function renderReport(payload) {
@@ -317,8 +321,15 @@ async function renderReport(payload) {
   const htmlPath = path.join(OUT_DIR, `${slug}.html`);
   const pdfPath = path.join(OUT_DIR, `${slug}.pdf`);
 
-  const html = await renderHtml(payload);
-  await fs.writeFile(htmlPath, html, 'utf8');
+  // The on-disk HTML is what the browser "view" serves → use web fonts.
+  const htmlForWeb = await renderHtml(payload, { forWeb: true });
+  await fs.writeFile(htmlPath, htmlForWeb, 'utf8');
+
+  // The PDF is rendered from a separate file:// font build so WeasyPrint
+  // embeds the exact brand fonts.
+  const htmlForPdf = await renderHtml(payload, { forWeb: false });
+  const pdfHtmlPath = path.join(OUT_DIR, `${slug}.pdf.html`);
+  await fs.writeFile(pdfHtmlPath, htmlForPdf, 'utf8');
 
   // WeasyPrint, not Chromium. The reference proposal was produced with
   // WeasyPrint 69, and it is the only engine that honours the @page
@@ -333,7 +344,7 @@ async function renderReport(payload) {
     const { execFile } = require('child_process');
     execFile(
       'python3',
-      ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(htmlPath), htmlPath, pdfPath],
+      ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(pdfHtmlPath), pdfHtmlPath, pdfPath],
       { timeout: 120000 },
       (err, stdout, stderr) => {
         if (err) return reject(new Error(`WeasyPrint failed: ${stderr || err.message}`));

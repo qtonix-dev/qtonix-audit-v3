@@ -223,6 +223,69 @@ function SettingsPanel() {
         </div>
       </section>
 
+      {/* --- Pricing packages --- */}
+      <section className="bg-white rounded-2xl border border-slate-200 p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="font-bold text-[#050A1F]">Pricing packages</h2>
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" checked={s.pricing?.enabled !== false}
+              onChange={(e) => setS((x) => ({ ...x, pricing: { ...x.pricing, enabled: e.target.checked } }))} />
+            Show pricing in reports
+          </label>
+        </div>
+        <p className="text-xs text-slate-500 mb-5">The three tiers shown on every report's investment page. Edit names, prices and what's included.</p>
+
+        <Field label="Intro line">
+          <textarea rows="2" className={input} value={s.pricing?.intro || ''}
+            onChange={(e) => setS((x) => ({ ...x, pricing: { ...x.pricing, intro: e.target.value } }))} />
+        </Field>
+
+        <div className="grid grid-cols-3 gap-4 mt-4">
+          {(s.pricing?.packages || []).map((pkg, i) => {
+            const setPkg = (field, val) => setS((x) => {
+              const packages = [...(x.pricing.packages || [])];
+              packages[i] = { ...packages[i], [field]: val };
+              return { ...x, pricing: { ...x.pricing, packages } };
+            });
+            return (
+              <div key={i} className={`rounded-xl border p-4 ${pkg.recommended ? 'border-[#FF6A00] bg-orange-50/30' : 'border-slate-200'}`}>
+                <input className={`${input} font-bold mb-2`} value={pkg.name || ''} placeholder="Package name"
+                  onChange={(e) => setPkg('name', e.target.value)} />
+                <div className="flex gap-2 mb-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-slate-400">Price</label>
+                    <input className={input} value={pkg.price || ''} placeholder="399"
+                      onChange={(e) => setPkg('price', e.target.value)} />
+                  </div>
+                  <div className="w-16">
+                    <label className="text-[10px] text-slate-400">Period</label>
+                    <input className={input} value={pkg.period || ''} placeholder="/mo"
+                      onChange={(e) => setPkg('period', e.target.value)} />
+                  </div>
+                </div>
+                <label className="text-[10px] text-slate-400">Old price (optional, struck-through)</label>
+                <input className={`${input} mb-2`} value={pkg.oldPrice || ''}
+                  onChange={(e) => setPkg('oldPrice', e.target.value)} />
+                <label className="text-[10px] text-slate-400">Tagline</label>
+                <input className={`${input} mb-2`} value={pkg.blurb || ''}
+                  onChange={(e) => setPkg('blurb', e.target.value)} />
+                <label className="text-[10px] text-slate-400">Features (one per line)</label>
+                <textarea rows="6" className={input} value={(pkg.features || []).join('\n')}
+                  onChange={(e) => setPkg('features', e.target.value.split('\n').filter((l) => l.trim()))} />
+                <label className="flex items-center gap-2 text-xs text-slate-600 mt-2">
+                  <input type="checkbox" checked={!!pkg.recommended}
+                    onChange={(e) => setS((x) => {
+                      const packages = (x.pricing.packages || []).map((p, j) => ({ ...p, recommended: j === i ? e.target.checked : false }));
+                      return { ...x, pricing: { ...x.pricing, packages } };
+                    })} />
+                  Mark as recommended
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       <div className="flex justify-end">
         <button onClick={save} disabled={saving}
           className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-40"
@@ -241,6 +304,24 @@ function Users() {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'agent', phone: '', designation: 'Sales Executive' });
   const [msg, setMsg] = useState(null);
+  const [editUser, setEditUser] = useState(null); // the user currently being edited
+
+  const saveEdit = async () => {
+    setMsg(null);
+    try {
+      const body = {
+        name: editUser.name,
+        role: editUser.role,
+        phone: editUser.phone,
+        designation: editUser.designation,
+      };
+      if (editUser.newPassword) body.password = editUser.newPassword;
+      await api(`/admin/users/${editUser._id}`, { method: 'PUT', body: JSON.stringify(body) });
+      setEditUser(null);
+      load();
+      setMsg({ text: 'User updated.' });
+    } catch (e) { setMsg({ bad: true, text: e.message }); }
+  };
 
   const load = () => api('/admin/users').then(setUsers).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -332,7 +413,11 @@ function Users() {
                 <td className="px-4 py-3 text-xs text-slate-400">
                   {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString('en-GB') : 'Never'}
                 </td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <button onClick={() => setEditUser({ ...u, newPassword: '' })}
+                    className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 mr-2 hover:border-slate-400">
+                    Edit
+                  </button>
                   <button onClick={() => toggle(u)}
                     className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600">
                     {u.active ? 'Deactivate' : 'Reactivate'}
@@ -343,16 +428,49 @@ function Users() {
           </tbody>
         </table>
       </div>
+
+      {editUser && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditUser(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-[#050A1F] text-lg mb-1">Edit user</h3>
+            <p className="text-xs text-slate-400 mb-4">{editUser.email}</p>
+            <div className="space-y-3">
+              <Field label="Name"><input className={input} value={editUser.name || ''} onChange={(e) => setEditUser({ ...editUser, name: e.target.value })} /></Field>
+              <Field label="Role">
+                <select className={input} value={editUser.role} onChange={(e) => setEditUser({ ...editUser, role: e.target.value })}>
+                  <option value="agent">Sales agent</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </Field>
+              <Field label="Phone" hint="Appears on their report covers"><input className={input} value={editUser.phone || ''} onChange={(e) => setEditUser({ ...editUser, phone: e.target.value })} /></Field>
+              <Field label="Designation"><input className={input} value={editUser.designation || ''} onChange={(e) => setEditUser({ ...editUser, designation: e.target.value })} /></Field>
+              <Field label="Reset password" hint="Leave blank to keep current password. Min 8 characters.">
+                <input type="text" className={input} placeholder="New password…" value={editUser.newPassword || ''} onChange={(e) => setEditUser({ ...editUser, newPassword: e.target.value })} />
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditUser(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={saveEdit} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-
-function Dashboard() {
+function Dashboard({ onAgentClick }) {
   const [stats, setStats] = useState(null);
   useEffect(() => { api('/admin/stats').then(setStats).catch(() => {}); }, []);
   if (!stats) return <div className="text-sm text-slate-400">Loading…</div>;
+
+  let seBalance = null;
+  const acc = stats.seRankingAccount;
+  if (acc && typeof acc === 'object') {
+    const cand = acc.balance ?? acc.credits_left ?? acc.remaining ?? acc.available ?? acc.limit;
+    if (typeof cand === 'number') seBalance = cand;
+    else if (cand != null && !isNaN(Number(cand))) seBalance = Number(cand);
+  }
 
   const cards = [
     { label: 'Reports run', value: stats.reports.total, tone: 'text-[#050A1F]' },
@@ -377,26 +495,50 @@ function Dashboard() {
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
           <h3 className="font-bold text-[#050A1F] text-sm mb-3">Reports by agent</h3>
+          <p className="text-[10px] text-slate-400 mb-2">Click an agent to see their reports.</p>
           {!stats.byAgent.length && <p className="text-xs text-slate-400">No reports yet.</p>}
           {stats.byAgent.map((a) => (
-            <div key={a._id} className="flex justify-between py-1.5 border-b border-slate-50 last:border-0">
-              <span className="text-xs text-slate-600">{a._id || '—'}</span>
-              <span className="text-xs font-bold text-[#050A1F]">{a.count}</span>
-            </div>
+            <button key={a._id} onClick={() => onAgentClick && onAgentClick(a._id)}
+              className="w-full flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 hover:bg-slate-50 rounded px-1 text-left">
+              <span className="text-xs text-blue-600 font-medium hover:underline">{a._id || '—'}</span>
+              <span className="text-xs font-bold text-[#050A1F]">{a.count} report{a.count === 1 ? '' : 's'}</span>
+            </button>
           ))}
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="font-bold text-[#050A1F] text-sm mb-3">SE Ranking credits</h3>
-          <div className="text-2xl font-extrabold text-[#FF6A00]">
-            {stats.creditsUsed ? stats.creditsUsed.toLocaleString() : 0}
+          <h3 className="font-bold text-[#050A1F] text-sm mb-3">API credits &amp; status</h3>
+
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">SE Ranking</span>
+              {stats.keyStatus?.seranking
+                ? <span className="text-[9px] font-bold text-green-600">CONNECTED</span>
+                : <span className="text-[9px] font-bold text-slate-400">NO KEY</span>}
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">Used: <b>{(stats.creditsUsed || 0).toLocaleString()}</b> credits across all reports</div>
+            {seBalance != null && <div className="text-xs text-green-700 mt-0.5">Remaining: <b>{seBalance.toLocaleString()}</b></div>}
           </div>
-          <p className="text-xs text-slate-400 mt-1">Used across all reports</p>
-          {stats.seRankingAccount && (
-            <pre className="mt-3 text-[10px] bg-slate-50 rounded p-2 overflow-auto max-h-24 text-slate-500">
-              {JSON.stringify(stats.seRankingAccount, null, 1)}
-            </pre>
-          )}
+
+          <div className="mb-3 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">Claude (Anthropic)</span>
+              {stats.keyStatus?.anthropic
+                ? <span className="text-[9px] font-bold text-green-600">CONNECTED</span>
+                : <span className="text-[9px] font-bold text-slate-400">NO KEY</span>}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Anthropic doesn't expose a remaining-balance API. Check console.anthropic.com for balance.</div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">Google Places</span>
+              {stats.keyStatus?.googlePlaces
+                ? <span className="text-[9px] font-bold text-green-600">CONNECTED</span>
+                : <span className="text-[9px] font-bold text-slate-400">NO KEY</span>}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Google bills by usage, not credits. Check your budget in Google Cloud Console.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -438,7 +580,7 @@ export default function Admin() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {tab === 'dashboard' && <Dashboard />}
+        {tab === 'dashboard' && <Dashboard onAgentClick={(name) => { window.location.href = `/?q=${encodeURIComponent(name || '')}`; }} />}
         {tab === 'settings' && <SettingsPanel />}
         {tab === 'users' && <Users />}
       </main>

@@ -382,7 +382,10 @@ const StatusPill = ({ status }) => {
 
 function ReportList({ isAdmin, onOpen }) {
   const [data, setData] = useState({ items: [], total: 0, pages: 1 });
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('q') || ''; }
+    catch { return ''; }
+  });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 

@@ -15,10 +15,14 @@
    Rendered with WeasyPrint 69.0 — the same engine that produced the reference.
    =========================================================================== */
 
+{{#if forWeb}}
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
+{{else}}
 @font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Regular.ttf'); font-weight:400; }
 @font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Medium.ttf'); font-weight:500; }
 @font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-Bold.ttf'); font-weight:700; }
 @font-face { font-family:'Plus Jakarta Sans'; src:url('{{fontDir}}/PlusJakartaSans-ExtraBold.ttf'); font-weight:800; }
+{{/if}}
 
 :root{
   --navy:{{settings.colors.navy}};
@@ -32,6 +36,12 @@
   --tint:#EEF3FF;
   --tint-accent:#FFF4EC;
 }
+
+{{#if forWeb}}
+/* Screen-only presentation for the browser "view" — the PDF is unaffected. */
+body{ background:#525659; margin:0; padding:24px 0; }
+.page{ margin:0 auto 24px auto; box-shadow:0 4px 24px rgba(0,0,0,.35); background:#fff; }
+{{/if}}
 
 @page{ size: Letter; margin: 0; }
 

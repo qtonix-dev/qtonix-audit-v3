@@ -250,9 +250,17 @@ router.get('/stats', async (req, res, next) => {
     ]);
 
     let seCredits = null;
+    let keyStatus = { seranking: false, anthropic: false, googlePlaces: false };
     try {
       const s = await Settings.findOne({ where: { singleton: 'settings' } });
-      if (s && s.getKey('seranking')) seCredits = await new SERanking(s.getKey('seranking')).getSubscription();
+      if (s) {
+        keyStatus = {
+          seranking: !!s.getKey('seranking'),
+          anthropic: !!s.getKey('anthropic'),
+          googlePlaces: !!s.getKey('googlePlaces'),
+        };
+        if (s.getKey('seranking')) seCredits = await new SERanking(s.getKey('seranking')).getSubscription();
+      }
     } catch { /* credit balance is nice-to-have, never block the dashboard */ }
 
     res.json({
@@ -260,6 +268,7 @@ router.get('/stats', async (req, res, next) => {
       creditsUsed: credits || 0,
       byAgent: byAgent.map((a) => ({ _id: a.agentName, count: Number(a.count), credits: Number(a.credits || 0) })),
       seRankingAccount: seCredits,
+      keyStatus,
     });
   } catch (e) { next(e); }
 });

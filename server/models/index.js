@@ -213,6 +213,14 @@ Report.prototype.toJSON = function () {
   return o;
 };
 
+// Same _id mirror for User, and never leak the password hash to the client.
+User.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get());
+  o._id = o.id;
+  delete o.passwordHash;
+  return o;
+};
+
 // ---------------------------------------------------------------------------
 // Encryption hooks — transparent at the model layer.
 // ---------------------------------------------------------------------------
