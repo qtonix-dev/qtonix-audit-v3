@@ -10,6 +10,22 @@ import { API_BASE } from './config.js';
 
 const SERVICES = ['SEO', 'SMO', 'AI SEO', 'GEO', 'AEO', 'Local SEO'];
 
+// CRM pipeline stages and request tags (mirror the sandbox).
+const STAGES = [
+  { id: 'new', label: 'New lead', color: '#64748B' },
+  { id: 'hot', label: 'Hot', color: '#DC2626' },
+  { id: 'cold', label: 'Cold', color: '#0891B2' },
+  { id: 'ni', label: 'Not interested', color: '#94A3B8' },
+  { id: 'contacted', label: 'Contacted', color: '#2563EB' },
+  { id: 'interested', label: 'Interested', color: '#0891B2' },
+  { id: 'proposal', label: 'Proposal sent', color: '#F59E0B' },
+  { id: 'negotiation', label: 'Negotiating', color: '#FF6A00' },
+  { id: 'won', label: 'Won', color: '#16A34A' },
+  { id: 'lost', label: 'Lost', color: '#DC2626' },
+];
+const REQUESTS = ['Wants pricing', 'Wants a call', 'Needs approval', 'Comparing agencies', 'Budget constrained', 'Wants case studies', 'Ready to start', 'Follow up later'];
+const crmInput = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+
 const COUNTRIES = [
   { code: 'us', name: 'United States' }, { code: 'uk', name: 'United Kingdom' },
   { code: 'in', name: 'India' }, { code: 'au', name: 'Australia' },
@@ -126,6 +142,7 @@ function NewReport({ user, onQueued }) {
   const [form, setForm] = useState({
     website: '', businessName: '', customerName: '',
     services: ['SEO'], country: 'us', location: '',
+    customerPhone: '', customerEmail: '', customerCountry: '', customerCompany: '',
   });
   const [error, setError] = useState('');
   const [cachePrompt, setCachePrompt] = useState(null);
@@ -160,7 +177,8 @@ function NewReport({ user, onQueued }) {
     }
   };
 
-  const valid = form.website && form.businessName && form.customerName && form.services.length;
+  const valid = form.website && form.businessName && form.customerName && form.services.length
+    && form.customerPhone && form.customerEmail;
 
   return (
     <div className="max-w-2xl">
@@ -269,6 +287,36 @@ function NewReport({ user, onQueued }) {
               placeholder="Kuala Lumpur"
               className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
             />
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-slate-100">
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="text-sm font-bold text-[#050A1F]">Customer details</h3>
+            <span className="rounded bg-red-50 text-red-600 px-1.5 py-0.5 text-[9px] font-bold">REQUIRED</span>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">Capture the lead's contact details before running the report. Phone and email are required.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer phone *</label>
+              <input value={form.customerPhone} onChange={(e) => set('customerPhone', e.target.value)} placeholder="+91-…"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer email *</label>
+              <input value={form.customerEmail} onChange={(e) => set('customerEmail', e.target.value)} placeholder="name@company.com"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer country</label>
+              <input value={form.customerCountry} onChange={(e) => set('customerCountry', e.target.value)} placeholder="Malaysia"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer company</label>
+              <input value={form.customerCompany} onChange={(e) => set('customerCompany', e.target.value)} placeholder="Company Ltd."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
+            </div>
           </div>
         </div>
 
@@ -388,6 +436,14 @@ function ReportList({ isAdmin, onOpen }) {
   });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [customerModal, setCustomerModal] = useState(null);
+
+  const saveCrm = async (id, patch) => {
+    try {
+      const updated = await api(`/reports/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      setData((d) => ({ ...d, items: d.items.map((r) => (r._id === id ? { ...r, ...updated } : r)) }));
+    } catch (e) { alert(e.message); }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -429,82 +485,99 @@ function ReportList({ isAdmin, onOpen }) {
         />
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-bold text-slate-500 uppercase">
-              <th className="px-4 py-3">Business</th>
-              <th className="px-4 py-3">Website</th>
-              <th className="px-4 py-3">Score</th>
-              <th className="px-4 py-3">Services</th>
-              {isAdmin && <th className="px-4 py-3">Agent</th>}
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Date</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 text-sm">Loading…</td></tr>
-            )}
-            {!loading && !data.items.length && (
-              <tr><td colSpan={8} className="px-4 py-12 text-center">
-                <p className="text-slate-500 text-sm font-medium">No reports yet</p>
-                <p className="text-slate-400 text-xs mt-1">Run your first analysis to see it here.</p>
-              </td></tr>
-            )}
-            {data.items.map((r) => (
-              <tr key={r._id} className="border-t border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  <div className="font-semibold text-[#050A1F]">{r.businessName}</div>
-                  <div className="text-xs text-slate-400">{r.customerName}</div>
-                </td>
-                <td className="px-4 py-3 text-slate-500 text-xs">{r.domain}</td>
-                <td className="px-4 py-3">
-                  {r.scores && r.scores.overall != null ? (
-                    <span className={`font-extrabold ${
-                      r.scores.overall >= 65 ? 'text-green-600' : r.scores.overall >= 45 ? 'text-amber-500' : 'text-red-600'
-                    }`}>{r.scores.overall}</span>
-                  ) : <span className="text-slate-300">—</span>}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {r.services.slice(0, 2).map((s) => (
-                      <span key={s} className="rounded bg-orange-50 text-[#FF4500] px-1.5 py-0.5 text-[10px] font-bold">{s}</span>
-                    ))}
-                    {r.services.length > 2 && <span className="text-[10px] text-slate-400">+{r.services.length - 2}</span>}
+      {loading && <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Loading…</div>}
+      {!loading && !data.items.length && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <p className="text-slate-500 text-sm font-medium">No reports yet</p>
+          <p className="text-slate-400 text-xs mt-1">Run your first analysis to see it here.</p>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {data.items.map((r) => {
+          const st = STAGES.find((s) => s.id === r.stage) || STAGES[0];
+          return (
+            <div key={r._id} className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex justify-between items-start gap-4 flex-wrap">
+                <div className="flex items-center gap-4">
+                  <div className="text-center shrink-0">
+                    <div className="text-2xl font-extrabold leading-none" style={{ color: r.scores && r.scores.overall >= 65 ? '#16A34A' : r.scores && r.scores.overall >= 45 ? '#E58A24' : '#E5484D' }}>{r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
+                    <div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div>
                   </div>
-                </td>
-                {isAdmin && <td className="px-4 py-3 text-xs text-slate-500">{r.agentName}</td>}
-                <td className="px-4 py-3"><StatusPill status={r.status} /></td>
-                <td className="px-4 py-3 text-xs text-slate-400">
-                  {new Date(r.createdAt).toLocaleDateString('en-GB')}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {r.status === 'complete' && (
-                    <div className="flex gap-1.5 justify-end">
-                      <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">
-                        View
-                      </button>
-                      <button onClick={() => download(r._id, r.businessName)}
-                        className="rounded-md px-2.5 py-1 text-xs font-bold text-white"
-                        style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                        PDF
-                      </button>
+                  <div>
+                    <div className="font-bold text-sm text-[#050A1F]">{r.businessName} <span className="text-slate-400 font-normal">— {r.customerName}</span></div>
+                    <div className="text-xs text-slate-500 mt-0.5">{r.domain}</div>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <span className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString('en-GB')}</span>
+                      {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
+                      <StatusPill status={r.status} />
+                      {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
                     </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select value={r.stage || 'new'} onChange={(e) => saveCrm(r._id, { stage: e.target.value })}
+                    className="rounded-full px-3 py-1 text-[10px] font-extrabold border-0 cursor-pointer text-white" style={{ background: st.color }}>
+                    {STAGES.map((s) => <option key={s.id} value={s.id} style={{ background: '#fff', color: '#000' }}>{s.label}</option>)}
+                  </select>
+                  <button onClick={() => setCustomerModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">Add customer details</button>
+                  {r.status === 'complete' && (
+                    <>
+                      <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">View</button>
+                      <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>PDF</button>
+                    </>
                   )}
                   {r.status === 'failed' && (
-                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }}
-                      className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-bold text-red-600">
-                      Retry
-                    </button>
+                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-bold text-red-600">Retry</button>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              </div>
+
+              {/* CRM: what they asked + remark */}
+              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">What they asked for</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {REQUESTS.map((t) => {
+                      const on = (r.tags || []).includes(t);
+                      return <button key={t} onClick={() => saveCrm(r._id, { tags: on ? r.tags.filter((x) => x !== t) : [...(r.tags || []), t] })}
+                        className={`rounded-full px-2.5 py-1 text-[9px] font-bold border transition ${on ? 'text-white border-transparent bg-[#2563EB]' : 'text-slate-500 border-slate-200 hover:border-slate-400'}`}>{t}</button>;
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">Remark</div>
+                  <textarea rows={2} defaultValue={r.remark || ''} placeholder="Call notes, next step, objection…"
+                    onBlur={(e) => { if (e.target.value !== (r.remark || '')) saveCrm(r._id, { remark: e.target.value }); }}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      {customerModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCustomerModal(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-[#050A1F] text-lg mb-1">Customer details</h3>
+            <p className="text-xs text-slate-400 mb-4">{customerModal.businessName}</p>
+            <div className="space-y-3">
+              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer name</label><input className={crmInput} value={customerModal.customerName || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerName: e.target.value })} /></div>
+              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Phone</label><input className={crmInput} value={customerModal.customerPhone || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerPhone: e.target.value })} /></div>
+              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Email</label><input className={crmInput} value={customerModal.customerEmail || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerEmail: e.target.value })} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Country</label><input className={crmInput} value={customerModal.customerCountry || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerCountry: e.target.value })} /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Company</label><input className={crmInput} value={customerModal.customerCompany || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerCompany: e.target.value })} /></div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setCustomerModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={async () => { await saveCrm(customerModal._id, { customerName: customerModal.customerName, customerPhone: customerModal.customerPhone, customerEmail: customerModal.customerEmail, customerCountry: customerModal.customerCountry, customerCompany: customerModal.customerCompany }); setCustomerModal(null); }} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {data.pages > 1 && (
         <div className="flex justify-center gap-2 mt-4">
@@ -605,7 +678,35 @@ export default function App() {
           />
         )}
         {view === 'list' && (
-          <ReportList isAdmin={isAdmin} onOpen={(r) => window.open(`${API_BASE}/api/reports/${r._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank')} />
+          <ReportList isAdmin={isAdmin} onOpen={(r) => { setActiveReport(r); setView('report'); }} />
+        )}
+        {view === 'report' && activeReport && (
+          <div>
+            <div className="flex justify-between items-start mb-4 flex-wrap gap-3">
+              <div>
+                <h1 className="text-2xl font-extrabold tracking-tight text-[#050A1F]">{activeReport.businessName} — Site Analysis</h1>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  Score {activeReport.scores && activeReport.scores.overall != null ? activeReport.scores.overall : '—'}/100
+                  {' · '}{activeReport.issueCounts ? activeReport.issueCounts.total : (activeReport.data && activeReport.data.issueCounts ? activeReport.data.issueCounts.total : '—')} issues
+                  {activeReport.creditsUsed != null ? ` · ${activeReport.creditsUsed.toLocaleString()} credits` : ''}
+                  {' · '}{new Date(activeReport.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { setActiveReport(null); setView('list'); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">Back to reports</button>
+                <button onClick={async () => {
+                  const token = localStorage.getItem('qtx_token');
+                  const res = await fetch(`${API_BASE}/api/reports/${activeReport._id}/download`, { headers: { Authorization: `Bearer ${token}` } });
+                  if (!res.ok) return alert("That PDF isn't ready yet.");
+                  const blob = await res.blob(); const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `${activeReport.businessName.replace(/[^a-z0-9]/gi, '-')}-Site-Analysis.pdf`; a.click(); URL.revokeObjectURL(url);
+                }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
+              <iframe title="report" src={`${API_BASE}/api/reports/${activeReport._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`} className="w-full h-full border-0" />
+            </div>
+          </div>
         )}
       </main>
     </div>

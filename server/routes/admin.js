@@ -172,7 +172,7 @@ router.get('/users', async (req, res) => {
 
 router.post('/users', async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, designation } = req.body || {};
+    const { name, email, password, role, phone, designation, team, shift, aliases } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -182,6 +182,9 @@ router.post('/users', async (req, res, next) => {
     const user = await User.create({
       name, email: String(email).toLowerCase(), passwordHash: await bcrypt.hash(password, 12),
       role: role === 'admin' ? 'admin' : 'agent', phone: phone || '', designation: designation || 'Sales Executive',
+      team: ['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar',
+      shift: ['Morning', 'Night'].includes(shift) ? shift : 'Morning',
+      aliases: Array.isArray(aliases) ? aliases : (aliases ? String(aliases).split(',').map((a) => a.trim()).filter(Boolean) : []),
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.create', target: user.email, ip: req.ip });
     const out = user.toJSON(); delete out.passwordHash;
@@ -191,7 +194,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -204,6 +207,9 @@ router.put('/users/:id', async (req, res, next) => {
     if (role !== undefined) user.role = role === 'admin' ? 'admin' : 'agent';
     if (phone !== undefined) user.phone = phone;
     if (designation !== undefined) user.designation = designation;
+    if (team !== undefined && ['Bhubaneswar', 'Kolkata'].includes(team)) user.team = team;
+    if (shift !== undefined && ['Morning', 'Night'].includes(shift)) user.shift = shift;
+    if (aliases !== undefined) user.aliases = Array.isArray(aliases) ? aliases : String(aliases).split(',').map((a) => a.trim()).filter(Boolean);
     if (active !== undefined) user.active = !!active;
     if (password) {
       if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });

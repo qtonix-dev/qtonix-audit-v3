@@ -83,6 +83,11 @@ const User = sequelize.define(
     passwordHash: { type: DataTypes.STRING(255), allowNull: false },
     phone: { type: DataTypes.STRING(40), defaultValue: '' },
     designation: { type: DataTypes.STRING(80), defaultValue: 'Sales Executive' },
+    // Team location and shift, for roster/ownership context.
+    team: { type: DataTypes.ENUM('Bhubaneswar', 'Kolkata'), defaultValue: 'Bhubaneswar' },
+    shift: { type: DataTypes.ENUM('Morning', 'Night'), defaultValue: 'Morning' },
+    // Pseudonyms an agent uses with clients (comma-separated list stored as JSON).
+    aliases: { type: DataTypes.JSON, defaultValue: [] },
     role: { type: DataTypes.ENUM('agent', 'admin'), defaultValue: 'agent' },
     active: { type: DataTypes.BOOLEAN, defaultValue: true },
     reportsRun: { type: DataTypes.INTEGER, defaultValue: 0 },
@@ -125,12 +130,21 @@ const Report = sequelize.define(
 
     // ---- CRM: how the sales team tracks the prospect after the report ----
     stage: {
-      type: DataTypes.ENUM('new', 'contacted', 'interested', 'proposal', 'negotiation', 'won', 'lost'),
+      type: DataTypes.ENUM(
+        'new', 'hot', 'cold', 'ni', 'contacted', 'interested',
+        'proposal', 'negotiation', 'won', 'lost'
+      ),
       defaultValue: 'new',
     },
     tags: { type: DataTypes.JSON, defaultValue: [] },   // what they asked for
     remark: { type: DataTypes.TEXT },                    // free-text call notes
     followUpAt: { type: DataTypes.DATE },
+
+    // ---- Customer contact details (CRM), captured before running a report ----
+    customerPhone: { type: DataTypes.STRING(40), defaultValue: '' },
+    customerEmail: { type: DataTypes.STRING(180), defaultValue: '' },
+    customerCountry: { type: DataTypes.STRING(60), defaultValue: '' },
+    customerCompany: { type: DataTypes.STRING(190), defaultValue: '' },
 
     isDemo: { type: DataTypes.BOOLEAN, defaultValue: false },
     pdfPath: DataTypes.STRING(255),

@@ -16,6 +16,10 @@ const createSchema = z.object({
   services: z.array(z.enum(SERVICES)).min(1, 'Select at least one service.'),
   country: z.string().length(2).optional(),
   location: z.string().optional(),
+  customerPhone: z.string().optional(),
+  customerEmail: z.string().optional(),
+  customerCountry: z.string().optional(),
+  customerCompany: z.string().optional(),
 });
 
 /** POST /api/reports — queue a new audit. */
@@ -81,6 +85,10 @@ router.post('/', requireAuth, async (req, res, next) => {
       services: input.services,
       country: input.country || settings.defaultCountry,
       location: input.location,
+      customerPhone: input.customerPhone || '',
+      customerEmail: input.customerEmail || '',
+      customerCountry: input.customerCountry || '',
+      customerCompany: input.customerCompany || '',
       status: 'queued',
     });
 
@@ -234,7 +242,7 @@ router.get('/:id/view', requireAuth, async (req, res, next) => {
   }
 });
 
-const STAGES = ['new', 'contacted', 'interested', 'proposal', 'negotiation', 'won', 'lost'];
+const STAGES = ['new', 'hot', 'cold', 'ni', 'contacted', 'interested', 'proposal', 'negotiation', 'won', 'lost'];
 
 /**
  * PATCH /api/reports/:id — update the CRM fields only.
@@ -249,7 +257,7 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
       return res.status(403).json({ error: 'This report belongs to another agent.' });
     }
 
-    const { stage, tags, remark, followUpAt } = req.body || {};
+    const { stage, tags, remark, followUpAt, customerPhone, customerEmail, customerCountry, customerCompany, customerName } = req.body || {};
     if (stage !== undefined) {
       if (!STAGES.includes(stage)) return res.status(400).json({ error: 'That is not a valid pipeline stage.' });
       report.stage = stage;
@@ -261,13 +269,18 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     }
     if (remark !== undefined) report.remark = String(remark).slice(0, 5000);
     if (followUpAt !== undefined) report.followUpAt = followUpAt || null;
+    if (customerName !== undefined) report.customerName = String(customerName).slice(0, 190);
+    if (customerPhone !== undefined) report.customerPhone = String(customerPhone).slice(0, 40);
+    if (customerEmail !== undefined) report.customerEmail = String(customerEmail).slice(0, 180);
+    if (customerCountry !== undefined) report.customerCountry = String(customerCountry).slice(0, 60);
+    if (customerCompany !== undefined) report.customerCompany = String(customerCompany).slice(0, 190);
 
     await report.save();
     await AuditLog.create({
       userId: req.user.id, userName: req.user.name, action: 'report.crm',
       target: report.domain, meta: { stage: report.stage }, ip: req.ip,
     });
-    res.json({ ok: true, stage: report.stage, tags: report.tags, remark: report.remark, followUpAt: report.followUpAt });
+    res.json(report);
   } catch (e) { next(e); }
 });
 
