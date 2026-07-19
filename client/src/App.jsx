@@ -527,7 +527,10 @@ function ReportList({ isAdmin, onOpen }) {
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('new');
+  const [view, setView] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('q') ? 'list' : 'new'; }
+    catch { return 'new'; }
+  });
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
 

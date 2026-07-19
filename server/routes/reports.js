@@ -109,6 +109,9 @@ router.get('/', requireAuth, async (req, res, next) => {
         { businessName: { [Op.like]: `%${q}%` } },
         { domain: { [Op.like]: `%${q}%` } },
         { customerName: { [Op.like]: `%${q}%` } },
+        // Admins search by agent name too (powers the dashboard "click an agent"
+        // drill-down). Harmless for agents, who are already scoped to their own.
+        { agentName: { [Op.like]: `%${q}%` } },
       ];
     }
     const { rows: items, count: total } = await Report.findAndCountAll({

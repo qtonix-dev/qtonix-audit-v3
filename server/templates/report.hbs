@@ -38,9 +38,8 @@
 }
 
 {{#if forWeb}}
-/* Screen-only presentation for the browser "view" — the PDF is unaffected. */
-body{ background:#525659; margin:0; padding:24px 0; }
-.page{ margin:0 auto 24px auto; box-shadow:0 4px 24px rgba(0,0,0,.35); background:#fff; }
+/* Screen presentation is defined at the end of this stylesheet so it reliably
+   overrides the print rules above. See the forWeb block before </style>. */
 {{/if}}
 
 @page{ size: Letter; margin: 0; }
@@ -218,6 +217,22 @@ tbody tr:nth-child(even){ background:#FAFBFC; }
 .risk-i{ flex-shrink:0; line-height:0; }
 .risk-t{ font-size:11.5pt; font-weight:800; color:var(--accent); }
 .risk-b{ font-size:8.5pt; color:rgba(255,255,255,.85); line-height:1.55; margin-top:5px; }
+{{#if forWeb}}
+/* ============ SCREEN-ONLY (browser "view") — overrides print rules ============
+   The PDF is unaffected (it never sets forWeb). In print, interior page margins
+   come from @page interior {}, which browsers ignore — so on screen we give
+   .page an explicit size and inner padding, or content sprawls edge-to-edge. */
+body{ background:#525659; margin:0; padding:24px 0; }
+.page{
+  width:8.5in; min-height:11in;
+  margin:0 auto 24px auto;
+  padding:0.87in 0.88in 0.95in 0.87in;   /* == @page interior margins */
+  box-shadow:0 4px 24px rgba(0,0,0,.35);
+  background:#fff;
+  overflow:hidden;
+}
+.cover{ margin:0 auto 24px auto; box-shadow:0 4px 24px rgba(0,0,0,.35); }
+{{/if}}
 </style>
 </head>
 <body>
