@@ -204,6 +204,15 @@ const AuditLog = sequelize.define(
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
 
+// The frontend was written against a Mongo-style `_id`. MySQL uses `id`. Rather
+// than rewrite every reference, expose both: every Report serialised to JSON
+// includes an `_id` mirror of `id`, so links like /reports/:id work correctly.
+Report.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get());
+  o._id = o.id;
+  return o;
+};
+
 // ---------------------------------------------------------------------------
 // Encryption hooks — transparent at the model layer.
 // ---------------------------------------------------------------------------

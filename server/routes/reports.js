@@ -169,7 +169,7 @@ router.get('/:id/status', requireAuth, async (req, res) => {
   poll();
 });
 
-/** GET /api/reports/:id/download — the PDF. */
+/** GET /api/reports/:id/download — the PDF. Regenerates from stored data if missing. */
 router.get('/:id/download', requireAuth, async (req, res, next) => {
   try {
     const report = await Report.findByPk(req.params.id);
@@ -177,8 +177,23 @@ router.get('/:id/download', requireAuth, async (req, res, next) => {
     if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
       return res.status(403).json({ error: 'This report belongs to another agent.' });
     }
+    // Self-heal: if the rendered PDF is gone (container restart wipes the disk)
+    // but the report data is in the database, re-render it on the fly. This is
+    // why everything is stored in MySQL — the files are disposable, the data is not.
     if (!report.pdfPath || !fs.existsSync(report.pdfPath)) {
-      return res.status(404).json({ error: 'The PDF is not ready yet.' });
+      if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
+        try {
+          const { renderReport } = require('../services/renderer');
+          const out = await renderReport(report.data);
+          report.pdfPath = out.pdfPath;
+          report.htmlPath = out.htmlPath;
+          await report.save();
+        } catch (e) {
+          return res.status(503).json({ error: `Could not regenerate the PDF: ${e.message}` });
+        }
+      } else {
+        return res.status(404).json({ error: 'The PDF is not ready yet.' });
+      }
     }
     const safe = `${report.businessName.replace(/[^a-z0-9]/gi, '-')}-Site-Analysis.pdf`;
     res.download(report.pdfPath, safe);
@@ -187,12 +202,28 @@ router.get('/:id/download', requireAuth, async (req, res, next) => {
   }
 });
 
-/** GET /api/reports/:id/view — HTML version, for screen-sharing and Loom walkthroughs. */
+/** GET /api/reports/:id/view — HTML version. Regenerates from stored data if missing. */
 router.get('/:id/view', requireAuth, async (req, res, next) => {
   try {
     const report = await Report.findByPk(req.params.id);
-    if (!report || !report.htmlPath || !fs.existsSync(report.htmlPath)) {
-      return res.status(404).send('Report not available.');
+    if (!report) return res.status(404).send('Report not found.');
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
+      return res.status(403).send('This report belongs to another agent.');
+    }
+    if (!report.htmlPath || !fs.existsSync(report.htmlPath)) {
+      if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
+        try {
+          const { renderReport } = require('../services/renderer');
+          const out = await renderReport(report.data);
+          report.pdfPath = out.pdfPath;
+          report.htmlPath = out.htmlPath;
+          await report.save();
+        } catch (e) {
+          return res.status(503).send(`Could not regenerate the report: ${e.message}`);
+        }
+      } else {
+        return res.status(404).send('Report not available yet.');
+      }
     }
     res.sendFile(path.resolve(report.htmlPath));
   } catch (e) {
