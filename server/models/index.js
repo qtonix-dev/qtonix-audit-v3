@@ -298,10 +298,14 @@ function defaultPricing() {
   };
 }
 
-/** Connect, create tables if absent, guarantee the settings row exists. */
+/** Connect, create/alter tables, guarantee the settings row exists. */
 async function initDb({ sync = true } = {}) {
   await sequelize.authenticate();
-  if (sync) await sequelize.sync();
+  // `alter: true` adds any new columns to existing tables (e.g. when the model
+  // gains fields after the tables were first created). Without it, sync() only
+  // creates missing tables and leaves old ones untouched, causing
+  // "Unknown column" errors after a schema change.
+  if (sync) await sequelize.sync({ alter: true });
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
