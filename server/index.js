@@ -61,8 +61,43 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 
 initDb()
-  .then(() => {
+  .then(async () => {
     console.log(`Database connected (${sequelize.getDialect()})`);
+
+    // -- Boot-time admin safety net. Never throws (so it can't cause a 502).
+    // Ensures the admin account exists. If RESET_ADMIN=true, it also overwrites
+    // the admin password with the current ADMIN_PASSWORD — set that variable,
+    // deploy once, log in, then remove RESET_ADMIN.
+    try {
+      const bcrypt = require('bcryptjs');
+      const email = (process.env.ADMIN_EMAIL || 'admin@qtonix.com').toLowerCase().trim();
+      const password = process.env.ADMIN_PASSWORD;
+      if (password) {
+        const existing = await User.findOne({ where: { email } });
+        if (!existing) {
+          await User.create({
+            name: process.env.ADMIN_NAME || 'Adam G',
+            email,
+            passwordHash: await bcrypt.hash(password, 12),
+            role: 'admin',
+            phone: process.env.ADMIN_PHONE || '+91-8249016547',
+            designation: 'Project Manager',
+          });
+          console.log('[admin] created:', email);
+        } else if (String(process.env.RESET_ADMIN).toLowerCase() === 'true') {
+          existing.passwordHash = await bcrypt.hash(password, 12);
+          existing.role = 'admin';
+          existing.active = true;
+          await existing.save();
+          console.log('[admin] password RESET for:', email, '(remove RESET_ADMIN now)');
+        } else {
+          console.log('[admin] exists:', email, '(set RESET_ADMIN=true to reset password)');
+        }
+      }
+    } catch (e) {
+      console.error('[admin] boot check skipped:', e.message);
+    }
+
     app.listen(PORT, () => {
       console.log(`API listening on :${PORT}`);
       if (process.env.DEMO_MODE === 'true') console.log(`Demo page: http://localhost:${PORT}/demo`);
