@@ -15,7 +15,12 @@ function sign(user) {
  *  a deactivated agent must lose access immediately, not in 12 hours. */
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  // Accept the token from the Authorization header (normal API calls) OR from a
+  // ?token= query param. The query form is needed for links opened in a new tab
+  // (report view / PDF download), where the browser can't send a custom header.
+  const token = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : (req.query && req.query.token) || null;
   if (!token) return res.status(401).json({ error: 'Sign in to continue.' });
   try {
     const payload = jwt.verify(token, SECRET());

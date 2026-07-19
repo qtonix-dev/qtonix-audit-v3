@@ -96,7 +96,9 @@ function SettingsPanel() {
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1.5">
               <label className="text-xs font-semibold text-slate-600">{label}</label>
-              {required && <span className="rounded bg-red-50 text-red-600 px-1.5 py-0.5 text-[9px] font-bold">REQUIRED</span>}
+              {s.apiKeys[id]
+                ? <span className="rounded bg-green-50 text-green-600 px-1.5 py-0.5 text-[9px] font-bold">CONFIGURED</span>
+                : required && <span className="rounded bg-red-50 text-red-600 px-1.5 py-0.5 text-[9px] font-bold">REQUIRED</span>}
             </div>
             <input
               type="password" value={s.apiKeys[id] || ''}

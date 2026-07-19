@@ -599,7 +599,7 @@ export default function App() {
           />
         )}
         {view === 'list' && (
-          <ReportList isAdmin={isAdmin} onOpen={(r) => window.open(`${API_BASE}/api/reports/${r._id}/view`, '_blank')} />
+          <ReportList isAdmin={isAdmin} onOpen={(r) => window.open(`${API_BASE}/api/reports/${r._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank')} />
         )}
       </main>
     </div>

@@ -324,11 +324,16 @@ async function renderReport(payload) {
   // WeasyPrint 69, and it is the only engine that honours the @page
   // named-page rules (running footers, per-page margins) this design needs.
   // Chromium ignores @page :nth and named pages entirely.
+  //
+  // Invoke via `python3 -m weasyprint` rather than the bare `weasyprint`
+  // binary: pip may install the console script outside the runtime PATH
+  // (a common cause of "PDF not ready" in containers), but the module form
+  // always resolves when the package is installed.
   await new Promise((resolve, reject) => {
     const { execFile } = require('child_process');
     execFile(
-      'weasyprint',
-      ['-e', 'utf-8', '-u', path.dirname(htmlPath), htmlPath, pdfPath],
+      'python3',
+      ['-m', 'weasyprint', '-e', 'utf-8', '-u', path.dirname(htmlPath), htmlPath, pdfPath],
       { timeout: 120000 },
       (err, stdout, stderr) => {
         if (err) return reject(new Error(`WeasyPrint failed: ${stderr || err.message}`));
