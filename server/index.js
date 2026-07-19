@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
-const { initDb, sequelize } = require('./models');
+const { initDb, sequelize, User } = require('./models');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -13,6 +13,11 @@ const admin = require('./routes/admin');
 const demo = require('./routes/demo');
 
 const app = express();
+
+// Railway (and most hosts) put a reverse proxy in front of the app. Trusting it
+// lets express-rate-limit read the real client IP from X-Forwarded-For instead
+// of erroring. '1' = trust the first proxy hop.
+app.set('trust proxy', 1);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
