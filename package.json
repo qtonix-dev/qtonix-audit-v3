@@ -1,0 +1,35 @@
+{
+  "name": "qtonix-site-analysis",
+  "version": "1.0.0",
+  "description": "Qtonix free complete site analysis report generator \u2014 React + Node + MySQL",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "worker": "node server/worker.js",
+    "seed": "node server/seed.js",
+    "demo": "DEMO_MODE=true node server/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.8.0",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "handlebars": "^4.7.8",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb-memory-server": "^11.2.0",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.23.0",
+    "sequelize": "^6.37.8",
+    "sqlite3": "^6.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/preset-react": "^8.0.1"
+  }
+}

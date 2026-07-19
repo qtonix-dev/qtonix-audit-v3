@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Qtonix — Site Analysis Demo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
+  :root{ --navy:#050A1F; --orange:#FF6A00; --orange-deep:#FF4500; --blue:#2563EB; --line:#E5E7EB; --muted:#6B7280; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{ font-family:'Plus Jakarta Sans',system-ui,sans-serif; background:#F1F5F9; color:#0A0E27; }
+
+  header{ background:var(--navy); }
+  .hw{ max-width:900px; margin:0 auto; padding:0 24px; height:56px; display:flex; align-items:center; justify-content:space-between; }
+  .logo{ font-size:18px; font-weight:800; color:#fff; letter-spacing:-.4px; }
+  .logo span{ color:var(--orange); }
+  .tag{ font-size:10px; font-weight:700; letter-spacing:2px; color:#94A3B8; text-transform:uppercase; }
+
+  .wrap{ max-width:900px; margin:0 auto; padding:32px 24px 60px; }
+  .banner{ background:#FFF4EC; border:1px solid #FFD9BF; border-radius:10px; padding:14px 16px; margin-bottom:24px; font-size:13px; color:#7C2D12; line-height:1.6; }
+  .banner b{ font-weight:800; }
+
+  h1{ font-size:26px; font-weight:800; letter-spacing:-.7px; }
+  .sub{ color:var(--muted); font-size:14px; margin:6px 0 24px; }
+
+  .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:24px; }
+  label{ display:block; font-size:12px; font-weight:700; color:#374151; margin-bottom:6px; }
+  input,select{ width:100%; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; font-size:14px; font-family:inherit; }
+  input:focus,select:focus{ outline:none; border-color:var(--orange); box-shadow:0 0 0 3px rgba(255,106,0,.15); }
+  .hint{ font-size:11px; color:#9AA3B2; margin-top:4px; }
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  .fg{ margin-bottom:16px; }
+
+  .pills{ display:flex; flex-wrap:wrap; gap:8px; }
+  .pill{ border:1px solid #CBD5E1; background:#fff; color:#64748B; border-radius:999px; padding:7px 16px;
+    font-size:12px; font-weight:800; cursor:pointer; font-family:inherit; }
+  .pill.on{ background:linear-gradient(90deg,var(--orange),var(--orange-deep)); color:var(--navy); border-color:transparent; }
+
+  .btn{ background:linear-gradient(90deg,var(--orange),var(--orange-deep)); color:#fff; border:0; border-radius:9px;
+    padding:12px 28px; font-size:14px; font-weight:800; cursor:pointer; font-family:inherit; }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .btn-2{ background:#fff; color:#334155; border:1px solid #CBD5E1; }
+
+  .err{ background:#FEF2F2; border:1px solid #FECACA; color:#991B1B; border-radius:8px; padding:11px 14px; font-size:13px; margin-bottom:16px; }
+  .ok{ background:#F0FDF4; border:1px solid #BBF7D0; color:#166534; border-radius:8px; padding:11px 14px; font-size:13px; margin-bottom:16px; }
+
+  .bar{ height:8px; background:#E2E8F0; border-radius:99px; overflow:hidden; margin:18px 0 10px; }
+  .fill{ height:100%; background:linear-gradient(90deg,var(--blue),var(--orange)); border-radius:99px; transition:width .5s; }
+  .prow{ display:flex; justify-content:space-between; font-size:12px; }
+  .pstep{ font-weight:700; color:#475569; } .ppct{ font-weight:800; color:var(--orange); }
+
+  .steps{ margin-top:20px; }
+  .st{ display:flex; align-items:center; gap:10px; padding:7px 0; font-size:13px; color:#94A3B8; }
+  .st.done{ color:#16A34A; } .st.now{ color:var(--navy); font-weight:700; }
+  .dot{ width:8px; height:8px; border-radius:99px; background:#CBD5E1; flex-shrink:0; }
+  .st.done .dot{ background:#16A34A; } .st.now .dot{ background:var(--orange); }
+
+  .score{ text-align:center; padding:20px 0; }
+  .snum{ font-size:56px; font-weight:800; line-height:1; letter-spacing:-2px; }
+  .slab{ font-size:11px; font-weight:700; letter-spacing:2px; color:var(--muted); margin-top:8px; }
+  .acts{ display:flex; gap:10px; justify-content:center; margin-top:22px; }
+  .foot{ text-align:center; font-size:11px; color:#9AA3B2; margin-top:28px; line-height:1.7; }
+</style>
+</head>
+<body>
+<header><div class="hw">
+  <div class="logo">Qtonix<span>.</span></div>
+  <div class="tag">Site Analysis · Demo</div>
+</div></header>
+
+<div class="wrap">
+  <div class="banner">
+    <b>This is a live demo.</b> Every run spends real SE Ranking credits and Claude tokens, so it's capped
+    at <span id="cap">15</span> reports per rolling 24 hours (<span id="used">0</span> used).
+    Re-running a domain analysed in the last 7 days is free — it returns the cached report.
+  </div>
+
+  <div id="view-form">
+    <h1>Run a site analysis</h1>
+    <p class="sub">Enter a real website. Takes 1–3 minutes and produces the full branded PDF.</p>
+
+    <div class="card">
+      <div id="err"></div>
+
+      <div class="fg" id="pc-wrap" style="display:none">
+        <label>Demo passcode</label>
+        <input id="passcode" type="password" placeholder="Enter passcode">
+      </div>
+
+      <div class="fg">
+        <label>Website *</label>
+        <input id="website" placeholder="example.com" autocomplete="off">
+        <div class="hint">No need for https:// — try a real site with some search presence.</div>
+      </div>
+
+      <div class="row">
+        <div><label>Business name *</label><input id="businessName" placeholder="Zuena"></div>
+        <div><label>Customer name *</label><input id="customerName" placeholder="Linda"></div>
+      </div>
+
+      <div class="fg">
+        <label>Services the customer might want *</label>
+        <div class="pills" id="pills"></div>
+        <div class="hint">Shapes the roadmap. AI visibility is always tested — it's the strongest hook.</div>
+      </div>
+
+      <div class="row">
+        <div><label>Target market</label>
+          <select id="country">
+            <option value="us">United States</option><option value="uk">United Kingdom</option>
+            <option value="in">India</option><option value="au">Australia</option>
+            <option value="ca">Canada</option><option value="my">Malaysia</option>
+            <option value="sg">Singapore</option><option value="ae">United Arab Emirates</option>
+          </select></div>
+        <div><label>Location <span style="font-weight:400;color:#9AA3B2">(optional)</span></label>
+          <input id="location" placeholder="Kuala Lumpur"></div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;border-top:1px solid #F1F5F9;padding-top:16px">
+        <button class="btn" id="go">Generate report</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-run" style="display:none">
+    <h1>Building the report</h1>
+    <p class="sub">Crawling the site, pulling live search data, and testing how AI assistants see them.</p>
+    <div class="card">
+      <div class="bar"><div class="fill" id="fill" style="width:0%"></div></div>
+      <div class="prow"><span class="pstep" id="step">Starting…</span><span class="ppct" id="pct">0%</span></div>
+      <div class="steps" id="steps"></div>
+    </div>
+  </div>
+
+  <div id="view-done" style="display:none">
+    <div class="card">
+      <div class="score">
+        <div class="snum" id="fscore">—</div>
+        <div class="slab">HEALTH SCORE · <span id="fname"></span></div>
+      </div>
+      <div class="acts">
+        <button class="btn" id="dl">Download PDF</button>
+        <button class="btn btn-2" id="viewHtml">View in browser</button>
+        <button class="btn btn-2" id="again">Run another</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-fail" style="display:none">
+    <div class="card">
+      <div class="err" id="failmsg"></div>
+      <button class="btn btn-2" id="back">Back</button>
+    </div>
+  </div>
+
+  <div class="foot">
+    Qtonix Software Pvt. Ltd. · Demo environment — not for public distribution<br>
+    Turn off by setting <code>DEMO_MODE=false</code>
+  </div>
+</div>
+
+<script>
+const SERVICES = ['SEO','SMO','AI SEO','GEO','AEO','Local SEO'];
+let chosen = ['SEO'], reportId = null, timer = null;
+const $ = (id) => document.getElementById(id);
+
+// Steps mirror the server pipeline so the user sees real progress, not theatre.
+const STEPS = ['Reading the website','Checking search visibility','Analysing backlinks',
+               'Finding competitors','Testing AI visibility','Scoring and writing','Building the PDF'];
+
+function renderPills(){
+  $('pills').innerHTML = '';
+  SERVICES.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'pill' + (chosen.includes(s) ? ' on' : '');
+    b.textContent = s;
+    b.onclick = () => {
+      chosen = chosen.includes(s) ? chosen.filter(x => x !== s) : [...chosen, s];
+      renderPills();
+    };
+    $('pills').appendChild(b);
+  });
+}
+function renderSteps(pct){
+  const i = Math.min(Math.floor(pct / (100 / STEPS.length)), STEPS.length - 1);
+  $('steps').innerHTML = STEPS.map((s, n) =>
+    `<div class="st ${n < i ? 'done' : n === i ? 'now' : ''}"><span class="dot"></span>${n < i ? '✓ ' : ''}${s}</div>`
+  ).join('');
+}
+const show = (v) => ['form','run','done','fail'].forEach(x =>
+  $('view-' + x).style.display = (x === v ? 'block' : 'none'));
+
+async function boot(){
+  try{
+    const c = await (await fetch('/api/demo/config')).json();
+    if (c.passcodeRequired) $('pc-wrap').style.display = 'block';
+    $('cap').textContent = c.dailyCap;
+    $('used').textContent = c.usedToday;
+    if (!c.keysReady) $('err').innerHTML = '<div class="err">API keys are not configured yet. Add them in Admin → Settings before running the demo.</div>';
+  } catch { $('err').innerHTML = '<div class="err">Demo mode is off. Set DEMO_MODE=true in .env and restart.</div>'; }
+}
+
+$('go').onclick = async () => {
+  $('err').innerHTML = '';
+  const body = {
+    website: $('website').value.trim(),
+    businessName: $('businessName').value.trim(),
+    customerName: $('customerName').value.trim(),
+    services: chosen,
+    country: $('country').value,
+    location: $('location').value.trim(),
+    passcode: $('passcode').value,
+  };
+  if (!body.website || !body.businessName || !body.customerName) {
+    return $('err').innerHTML = '<div class="err">Website, business name and customer name are all required.</div>';
+  }
+  $('go').disabled = true;
+  try{
+    const r = await fetch('/api/demo/run', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    reportId = d.reportId;
+    if (d.cached) { $('err').innerHTML = '<div class="ok">' + d.message + '</div>'; }
+    show('run'); poll();
+  } catch(e){
+    $('err').innerHTML = '<div class="err">' + e.message + '</div>';
+  } finally { $('go').disabled = false; }
+};
+
+async function poll(){
+  try{
+    const s = await (await fetch('/api/demo/status/' + reportId)).json();
+    $('fill').style.width = (s.progress || 0) + '%';
+    $('pct').textContent = (s.progress || 0) + '%';
+    $('step').textContent = s.step || 'Working…';
+    renderSteps(s.progress || 0);
+
+    if (s.status === 'complete'){
+      const sc = (s.scores && s.scores.overall) || 0;
+      $('fscore').textContent = sc;
+      $('fscore').style.color = sc >= 70 ? '#16A34A' : sc >= 45 ? '#E58A24' : '#E5484D';
+      $('fname').textContent = s.businessName;
+      return show('done');
+    }
+    if (s.status === 'failed'){
+      $('failmsg').textContent = s.error || 'That report did not finish.';
+      return show('fail');
+    }
+    timer = setTimeout(poll, 2000);
+  } catch { timer = setTimeout(poll, 3000); }
+}
+
+$('dl').onclick       = () => window.location = '/api/demo/download/' + reportId;
+$('viewHtml').onclick = () => window.open('/api/demo/view/' + reportId, '_blank');
+$('again').onclick    = () => { clearTimeout(timer); show('form'); boot(); };
+$('back').onclick     = () => show('form');
+
+renderPills(); boot();
+</script>
+</body>
+</html>
