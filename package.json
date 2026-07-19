@@ -7,6 +7,7 @@
     "start": "node server/index.js",
     "worker": "node server/worker.js",
     "seed": "node server/seed.js",
+    "reset-admin": "node server/resetAdmin.js",
     "demo": "DEMO_MODE=true node server/index.js"
   },
   "dependencies": {
