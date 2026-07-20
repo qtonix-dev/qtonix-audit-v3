@@ -172,18 +172,20 @@ router.get('/users', async (req, res) => {
 
 router.post('/users', async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, designation, team, shift, aliases } = req.body || {};
+    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
     const exists = await User.findOne({ where: { email: String(email).toLowerCase() } });
     if (exists) return res.status(409).json({ error: 'That email is already registered.' });
 
+    const validRole = ['agent', 'manager', 'admin'].includes(role) ? role : 'agent';
     const user = await User.create({
       name, email: String(email).toLowerCase(), passwordHash: await bcrypt.hash(password, 12),
-      role: role === 'admin' ? 'admin' : 'agent', phone: phone || '', designation: designation || 'Sales Executive',
+      role: validRole, phone: phone || '', designation: designation || 'Sales Executive',
       team: ['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar',
       shift: ['Morning', 'Night'].includes(shift) ? shift : 'Morning',
+      managerScopes: validRole === 'manager' && Array.isArray(managerScopes) ? managerScopes : [],
       aliases: Array.isArray(aliases) ? aliases : (aliases ? String(aliases).split(',').map((a) => a.trim()).filter(Boolean) : []),
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.create', target: user.email, ip: req.ip });
@@ -194,21 +196,24 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
     // An admin locking themselves out is unrecoverable without DB access.
-    if (user.id === req.user.id && (active === false || role === 'agent')) {
+    if (user.id === req.user.id && (active === false || role === 'agent' || role === 'manager')) {
       return res.status(400).json({ error: 'You cannot deactivate or demote your own account.' });
     }
 
     if (name !== undefined) user.name = name;
-    if (role !== undefined) user.role = role === 'admin' ? 'admin' : 'agent';
+    if (role !== undefined) user.role = ['agent', 'manager', 'admin'].includes(role) ? role : 'agent';
     if (phone !== undefined) user.phone = phone;
     if (designation !== undefined) user.designation = designation;
     if (team !== undefined && ['Bhubaneswar', 'Kolkata'].includes(team)) user.team = team;
     if (shift !== undefined && ['Morning', 'Night'].includes(shift)) user.shift = shift;
+    if (managerScopes !== undefined) user.managerScopes = Array.isArray(managerScopes) ? managerScopes : [];
+    // Clear scopes if no longer a manager.
+    if (user.role !== 'manager') user.managerScopes = [];
     if (aliases !== undefined) user.aliases = Array.isArray(aliases) ? aliases : String(aliases).split(',').map((a) => a.trim()).filter(Boolean);
     if (active !== undefined) user.active = !!active;
     if (password) {

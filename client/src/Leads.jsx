@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
+import { API_BASE } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Leads CRM — Phase 1: list (role-filtered by the API), single-lead create
@@ -233,8 +234,9 @@ export function LeadDetail({ user, leadId, onBack }) {
   const [lead, setLead] = useState(null);
   const [config, setConfig] = useState({});
   const [tab, setTab] = useState('timeline');
-  const [editing, setEditing] = useState(false);
+  const [editSection, setEditSection] = useState(null); // 'all' | 'basic' | 'tags' | 'description' | 'other'
   const [draft, setDraft] = useState(null);
+  const [quickModal, setQuickModal] = useState(null); // 'note' | 'task' | 'call' | 'deal'
 
   const load = async () => {
     try {
@@ -247,39 +249,53 @@ export function LeadDetail({ user, leadId, onBack }) {
   if (!lead) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
 
   const sm = statusMeta(config, lead.status);
+  const openEdit = (section) => { setDraft({ ...lead }); setEditSection(section); };
   const saveEdit = async () => {
     try {
       const updated = await api(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(draft) });
-      setLead(updated); setEditing(false);
+      setLead(updated); setEditSection(null);
     } catch (e) { alert(e.message); }
   };
 
   const Icon = ({ children }) => <span className="inline-block w-4 text-slate-400 mr-2">{children}</span>;
+  const SectionHead = ({ title, section }) => (
+    <div className="flex items-center justify-between mb-3">
+      <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">{title}</div>
+      <button onClick={() => openEdit(section)} title={`Edit ${title}`} className="text-slate-300 hover:text-[#FF4500] text-xs">✏️</button>
+    </div>
+  );
 
   return (
     <div>
       <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to leads</button>
 
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
-          <div className="text-sm text-slate-400 mt-1">
+      {/* Header: name + tags inline, owner/last-activity, quick actions */}
+      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
+            <span className="rounded-full px-3 py-1 text-[11px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
+            {(lead.tags || []).map((t) => <span key={t} className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold">{t}</span>)}
+          </div>
+          <div className="text-sm text-slate-400 mt-1.5">
             Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
             <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full px-3 py-1 text-[11px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
-          <button onClick={() => { setDraft({ ...lead }); setEditing(true); }} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">✏️ Edit</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => setQuickModal('note')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Add note</button>
+          <button onClick={() => setQuickModal('task')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">✅ Add task</button>
+          <button onClick={() => setQuickModal('call')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📞 Add call</button>
+          <button onClick={() => setQuickModal('deal')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">💰 Add deal</button>
+          <button onClick={() => openEdit('all')} className="rounded-md px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>✏️ Edit lead</button>
         </div>
       </div>
 
       <div className="grid gap-6" style={{ gridTemplateColumns: '30% 1fr' }}>
-        {/* LEFT 30% */}
+        {/* LEFT 30% — each section independently editable */}
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-3">Basic info</div>
+            <SectionHead title="Basic info" section="basic" />
             <div className="space-y-2 text-sm text-slate-700">
               <div><Icon>✉️</Icon>{lead.email || <span className="text-slate-300">—</span>}</div>
               <div><Icon>📱</Icon>{lead.mobile || <span className="text-slate-300">—</span>}</div>
@@ -289,19 +305,19 @@ export function LeadDetail({ user, leadId, onBack }) {
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-3">Tags</div>
+            <SectionHead title="Tags" section="tags" />
             <div className="flex flex-wrap gap-1.5">
               {(lead.tags || []).length ? lead.tags.map((t) => <span key={t} className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold">{t}</span>) : <span className="text-slate-300 text-sm">No tags</span>}
             </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-3">Description</div>
+            <SectionHead title="Description" section="description" />
             <div className="text-sm text-slate-600 whitespace-pre-wrap">{lead.additionalInfo || <span className="text-slate-300">No description</span>}</div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-3">Other info</div>
+            <SectionHead title="Other info" section="other" />
             <div className="space-y-2 text-sm">
               <Row k="Website" v={lead.website} />
               <Row k="Secondary email" v={lead.secondaryEmail} />
@@ -326,19 +342,45 @@ export function LeadDetail({ user, leadId, onBack }) {
             {tab === 'timeline' && <Timeline lead={lead} />}
             {tab === 'notes' && <NotesTab lead={lead} onChange={setLead} />}
             {tab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
-            {(tab === 'deals' || tab === 'reports') && (
-              <div className="text-slate-300 text-sm py-16 text-center">
-                The <span className="font-bold capitalize">{tab}</span> tab is coming in the next phase.
-              </div>
-            )}
+            {tab === 'deals' && <DealsTab lead={lead} config={config} onChange={setLead} />}
+            {tab === 'reports' && <ReportsTab lead={lead} onChange={setLead} />}
           </div>
         </div>
       </div>
 
-      {/* Edit modal */}
-      {editing && draft && (
-        <EditLeadModal user={user} config={config} draft={draft} setDraft={setDraft} onSave={saveEdit} onClose={() => setEditing(false)} />
+      {/* Section / full edit modal */}
+      {editSection && draft && (
+        <EditLeadModal user={user} config={config} draft={draft} setDraft={setDraft} section={editSection} onSave={saveEdit} onClose={() => setEditSection(null)} />
       )}
+
+      {/* Quick-action modals */}
+      {quickModal === 'note' && <QuickNoteModal lead={lead} onClose={() => setQuickModal(null)} onSaved={(u) => { setLead(u); setQuickModal(null); setTab('notes'); }} />}
+      {(quickModal === 'task' || quickModal === 'call') && <ActivityModal kind={quickModal} lead={lead} config={config} onClose={() => setQuickModal(null)} onSaved={(u) => { setLead(u); setQuickModal(null); setTab('activity'); }} />}
+      {quickModal === 'deal' && <DealModal lead={lead} config={config} onClose={() => setQuickModal(null)} onSaved={(u) => { setLead(u); setQuickModal(null); setTab('deals'); }} />}
+    </div>
+  );
+}
+
+function QuickNoteModal({ lead, onClose, onSaved }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    try { const u = await api(`/leads/${lead._id}/notes`, { method: 'POST', body: JSON.stringify({ text }) }); onSaved(u); }
+    catch (e) { alert(e.message); } setBusy(false);
+  };
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-[#050A1F] mb-4">📝 Add note</h3>
+        <textarea rows={4} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a note…"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy || !text.trim()} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save note'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -551,67 +593,222 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
   );
 }
 
-function EditLeadModal({ user, config, draft, setDraft, onSave, onClose }) {
+function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave, onClose }) {
   const set = (k, v) => setDraft((s) => ({ ...s, [k]: v }));
   const toggleArr = (k, v) => setDraft((s) => ({ ...s, [k]: (s[k] || []).includes(v) ? s[k].filter((x) => x !== v) : [...(s[k] || []), v] }));
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
+  const show = (s) => section === 'all' || section === s;
+  const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info' };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold text-[#050A1F] mb-4">Edit lead</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className={lab}>First name</label><input className={inp} value={draft.firstName || ''} onChange={(e) => set('firstName', e.target.value)} /></div>
-          <div><label className={lab}>Last name</label><input className={inp} value={draft.lastName || ''} onChange={(e) => set('lastName', e.target.value)} /></div>
-          <div><label className={lab}>Website</label><input className={inp} value={draft.website || ''} onChange={(e) => set('website', e.target.value)} /></div>
-          <div><label className={lab}>Email</label><input className={inp} value={draft.email || ''} onChange={(e) => set('email', e.target.value)} /></div>
-          <div><label className={lab}>Secondary email</label><input className={inp} value={draft.secondaryEmail || ''} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
-          <div><label className={lab}>Mobile</label><input className={inp} value={draft.mobile || ''} onChange={(e) => set('mobile', e.target.value)} /></div>
-          <div><label className={lab}>Phone</label><input className={inp} value={draft.phone || ''} onChange={(e) => set('phone', e.target.value)} /></div>
-          <div>
-            <label className={lab}>Lead source</label>
-            <select className={inp} value={draft.leadSource || ''} onChange={(e) => set('leadSource', e.target.value)}>
-              <option value="">— Select —</option>
-              {(config.leadSources || []).map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+        <h3 className="text-lg font-bold text-[#050A1F] mb-4">{titles[section] || 'Edit lead'}</h3>
+
+        {show('basic') && (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            {section === 'all' && <div><label className={lab}>First name</label><input className={inp} value={draft.firstName || ''} onChange={(e) => set('firstName', e.target.value)} /></div>}
+            {section === 'all' && <div><label className={lab}>Last name</label><input className={inp} value={draft.lastName || ''} onChange={(e) => set('lastName', e.target.value)} /></div>}
+            <div><label className={lab}>Email</label><input className={inp} value={draft.email || ''} onChange={(e) => set('email', e.target.value)} /></div>
+            <div><label className={lab}>Mobile</label><input className={inp} value={draft.mobile || ''} onChange={(e) => set('mobile', e.target.value)} /></div>
+            <div><label className={lab}>Phone</label><input className={inp} value={draft.phone || ''} onChange={(e) => set('phone', e.target.value)} /></div>
+            <div><label className={lab}>Country</label><input className={inp} value={draft.country || ''} onChange={(e) => set('country', e.target.value)} /></div>
+            <div><label className={lab}>City</label><input className={inp} value={draft.city || ''} onChange={(e) => set('city', e.target.value)} /></div>
+            <div><label className={lab}>Time zone</label><input className={inp} value={draft.timezone || ''} onChange={(e) => set('timezone', e.target.value)} /></div>
           </div>
-          <div>
-            <label className={lab}>Status</label>
-            <select className={inp} value={draft.status || 'new'} onChange={(e) => set('status', e.target.value)}>
-              {(config.leadStatuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+        )}
+
+        {show('tags') && (
+          <div className="mb-4">
+            <label className={lab}>Tags</label>
+            <div className="flex flex-wrap gap-1.5">
+              {(config.tags || []).map((t) => (
+                <button key={t} type="button" onClick={() => toggleArr('tags', t)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.tags || []).includes(t) ? 'bg-[#FF6A00] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{t}</button>
+              ))}
+            </div>
           </div>
-          <div><label className={lab}>Country</label><input className={inp} value={draft.country || ''} onChange={(e) => set('country', e.target.value)} /></div>
-          <div><label className={lab}>City</label><input className={inp} value={draft.city || ''} onChange={(e) => set('city', e.target.value)} /></div>
-          <div><label className={lab}>Time zone</label><input className={inp} value={draft.timezone || ''} onChange={(e) => set('timezone', e.target.value)} /></div>
-        </div>
-        <div className="mt-4">
-          <label className={lab}>Services interested in</label>
-          <div className="flex flex-wrap gap-1.5">
-            {(config.servicesInterested || []).map((s) => (
-              <button key={s} type="button" onClick={() => toggleArr('servicesInterested', s)}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.servicesInterested || []).includes(s) ? 'bg-[#2563EB] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{s}</button>
-            ))}
+        )}
+
+        {show('description') && (
+          <div className="mb-4">
+            <label className={lab}>Description</label>
+            <textarea rows={4} className={inp} value={draft.additionalInfo || ''} onChange={(e) => set('additionalInfo', e.target.value)} />
           </div>
-        </div>
-        <div className="mt-4">
-          <label className={lab}>Tags</label>
-          <div className="flex flex-wrap gap-1.5">
-            {(config.tags || []).map((t) => (
-              <button key={t} type="button" onClick={() => toggleArr('tags', t)}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.tags || []).includes(t) ? 'bg-[#FF6A00] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{t}</button>
-            ))}
+        )}
+
+        {show('other') && (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div><label className={lab}>Website</label><input className={inp} value={draft.website || ''} onChange={(e) => set('website', e.target.value)} /></div>
+            <div><label className={lab}>Secondary email</label><input className={inp} value={draft.secondaryEmail || ''} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
+            <div>
+              <label className={lab}>Generated by</label>
+              <input className={inp} value={draft.generatedBy || ''} onChange={(e) => set('generatedBy', e.target.value)} />
+            </div>
+            <div>
+              <label className={lab}>Lead source</label>
+              <select className={inp} value={draft.leadSource || ''} onChange={(e) => set('leadSource', e.target.value)}>
+                <option value="">— Select —</option>
+                {(config.leadSources || []).map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lab}>Lead status</label>
+              <select className={inp} value={draft.status || 'new'} onChange={(e) => set('status', e.target.value)}>
+                {(config.leadStatuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className={lab}>Services interested in</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(config.servicesInterested || []).map((s) => (
+                  <button key={s} type="button" onClick={() => toggleArr('servicesInterested', s)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.servicesInterested || []).includes(s) ? 'bg-[#2563EB] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{s}</button>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="mt-4">
-          <label className={lab}>Additional information</label>
-          <textarea rows={3} className={inp} value={draft.additionalInfo || ''} onChange={(e) => set('additionalInfo', e.target.value)} />
-        </div>
+        )}
+
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
           <button onClick={onSave} className="rounded-lg bg-[#050A1F] px-6 py-2 text-sm font-bold text-white">Save changes</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- Deals tab -------------------------------------------------------------
+function DealsTab({ lead, config, onChange }) {
+  const [modal, setModal] = useState(null); // null | 'new' | deal object
+  const deals = Array.isArray(lead.deals) ? lead.deals : [];
+  const stageMeta = (id) => (config.dealStages || []).find((s) => s.id === id) || { id, label: id, color: '#64748B' };
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-sm text-slate-500">{deals.length} deal{deals.length === 1 ? '' : 's'}</div>
+        <button onClick={() => setModal('new')} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>💰 Add deal</button>
+      </div>
+      {deals.length === 0 ? <div className="text-slate-300 text-sm py-12 text-center">No deals yet.</div> : (
+        <div className="space-y-2">
+          {deals.map((d) => {
+            const sm = stageMeta(d.stage);
+            return (
+              <div key={d.id} onClick={() => setModal(d)} className="rounded-lg border border-slate-100 hover:border-slate-300 px-4 py-3 cursor-pointer">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-sm text-[#050A1F]">{d.name}</div>
+                  <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
+                  {d.service && <span className="text-[11px] text-slate-500">{d.service}</span>}
+                  {d.expectedClose && <span className="text-[11px] text-slate-400">· close {d.expectedClose}</span>}
+                </div>
+                {d.remark && <div className="text-xs text-slate-500 mt-1.5">{d.remark}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {modal && <DealModal lead={lead} config={config} deal={modal === 'new' ? null : modal} onClose={() => setModal(null)} onSaved={(u) => { onChange(u); setModal(null); }} />}
+    </div>
+  );
+}
+
+function DealModal({ lead, config, deal, onClose, onSaved }) {
+  const [f, setF] = useState(deal || { name: '', stage: (config.dealStages && config.dealStages[0] && config.dealStages[0].id) || 'qualification', currency: (config.dealCurrencies && config.dealCurrencies[0]) || 'USD', amount: '', expectedClose: '', service: '', remark: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+  const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
+  const save = async () => {
+    if (!f.name.trim()) { alert('Deal name is required.'); return; }
+    setBusy(true);
+    try {
+      const u = deal
+        ? await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify(f) })
+        : await api(`/leads/${lead._id}/deals`, { method: 'POST', body: JSON.stringify(f) });
+      onSaved(u);
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-[#050A1F] mb-4">{deal ? 'Edit deal' : '💰 Add deal'}</h3>
+        <div className="space-y-3">
+          <div><label className={lab}>Deal name</label><input className={inp} value={f.name} onChange={(e) => set('name', e.target.value)} /></div>
+          <div>
+            <label className={lab}>Stage</label>
+            <select className={inp} value={f.stage} onChange={(e) => set('stage', e.target.value)}>
+              {(config.dealStages || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lab}>Currency</label>
+              <select className={inp} value={f.currency} onChange={(e) => set('currency', e.target.value)}>
+                {(config.dealCurrencies || ['USD']).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div><label className={lab}>Amount</label><input type="number" className={inp} value={f.amount} onChange={(e) => set('amount', e.target.value)} /></div>
+          </div>
+          <div><label className={lab}>Expected closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+          <div>
+            <label className={lab}>Interested service</label>
+            <select className={inp} value={f.service} onChange={(e) => set('service', e.target.value)}>
+              <option value="">— Select —</option>
+              {(config.servicesInterested || []).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div><label className={lab}>Remark</label><textarea rows={2} className={inp} value={f.remark} onChange={(e) => set('remark', e.target.value)} /></div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save deal'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Reports tab -----------------------------------------------------------
+function ReportsTab({ lead, onChange }) {
+  const [reports, setReports] = useState(null);
+  useEffect(() => {
+    api(`/leads/${lead._id}`).then((r) => setReports(r.reports || [])).catch(() => setReports([]));
+  }, [lead._id]);
+  const openReport = (r) => window.open(`${API_BASE}/api/reports/${r._id}/view?token=${localStorage.getItem('qtx_token')}`, '_blank');
+  const download = (r) => window.open(`${API_BASE}/api/reports/${r._id}/download?token=${localStorage.getItem('qtx_token')}`, '_blank');
+  if (reports === null) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-sm text-slate-500">{reports.length} report{reports.length === 1 ? '' : 's'} linked</div>
+        <a href={`/?leadRun=${lead._id}`} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run report</a>
+      </div>
+      {reports.length === 0 ? (
+        <div className="text-slate-300 text-sm py-12 text-center">No reports linked to this lead yet.<br />Use “Run report” to generate one for this lead.</div>
+      ) : (
+        <div className="space-y-2">
+          {reports.map((r) => (
+            <div key={r._id} className="rounded-lg border border-slate-100 px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="font-bold text-sm text-[#050A1F]">{r.businessName || r.domain}</div>
+                <div className="text-[11px] text-slate-400">{r.status} · {fmtDate(r.createdAt)} · score {r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
+              </div>
+              {r.status === 'complete' && (
+                <div className="flex gap-2">
+                  <button onClick={() => openReport(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600">👁️ View</button>
+                  <button onClick={() => download(r)} className="rounded-md px-2.5 py-1 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇️ PDF</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -450,6 +450,14 @@ async function initDb({ sync = true } = {}) {
     s.pricing = defaultPricing();
     await s.save();
   }
+  // Backfill CRM config for installs whose settings row predates it (sync adds
+  // the column but never populates existing rows). Without this the Leads
+  // dropdowns come back empty on upgraded databases.
+  if (!s.crmConfig || !s.crmConfig.leadSources) {
+    s.crmConfig = Settings.rawAttributes.crmConfig.defaultValue;
+    s.changed('crmConfig', true);
+    await s.save();
+  }
   return s;
 }
 

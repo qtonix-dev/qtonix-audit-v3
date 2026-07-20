@@ -2,7 +2,7 @@ const router = require('express').Router();
 const fs = require('fs');
 const path = require('path');
 const { z } = require('zod');
-const { Report, User, Settings, AuditLog, Op } = require('../models');
+const { Report, User, Lead, Settings, AuditLog, Op } = require('../models');
 
 // Re-render a stored report using the CURRENT pricing and branding, not the
 // snapshot taken when it was first generated. Pricing/branding are agency-wide
@@ -122,6 +122,82 @@ router.post('/', requireAuth, async (req, res, next) => {
       status: 'queued',
     });
 
+    // ---- Link this report to a lead -----------------------------------------
+    // Three cases:
+    //  (a) run from inside a lead detail page -> input.leadId is set: attach.
+    //  (b) run standalone, a lead with this domain exists & is the running
+    //      agent's -> attach to it.
+    //  (c) run standalone, a lead with this domain belongs to ANOTHER agent ->
+    //      unless the agent confirmed a duplicate, we still create a new lead
+    //      under the running agent but flag ownerConflict so the UI can warn.
+    //  (d) no match -> auto-create a new lead under the running agent.
+    try {
+      let lead = null;
+      let ownerConflict = null;
+
+      if (input.leadId) {
+        lead = await Lead.findByPk(input.leadId);
+        if (lead && (req.user.role === 'admin' || lead.ownerId === req.user.id ||
+          (req.user.role === 'manager'))) {
+          // attach (visibility already implies access for manager/admin)
+        } else {
+          lead = null;
+        }
+      }
+
+      if (!lead && domain) {
+        const own = await Lead.findOne({ where: { domain, ownerId: req.user.id } });
+        if (own) {
+          lead = own;
+        } else {
+          const others = await Lead.findOne({ where: { domain, ownerId: { [Op.ne]: req.user.id } } });
+          if (others && !input.confirmDuplicate) {
+            // Report is created, but flag the conflict — the client decides
+            // whether to create a duplicate lead (confirmDuplicate on a retry)
+            // or leave the report unlinked for now.
+            ownerConflict = { existingOwner: others.ownerName, existingLeadId: others.id };
+          }
+        }
+      }
+
+      if (!lead && !ownerConflict) {
+        // create a fresh lead under the running agent
+        const nameParts = String(input.customerName || input.businessName || 'Unknown').trim().split(/\s+/);
+        lead = await Lead.create({
+          ownerId: req.user.id,
+          ownerName: req.user.name,
+          ownerTeam: req.user.team || 'Bhubaneswar',
+          ownerShift: req.user.shift || 'Morning',
+          firstName: nameParts[0] || 'Unknown',
+          lastName: nameParts.slice(1).join(' '),
+          website: input.website,
+          domain,
+          email: input.customerEmail || '',
+          mobile: input.customerPhone || '',
+          country: input.customerCountry || '',
+          servicesInterested: [],
+          status: 'new',
+          additionalInfo: `Auto-created from a report run for ${input.businessName || domain}.`,
+          lastActivityAt: new Date(),
+          timeline: [{ type: 'created', text: 'Lead auto-created from a report run', time: new Date().toISOString(), author: req.user.name }],
+        });
+      }
+
+      if (lead) {
+        report.leadId = lead.id;
+        await report.save();
+        const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+        tl.push({ type: 'report', text: `Report generated for ${input.businessName || domain}`, time: new Date().toISOString(), author: req.user.name });
+        lead.timeline = tl; lead.changed('timeline', true);
+        lead.lastActivityAt = new Date();
+        await lead.save();
+      }
+      // stash the conflict on the response below
+      report._ownerConflict = ownerConflict;
+    } catch (linkErr) {
+      console.error('[lead-link] skipped:', linkErr.message);
+    }
+
     await User.increment('reportsRun', { where: { id: req.user.id } });
     await AuditLog.create({
       userId: req.user.id, userName: req.user.name, action: 'report.create',
@@ -129,7 +205,7 @@ router.post('/', requireAuth, async (req, res, next) => {
     });
 
     await enqueueReport(report.id);
-    res.status(201).json({ reportId: report.id, status: 'queued' });
+    res.status(201).json({ reportId: report.id, status: 'queued', leadId: report.leadId || null, ownerConflict: report._ownerConflict || null });
   } catch (e) {
     next(e);
   }

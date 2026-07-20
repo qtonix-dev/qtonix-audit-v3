@@ -321,5 +321,67 @@ router.delete('/:id/activities/:actId', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---------------------------------------------------------------------------
+// DEALS — multiple deals per lead, each with a sales stage (kanban-ready).
+// ---------------------------------------------------------------------------
+router.post('/:id/deals', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    const b = req.body || {};
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Deal name is required.' });
+    const list = Array.isArray(lead.deals) ? lead.deals : [];
+    const deal = {
+      id: `d_${Date.now()}`,
+      name: String(b.name).slice(0, 200),
+      stage: String(b.stage || 'qualification').slice(0, 40),
+      currency: String(b.currency || 'USD').slice(0, 8),
+      amount: Number(b.amount) || 0,
+      expectedClose: b.expectedClose || '',
+      service: String(b.service || '').slice(0, 120),
+      remark: String(b.remark || '').slice(0, 2000),
+      createdBy: req.user.name,
+      createdAt: new Date().toISOString(),
+    };
+    list.push(deal);
+    lead.deals = list; lead.changed('deals', true);
+    pushTimeline(lead, 'deal', `Deal added: ${deal.name} (${deal.currency} ${deal.amount})`, req.user.name);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    const list = Array.isArray(lead.deals) ? lead.deals : [];
+    const deal = list.find((d) => d.id === req.params.dealId);
+    if (!deal) return res.status(404).json({ error: 'Deal not found.' });
+    const b = req.body || {};
+    const before = deal.stage;
+    for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
+    if (b.amount !== undefined) deal.amount = Number(b.amount) || 0;
+    if (b.stage && b.stage !== before) pushTimeline(lead, 'deal', `Deal "${deal.name}" moved to ${deal.stage}`, req.user.name);
+    lead.deals = list; lead.changed('deals', true);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can delete.' });
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    lead.deals = (Array.isArray(lead.deals) ? lead.deals : []).filter((d) => d.id !== req.params.dealId);
+    lead.changed('deals', true);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.helpers = { toDomain, visibilityWhere, canAccessLead };

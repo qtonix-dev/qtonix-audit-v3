@@ -147,6 +147,7 @@ function NewReport({ user, onQueued }) {
   });
   const [error, setError] = useState('');
   const [cachePrompt, setCachePrompt] = useState(null);
+  const [conflictPrompt, setConflictPrompt] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -157,17 +158,24 @@ function NewReport({ user, onQueued }) {
       services: f.services.includes(s) ? f.services.filter((x) => x !== s) : [...f.services, s],
     }));
 
-  const submit = async (force = false) => {
+  const submit = async (force = false, confirmDuplicate = false) => {
     setError('');
     setCachePrompt(null);
     setBusy(true);
     try {
       const data = await api('/reports', {
         method: 'POST',
-        body: JSON.stringify({ ...form, force }),
+        body: JSON.stringify({ ...form, force, confirmDuplicate }),
       });
       if (data.cached) {
         setCachePrompt(data);
+        setBusy(false);
+        return;
+      }
+      // A lead with this website already belongs to another agent — ask before
+      // creating a duplicate lead under the current agent.
+      if (data.ownerConflict && !confirmDuplicate) {
+        setConflictPrompt({ reportId: data.reportId, owner: data.ownerConflict.existingOwner });
         setBusy(false);
         return;
       }
@@ -209,6 +217,28 @@ function NewReport({ user, onQueued }) {
               className="rounded-md border border-amber-400 px-3 py-1.5 text-xs font-bold text-amber-900"
             >
               Run fresh (uses credits)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {conflictPrompt && (
+        <div className="mb-5 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3">
+          <p className="text-sm text-blue-900">
+            A lead for this website already belongs to <b>{conflictPrompt.owner}</b>. Your report has been generated, but it isn't linked to a lead yet.
+          </p>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => onQueued(conflictPrompt.reportId)}
+              className="rounded-md bg-[#050A1F] px-3 py-1.5 text-xs font-bold text-white"
+            >
+              Continue without a duplicate
+            </button>
+            <button
+              onClick={() => { setConflictPrompt(null); submit(false, true); }}
+              className="rounded-md border border-blue-400 px-3 py-1.5 text-xs font-bold text-blue-900"
+            >
+              Create a duplicate lead for me
             </button>
           </div>
         </div>
@@ -437,28 +467,6 @@ function ReportList({ isAdmin, onOpen }) {
   });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [customerModal, setCustomerModal] = useState(null);
-  const [leadModal, setLeadModal] = useState(null);
-  const [remarkModal, setRemarkModal] = useState(null);
-  const [leadEditing, setLeadEditing] = useState(false);
-
-  const saveCrm = async (id, patch) => {
-    try {
-      const updated = await api(`/reports/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-      setData((d) => ({ ...d, items: d.items.map((r) => (r._id === id ? { ...r, ...updated } : r)) }));
-      if (leadModal && leadModal._id === id) setLeadModal((l) => ({ ...l, ...updated }));
-      return updated;
-    } catch (e) { alert(e.message); }
-  };
-
-  const addRemark = async (id, text) => {
-    if (!text.trim()) return;
-    try {
-      const updated = await api(`/reports/${id}/remark`, { method: 'POST', body: JSON.stringify({ text }) });
-      setData((d) => ({ ...d, items: d.items.map((r) => (r._id === id ? { ...r, ...updated } : r)) }));
-      if (leadModal && leadModal._id === id) setLeadModal((l) => ({ ...l, ...updated }));
-    } catch (e) { alert(e.message); }
-  };
 
   const load = async () => {
     setLoading(true);
@@ -510,7 +518,6 @@ function ReportList({ isAdmin, onOpen }) {
 
       <div className="space-y-3">
         {data.items.map((r) => {
-          const st = STAGES.find((s) => s.id === r.stage) || STAGES[0];
           return (
             <div key={r._id} className="bg-white rounded-xl border border-slate-200 p-4">
               <div className="flex items-center gap-4">
@@ -530,18 +537,8 @@ function ReportList({ isAdmin, onOpen }) {
                 </div>
               </div>
 
-              {/* Action bar — its own full-width row so buttons never wrap to a 2nd line */}
+              {/* Action bar — report actions only. Lead/CRM lives in the Leads tab now. */}
               <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
-                <select value={r.stage || 'new'} onChange={(e) => saveCrm(r._id, { stage: e.target.value })}
-                  className="rounded-full px-3 py-1.5 text-[10px] font-extrabold border-0 cursor-pointer text-white shrink-0" style={{ background: st.color }}>
-                  {STAGES.map((s) => <option key={s.id} value={s.id} style={{ background: '#fff', color: '#000' }}>{s.label}</option>)}
-                </select>
-                <button onClick={() => setLeadModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
-                  <span aria-hidden>👤</span> View lead
-                </button>
-                <button onClick={() => setRemarkModal({ report: r, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
-                  <span aria-hidden>📝</span> Add remark
-                </button>
                 {r.status === 'complete' && (
                   <>
                     <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
@@ -557,147 +554,15 @@ function ReportList({ isAdmin, onOpen }) {
                     <span aria-hidden>🔄</span> Retry
                   </button>
                 )}
-              </div>
-
-              {/* Latest activity — newest remark / stage change / request change */}
-              <div className="mt-3 pt-3 border-t border-slate-100 flex items-start gap-2">
-                <div className="text-[10px] font-bold text-slate-500 shrink-0 mt-0.5">Latest activity:</div>
-                <div className="flex-1 min-w-0">
-                  {(() => {
-                    const acts = Array.isArray(r.activity) ? r.activity : [];
-                    const last = acts[acts.length - 1];
-                    if (last) {
-                      const icon = last.type === 'stage' ? '🏷️' : last.type === 'request' ? '💬' : '📝';
-                      return <div className="text-xs text-slate-600"><span>{icon} {last.text}</span><span className="text-[10px] text-slate-400 ml-2">— {last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{acts.length > 1 ? ` · ${acts.length} events` : ''}</span></div>;
-                    }
-                    const hist = Array.isArray(r.remarks) ? r.remarks : [];
-                    const lr = hist[hist.length - 1];
-                    if (lr) return <div className="text-xs text-slate-600">📝 {lr.text}<span className="text-[10px] text-slate-400 ml-2">— {lr.author}</span></div>;
-                    if (r.remark) return <div className="text-xs text-slate-600">{r.remark}</div>;
-                    return <div className="text-xs text-slate-400 italic">No activity yet — change the status or add a remark.</div>;
-                  })()}
-                </div>
-                {r.tags && r.tags[0] && <span className="rounded-full bg-blue-50 text-blue-600 px-2 py-0.5 text-[9px] font-bold shrink-0">{r.tags[0]}</span>}
+                {r.leadId && (
+                  <span className="text-[10px] text-slate-400 shrink-0 ml-1">🔗 Linked to a lead</span>
+                )}
               </div>
             </div>
           );
         })}
       </div>
 
-      {customerModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCustomerModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-bold text-[#050A1F] text-lg mb-1">Customer details</h3>
-            <p className="text-xs text-slate-400 mb-4">{customerModal.businessName}</p>
-            <div className="space-y-3">
-              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer name</label><input className={crmInput} value={customerModal.customerName || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerName: e.target.value })} /></div>
-              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Phone</label><input className={crmInput} value={customerModal.customerPhone || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerPhone: e.target.value })} /></div>
-              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Email</label><input className={crmInput} value={customerModal.customerEmail || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerEmail: e.target.value })} /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Country</label><input className={crmInput} value={customerModal.customerCountry || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerCountry: e.target.value })} /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Company</label><input className={crmInput} value={customerModal.customerCompany || ''} onChange={(e) => setCustomerModal({ ...customerModal, customerCompany: e.target.value })} /></div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setCustomerModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-              <button onClick={async () => { await saveCrm(customerModal._id, { customerName: customerModal.customerName, customerPhone: customerModal.customerPhone, customerEmail: customerModal.customerEmail, customerCountry: customerModal.customerCountry, customerCompany: customerModal.customerCompany }); setCustomerModal(null); }} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ADD REMARK popup */}
-      {remarkModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setRemarkModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-bold text-[#050A1F] text-lg mb-1">Add remark</h3>
-            <p className="text-xs text-slate-400 mb-4">{remarkModal.report.businessName} — {remarkModal.report.customerName}</p>
-            <textarea rows={4} autoFocus value={remarkModal.text} placeholder="Call notes, next step, objection…"
-              onChange={(e) => setRemarkModal({ ...remarkModal, text: e.target.value })}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-            <p className="text-[11px] text-slate-400 mt-1">Saved with a timestamp. Previous remarks are kept — view them under "View lead".</p>
-            <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setRemarkModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-              <button onClick={async () => { await addRemark(remarkModal.report._id, remarkModal.text); setRemarkModal(null); }} disabled={!remarkModal.text.trim()} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white disabled:opacity-40">Save remark</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* VIEW LEAD popup — all details, edit, remark history */}
-      {leadModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => { setLeadModal(null); setLeadEditing(false); }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-[#050A1F] text-lg">{leadModal.businessName}</h3>
-                <p className="text-xs text-slate-400">{leadModal.domain}</p>
-              </div>
-              <button onClick={() => setLeadEditing((v) => !v)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">{leadEditing ? 'Done editing' : '✏️ Edit'}</button>
-            </div>
-
-            {/* Details */}
-            <div className="grid grid-cols-2 gap-3 mb-5">
-              {[['customerName', 'Customer name'], ['customerPhone', 'Phone'], ['customerEmail', 'Email'], ['customerCountry', 'Country'], ['customerCompany', 'Company']].map(([k, l]) => (
-                <div key={k}>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">{l}</div>
-                  {leadEditing
-                    ? <input className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" value={leadModal[k] || ''} onChange={(e) => setLeadModal({ ...leadModal, [k]: e.target.value })} />
-                    : <div className="text-sm text-slate-700">{leadModal[k] || <span className="text-slate-300">—</span>}</div>}
-                </div>
-              ))}
-              <div>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">What they asked for</div>
-                <select className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                  value={(leadModal.tags && leadModal.tags[0]) || ''}
-                  onChange={(e) => { const tags = e.target.value ? [e.target.value] : []; setLeadModal({ ...leadModal, tags }); saveCrm(leadModal._id, { tags }); }}>
-                  <option value="">— Select —</option>{REQUESTS.map((t) => <option key={t}>{t}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {leadEditing && (
-              <div className="flex justify-end mb-5">
-                <button onClick={async () => { await saveCrm(leadModal._id, { customerName: leadModal.customerName, customerPhone: leadModal.customerPhone, customerEmail: leadModal.customerEmail, customerCountry: leadModal.customerCountry, customerCompany: leadModal.customerCompany, tags: leadModal.tags || [] }); setLeadEditing(false); }} className="rounded-lg bg-[#050A1F] px-5 py-2 text-sm font-bold text-white">Save details</button>
-              </div>
-            )}
-
-            {/* Activity timeline — remarks + status + request changes, newest first */}
-            <div className="border-t border-slate-100 pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-bold text-[#050A1F]">Activity timeline</h4>
-                <button onClick={() => setRemarkModal({ report: leadModal, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Add remark</button>
-              </div>
-              {(() => {
-                let acts = Array.isArray(leadModal.activity) ? [...leadModal.activity] : [];
-                // Back-compat: if no unified activity yet, fall back to remarks/legacy remark.
-                if (!acts.length) {
-                  const hist = Array.isArray(leadModal.remarks) ? leadModal.remarks : [];
-                  acts = hist.map((rm) => ({ ...rm, type: 'remark' }));
-                  if (leadModal.remark && !acts.length) acts.push({ type: 'remark', text: leadModal.remark, time: leadModal.createdAt, author: leadModal.agentName || '' });
-                }
-                if (!acts.length) return <p className="text-xs text-slate-400 italic">No activity yet.</p>;
-                const meta = { stage: { icon: '🏷️', label: 'Status' }, request: { icon: '💬', label: 'Request' }, remark: { icon: '📝', label: 'Remark' } };
-                return <div className="space-y-2 max-h-64 overflow-auto">
-                  {acts.slice().reverse().map((a, i) => {
-                    const m = meta[a.type] || meta.remark;
-                    return (
-                      <div key={i} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                        <div className="text-sm text-slate-700"><span className="mr-1">{m.icon}</span>{a.text}</div>
-                        <div className="text-[10px] text-slate-400 mt-1">{m.label} · {a.author || '—'} · {new Date(a.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                      </div>
-                    );
-                  })}
-                </div>;
-              })()}
-            </div>
-
-            <div className="flex justify-end mt-5">
-              <button onClick={() => { setLeadModal(null); setLeadEditing(false); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {data.pages > 1 && (
         <div className="flex justify-center gap-2 mt-4">
