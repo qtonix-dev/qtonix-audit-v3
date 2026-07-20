@@ -512,62 +512,68 @@ function ReportList({ isAdmin, onOpen }) {
           const st = STAGES.find((s) => s.id === r.stage) || STAGES[0];
           return (
             <div key={r._id} className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex justify-between items-start gap-4 flex-wrap">
-                <div className="flex items-center gap-4">
-                  <div className="text-center shrink-0">
-                    <div className="text-2xl font-extrabold leading-none" style={{ color: r.scores && r.scores.overall >= 65 ? '#16A34A' : r.scores && r.scores.overall >= 45 ? '#E58A24' : '#E5484D' }}>{r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
-                    <div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div>
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm text-[#050A1F]">{r.businessName} <span className="text-slate-400 font-normal">— {r.customerName}</span></div>
-                    <div className="text-xs text-slate-500 mt-0.5">{r.domain}</div>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      <span className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString('en-GB')}</span>
-                      {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
-                      <StatusPill status={r.status} />
-                      {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
-                    </div>
-                  </div>
+              <div className="flex items-center gap-4">
+                <div className="text-center shrink-0">
+                  <div className="text-2xl font-extrabold leading-none" style={{ color: r.scores && r.scores.overall >= 65 ? '#16A34A' : r.scores && r.scores.overall >= 45 ? '#E58A24' : '#E5484D' }}>{r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
+                  <div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select value={r.stage || 'new'} onChange={(e) => saveCrm(r._id, { stage: e.target.value })}
-                    className="rounded-full px-3 py-1 text-[10px] font-extrabold border-0 cursor-pointer text-white" style={{ background: st.color }}>
-                    {STAGES.map((s) => <option key={s.id} value={s.id} style={{ background: '#fff', color: '#000' }}>{s.label}</option>)}
-                  </select>
-                  <button onClick={() => setLeadModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
-                    <span aria-hidden>👤</span> View lead
-                  </button>
-                  <button onClick={() => setRemarkModal({ report: r, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
-                    <span aria-hidden>📝</span> Add remark
-                  </button>
-                  {r.status === 'complete' && (
-                    <>
-                      <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1">
-                        <span aria-hidden>👁️</span> View report
-                      </button>
-                      <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1 text-xs font-bold text-white inline-flex items-center gap-1" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                        <span aria-hidden>⬇️</span> Download PDF
-                      </button>
-                    </>
-                  )}
-                  {r.status === 'failed' && (
-                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-bold text-red-600 inline-flex items-center gap-1">
-                      <span aria-hidden>🔄</span> Retry
-                    </button>
-                  )}
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#050A1F] truncate">{r.businessName} <span className="text-slate-400 font-normal">— {r.customerName}</span></div>
+                  <div className="text-xs text-slate-500 mt-0.5">{r.domain}</div>
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString('en-GB')}</span>
+                    {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
+                    <StatusPill status={r.status} />
+                    {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
+                  </div>
                 </div>
               </div>
 
-              {/* Compact: just the latest remark line. "What they asked" lives in View lead. */}
+              {/* Action bar — its own full-width row so buttons never wrap to a 2nd line */}
+              <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+                <select value={r.stage || 'new'} onChange={(e) => saveCrm(r._id, { stage: e.target.value })}
+                  className="rounded-full px-3 py-1.5 text-[10px] font-extrabold border-0 cursor-pointer text-white shrink-0" style={{ background: st.color }}>
+                  {STAGES.map((s) => <option key={s.id} value={s.id} style={{ background: '#fff', color: '#000' }}>{s.label}</option>)}
+                </select>
+                <button onClick={() => setLeadModal(r)} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
+                  <span aria-hidden>👤</span> View lead
+                </button>
+                <button onClick={() => setRemarkModal({ report: r, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
+                  <span aria-hidden>📝</span> Add remark
+                </button>
+                {r.status === 'complete' && (
+                  <>
+                    <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
+                      <span aria-hidden>👁️</span> View report
+                    </button>
+                    <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1 shrink-0" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                      <span aria-hidden>⬇️</span> Download PDF
+                    </button>
+                  </>
+                )}
+                {r.status === 'failed' && (
+                  <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1.5 text-xs font-bold text-red-600 inline-flex items-center gap-1 shrink-0">
+                    <span aria-hidden>🔄</span> Retry
+                  </button>
+                )}
+              </div>
+
+              {/* Latest activity — newest remark / stage change / request change */}
               <div className="mt-3 pt-3 border-t border-slate-100 flex items-start gap-2">
-                <div className="text-[10px] font-bold text-slate-500 shrink-0 mt-0.5">Latest remark:</div>
-                <div className="flex-1">
+                <div className="text-[10px] font-bold text-slate-500 shrink-0 mt-0.5">Latest activity:</div>
+                <div className="flex-1 min-w-0">
                   {(() => {
+                    const acts = Array.isArray(r.activity) ? r.activity : [];
+                    const last = acts[acts.length - 1];
+                    if (last) {
+                      const icon = last.type === 'stage' ? '🏷️' : last.type === 'request' ? '💬' : '📝';
+                      return <div className="text-xs text-slate-600"><span>{icon} {last.text}</span><span className="text-[10px] text-slate-400 ml-2">— {last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{acts.length > 1 ? ` · ${acts.length} events` : ''}</span></div>;
+                    }
                     const hist = Array.isArray(r.remarks) ? r.remarks : [];
-                    const last = hist[hist.length - 1];
-                    if (last) return <div className="text-xs text-slate-600"><span>{last.text}</span><span className="text-[10px] text-slate-400 ml-2">— {last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{hist.length > 1 ? ` · ${hist.length} notes` : ''}</span></div>;
+                    const lr = hist[hist.length - 1];
+                    if (lr) return <div className="text-xs text-slate-600">📝 {lr.text}<span className="text-[10px] text-slate-400 ml-2">— {lr.author}</span></div>;
                     if (r.remark) return <div className="text-xs text-slate-600">{r.remark}</div>;
-                    return <div className="text-xs text-slate-400 italic">No remarks yet — click "Add remark".</div>;
+                    return <div className="text-xs text-slate-400 italic">No activity yet — change the status or add a remark.</div>;
                   })()}
                 </div>
                 {r.tags && r.tags[0] && <span className="rounded-full bg-blue-50 text-blue-600 px-2 py-0.5 text-[9px] font-bold shrink-0">{r.tags[0]}</span>}
@@ -655,23 +661,32 @@ function ReportList({ isAdmin, onOpen }) {
               </div>
             )}
 
-            {/* Remark history */}
+            {/* Activity timeline — remarks + status + request changes, newest first */}
             <div className="border-t border-slate-100 pt-4">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-bold text-[#050A1F]">Remark history</h4>
+                <h4 className="text-sm font-bold text-[#050A1F]">Activity timeline</h4>
                 <button onClick={() => setRemarkModal({ report: leadModal, text: '' })} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Add remark</button>
               </div>
               {(() => {
-                const hist = Array.isArray(leadModal.remarks) ? [...leadModal.remarks] : [];
-                if (leadModal.remark && !hist.length) hist.push({ text: leadModal.remark, time: leadModal.createdAt, author: leadModal.agentName || '' });
-                if (!hist.length) return <p className="text-xs text-slate-400 italic">No remarks yet.</p>;
-                return <div className="space-y-2">
-                  {hist.slice().reverse().map((rm, i) => (
-                    <div key={i} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                      <div className="text-sm text-slate-700">{rm.text}</div>
-                      <div className="text-[10px] text-slate-400 mt-1">{rm.author || '—'} · {new Date(rm.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                    </div>
-                  ))}
+                let acts = Array.isArray(leadModal.activity) ? [...leadModal.activity] : [];
+                // Back-compat: if no unified activity yet, fall back to remarks/legacy remark.
+                if (!acts.length) {
+                  const hist = Array.isArray(leadModal.remarks) ? leadModal.remarks : [];
+                  acts = hist.map((rm) => ({ ...rm, type: 'remark' }));
+                  if (leadModal.remark && !acts.length) acts.push({ type: 'remark', text: leadModal.remark, time: leadModal.createdAt, author: leadModal.agentName || '' });
+                }
+                if (!acts.length) return <p className="text-xs text-slate-400 italic">No activity yet.</p>;
+                const meta = { stage: { icon: '🏷️', label: 'Status' }, request: { icon: '💬', label: 'Request' }, remark: { icon: '📝', label: 'Remark' } };
+                return <div className="space-y-2 max-h-64 overflow-auto">
+                  {acts.slice().reverse().map((a, i) => {
+                    const m = meta[a.type] || meta.remark;
+                    return (
+                      <div key={i} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                        <div className="text-sm text-slate-700"><span className="mr-1">{m.icon}</span>{a.text}</div>
+                        <div className="text-[10px] text-slate-400 mt-1">{m.label} · {a.author || '—'} · {new Date(a.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                      </div>
+                    );
+                  })}
                 </div>;
               })()}
             </div>

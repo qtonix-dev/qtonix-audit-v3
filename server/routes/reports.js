@@ -279,13 +279,25 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     }
 
     const { stage, tags, remark, followUpAt, customerPhone, customerEmail, customerCountry, customerCompany, customerName } = req.body || {};
+    const activity = Array.isArray(report.activity) ? report.activity : [];
+    const now = new Date().toISOString();
+
     if (stage !== undefined) {
       if (!STAGES.includes(stage)) return res.status(400).json({ error: 'That is not a valid pipeline stage.' });
+      if (stage !== report.stage) {
+        const label = { new: 'New lead', hot: 'Hot', cold: 'Cold', ni: 'Not interested', contacted: 'Contacted', interested: 'Interested', proposal: 'Proposal sent', negotiation: 'Negotiating', won: 'Won', lost: 'Lost' }[stage] || stage;
+        activity.push({ type: 'stage', text: `Status changed to "${label}"`, time: now, author: req.user.name });
+      }
       report.stage = stage;
     }
     if (tags !== undefined) {
       if (!Array.isArray(tags)) return res.status(400).json({ error: 'Tags must be a list.' });
-      report.tags = tags.slice(0, 20).map((t) => String(t).slice(0, 60));
+      const newTags = tags.slice(0, 20).map((t) => String(t).slice(0, 60));
+      const prev = (report.tags || []).join(',');
+      if (newTags.join(',') !== prev) {
+        activity.push({ type: 'request', text: newTags.length ? `Request set to "${newTags.join(', ')}"` : 'Request cleared', time: now, author: req.user.name });
+      }
+      report.tags = newTags;
       report.changed('tags', true);
     }
     if (remark !== undefined) report.remark = String(remark).slice(0, 5000);
@@ -296,6 +308,8 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     if (customerCountry !== undefined) report.customerCountry = String(customerCountry).slice(0, 60);
     if (customerCompany !== undefined) report.customerCompany = String(customerCompany).slice(0, 190);
 
+    report.activity = activity;
+    report.changed('activity', true);
     await report.save();
     await AuditLog.create({
       userId: req.user.id, userName: req.user.name, action: 'report.crm',
@@ -317,9 +331,16 @@ router.post('/:id/remark', requireAuth, async (req, res, next) => {
     if (!text) return res.status(400).json({ error: 'Remark text is required.' });
 
     const list = Array.isArray(report.remarks) ? report.remarks : [];
-    list.push({ text: text.slice(0, 5000), time: new Date().toISOString(), author: req.user.name });
+    const entry = { text: text.slice(0, 5000), time: new Date().toISOString(), author: req.user.name };
+    list.push(entry);
     report.remarks = list;
     report.changed('remarks', true);
+
+    // Mirror into the unified activity timeline.
+    const activity = Array.isArray(report.activity) ? report.activity : [];
+    activity.push({ type: 'remark', text: entry.text, time: entry.time, author: entry.author });
+    report.activity = activity;
+    report.changed('activity', true);
     await report.save();
     await AuditLog.create({
       userId: req.user.id, userName: req.user.name, action: 'report.remark',

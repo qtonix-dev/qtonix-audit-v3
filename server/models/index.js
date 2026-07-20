@@ -141,6 +141,9 @@ const Report = sequelize.define(
     // Timestamped remark history: [{ text, time, author }]. Never overwritten —
     // each new note is appended, so the full call history is always visible.
     remarks: { type: DataTypes.JSON, defaultValue: [] },
+    // Unified activity timeline: [{ type:'remark'|'stage'|'request', text, time, author }]
+    // — every remark, stage change and request change, newest last.
+    activity: { type: DataTypes.JSON, defaultValue: [] },
     followUpAt: { type: DataTypes.DATE },
 
     // ---- Customer contact details (CRM), captured before running a report ----

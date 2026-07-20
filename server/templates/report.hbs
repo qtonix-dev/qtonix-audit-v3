@@ -91,9 +91,14 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
   display:flex; justify-content:space-between; font-size:8pt; color:rgba(255,255,255,.6); }
 .cover-foot b{ color:#fff; font-weight:700; }
 
-/* ---------------- INTERIOR ---------------- */
-.page{ page:interior; page-break-after:always; }
-.page:last-child{ page-break-after:auto; }
+/* ---------------- INTERIOR ----------------
+   Sections now FLOW: a short section no longer wastes a whole page. Each .page
+   is a content block that tries to stay together (page-break-inside:avoid) but
+   packs onto the physical page with the section before it. Sections that must
+   start fresh use .page-break (see The Fix / Investment / Let's Begin). */
+.page{ page:interior; break-inside:avoid; padding-bottom:18px; }
+.page-break-before{ break-before:page; }
+.page:last-child{ padding-bottom:0; }
 
 .sec-head{ margin-bottom:14px; font-size:7.5pt; }
 .sec-dia{ display:inline-block; width:8px; height:8px; background:var(--blue); transform:rotate(45deg); margin-right:9px; }
@@ -302,7 +307,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 
 <!-- ================= CONTENTS ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-rule"></span><span class="sec-name">CONTENTS</span></div>
   <h2>What's <span class="b">inside.</span></h2>
   <p class="lead">A precise, evidence-based look at where {{report.domain}} stands in search today, why customers aren't finding it, and the specific plan to change that. No hype — just the data and the roadmap.</p>
@@ -341,7 +346,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 
 <!-- ================= 02 THE VISIBILITY GAP ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">02</span><span class="sec-rule"></span><span class="sec-name">THE VISIBILITY GAP</span></div>
   <h2>The demand is real and measurable. <span class="b">You're simply not in the results yet.</span></h2>
   <p class="lead">{{visibility.intro}}</p>
@@ -377,7 +382,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 
 <!-- ================= 03 PROBLEM & TRANSFORMATION ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">03</span><span class="sec-rule"></span><span class="sec-name">PROBLEM &amp; TRANSFORMATION</span></div>
   <h2>It's fixable. <span class="b">Here's the honest diagnosis and what changes.</span></h2>
 
@@ -411,7 +416,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 
 <!-- ================= 04 HEALTH SCORECARD ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">04</span><span class="sec-rule"></span><span class="sec-name">HEALTH SCORECARD</span></div>
   <h2>Six things decide whether you get found. <span class="b">Here's where you stand.</span></h2>
   <p class="lead">Every score comes from a live measurement of {{report.domain}}, not an opinion. Red means it is actively costing you customers today.</p>
@@ -569,7 +574,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
 <!-- ================= 05 COMPETITOR & BACKLINK ================= -->
 {{#if competitors.length}}
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">05</span><span class="sec-rule"></span><span class="sec-name">COMPETITOR &amp; BACKLINK ANALYSIS</span></div>
   <h2>Your competitors aren't better at what you do. <span class="b">They just have authority and the right pages.</span></h2>
   <p class="lead">{{competitorIntro}}</p>
@@ -639,7 +644,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
 <!-- ================= 06 AI SEARCH VISIBILITY ================= -->
 {{#if ai}}
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">06</span><span class="sec-rule"></span><span class="sec-name">AI SEARCH VISIBILITY</span></div>
   <h2>Your buyers don't only ask Google anymore. <span class="b">They ask ChatGPT too.</span></h2>
   <p class="lead">Search is changing fast. Customers increasingly ask ChatGPT, Google AI Overviews, Gemini, Perplexity and Claude for recommendations before they ever click. We asked an AI assistant {{ai.promptsTested}} real buying questions from your category — never mentioning your name — and recorded who it recommended.</p>
@@ -768,7 +773,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 {{/if}}
 
 <!-- ================= 07 THE STRATEGY ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">07</span><span class="sec-rule"></span><span class="sec-name">THE STRATEGY</span></div>
   <h2>A clear plan, <span class="b">starting from a clean, credible base.</span></h2>
   <p class="lead">Three phases — clean up the spam and technical issues, build the pages that capture high-intent searches, then scale genuine authority. Sorted by impact against effort, so you see movement while the slower work compounds.</p>
@@ -793,7 +798,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 
 <!-- ================= 08 THE FIX, MEASURED ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">08</span><span class="sec-rule"></span><span class="sec-name">THE FIX, MEASURED</span></div>
   <h2>We report on outcomes, <span class="b">not activity.</span></h2>
   <p class="lead">You'll never get a vague "we did some SEO" update. Every month you see exactly where these numbers stand and how far they've moved. These are the metrics we own together.</p>
@@ -808,18 +813,30 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   <p class="note">Targets are directional based on the strategy and current data; actual results depend on execution, budget for quality backlinks, and market conditions.</p>
 
-  <h3 style="margin-top:26px">Why {{settings.companyShort}}</h3>
+  <h3 style="margin-top:22px">Why {{settings.companyShort}}</h3>
   <div class="stats">
     <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">13+</div><div class="stat-l">Years in digital marketing</div></div>
     <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">250+</div><div class="stat-l">Clients worldwide</div></div>
     <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">60+</div><div class="stat-l">In-house specialists</div></div>
     <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">1:1</div><div class="stat-l">Direct access to your strategist</div></div>
   </div>
+
+  <h3 style="margin-top:20px">How we work with you</h3>
+  <table>
+    <tbody>
+      <tr><td class="tb" style="width:26%">Transparent reporting</td><td>A live dashboard plus a monthly review call — you always see the numbers above and exactly what moved them.</td></tr>
+      <tr><td class="tb">One dedicated strategist</td><td>A single point of contact who knows your account, not a rotating ticket queue.</td></tr>
+      <tr><td class="tb">No long lock-in</td><td>Month-to-month. We keep your business by delivering results, not by contract.</td></tr>
+      <tr><td class="tb">White-hat only</td><td>Every tactic is Google-compliant, so your gains compound instead of risking a penalty.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="nb" style="margin-top:14px"><strong>Our promise.</strong> You'll never get a vague "we did some SEO" update. Every month you see movement against the exact KPIs above — and if something isn't working, we tell you first and change course.</div>
 </div>
 
 <!-- ================= 09 YOUR INVESTMENT ================= -->
 {{#if pricing.enabled}}
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">09</span><span class="sec-rule"></span><span class="sec-name">YOUR INVESTMENT</span></div>
   <h2>Simple pricing. <span class="b">Serious results.</span></h2>
   <p class="lead">{{pricing.intro}} Prices in {{pricing.currency}}.</p>
@@ -860,7 +877,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 {{/if}}
 
 <!-- ================= 10 LET'S BEGIN ================= -->
-<div class="page">
+<div class="page page-break-before">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">{{#if pricing.enabled}}10{{else}}09{{/if}}</span><span class="sec-rule"></span><span class="sec-name">LET'S BEGIN</span></div>
   <h2>Ready when you are. <span class="b">Let's get customers finding you.</span></h2>
   <p class="lead">Onboarding is simple and fast — you could have work underway within 24 hours of saying yes.</p>
