@@ -88,7 +88,12 @@ const User = sequelize.define(
     shift: { type: DataTypes.ENUM('Morning', 'Night'), defaultValue: 'Morning' },
     // Pseudonyms an agent uses with clients (comma-separated list stored as JSON).
     aliases: { type: DataTypes.JSON, defaultValue: [] },
-    role: { type: DataTypes.ENUM('agent', 'admin'), defaultValue: 'agent' },
+    role: { type: DataTypes.ENUM('agent', 'manager', 'admin'), defaultValue: 'agent' },
+    // For managers: which team+shift groups they oversee, e.g.
+    // [{ team:'Bhubaneswar', shift:'Morning' }, { team:'Kolkata', shift:'Night' }].
+    // A manager sees every lead owned by an agent whose team+shift matches any
+    // entry here, plus their own leads. Admin assigns these explicitly.
+    managerScopes: { type: DataTypes.JSON, defaultValue: [] },
     active: { type: DataTypes.BOOLEAN, defaultValue: true },
     reportsRun: { type: DataTypes.INTEGER, defaultValue: 0 },
     lastLogin: { type: DataTypes.DATE },
@@ -171,6 +176,85 @@ const Report = sequelize.define(
   }
 );
 
+// ---------------------------------------------------------------------------
+// Lead — the central CRM entity. A lead is a prospect owned by an agent/manager,
+// worked through a pipeline, with notes, activities (tasks/calls), deals and
+// linked reports hung off it. Dropdown *values* (sources, services, tags, deal
+// stages) are configured in Settings so admin can edit them without a deploy.
+// ---------------------------------------------------------------------------
+const Lead = sequelize.define(
+  'Lead',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    // Ownership: who the lead belongs to (drives visibility). Denormalised
+    // owner team/shift so manager visibility queries stay simple and survive
+    // the owner later changing team.
+    ownerId: { type: DataTypes.INTEGER, allowNull: false },
+    ownerName: { type: DataTypes.STRING(120) },
+    ownerTeam: { type: DataTypes.ENUM('Bhubaneswar', 'Kolkata'), defaultValue: 'Bhubaneswar' },
+    ownerShift: { type: DataTypes.ENUM('Morning', 'Night'), defaultValue: 'Morning' },
+
+    // Contact information
+    firstName: { type: DataTypes.STRING(120), allowNull: false },
+    lastName: { type: DataTypes.STRING(120), defaultValue: '' },
+    website: { type: DataTypes.STRING(255), defaultValue: '' },
+    domain: { type: DataTypes.STRING(190), defaultValue: '' }, // normalised, for report matching
+    email: { type: DataTypes.STRING(180), defaultValue: '' },
+    secondaryEmail: { type: DataTypes.STRING(180), defaultValue: '' },
+    mobile: { type: DataTypes.STRING(40), defaultValue: '' },
+    phone: { type: DataTypes.STRING(40), defaultValue: '' },
+
+    // Classification (values validated against Settings-configured lists)
+    leadSource: { type: DataTypes.STRING(60), defaultValue: '' },
+    generatedBy: { type: DataTypes.STRING(120), defaultValue: '' },
+    status: { type: DataTypes.STRING(40), defaultValue: 'new' },
+    servicesInterested: { type: DataTypes.JSON, defaultValue: [] },
+    tags: { type: DataTypes.JSON, defaultValue: [] },
+
+    // Geography
+    country: { type: DataTypes.STRING(80), defaultValue: '' },
+    city: { type: DataTypes.STRING(120), defaultValue: '' },
+    timezone: { type: DataTypes.STRING(80), defaultValue: '' },
+
+    additionalInfo: { type: DataTypes.TEXT, defaultValue: '' },
+
+    // Sub-collections stored as JSON for now (simple, migration-friendly).
+    // Each: notes[{id,text,time,author}], activities[{id,kind:'task'|'call',...}],
+    // deals[{id,name,stage,currency,amount,expectedClose,service,remark,...}],
+    // timeline[{type,text,time,author}] (auto-built from every change).
+    notes: { type: DataTypes.JSON, defaultValue: [] },
+    activities: { type: DataTypes.JSON, defaultValue: [] },
+    deals: { type: DataTypes.JSON, defaultValue: [] },
+    timeline: { type: DataTypes.JSON, defaultValue: [] },
+
+    lastActivityAt: { type: DataTypes.DATE },
+    // If this lead originated from a migrated report, keep the link.
+    sourceReportId: { type: DataTypes.INTEGER },
+  },
+  {
+    tableName: 'leads',
+    indexes: [
+      { fields: ['ownerId'] },
+      { fields: ['ownerTeam', 'ownerShift'] }, // manager visibility
+      { fields: ['domain'] },                  // report auto-linking
+      { fields: ['status'] },
+    ],
+  }
+);
+
+// Add _id alias mirroring id (frontend convenience, matches Report/User pattern).
+Lead.prototype.toJSON = function () {
+  const v = { ...this.get() };
+  v._id = v.id;
+  return v;
+};
+
+// Link reports to leads via a plain nullable column (no hard FK constraint —
+// keeps SQLite alter-table migrations simple and avoids constraint failures
+// when adding the column to a table that already has rows).
+Report.rawAttributes.leadId = { type: DataTypes.INTEGER, allowNull: true };
+Report.refreshAttributes();
+
 const Settings = sequelize.define(
   'Settings',
   {
@@ -198,6 +282,45 @@ const Settings = sequelize.define(
     },
 
     pricing: { type: DataTypes.JSON },
+    // CRM dropdown configuration — admin-editable so new sources/services/stages
+    // can be added without a code change. Defaults seed the lists you specified.
+    crmConfig: {
+      type: DataTypes.JSON,
+      defaultValue: {
+        leadSources: ['Pre-Sales', 'Cold Calling', 'Ads & Marketing', 'Referral', 'Partner', 'Inbound'],
+        generatedByExtra: ['Presales'], // plus the live agent/manager list, merged at read time
+        leadStatuses: [
+          { id: 'new', label: 'New lead', color: '#64748B' },
+          { id: 'hot', label: 'Hot', color: '#EA580C' },
+          { id: 'cold', label: 'Cold', color: '#0891B2' },
+          { id: 'ni', label: 'Not interested', color: '#94A3B8' },
+          { id: 'contacted', label: 'Contacted', color: '#2563EB' },
+          { id: 'interested', label: 'Interested', color: '#7C3AED' },
+          { id: 'proposal', label: 'Proposal sent', color: '#0D9488' },
+          { id: 'negotiation', label: 'Negotiating', color: '#CA8A04' },
+          { id: 'won', label: 'Won', color: '#16A34A' },
+          { id: 'lost', label: 'Lost', color: '#DC2626' },
+        ],
+        servicesInterested: [
+          'One-time Issue Fixing', 'Complete Digital Marketing', 'Website Design', 'Web Development',
+          'eCommerce Website Development', 'Mobile App Development', 'AI Agent Development',
+          'Social Media Promotion', 'Meta Ads Campaign', 'Google Ads Campaign', 'Website Maintenance',
+          'Logo Design', 'Article/Blog Writing', 'PR Outreach', 'Email Newsletter Design',
+          'Email Funnel Design & Manage',
+        ],
+        tags: ['SEO', 'AI SEO', 'GEO', 'AEO', 'Local SEO', 'Web Design', 'Web Development', 'Pricing', 'Proposal', 'Follow-up'],
+        dealStages: [
+          { id: 'qualification', label: 'Qualification', color: '#64748B' },
+          { id: 'needs_analysis', label: 'Needs Analysis', color: '#2563EB' },
+          { id: 'proposal', label: 'Proposal', color: '#7C3AED' },
+          { id: 'negotiation', label: 'Negotiation', color: '#CA8A04' },
+          { id: 'closed_won', label: 'Closed Won', color: '#16A34A' },
+          { id: 'closed_lost', label: 'Closed Lost', color: '#DC2626' },
+        ],
+        dealCurrencies: ['USD', 'INR', 'EUR', 'GBP', 'AUD'],
+        taskPriorities: ['Low', 'Medium', 'High', 'Urgent'],
+      },
+    },
 
     reportValidDays: { type: DataTypes.INTEGER, defaultValue: 14 },
     dailyReportLimit: { type: DataTypes.INTEGER, defaultValue: 20 },
@@ -311,7 +434,16 @@ async function initDb({ sync = true } = {}) {
   // gains fields after the tables were first created). Without it, sync() only
   // creates missing tables and leaves old ones untouched, causing
   // "Unknown column" errors after a schema change.
-  if (sync) await sequelize.sync({ alter: true });
+  if (sync) {
+    // SQLite enforces foreign keys during ALTER TABLE, which can fail when
+    // adding columns to tables that already hold rows. MySQL (production) does
+    // not have this limitation. Briefly relax FK enforcement around sync on
+    // SQLite so `alter: true` can add new columns cleanly.
+    const isSqlite = sequelize.getDialect() === 'sqlite';
+    if (isSqlite) await sequelize.query('PRAGMA foreign_keys = OFF');
+    await sequelize.sync({ alter: true });
+    if (isSqlite) await sequelize.query('PRAGMA foreign_keys = ON');
+  }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
@@ -323,6 +455,6 @@ async function initDb({ sync = true } = {}) {
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Settings, AuditLog,
+  User, Report, Lead, Settings, AuditLog,
   encrypt, decrypt, initDb, defaultPricing,
 };

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
+import Leads from './Leads.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -47,7 +48,7 @@ const COUNTRIES = [
   { code: 'sa', name: 'Saudi Arabia' }, { code: 'qa', name: 'Qatar' },
 ];
 
-const api = async (path, opts = {}) => {
+export const api = async (path, opts = {}) => {
   const token = localStorage.getItem('qtx_token');
   const res = await fetch(API_BASE + '/api' + path, {
     ...opts,
@@ -725,6 +726,16 @@ export default function App() {
   });
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
+  const [dueCount, setDueCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    const poll = () => api('/leads/reminders/count').then((d) => alive && setDueCount(d.due || 0)).catch(() => {});
+    poll();
+    const t = setInterval(poll, 60000); // refresh every minute
+    return () => { alive = false; clearInterval(t); };
+  }, [user]);
 
   useEffect(() => {
     const token = localStorage.getItem('qtx_token');
@@ -744,6 +755,7 @@ export default function App() {
   const isAdmin = user.role === 'admin';
 
   const nav = [
+    { id: 'leads', label: 'Leads' },
     { id: 'new', label: 'New report' },
     { id: 'list', label: isAdmin ? 'All reports' : 'My reports' },
   ];
@@ -760,10 +772,13 @@ export default function App() {
               {nav.map((n) => (
                 <button key={n.id}
                   onClick={() => { setView(n.id); setActiveReport(null); }}
-                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                  className={`relative rounded-md px-3 py-1.5 text-xs font-bold transition ${
                     view === n.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'
                   }`}>
                   {n.label}
+                  {n.id === 'leads' && dueCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#FF4500] text-white text-[9px] font-bold flex items-center justify-center">{dueCount}</span>
+                  )}
                 </button>
               ))}
               {isAdmin && (
@@ -786,6 +801,7 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
+        {view === 'leads' && <Leads user={user} />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
         )}

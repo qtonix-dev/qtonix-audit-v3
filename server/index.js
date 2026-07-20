@@ -11,6 +11,7 @@ const auth = require('./routes/auth');
 const reports = require('./routes/reports');
 const admin = require('./routes/admin');
 const demo = require('./routes/demo');
+const leads = require('./routes/leads');
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
 app.use('/api/demo', demo);
+app.use('/api/leads', leads);
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.
@@ -101,6 +103,15 @@ initDb()
       }
     } catch (e) {
       console.error('[admin] boot check skipped:', e.message);
+    }
+
+    // -- One-time (idempotent) migration of existing reports into the new Leads
+    // CRM. Safe on every boot; skips already-linked reports. Never throws.
+    try {
+      const { migrateLeadsFromReports } = require('./migrateLeadsFromReports');
+      await migrateLeadsFromReports();
+    } catch (e) {
+      console.error('[migrate] leads migration skipped:', e.message);
     }
 
     app.listen(PORT, () => {
