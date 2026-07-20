@@ -3,6 +3,36 @@ const fs = require('fs');
 const path = require('path');
 const { z } = require('zod');
 const { Report, User, Settings, AuditLog, Op } = require('../models');
+
+// Re-render a stored report using the CURRENT pricing and branding, not the
+// snapshot taken when it was first generated. Pricing/branding are agency-wide
+// settings the admin tweaks over time, and every report (old or new) should
+// reflect the latest — so we always merge live settings in before rendering.
+async function renderWithLiveSettings(report) {
+  const { renderReport } = require('../services/renderer');
+  const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+  const data = { ...report.data };
+  if (settings) {
+    data.pricing = settings.pricing ? JSON.parse(JSON.stringify(settings.pricing)) : { enabled: false };
+    if (data.settings) {
+      data.settings = {
+        ...data.settings,
+        colors: settings.colors || data.settings.colors,
+        logoPath: settings.logoPath || data.settings.logoPath,
+        companyName: settings.companyName || data.settings.companyName,
+        companyShort: settings.companyShort || data.settings.companyShort,
+        website: settings.website || data.settings.website,
+        phone: settings.phone || data.settings.phone,
+        email: settings.email || data.settings.email,
+      };
+    }
+  }
+  const out = await renderReport(data);
+  report.pdfPath = out.pdfPath;
+  report.htmlPath = out.htmlPath;
+  await report.save();
+  return out;
+}
 const { requireAuth } = require('../middleware/auth');
 const { normaliseUrl } = require('../services/crawler');
 const { enqueueReport } = require('../queue');
@@ -188,23 +218,18 @@ router.get('/:id/download', requireAuth, async (req, res, next) => {
     if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
       return res.status(403).json({ error: 'This report belongs to another agent.' });
     }
-    // Self-heal: if the rendered PDF is gone (container restart wipes the disk)
-    // but the report data is in the database, re-render it on the fly. This is
-    // why everything is stored in MySQL — the files are disposable, the data is not.
-    if (!report.pdfPath || !fs.existsSync(report.pdfPath)) {
-      if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
-        try {
-          const { renderReport } = require('../services/renderer');
-          const out = await renderReport(report.data);
-          report.pdfPath = out.pdfPath;
-          report.htmlPath = out.htmlPath;
-          await report.save();
-        } catch (e) {
+    // Always regenerate with the latest pricing/branding so admin edits show up.
+    if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
+      try {
+        await renderWithLiveSettings(report);
+      } catch (e) {
+        // Fall back to an existing file if the fresh render fails.
+        if (!report.pdfPath || !fs.existsSync(report.pdfPath)) {
           return res.status(503).json({ error: `Could not regenerate the PDF: ${e.message}` });
         }
-      } else {
-        return res.status(404).json({ error: 'The PDF is not ready yet.' });
       }
+    } else if (!report.pdfPath || !fs.existsSync(report.pdfPath)) {
+      return res.status(404).json({ error: 'The PDF is not ready yet.' });
     }
     const safe = `${report.businessName.replace(/[^a-z0-9]/gi, '-')}-Site-Analysis.pdf`;
     res.download(report.pdfPath, safe);
@@ -221,20 +246,16 @@ router.get('/:id/view', requireAuth, async (req, res, next) => {
     if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
       return res.status(403).send('This report belongs to another agent.');
     }
-    if (!report.htmlPath || !fs.existsSync(report.htmlPath)) {
-      if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
-        try {
-          const { renderReport } = require('../services/renderer');
-          const out = await renderReport(report.data);
-          report.pdfPath = out.pdfPath;
-          report.htmlPath = out.htmlPath;
-          await report.save();
-        } catch (e) {
+    if (report.status === 'complete' && report.data && Object.keys(report.data).length) {
+      try {
+        await renderWithLiveSettings(report);
+      } catch (e) {
+        if (!report.htmlPath || !fs.existsSync(report.htmlPath)) {
           return res.status(503).send(`Could not regenerate the report: ${e.message}`);
         }
-      } else {
-        return res.status(404).send('Report not available yet.');
       }
+    } else if (!report.htmlPath || !fs.existsSync(report.htmlPath)) {
+      return res.status(404).send('Report not available yet.');
     }
     res.sendFile(path.resolve(report.htmlPath));
   } catch (e) {

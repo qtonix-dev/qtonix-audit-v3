@@ -104,7 +104,7 @@ body{ font-family:'Plus Jakarta Sans', sans-serif; color:var(--ink); font-size:9
 
 h2{ font-size:20pt; line-height:1.2; letter-spacing:-.6px; font-weight:800; margin-bottom:14px; }
 h2 .b{ color:var(--blue); }
-h3{ font-size:10.5pt; font-weight:700; margin:22px 0 9px; }
+h3{ font-size:10.5pt; font-weight:700; margin:16px 0 8px; }
 p{ margin-bottom:9px; }
 .lead{ color:#374151; font-size:9.5pt; line-height:1.62; }
 
@@ -112,8 +112,8 @@ p{ margin-bottom:9px; }
 .toc-n{ color:var(--blue); font-weight:800; font-size:8.5pt; display:inline-block; width:34px; }
 .toc-t{ font-weight:700; font-size:9.5pt; }
 
-.stats{ display:flex; gap:10px; margin:18px 0; }
-.stat{ flex:1; border:1px solid var(--line); border-radius:9px; padding:14px; }
+.stats{ display:flex; gap:10px; margin:14px 0; }
+.stat{ flex:1; border:1px solid var(--line); border-radius:9px; padding:11px; }
 .stat-v{
   font-size:23pt; font-weight:800; line-height:1; letter-spacing:-1px;
   /* Stat values are single tokens: "20–30%", "~210", "0.2". WeasyPrint will
@@ -128,9 +128,9 @@ p{ margin-bottom:9px; }
 .stat-v.good{ color:#16A34A; }   .stat-v.ink{ color:var(--ink); }
 .stat-l{ font-size:7.5pt; color:var(--muted); margin-top:9px; line-height:1.45; }
 
-table{ width:100%; border-collapse:collapse; font-size:8.5pt; margin:10px 0; }
-thead th{ background:var(--navy); color:#fff; text-align:left; padding:9px 10px; font-weight:700; font-size:8pt; }
-tbody td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+table{ width:100%; border-collapse:collapse; font-size:8.5pt; margin:8px 0; }
+thead th{ background:var(--navy); color:#fff; text-align:left; padding:7px 10px; font-weight:700; font-size:8pt; }
+tbody td{ padding:6.5px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 tbody tr:nth-child(even){ background:#FAFBFC; }
 .tb{ font-weight:700; }
 
@@ -151,7 +151,7 @@ tbody tr:nth-child(even){ background:#FAFBFC; }
 .box li:before{ content:'•'; position:absolute; left:0; }
 .box-bad li:before{ color:var(--red); } .box-good li:before{ color:var(--accent-deep); }
 
-.quote{ background:var(--tint); border-radius:9px; padding:20px 24px; text-align:center; margin:18px 0; }
+.quote{ background:var(--tint); border-radius:9px; padding:15px 24px; text-align:center; margin:14px 0; }
 .quote .qd{ display:block; width:9px; height:9px; background:var(--blue); transform:rotate(45deg); margin:0 auto 14px; }
 .quote p{ font-style:italic; font-size:10.5pt; color:#1E293B; margin:0; line-height:1.5; }
 .quote.accent{ background:var(--tint-accent); }
@@ -256,7 +256,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   <div class="cov-lab">PREPARED FOR</div>
   <div class="cov-client">{{report.businessName}} — {{report.customerName}}</div>
-  <div class="cov-detail">{{report.industryLine}} · {{report.domain}}{{#if report.location}} · {{report.location}}{{/if}}</div>
+  <div class="cov-detail">{{report.domain}}</div>
 
   <div class="pills">{{#each report.services}}<span class="pill">{{this}}</span>{{/each}}</div>
 
@@ -691,7 +691,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
     <div class="cta-e">LET'S BEGIN</div>
     <h3>This report is free. The next 90 days are the decision.</h3>
     <p>Everything in this analysis is fixable, and most of it quickly. Reply and we'll walk you through the plan for {{report.domain}} — no obligation.</p>
-    <div class="cta-b">Reply "Let's go" to begin</div>
+    <a class="cta-b" href="mailto:{{#if report.agentEmail}}{{report.agentEmail}}{{else}}{{settings.email}}{{/if}}?cc=sales@qtonix.com&subject=Let's go — {{report.domain}} SEO plan">Reply "Let's go" to begin</a>
     <div class="cta-s">{{report.agentName}} · {{report.agentDesignation}} · {{settings.companyName}}<br>
       {{#if report.agentPhone}}{{report.agentPhone}} · {{/if}}{{#if report.agentEmail}}{{report.agentEmail}}{{else}}{{settings.email}}{{/if}} · {{settings.website}}</div>
   </div>
