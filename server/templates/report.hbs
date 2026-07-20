@@ -141,7 +141,7 @@ tbody tr:nth-child(even){ background:#FAFBFC; }
 .b-good{ background:#DCFCE7; color:#166534; }
 .b-you{ background:var(--tint-accent); color:var(--accent-deep); }
 
-.two{ display:flex; gap:12px; margin:16px 0; }
+.two{ display:flex; gap:12px; margin:16px 0; align-items:stretch; }
 .box{ flex:1; border-radius:9px; padding:15px; }
 .box-bad{ background:#FDF2F2; border:1px solid #FBD5D5; }
 .box-good{ background:var(--tint-accent); border:1px solid #FFD9BF; }
@@ -415,6 +415,68 @@ body{ background:#525659; margin:0; padding:24px 0; }
   </table>
   {{#if moreIssues}}<p class="note">…and {{moreIssues}} further issues documented in the full technical appendix, provided when we begin work.</p>{{/if}}
 </div>
+
+<!-- ================= PAGESPEED (Desktop + Mobile) ================= -->
+{{#if crawl.pageSpeed}}
+{{#if hasPageSpeed}}
+<div class="page">
+  <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">GOOGLE PAGESPEED INSIGHTS</span></div>
+  <h2>How fast your site feels — <span class="b">on desktop and mobile.</span></h2>
+  <p class="lead">Google measures loading speed separately for desktop and mobile, and mobile is what most searchers use. Slow pages lose visitors before they convert and are ranked lower. Scores are 0–100; green is good, amber needs work, red is costing you traffic.</p>
+
+  <div class="two" style="margin-top:16px">
+    {{#with crawl.pageSpeed.desktop}}
+    <div class="box" style="background:#F8FAFC;border:1px solid var(--line)">
+      <h4 style="color:var(--blue)">🖥 DESKTOP</h4>
+      <div style="display:flex;gap:16px;align-items:baseline;margin-bottom:10px">
+        <div style="font-size:30pt;font-weight:800;line-height:1;color:{{scoreColor performance}}">{{#if performance}}{{performance}}{{else}}—{{/if}}</div>
+        <div style="font-size:8pt;color:var(--muted)">Performance<br>score /100</div>
+      </div>
+      <table style="margin:0">
+        <tbody>
+          <tr><td style="width:55%">Largest Contentful Paint</td><td><b>{{#if lab.lcp}}{{seconds lab.lcp}}s{{else}}—{{/if}}</b></td></tr>
+          <tr><td>First Contentful Paint</td><td><b>{{#if lab.fcp}}{{seconds lab.fcp}}s{{else}}—{{/if}}</b></td></tr>
+          <tr><td>Total Blocking Time</td><td><b>{{#if lab.tbt}}{{lab.tbt}}ms{{else}}—{{/if}}</b></td></tr>
+          <tr><td>SEO score</td><td><b>{{#if seo}}{{seo}}/100{{else}}—{{/if}}</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    {{/with}}
+    {{#with crawl.pageSpeed.mobile}}
+    <div class="box" style="background:#F8FAFC;border:1px solid var(--line)">
+      <h4 style="color:var(--accent-deep)">📱 MOBILE</h4>
+      <div style="display:flex;gap:16px;align-items:baseline;margin-bottom:10px">
+        <div style="font-size:30pt;font-weight:800;line-height:1;color:{{scoreColor performance}}">{{#if performance}}{{performance}}{{else}}—{{/if}}</div>
+        <div style="font-size:8pt;color:var(--muted)">Performance<br>score /100</div>
+      </div>
+      <table style="margin:0">
+        <tbody>
+          <tr><td style="width:55%">Largest Contentful Paint</td><td><b>{{#if lab.lcp}}{{seconds lab.lcp}}s{{else}}—{{/if}}</b></td></tr>
+          <tr><td>First Contentful Paint</td><td><b>{{#if lab.fcp}}{{seconds lab.fcp}}s{{else}}—{{/if}}</b></td></tr>
+          <tr><td>Total Blocking Time</td><td><b>{{#if lab.tbt}}{{lab.tbt}}ms{{else}}—{{/if}}</b></td></tr>
+          <tr><td>SEO score</td><td><b>{{#if seo}}{{seo}}/100{{else}}—{{/if}}</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    {{/with}}
+  </div>
+
+  {{#if crawl.pageSpeed.mobile.opportunities.length}}
+  <h3 style="margin-top:18px">Biggest speed opportunities (mobile)</h3>
+  <table>
+    <thead><tr><th>Opportunity</th><th style="width:24%">Potential saving</th></tr></thead>
+    <tbody>
+      {{#each crawl.pageSpeed.mobile.opportunities}}
+      <tr><td>{{this.title}}</td><td><b>{{seconds this.savingsMs}}s</b></td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+  {{/if}}
+
+  <p class="note" style="margin-top:12px">Source: Google PageSpeed Insights (Lighthouse), {{formatMonth report.date}}. Core Web Vitals thresholds: LCP under 2.5s and TBT under 200ms are considered good by Google.</p>
+</div>
+{{/if}}
+{{/if}}
 
 <!-- ================= 05 COMPETITOR & BACKLINK ================= -->
 {{#if competitors.length}}

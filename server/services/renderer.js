@@ -95,6 +95,11 @@ function buildViewModel(p, opts = {}) {
   // A browser cannot load file:// fonts, so the HTML view must pull them from
   // a web source, or the page renders unstyled/broken. `forWeb` picks the right one.
   vm.forWeb = !!opts.forWeb;
+
+  // True only when at least one PageSpeed strategy returned a real score,
+  // so the template can skip the whole section when the key wasn't configured.
+  const ps = p.crawl && p.crawl.pageSpeed;
+  vm.hasPageSpeed = !!(ps && ((ps.desktop && ps.desktop.performance != null) || (ps.mobile && ps.mobile.performance != null)));
   vm.fontDir = 'file://' + FONT_DIR;
 
   // --- dials, each with a plain-English verdict for the scorecard table
@@ -245,6 +250,8 @@ function buildViewModel(p, opts = {}) {
     ['04', 'Health Scorecard'],
   ];
   if (p.competitors && p.competitors.length) toc.push(['05', 'Competitor & Backlink Analysis']);
+  if (vm.hasPageSpeed) toc.push(['◆', 'Google PageSpeed Insights']);
+  if (p.local && p.local.gbpFound) toc.push(['◆', 'Google Maps & Local SEO']);
   if (p.ai) toc.push(['06', 'AI Search Visibility — GEO / AEO']);
   toc.push(['07', 'The Strategy']);
   toc.push(['08', 'The Fix, Measured — KPIs']);

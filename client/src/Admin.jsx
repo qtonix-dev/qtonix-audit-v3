@@ -74,7 +74,6 @@ function PricingEditor({ settings, setSettings, say }) {
 
   return (
     <div className="space-y-5">
-      <Note tone="info">Saved to the <code className="font-mono text-xs">settings.pricing</code> column in MySQL and rendered on the <b>Your Investment</b> page of every report.</Note>
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-sm" style={{ color: C.navy }}>Pricing page</h3>
@@ -162,7 +161,6 @@ function Branding({ settings, setSettings, say, reload }) {
 
   return (
     <div className="max-w-2xl space-y-5">
-      <Note tone="info">Uploads are stored on the server and the path is saved to MySQL. Appear on every report cover.</Note>
 
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <h3 className="font-bold text-sm mb-4" style={{ color: C.navy }}>Logo</h3>
@@ -250,7 +248,6 @@ function ApiKeys({ settings, setSettings, say }) {
 
   return (
     <div className="max-w-2xl space-y-4">
-      <Note tone="warn">Keys are AES-256 encrypted before they touch MySQL; the API only ever returns a masked hint. <b>Test</b> calls the live provider to confirm the key works.</Note>
       {Object.entries(RULES).map(([id, r]) => {
         const t = tests[id];
         return (
