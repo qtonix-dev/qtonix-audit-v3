@@ -75,6 +75,7 @@ Handlebars.registerHelper('severityClass', (s) =>
  * Used instead of conic-gradient, which several PDF engines render as a flat
  * circle with no warning.
  */
+Handlebars.registerHelper('between', (v, lo, hi) => Number(v) >= Number(lo) && Number(v) <= Number(hi));
 Handlebars.registerHelper('ringDash', (pct, radius) => {
   const c = 2 * Math.PI * Number(radius);
   const filled = (Math.max(0, Math.min(100, Number(pct) || 0)) / 100) * c;
@@ -243,21 +244,22 @@ function buildViewModel(p, opts = {}) {
   ];
 
   // --- contents page: only list sections we actually rendered
-  const toc = [
-    ['01', 'The Situation'],
-    ['02', 'The Visibility Gap'],
-    ['03', 'The Problem & The Transformation'],
-    ['04', 'Health Scorecard'],
+  const tocItems = [
+    'The Situation',
+    'The Visibility Gap',
+    'The Problem & The Transformation',
+    'Health Scorecard',
   ];
-  if (p.competitors && p.competitors.length) toc.push(['05', 'Competitor & Backlink Analysis']);
-  if (vm.hasPageSpeed) toc.push(['◆', 'Google PageSpeed Insights']);
-  if (p.local && p.local.gbpFound) toc.push(['◆', 'Google Maps & Local SEO']);
-  if (p.ai) toc.push(['06', 'AI Search Visibility — GEO / AEO']);
-  toc.push(['07', 'The Strategy']);
-  toc.push(['08', 'The Fix, Measured — KPIs']);
-  if (p.pricing && p.pricing.enabled) toc.push(['09', 'Your Investment']);
-  toc.push([(p.pricing && p.pricing.enabled) ? '10' : '09', "Let's Begin"]);
-  vm.toc = toc.map(([n, t]) => ({ n, t }));
+  if (p.competitors && p.competitors.length) tocItems.push('Competitor & Backlink Analysis');
+  if (vm.hasPageSpeed) tocItems.push('Google PageSpeed Insights');
+  if (p.local && p.local.gbpFound) tocItems.push('Google Maps & Local SEO');
+  if (p.ai) tocItems.push('AI Search Visibility — GEO / AEO');
+  tocItems.push('The Strategy');
+  tocItems.push('The Fix, Measured — KPIs');
+  if (p.pricing && p.pricing.enabled) tocItems.push('Your Investment');
+  tocItems.push("Let's Begin");
+  // Number every entry sequentially so inserted sections keep the running order.
+  vm.toc = tocItems.map((t, i) => ({ n: String(i + 1).padStart(2, '0'), t }));
 
   // --- "what we researched" table, from real crawl + report inputs
   vm.research = [

@@ -190,6 +190,29 @@ tbody tr:nth-child(even){ background:#FAFBFC; }
 .nb{ background:#F8FAFC; border-left:3px solid var(--blue); padding:12px 14px; margin:14px 0; font-size:8pt; color:#475569; line-height:1.55; }
 .avoid{ page-break-inside:avoid; }
 
+/* ---------------- GOOGLE MAPS / LOCAL SEO ---------------- */
+.gmb-hero{ display:flex; gap:14px; margin:16px 0; align-items:stretch; }
+.gmb-score{ background:linear-gradient(135deg,#0A0E28,#0435AC); border-radius:11px; padding:18px 22px; color:#fff; display:flex; flex-direction:column; justify-content:center; align-items:center; min-width:2in; }
+.gmb-score-v{ font-size:40pt; font-weight:800; line-height:1; letter-spacing:-2px; }
+.gmb-score-l{ font-size:7.5pt; letter-spacing:1px; font-weight:700; color:rgba(255,255,255,.8); text-align:center; margin-top:8px; }
+.gmb-hero-r{ flex:1; display:flex; gap:10px; }
+.gmb-metric{ flex:1; border:1px solid var(--line); border-radius:9px; padding:14px; display:flex; flex-direction:column; justify-content:center; }
+.gmb-metric-v{ font-size:22pt; font-weight:800; line-height:1; letter-spacing:-1px; white-space:nowrap; }
+.gmb-metric-l{ font-size:7.5pt; color:var(--muted); margin-top:8px; font-weight:600; }
+.gmb-nap{ border:1px solid var(--line); border-radius:9px; overflow:hidden; margin:14px 0; }
+.gmb-nap-h{ background:#F8FAFC; padding:9px 14px; font-size:8pt; font-weight:800; letter-spacing:.5px; color:var(--navy); border-bottom:1px solid var(--line); }
+.gmb-nap-grid{ display:grid; grid-template-columns:1fr 1fr; gap:11px 18px; padding:14px; }
+.gmb-k{ display:block; font-size:6.5pt; letter-spacing:1px; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:3px; }
+.gmb-val{ font-size:9pt; color:var(--ink); font-weight:600; }
+
+/* ---------------- ON-PAGE TAGS ---------------- */
+.op-card{ border:1px solid var(--line); border-radius:9px; padding:14px 16px; margin:12px 0; }
+.op-h{ font-size:7.5pt; letter-spacing:1.5px; font-weight:800; color:var(--muted); display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.op-len{ font-weight:600; letter-spacing:0; }
+.op-current{ font-size:10pt; color:var(--ink); line-height:1.5; padding:10px 12px; background:#F8FAFC; border-radius:6px; border-left:3px solid var(--blue); }
+.op-remark{ font-size:9pt; color:#334155; line-height:1.55; margin-top:10px; }
+.op-remark-l{ display:block; font-size:6.5pt; letter-spacing:1.5px; font-weight:800; color:var(--accent-deep); margin-bottom:3px; }
+
 /* ---------------- PRICING ---------------- */
 .price-grid{ display:flex; gap:12px; margin:22px 0 16px; align-items:stretch; }
 .pk{ flex:1; border:1px solid var(--line); border-radius:11px; padding:18px 16px; position:relative; }
@@ -416,6 +439,30 @@ body{ background:#525659; margin:0; padding:24px 0; }
   {{#if moreIssues}}<p class="note">…and {{moreIssues}} further issues documented in the full technical appendix, provided when we begin work.</p>{{/if}}
 </div>
 
+<!-- ================= ON-PAGE TAGS (title + meta, Claude remark) ================= -->
+{{#if onPageAssessment}}
+<div class="page">
+  <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">ON-PAGE TAGS</span></div>
+  <h2>Your title and meta description, <span class="b">reviewed.</span></h2>
+  <p class="lead">These two tags are the first thing a searcher sees in Google's results — and the first thing Google reads to understand your page. Here's exactly what yours say today, and our specific remark on each.</p>
+
+  <div class="op-card">
+    <div class="op-h">PAGE TITLE <span class="op-len {{#if crawl.titleLength}}{{else}}op-bad{{/if}}">{{crawl.titleLength}} chars {{#if crawl.titleLength}}{{#unless (between crawl.titleLength 40 65)}}<span class="badge b-warn">off ideal 50–60</span>{{/unless}}{{else}}<span class="badge b-crit">EMPTY</span>{{/if}}</span></div>
+    <div class="op-current">{{#if crawl.title}}{{crawl.title}}{{else}}<span style="color:#E5484D">No title tag found.</span>{{/if}}</div>
+    <div class="op-remark"><span class="op-remark-l">◆ Our remark</span>{{onPageAssessment.titleRemark}}</div>
+  </div>
+
+  <div class="op-card">
+    <div class="op-h">META DESCRIPTION <span class="op-len">{{crawl.metaDescriptionLength}} chars {{#if crawl.metaDescriptionLength}}{{#unless (between crawl.metaDescriptionLength 120 165)}}<span class="badge b-warn">off ideal 140–160</span>{{/unless}}{{else}}<span class="badge b-crit">EMPTY</span>{{/if}}</span></div>
+    <div class="op-current">{{#if crawl.metaDescription}}{{crawl.metaDescription}}{{else}}<span style="color:#E5484D">No meta description — Google will auto-generate a snippet, usually a poor one.</span>{{/if}}</div>
+    <div class="op-remark"><span class="op-remark-l">◆ Our remark</span>{{onPageAssessment.metaRemark}}</div>
+  </div>
+
+  <div class="quote accent"><span class="qd"></span><p>{{onPageAssessment.overall}}</p></div>
+  <p class="note">Assessment by Claude, based on your live homepage tags. Ideal lengths: title 50–60 characters, meta description 140–160.</p>
+</div>
+{{/if}}
+
 <!-- ================= PAGESPEED (Desktop + Mobile) ================= -->
 {{#if crawl.pageSpeed}}
 {{#if hasPageSpeed}}
@@ -594,47 +641,62 @@ body{ background:#525659; margin:0; padding:24px 0; }
 {{#if local.gbpFound}}
 <div class="page">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">GOOGLE MAPS &amp; LOCAL SEO</span></div>
-  <h2>How your Google Business Profile <span class="b">looks to a customer on the map.</span></h2>
-  <p class="lead">This is the profile Google shows when someone nearby searches for what you do. Name, address and phone (NAP) consistency, review volume and rating, and how actively the profile is maintained all decide whether you appear in the local map pack.</p>
+  <h2>Your Google Business Profile, <span class="b">optimisation scored.</span></h2>
+  <p class="lead">This is the profile Google shows on the map when someone nearby searches for what you do. NAP consistency, review volume and rating, and how actively it's maintained decide whether you appear in the local map pack.</p>
 
-  <div class="stats">
-    <div class="stat"><div class="stat-v" style="color:{{settings.colors.blue}}">{{local.rating}}</div><div class="stat-l">Average star rating</div></div>
-    <div class="stat"><div class="stat-v" style="color:{{settings.colors.blue}}">{{formatNum local.reviewCount}}</div><div class="stat-l">Total Google reviews</div></div>
-    <div class="stat"><div class="stat-v" style="color:{{settings.colors.blue}}">{{scores.local}}</div><div class="stat-l">Local SEO score /100</div></div>
-    <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">{{upper local.activitySignal}}</div><div class="stat-l">Profile activity</div></div>
+  <!-- Hero: optimisation score + rating + reviews -->
+  <div class="gmb-hero">
+    <div class="gmb-score">
+      <div class="gmb-score-v" style="color:{{scoreColor scores.local}}">{{scores.local}}</div>
+      <div class="gmb-score-l">Local SEO<br>optimisation /100</div>
+    </div>
+    <div class="gmb-hero-r">
+      <div class="gmb-metric">
+        <div class="gmb-metric-v" style="color:{{settings.colors.orange}}">{{local.rating}}<span style="font-size:11pt"> ★</span></div>
+        <div class="gmb-metric-l">Average rating</div>
+      </div>
+      <div class="gmb-metric">
+        <div class="gmb-metric-v" style="color:{{settings.colors.blue}}">{{formatNum local.reviewCount}}</div>
+        <div class="gmb-metric-l">Google reviews</div>
+      </div>
+      <div class="gmb-metric">
+        <div class="gmb-metric-v" style="color:{{#if local.hasHours}}#16A34A{{else}}#E5484D{{/if}};font-size:13pt">{{upper local.activitySignal}}</div>
+        <div class="gmb-metric-l">Profile activity</div>
+      </div>
+    </div>
   </div>
 
-  <h3 style="margin-top:22px">Your listing (NAP) as Google has it</h3>
-  <table>
-    <tbody>
-      <tr><td style="width:26%"><b>Business name</b></td><td>{{local.name}}</td></tr>
-      <tr><td><b>Address</b></td><td>{{#if local.address}}{{local.address}}{{else}}Not listed{{/if}}</td></tr>
-      <tr><td><b>Phone</b></td><td>{{#if local.phone}}{{local.phone}}{{else}}Not listed{{/if}}</td></tr>
-      <tr><td><b>Website on profile</b></td><td>{{#if local.website}}{{local.website}}{{#unless local.websiteMatches}} <span class="badge b-crit">MISMATCH</span>{{/unless}}{{else}}Not listed{{/if}}</td></tr>
-      <tr><td><b>Category</b></td><td>{{#if local.category}}{{local.category}}{{else}}—{{/if}}</td></tr>
-      <tr><td><b>Opening hours</b></td><td>{{#if local.hasHours}}Listed{{else}}<span class="badge b-crit">MISSING</span>{{/if}}</td></tr>
-      <tr><td><b>Business status</b></td><td>{{#if local.businessStatus}}{{local.businessStatus}}{{else}}—{{/if}}</td></tr>
-    </tbody>
-  </table>
+  <!-- NAP card -->
+  <div class="gmb-nap">
+    <div class="gmb-nap-h">📍 Name · Address · Phone (as Google has it)</div>
+    <div class="gmb-nap-grid">
+      <div><span class="gmb-k">Business</span><span class="gmb-val">{{local.name}}</span></div>
+      <div><span class="gmb-k">Category</span><span class="gmb-val">{{#if local.category}}{{local.category}}{{else}}—{{/if}}</span></div>
+      <div style="grid-column:1 / -1"><span class="gmb-k">Address</span><span class="gmb-val">{{#if local.address}}{{local.address}}{{else}}<span class="badge b-crit">NOT LISTED</span>{{/if}}</span></div>
+      <div><span class="gmb-k">Phone</span><span class="gmb-val">{{#if local.phone}}{{local.phone}}{{else}}<span class="badge b-crit">NOT LISTED</span>{{/if}}</span></div>
+      <div><span class="gmb-k">Hours</span><span class="gmb-val">{{#if local.hasHours}}<span class="badge b-good">LISTED</span>{{else}}<span class="badge b-crit">MISSING</span>{{/if}}</span></div>
+      <div style="grid-column:1 / -1"><span class="gmb-k">Website</span><span class="gmb-val">{{#if local.website}}{{local.website}} {{#if local.websiteMatches}}<span class="badge b-good">MATCHES SITE</span>{{else}}<span class="badge b-crit">MISMATCH</span>{{/if}}{{else}}<span class="badge b-crit">NOT LISTED</span>{{/if}}</span></div>
+    </div>
+  </div>
 
   {{#if local.reviewSummary}}
-  <h3 style="margin-top:22px">What customers are saying</h3>
+  <h3 style="margin-top:16px">What customers are saying</h3>
   <div class="quote"><span class="qd"></span><p>{{local.reviewSummary}}</p></div>
   {{/if}}
 
   {{#if local.reviews.length}}
-  <h3 style="margin-top:18px">Recent reviews</h3>
+  <h3 style="margin-top:14px">Recent reviews</h3>
   <table>
-    <thead><tr><th style="width:22%">Reviewer</th><th style="width:10%">Rating</th><th>Review</th><th style="width:16%">When</th></tr></thead>
+    <thead><tr><th style="width:20%">Reviewer</th><th style="width:9%">Rating</th><th>Review</th><th style="width:15%">When</th></tr></thead>
     <tbody>
       {{#each local.reviews}}
-      <tr><td>{{this.author}}</td><td>{{this.rating}}★</td><td>{{this.text}}</td><td>{{#if this.relativeTime}}{{this.relativeTime}}{{else}}—{{/if}}</td></tr>
+      <tr><td class="tb">{{this.author}}</td><td style="color:{{../settings.colors.orange}};font-weight:800">{{this.rating}}★</td><td>{{this.text}}</td><td>{{#if this.relativeTime}}{{this.relativeTime}}{{else}}—{{/if}}</td></tr>
       {{/each}}
     </tbody>
   </table>
   {{/if}}
 
-  <p class="note" style="margin-top:14px">Source: Google Places (New), {{formatMonth report.date}}. Review count, rating, NAP and hours are read live from the public Google Business Profile. "Profile activity" reflects how recently the profile has received new reviews — a maintenance signal, not a count of Google Posts.</p>
+  <p class="note" style="margin-top:12px">Source: Google Places (New), {{formatMonth report.date}}. Rating, review count, NAP and hours are read live from the public Google Business Profile. "Profile activity" reflects how recently new reviews have arrived — a maintenance signal, not a count of Google Posts.</p>
 </div>
 {{else}}
 {{#if local.enabled}}

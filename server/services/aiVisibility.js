@@ -326,6 +326,30 @@ Return JSON exactly:
 }
 
 /**
+ * Review the homepage <title> and meta description and give a short, specific
+ * remark. Fed only the real crawled values — no invention. Returns
+ * { titleRemark, metaRemark, overall } or null on failure.
+ */
+async function assessOnPage(apiKey, { businessName, title, titleLength, metaDescription, metaDescriptionLength }) {
+  const text = await callClaude(apiKey, {
+    system: 'You are a senior SEO strategist reviewing on-page tags. Output ONLY valid JSON, no preamble, no fences. Be specific and practical. Never invent facts — judge only what is given. Ideal title 50-60 chars; ideal meta description 140-160 chars.',
+    messages: [
+      {
+        role: 'user',
+        content: `Business: ${businessName}
+Current page title (${titleLength} chars): ${title || '(empty)'}
+Current meta description (${metaDescriptionLength} chars): ${metaDescription || '(empty)'}
+
+Return JSON exactly:
+{"titleRemark":"one sentence assessing the title — note length issues and whether it targets what buyers search","metaRemark":"one sentence assessing the meta description — if empty, say Google will auto-generate a poor snippet","overall":"one short actionable recommendation sentence"}`,
+      },
+    ],
+    maxTokens: 400,
+  });
+  return parseJson(text);
+}
+
+/**
  * Summarise Google review sentiment into 2-3 plain sentences the report can
  * quote. Fed only the review text we already fetched from Places — no invention.
  * Returns a short string, or null on failure (the section degrades gracefully).
@@ -363,6 +387,7 @@ module.exports = {
   generateTagline,
   generateExecutiveSummary,
   summariseReviews,
+  assessOnPage,
   callClaude,
   analyseAiReadiness,
 };

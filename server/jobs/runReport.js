@@ -315,6 +315,20 @@ async function runReport(reportId) {
       null
     );
 
+    // On-page tag assessment (title + meta description) with a Claude remark.
+    const onPageAssessment = await safe(
+      'onPageAssessment',
+      () =>
+        ai.assessOnPage(claudeKey, {
+          businessName: report.businessName,
+          title: crawl.title,
+          titleLength: crawl.titleLength,
+          metaDescription: crawl.metaDescription,
+          metaDescriptionLength: crawl.metaDescriptionLength,
+        }),
+      null
+    );
+
     // -- 7. Render.
     await setProgress(reportId, 90, STEPS[6]);
 
@@ -364,6 +378,7 @@ async function runReport(reportId) {
       keywordGap,
       ai: aiData,
       local: localData,
+      onPageAssessment,
       opportunity,
       roadmap,
       issues: allIssues,
