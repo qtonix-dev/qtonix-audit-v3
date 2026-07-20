@@ -89,12 +89,28 @@ async function crawlHomepage(website) {
     schemaTypes.some((t) => /person|author/i.test(t)) ||
     $('[rel="author"], .author, [itemprop="author"]').length > 0;
 
-  // Internal vs external links
+  // Internal vs external links, plus social-media profile detection (for SMO).
   let internal = 0;
   let external = 0;
+  const socialPatterns = {
+    facebook: /facebook\.com|fb\.com/i,
+    instagram: /instagram\.com/i,
+    twitter: /twitter\.com|x\.com/i,
+    linkedin: /linkedin\.com/i,
+    youtube: /youtube\.com|youtu\.be/i,
+    tiktok: /tiktok\.com/i,
+    pinterest: /pinterest\./i,
+  };
+  const socialLinks = {};
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
     if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+    // Social detection: match the href against known networks (first link wins).
+    for (const [net, re] of Object.entries(socialPatterns)) {
+      if (re.test(href) && !socialLinks[net]) {
+        try { socialLinks[net] = new URL(href, url.origin).href; } catch { socialLinks[net] = href; }
+      }
+    }
     try {
       const abs = new URL(href, url.origin);
       abs.hostname === url.hostname ? internal++ : external++;
@@ -102,6 +118,7 @@ async function crawlHomepage(website) {
       /* ignore malformed hrefs */
     }
   });
+  const socialNetworks = Object.keys(socialLinks);
 
   return {
     finalUrl: res.url,
@@ -128,6 +145,8 @@ async function crawlHomepage(website) {
     serverRenderedContent,
     scriptCount,
     internalLinks: internal,
+    social: socialLinks,
+    socialNetworks,
     externalLinks: external,
     bodyTextSample: bodyText.slice(0, 3000),
   };

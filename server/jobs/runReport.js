@@ -66,6 +66,7 @@ async function runReport(reportId) {
   const domain = toDomain(report.website);
   const source = report.country || settings.defaultCountry || 'us';
   const wantsLocal = report.services.includes('Local SEO');
+  const wantsSmo = report.services.includes('SMO');
   const wantsAi = report.services.some((s) => ['AI SEO', 'GEO', 'AEO'].includes(s));
 
   try {
@@ -329,6 +330,25 @@ async function runReport(reportId) {
       null
     );
 
+    // SMO: social-media presence assessment (only when SMO selected).
+    let socialAssessment = null;
+    if (wantsSmo) {
+      const found = (crawl.socialNetworks || []);
+      const allNets = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube', 'tiktok', 'pinterest'];
+      const missing = allNets.filter((n) => !found.includes(n));
+      socialAssessment = await safe(
+        'socialAssessment',
+        () =>
+          ai.assessSocial(claudeKey, {
+            businessName: report.businessName,
+            industry: crawl.title || '',
+            found,
+            missing,
+          }),
+        null
+      );
+    }
+
     // -- 7. Render.
     await setProgress(reportId, 90, STEPS[6]);
 
@@ -379,6 +399,8 @@ async function runReport(reportId) {
       ai: aiData,
       local: localData,
       onPageAssessment,
+      social: crawl.social || {},
+      socialAssessment,
       opportunity,
       roadmap,
       issues: allIssues,

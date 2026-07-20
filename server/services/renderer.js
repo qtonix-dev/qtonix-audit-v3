@@ -101,6 +101,16 @@ function buildViewModel(p, opts = {}) {
   // so the template can skip the whole section when the key wasn't configured.
   const ps = p.crawl && p.crawl.pageSpeed;
   vm.hasPageSpeed = !!(ps && ((ps.desktop && ps.desktop.performance != null) || (ps.mobile && ps.mobile.performance != null)));
+
+  // SMO: friendly network list with found/not-found, for the social section.
+  if (p.socialAssessment) {
+    const social = p.social || {};
+    const nets = [
+      ['facebook', 'Facebook'], ['instagram', 'Instagram'], ['linkedin', 'LinkedIn'],
+      ['twitter', 'X / Twitter'], ['youtube', 'YouTube'], ['tiktok', 'TikTok'], ['pinterest', 'Pinterest'],
+    ];
+    vm.socialList = nets.map(([k, label]) => ({ label, found: !!social[k], url: social[k] || null }));
+  }
   vm.fontDir = 'file://' + FONT_DIR;
 
   // --- dials, each with a plain-English verdict for the scorecard table
@@ -252,7 +262,8 @@ function buildViewModel(p, opts = {}) {
   ];
   if (p.competitors && p.competitors.length) tocItems.push('Competitor & Backlink Analysis');
   if (vm.hasPageSpeed) tocItems.push('Google PageSpeed Insights');
-  if (p.local && p.local.gbpFound) tocItems.push('Google Maps & Local SEO');
+  if (p.socialAssessment) tocItems.push('Social Media (SMO)');
+  if (p.local && (p.local.gbpFound || p.local.enabled)) tocItems.push('Google Maps & Local SEO');
   if (p.ai) tocItems.push('AI Search Visibility — GEO / AEO');
   tocItems.push('The Strategy');
   tocItems.push('The Fix, Measured — KPIs');
@@ -263,12 +274,12 @@ function buildViewModel(p, opts = {}) {
 
   // --- "what we researched" table, from real crawl + report inputs
   vm.research = [
-    { k: 'Industry', v: (p.crawl.title || p.report.businessName) + (p.crawl.metaDescription ? ` — ${p.crawl.metaDescription.slice(0, 90)}` : '') },
-    { k: 'Website', v: `${p.report.domain} · ${p.crawl.https ? 'HTTPS secure' : 'NOT SECURE (no HTTPS)'} · ${(p.crawl.wordCount || 0).toLocaleString()} words on homepage` },
+    { k: 'Industry', v: (p.crawl.title || p.report.businessName) + (p.crawl.metaDescription ? ` — ${p.crawl.metaDescription.slice(0, 60)}` : '') },
+    { k: 'Website', v: `${p.report.domain} · ${p.crawl.https ? 'HTTPS secure' : 'NOT SECURE'} · ${(p.crawl.wordCount || 0).toLocaleString()} words` },
     { k: 'Services to market', v: (p.report.services || []).join(', ') },
     { k: 'Target market', v: (p.report.location ? p.report.location + ' · ' : '') + String(p.report.country || '').toUpperCase() },
-    { k: 'Competitors', v: (p.competitors || []).map((c) => c.domain).join(', ') || 'None identified' },
-    { k: 'Pain points', v: (p.issues || []).filter((i) => i.severity === 'critical').slice(0, 4).map((i) => i.title).join('; ') || 'None critical' },
+    { k: 'Competitors', v: (p.competitors || []).map((c) => c.domain).slice(0, 5).join(', ') || 'None identified' },
+    { k: 'Pain points', v: (p.issues || []).filter((i) => i.severity === 'critical').slice(0, 3).map((i) => i.title).join('; ') || 'None critical' },
   ];
 
   // --- growth headline stats

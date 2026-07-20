@@ -326,6 +326,31 @@ Return JSON exactly:
 }
 
 /**
+ * Social media (SMO) assessment. Given which social profiles were found linked
+ * on the site (and which weren't), Claude gives a short, specific verdict and
+ * recommendations. No external social API needed — we detect links from the
+ * crawl and let Claude reason about the presence/gaps.
+ */
+async function assessSocial(apiKey, { businessName, industry, found, missing }) {
+  const text = await callClaude(apiKey, {
+    system: 'You are a social media marketing strategist. Output ONLY valid JSON, no preamble, no fences. Be specific and practical. Judge only what is given.',
+    messages: [
+      {
+        role: 'user',
+        content: `Business: ${businessName}${industry ? ' — ' + industry : ''}
+Social profiles linked from their website: ${found.length ? found.join(', ') : 'NONE'}
+Networks with no link found: ${missing.length ? missing.join(', ') : 'none'}
+
+Return JSON exactly:
+{"verdict":"2 sentences on their current social presence based on what's linked — note if none are linked, that's a visible trust gap","priorities":["the 2-3 networks this specific business should prioritise and why, each a short phrase"],"recommendation":"one actionable sentence on the single most important social move for them"}`,
+      },
+    ],
+    maxTokens: 500,
+  });
+  return parseJson(text);
+}
+
+/**
  * Review the homepage <title> and meta description and give a short, specific
  * remark. Fed only the real crawled values — no invention. Returns
  * { titleRemark, metaRemark, overall } or null on failure.
@@ -388,6 +413,7 @@ module.exports = {
   generateExecutiveSummary,
   summariseReviews,
   assessOnPage,
+  assessSocial,
   callClaude,
   analyseAiReadiness,
 };

@@ -13,7 +13,7 @@ const SERVICES = ['SEO', 'SMO', 'AI SEO', 'GEO', 'AEO', 'Local SEO'];
 // CRM pipeline stages and request tags (mirror the sandbox).
 const STAGES = [
   { id: 'new', label: 'New lead', color: '#64748B' },
-  { id: 'hot', label: 'Hot', color: '#DC2626' },
+  { id: 'hot', label: 'Hot', color: '#EA580C' },
   { id: 'cold', label: 'Cold', color: '#0891B2' },
   { id: 'ni', label: 'Not interested', color: '#94A3B8' },
   { id: 'contacted', label: 'Contacted', color: '#2563EB' },
@@ -558,26 +558,19 @@ function ReportList({ isAdmin, onOpen }) {
                 </div>
               </div>
 
-              {/* CRM: what they asked (dropdown) + latest remark */}
-              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">What the customer asked for</div>
-                  <select value={(r.tags && r.tags[0]) || ''} onChange={(e) => saveCrm(r._id, { tags: e.target.value ? [e.target.value] : [] })}
-                    className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400">
-                    <option value="">— Select —</option>
-                    {REQUESTS.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-500 mb-1.5">Latest remark</div>
+              {/* Compact: just the latest remark line. "What they asked" lives in View lead. */}
+              <div className="mt-3 pt-3 border-t border-slate-100 flex items-start gap-2">
+                <div className="text-[10px] font-bold text-slate-500 shrink-0 mt-0.5">Latest remark:</div>
+                <div className="flex-1">
                   {(() => {
                     const hist = Array.isArray(r.remarks) ? r.remarks : [];
                     const last = hist[hist.length - 1];
-                    if (last) return <div className="text-xs text-slate-600"><span>{last.text}</span><div className="text-[10px] text-slate-400 mt-0.5">{last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{hist.length > 1 ? ` · ${hist.length} notes` : ''}</div></div>;
+                    if (last) return <div className="text-xs text-slate-600"><span>{last.text}</span><span className="text-[10px] text-slate-400 ml-2">— {last.author} · {new Date(last.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}{hist.length > 1 ? ` · ${hist.length} notes` : ''}</span></div>;
                     if (r.remark) return <div className="text-xs text-slate-600">{r.remark}</div>;
                     return <div className="text-xs text-slate-400 italic">No remarks yet — click "Add remark".</div>;
                   })()}
                 </div>
+                {r.tags && r.tags[0] && <span className="rounded-full bg-blue-50 text-blue-600 px-2 py-0.5 text-[9px] font-bold shrink-0">{r.tags[0]}</span>}
               </div>
             </div>
           );
@@ -647,10 +640,12 @@ function ReportList({ isAdmin, onOpen }) {
                 </div>
               ))}
               <div>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">What they asked</div>
-                {leadEditing
-                  ? <select className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" value={(leadModal.tags && leadModal.tags[0]) || ''} onChange={(e) => setLeadModal({ ...leadModal, tags: e.target.value ? [e.target.value] : [] })}><option value="">— Select —</option>{REQUESTS.map((t) => <option key={t}>{t}</option>)}</select>
-                  : <div className="text-sm text-slate-700">{(leadModal.tags && leadModal.tags[0]) || <span className="text-slate-300">—</span>}</div>}
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">What they asked for</div>
+                <select className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  value={(leadModal.tags && leadModal.tags[0]) || ''}
+                  onChange={(e) => { const tags = e.target.value ? [e.target.value] : []; setLeadModal({ ...leadModal, tags }); saveCrm(leadModal._id, { tags }); }}>
+                  <option value="">— Select —</option>{REQUESTS.map((t) => <option key={t}>{t}</option>)}
+                </select>
               </div>
             </div>
 

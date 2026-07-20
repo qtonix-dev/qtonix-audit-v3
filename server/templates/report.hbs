@@ -213,6 +213,18 @@ tbody tr:nth-child(even){ background:#FAFBFC; }
 .op-remark{ font-size:9pt; color:#334155; line-height:1.55; margin-top:10px; }
 .op-remark-l{ display:block; font-size:6.5pt; letter-spacing:1.5px; font-weight:800; color:var(--accent-deep); margin-bottom:3px; }
 
+/* ---------------- SMO / SOCIAL ---------------- */
+.smo-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin:16px 0; }
+.smo-net{ border-radius:8px; padding:11px 12px; text-align:center; border:1px solid var(--line); }
+.smo-on{ background:#F0FDF4; border-color:#BBF7D0; }
+.smo-off{ background:#FAFAFA; }
+.smo-net-n{ font-size:8.5pt; font-weight:800; color:var(--navy); }
+.smo-net-s{ font-size:7pt; font-weight:700; margin-top:3px; }
+.smo-on .smo-net-s{ color:#16A34A; }
+.smo-off .smo-net-s{ color:#9AA3B2; }
+.smo-pri{ margin:6px 0 0; padding-left:18px; }
+.smo-pri li{ font-size:9pt; color:#334155; line-height:1.6; margin-bottom:4px; }
+
 /* ---------------- PRICING ---------------- */
 .price-grid{ display:flex; gap:12px; margin:22px 0 16px; align-items:stretch; }
 .pk{ flex:1; border:1px solid var(--line); border-radius:11px; padding:18px 16px; position:relative; }
@@ -325,7 +337,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   <div class="quote"><span class="qd"></span><p>{{summary.opportunity}}</p></div>
 
-  <div class="note">A note on this data. All data in this report is sourced from third-party tools and our own crawl of {{report.domain}}, as we currently do not have direct access to your website, Google Search Console, or Analytics. Any discrepancies or inaccuracies in data may be due to this.</div>
+  <p class="note">All data is sourced from third-party tools and our own crawl of {{report.domain}}; we don't yet have direct access to your Search Console or Analytics, so minor discrepancies are possible.</p>
 </div>
 
 <!-- ================= 02 THE VISIBILITY GAP ================= -->
@@ -460,6 +472,36 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   <div class="quote accent"><span class="qd"></span><p>{{onPageAssessment.overall}}</p></div>
   <p class="note">Assessment by Claude, based on your live homepage tags. Ideal lengths: title 50–60 characters, meta description 140–160.</p>
+</div>
+{{/if}}
+
+<!-- ================= SMO / SOCIAL MEDIA ================= -->
+{{#if socialAssessment}}
+<div class="page">
+  <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">SOCIAL MEDIA (SMO)</span></div>
+  <h2>Your social presence, <span class="b">as customers see it.</span></h2>
+  <p class="lead">Buyers check social profiles to judge whether a business is active and trustworthy before they enquire. We scanned {{report.domain}} for links to the major networks — here's what's connected, what's missing, and where to focus.</p>
+
+  <div class="smo-grid">
+    {{#each socialList}}
+    <div class="smo-net {{#if this.found}}smo-on{{else}}smo-off{{/if}}">
+      <div class="smo-net-n">{{this.label}}</div>
+      <div class="smo-net-s">{{#if this.found}}✓ Linked{{else}}Not linked{{/if}}</div>
+    </div>
+    {{/each}}
+  </div>
+
+  <div class="quote accent" style="margin-top:16px"><span class="qd"></span><p>{{socialAssessment.verdict}}</p></div>
+
+  {{#if socialAssessment.priorities.length}}
+  <h3>Where to focus first</h3>
+  <ul class="smo-pri">
+    {{#each socialAssessment.priorities}}<li>{{this}}</li>{{/each}}
+  </ul>
+  {{/if}}
+
+  <div class="nb" style="margin-top:14px"><strong>Our recommendation.</strong> {{socialAssessment.recommendation}}</div>
+  <p class="note" style="margin-top:12px">Detected from links on your homepage. A network shown as "not linked" may still exist — but if customers can't find it from your site, it isn't working for you.</p>
 </div>
 {{/if}}
 
@@ -703,7 +745,24 @@ body{ background:#525659; margin:0; padding:24px 0; }
 <div class="page">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">GOOGLE MAPS &amp; LOCAL SEO</span></div>
   <h2>You're missing from the map <span class="b">where local buyers decide.</span></h2>
-  <p class="lead">{{#if local.skippedNoKey}}Local SEO was selected, but the Google Places key isn't configured yet, so the map-pack data couldn't be pulled for this run.{{else}}We couldn't find a Google Business Profile for {{report.businessName}} in this location. Nearby customers searching Google Maps see your competitors, not you — and the map pack is where a large share of local buying decisions happen.{{/if}}</p>
+  <p class="lead">{{#if local.skippedNoKey}}Local SEO was selected, but the Google Places key isn't configured for this run, so the live map-pack data couldn't be pulled. Here's why it matters and what a strong profile needs.{{else}}We couldn't find a Google Business Profile for {{report.businessName}} on Google Maps. Nearby customers searching Google see your competitors in the map pack — not you. For many local searches, the three map results capture the majority of clicks and calls.{{/if}}</p>
+
+  <div class="nb"><strong>Why this is urgent.</strong> When someone searches "{{report.businessName}}" or your category "near me", Google shows a map with three businesses at the very top — above the normal results. Without a claimed, optimised profile, you're invisible at the exact moment a local customer is ready to act.</div>
+
+  <h3 style="margin-top:18px">What a winning Google Business Profile needs</h3>
+  <table>
+    <thead><tr><th style="width:34%">Element</th><th>Why it wins the map pack</th></tr></thead>
+    <tbody>
+      <tr><td class="tb">Claimed &amp; verified listing</td><td>Nothing ranks until the profile is claimed and verified with Google.</td></tr>
+      <tr><td class="tb">Consistent NAP</td><td>Name, address and phone must match your website and every directory exactly.</td></tr>
+      <tr><td class="tb">Complete categories &amp; hours</td><td>Primary + secondary categories and accurate hours are direct ranking signals.</td></tr>
+      <tr><td class="tb">Steady review flow</td><td>Review count, rating and recency are among the strongest local factors.</td></tr>
+      <tr><td class="tb">Photos &amp; regular posts</td><td>Active profiles with fresh media are favoured and convert more searchers.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quote accent" style="margin-top:16px"><span class="qd"></span><p>Claiming and optimising your Google Business Profile is one of the fastest, highest-return local wins available — often visible within weeks.</p></div>
+  <p class="note">We set up or reclaim the profile, fix NAP consistency across the web, and build a review system so you start appearing in the local map pack.</p>
 </div>
 {{/if}}
 {{/if}}
