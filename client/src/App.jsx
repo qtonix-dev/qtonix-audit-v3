@@ -144,13 +144,44 @@ function NewReport({ user, onQueued }) {
     website: '', businessName: '', customerName: '',
     services: ['SEO'], country: 'us', location: '',
     customerPhone: '', customerEmail: '', customerCountry: '', customerCompany: '',
+    leadId: null,
   });
+  const [sourceMode, setSourceMode] = useState('new'); // 'new' | 'lead'
+  const [leads, setLeads] = useState([]);
+  const [leadPick, setLeadPick] = useState('');
   const [error, setError] = useState('');
   const [cachePrompt, setCachePrompt] = useState(null);
   const [conflictPrompt, setConflictPrompt] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Load the user's leads when they switch to "From an existing lead".
+  useEffect(() => {
+    if (sourceMode === 'lead' && leads.length === 0) {
+      api('/leads').then((r) => setLeads(r.items || [])).catch(() => {});
+    }
+  }, [sourceMode]);
+
+  // When a lead is picked, auto-fill the form from its data.
+  const pickLead = async (id) => {
+    setLeadPick(id);
+    if (!id) { set('leadId', null); return; }
+    try {
+      const { lead } = await api(`/leads/${id}`);
+      const name = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+      setForm((f) => ({
+        ...f,
+        leadId: lead._id,
+        website: lead.website || f.website,
+        businessName: lead.firstName ? (name || lead.website) : f.businessName,
+        customerName: name || f.customerName,
+        customerPhone: lead.mobile || lead.phone || f.customerPhone,
+        customerEmail: lead.email || f.customerEmail,
+        customerCountry: lead.country || f.customerCountry,
+      }));
+    } catch (e) { setError(e.message); }
+  };
 
   const toggleService = (s) =>
     setForm((f) => ({
@@ -245,6 +276,27 @@ function NewReport({ user, onQueued }) {
       )}
 
       <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5">
+        {/* Source: brand-new report, or pull details from an existing lead */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Report for</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => { setSourceMode('new'); setLeadPick(''); set('leadId', null); }}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold border ${sourceMode === 'new' ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>New</button>
+            <button type="button" onClick={() => setSourceMode('lead')}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold border ${sourceMode === 'lead' ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>From an existing lead</button>
+          </div>
+          {sourceMode === 'lead' && (
+            <div className="mt-3">
+              <select value={leadPick} onChange={(e) => pickLead(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]">
+                <option value="">— Select a lead —</option>
+                {leads.map((l) => <option key={l._id} value={l._id}>{`${l.firstName || ''} ${l.lastName || ''}`.trim()}{l.website ? ` · ${l.website}` : ''}</option>)}
+              </select>
+              {form.leadId && <p className="text-xs text-green-600 mt-1">✓ Details filled from the lead. This report will link back to it.</p>}
+            </div>
+          )}
+        </div>
+
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-1.5">Website *</label>
           <input

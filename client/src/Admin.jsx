@@ -416,6 +416,113 @@ function Users({ me, say }) {
 // ---------------------------------------------------------------------------
 // Limits
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// CRM Fields — admin manages all the dropdown lists used across the Leads UI.
+// Simple string lists (sources, services, tags) and labelled+coloured lists
+// (statuses, deal stages). Saves the whole crmConfig back to settings.
+// ---------------------------------------------------------------------------
+function CrmFields({ say }) {
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api('/admin/settings').then((s) => setCfg(s.crmConfig || {})).catch((e) => say(e.message, 'bad'));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api('/admin/settings', { method: 'PUT', body: JSON.stringify({ crmConfig: cfg }) });
+      say('CRM fields saved.');
+    } catch (e) { say(e.message, 'bad'); }
+    setSaving(false);
+  };
+
+  if (!cfg) return <div className="text-sm text-slate-400">Loading…</div>;
+
+  const setList = (key, list) => setCfg({ ...cfg, [key]: list });
+
+  return (
+    <div className="space-y-8">
+      <p className="text-sm text-slate-500">Manage the dropdown options used across the Leads module. Changes apply everywhere leads are created or edited.</p>
+
+      <StringListEditor title="Lead sources" items={cfg.leadSources || []} onChange={(l) => setList('leadSources', l)} />
+      <StringListEditor title="Services interested (multi-select in leads)" items={cfg.servicesInterested || []} onChange={(l) => setList('servicesInterested', l)} />
+      <StringListEditor title="Lead tags" hint="First one is the default on new leads" items={cfg.tags || []} onChange={(l) => setList('tags', l)} />
+      <StringListEditor title="Deal currencies" items={cfg.dealCurrencies || []} onChange={(l) => setList('dealCurrencies', l)} />
+      <StringListEditor title="Task priorities" items={cfg.taskPriorities || []} onChange={(l) => setList('taskPriorities', l)} />
+
+      <LabelListEditor title="Lead statuses" items={cfg.leadStatuses || []} onChange={(l) => setList('leadStatuses', l)} />
+      <LabelListEditor title="Deal stages" items={cfg.dealStages || []} onChange={(l) => setList('dealStages', l)} />
+
+      <div className="flex justify-end sticky bottom-4">
+        <button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{saving ? 'Saving…' : 'Save CRM fields'}</button>
+      </div>
+    </div>
+  );
+}
+
+// Editor for a simple list of strings.
+function StringListEditor({ title, hint, items, onChange }) {
+  const [val, setVal] = useState('');
+  const add = () => { const v = val.trim(); if (!v || items.includes(v)) return; onChange([...items, v]); setVal(''); };
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <div className="text-sm font-bold text-[#050A1F]">{title}</div>
+        {hint && <div className="text-[11px] text-slate-400">{hint}</div>}
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {items.map((it, i) => (
+          <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            {it}
+            <button onClick={() => onChange(items.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500">✕</button>
+          </span>
+        ))}
+        {items.length === 0 && <span className="text-xs text-slate-300 italic">No options yet.</span>}
+      </div>
+      <div className="flex gap-2">
+        <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Add an option…"
+          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <button onClick={add} className="rounded-lg bg-[#050A1F] px-4 py-2 text-sm font-bold text-white">Add</button>
+      </div>
+    </div>
+  );
+}
+
+// Editor for a list of { id, label, color } — statuses and deal stages.
+function LabelListEditor({ title, items, onChange }) {
+  const [label, setLabel] = useState('');
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const add = () => {
+    const l = label.trim(); if (!l) return;
+    const id = slug(l); if (items.some((x) => x.id === id)) return;
+    onChange([...items, { id, label: l, color: '#64748B' }]); setLabel('');
+  };
+  const update = (i, patch) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-3">{title}</div>
+      <div className="space-y-2 mb-3">
+        {items.map((it, i) => (
+          <div key={it.id} className="flex items-center gap-2">
+            <input type="color" value={it.color || '#64748B'} onChange={(e) => update(i, { color: e.target.value })} className="h-8 w-10 rounded border border-slate-200 cursor-pointer" />
+            <input value={it.label} onChange={(e) => update(i, { label: e.target.value })} className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm" />
+            <span className="text-[10px] text-slate-400 font-mono w-24 truncate">{it.id}</span>
+            <button onClick={() => onChange(items.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500 text-sm">✕</button>
+          </div>
+        ))}
+        {items.length === 0 && <span className="text-xs text-slate-300 italic">No options yet.</span>}
+      </div>
+      <div className="flex gap-2">
+        <input value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Add an option…"
+          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <button onClick={add} className="rounded-lg bg-[#050A1F] px-4 py-2 text-sm font-bold text-white">Add</button>
+      </div>
+    </div>
+  );
+}
+
 function Limits({ settings, setSettings }) {
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
@@ -482,9 +589,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['limits', 'Limits']];
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['limits', 'Limits']];
   // Save applies to tabs backed by the settings object (not Users, which saves inline).
-  const showSave = tab !== 'users';
+  const showSave = tab !== 'users' && tab !== 'crm';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -513,6 +620,7 @@ export default function Admin() {
         {tab === 'branding' && <Branding settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
+        {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}
 
         <ActivityLog />

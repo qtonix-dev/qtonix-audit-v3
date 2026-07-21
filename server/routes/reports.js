@@ -50,6 +50,9 @@ const createSchema = z.object({
   customerEmail: z.string().optional(),
   customerCountry: z.string().optional(),
   customerCompany: z.string().optional(),
+  leadId: z.union([z.number(), z.string()]).optional().nullable(),
+  confirmDuplicate: z.boolean().optional(),
+  force: z.boolean().optional(),
 });
 
 /** POST /api/reports — queue a new audit. */

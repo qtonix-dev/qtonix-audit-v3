@@ -308,7 +308,7 @@ const Settings = sequelize.define(
           'Logo Design', 'Article/Blog Writing', 'PR Outreach', 'Email Newsletter Design',
           'Email Funnel Design & Manage',
         ],
-        tags: ['SEO', 'AI SEO', 'GEO', 'AEO', 'Local SEO', 'Web Design', 'Web Development', 'Pricing', 'Proposal', 'Follow-up'],
+        tags: ['New Lead', 'Call Back', 'Voice Mail', 'Meeting Scheduled', 'Waiting for Response', 'Contacted', 'Proposal Sent', 'Negotiating', 'Not Interested'],
         dealStages: [
           { id: 'qualification', label: 'Qualification', color: '#64748B' },
           { id: 'needs_analysis', label: 'Needs Analysis', color: '#2563EB' },

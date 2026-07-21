@@ -50,6 +50,7 @@ router.put('/settings', async (req, res, next) => {
     for (const f of plain) if (body[f] !== undefined) s[f] = body[f];
     if (body.colors) { s.colors = { ...s.colors, ...body.colors }; s.changed('colors', true); }
     if (body.pricing) { s.pricing = body.pricing; s.changed('pricing', true); }
+    if (body.crmConfig) { s.crmConfig = body.crmConfig; s.changed('crmConfig', true); }
 
     // Only overwrite a key if a real new value was sent — the UI shows masked
     // placeholders, and saving the form must not wipe the stored key.

@@ -166,7 +166,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       generatedBy: String(b.generatedBy || '').slice(0, 120),
       status: String(b.status || 'new').slice(0, 40),
       servicesInterested: Array.isArray(b.servicesInterested) ? b.servicesInterested.slice(0, 30) : [],
-      tags: Array.isArray(b.tags) ? b.tags.slice(0, 30) : [],
+      tags: Array.isArray(b.tags) && b.tags.length ? b.tags.slice(0, 30) : ['New Lead'],
       country: String(b.country || '').slice(0, 80),
       city: String(b.city || '').slice(0, 120),
       timezone: String(b.timezone || '').slice(0, 80),
@@ -272,6 +272,7 @@ router.post('/:id/activities', requireAuth, async (req, res, next) => {
       act.time = b.time || '';
       act.timezone = String(b.timezone || '').slice(0, 80);
       act.reminder = b.reminder && b.reminder.on ? { on: true, at: b.reminder.at || `${b.date}T${b.time || '09:00'}` } : { on: false };
+      if (b.mode === 'done' && b.durationMin != null) act.durationMin = Number(b.durationMin) || 0;
       act.title = act.agenda || 'Call';
     } else {
       act.title = String(b.title || '').slice(0, 200) || 'Task';
