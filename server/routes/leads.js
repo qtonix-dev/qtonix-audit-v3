@@ -210,6 +210,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
     let salesThisMonthUsd = 0, convertedThisMonth = 0;
+    let pipelineUsd = 0; // open (not won/lost) deal value in USD, motivational
     let newSalesUsd = 0, crossSalesUsd = 0, newSalesCount = 0, crossSalesCount = 0;
     const byOwner = {};
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0 });
@@ -238,6 +239,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // Sales = installments actually collected (paid) this month. First paid
       // installment of a lead's first deal = new sale; everything else = cross.
       const wonDeals = (l.deals || []).filter((d) => d.stage === 'closed_won');
+      // Open pipeline = deals not yet won or lost (motivational "in progress").
+      for (const d of (l.deals || [])) {
+        if (d.stage !== 'closed_won' && d.stage !== 'closed_lost') {
+          const v = toUsd(d.amount, d.currency);
+          pipelineUsd += v;
+          byOwner[l.ownerId].pipelineUsd = (byOwner[l.ownerId].pipelineUsd || 0) + v;
+        }
+      }
       // Order deals by wonAt/createdAt so "first deal" is stable.
       wonDeals.sort((a, b) => new Date(a.wonAt || a.createdAt || 0) - new Date(b.wonAt || b.createdAt || 0));
       let leadHasCountedNew = false;
@@ -337,6 +346,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       metrics: {
         totalLeads, generatedToday, assignedToday, untouched,
         salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
+        pipelineUsd: Math.round(pipelineUsd),
         newSalesUsd: Math.round(newSalesUsd), crossSalesUsd: Math.round(crossSalesUsd),
         newSalesCount, crossSalesCount,
         companyTarget: Math.round(companyTarget),
@@ -344,7 +354,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         generatedTarget: targetForToday(targetsById[req.user.id], 'transfer'),
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList },
-      me: meRow ? { salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining, transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget, newSalesUsd: meRow.newSalesUsd, crossSalesUsd: meRow.crossSalesUsd } : null,
+      me: meRow ? { salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining, transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget, newSalesUsd: meRow.newSalesUsd, crossSalesUsd: meRow.crossSalesUsd, pipelineUsd: Math.round(meRow.pipelineUsd || 0) } : null,
       leaderboard, transferBoard, trend, shiftBoard, topShift,
     });
   } catch (e) { next(e); }

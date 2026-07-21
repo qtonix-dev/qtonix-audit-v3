@@ -690,8 +690,13 @@ function Users({ me, say }) {
             {users.map((u) => (
               <tr key={u._id} className={`border-t border-slate-100 ${!u.active ? 'opacity-40' : ''}`}>
                 <td className="px-4 py-3">
-                  <div className="font-semibold" style={{ color: C.navy }}>{u.name} {(u._id === me.id || u._id === me._id) && <span className="text-[9px] font-bold text-slate-400">(you)</span>}</div>
-                  <div className="text-[11px] text-slate-400">{u.designation}{u.phone ? ' · ' + u.phone : ''}{u.aliases && u.aliases.length ? ' · aka ' + u.aliases.join(', ') : ''}</div>
+                  <div className="flex items-center gap-3">
+                    <AvatarPreview name={u.name} src={u.avatar} size={36} />
+                    <div>
+                      <div className="font-semibold" style={{ color: C.navy }}>{u.name} {(u._id === me.id || u._id === me._id) && <span className="text-[9px] font-bold text-slate-400">(you)</span>}</div>
+                      <div className="text-[11px] text-slate-400">{u.designation}{u.phone ? ' · ' + u.phone : ''}{u.aliases && u.aliases.length ? ' · aka ' + u.aliases.join(', ') : ''}</div>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-xs text-slate-500">{u.email}</td>
                 <td className="px-4 py-3"><span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={u.role === 'admin' ? { background: '#FFF4EC', color: C.orangeDeep } : { background: '#F1F5F9', color: '#64748B' }}>{u.role}</span></td>

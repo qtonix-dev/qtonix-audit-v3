@@ -141,7 +141,7 @@ function Login({ onSignIn }) {
 
 // ---------------------------------------------------------------------------
 
-function NewReport({ user, initialLeadId, onQueued }) {
+function NewReport({ user, initialLeadId, onQueued, onBack }) {
   const [form, setForm] = useState({
     website: '', businessName: '', customerName: '',
     services: ['SEO'], country: 'us', location: '',
@@ -234,6 +234,7 @@ function NewReport({ user, initialLeadId, onQueued }) {
 
   return (
     <div className="max-w-2xl">
+      {onBack && <button onClick={onBack} className="text-sm font-bold text-slate-500 hover:text-slate-700 mb-3">← Back to reports</button>}
       <h1 className="text-2xl font-extrabold text-[#050A1F] tracking-tight">Run a site analysis</h1>
       <p className="text-sm text-slate-500 mt-1 mb-6">
         Takes about two minutes. You'll get a branded PDF ready to send.
@@ -518,7 +519,7 @@ const StatusPill = ({ status }) => {
   );
 };
 
-function ReportList({ isAdmin, onOpen }) {
+function ReportList({ isAdmin, onOpen, onNewReport }) {
   const [data, setData] = useState({ items: [], total: 0, pages: 1 });
   const [q, setQ] = useState(() => {
     try { return new URLSearchParams(window.location.search).get('q') || ''; }
@@ -560,11 +561,14 @@ function ReportList({ isAdmin, onOpen }) {
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">{data.total} total</p>
         </div>
-        <input
-          value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="Search business or domain…"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Search business or domain…"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
+          />
+          <button onClick={onNewReport} className="rounded-lg px-4 py-2 text-sm font-bold text-white whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run new report</button>
+        </div>
       </div>
 
       {loading && <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Loading…</div>}
@@ -690,8 +694,7 @@ export default function App() {
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'leads', label: 'Leads' },
-    { id: 'new', label: 'New report' },
-    { id: 'list', label: isAdmin ? 'All reports' : 'My reports' },
+    { id: 'list', label: 'Reports' },
   ];
 
   return (
@@ -742,7 +745,7 @@ export default function App() {
           onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
         {view === 'new' && !activeReport && (
-          <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
+          <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />
         )}
         {view === 'progress' && activeReport && (
           <Progress
@@ -752,7 +755,7 @@ export default function App() {
           />
         )}
         {view === 'list' && (
-          <ReportList isAdmin={isAdmin} onOpen={(r) => { setActiveReport(r); setView('report'); }} />
+          <ReportList isAdmin={isAdmin} onOpen={(r) => { setActiveReport(r); setView('report'); }} onNewReport={() => { setActiveReport(null); setView('new'); }} />
         )}
         {view === 'report' && activeReport && (
           <div>

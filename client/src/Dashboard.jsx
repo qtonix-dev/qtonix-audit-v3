@@ -15,7 +15,7 @@ function Avatar({ name, src, size = 28 }) {
 }
 
 // Metric card in achieved/target (%) format with a $0 motivational message.
-function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational }) {
+function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational, pipelineNote }) {
   const u = unit || '$';
   const fmt = u === '$' ? usd : (n) => `${n}`;
   const has = target > 0;
@@ -41,6 +41,7 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
           </div>
         </>
       )}
+      {pipelineNote && <div className="text-[11px] font-semibold text-indigo-500 mt-1">💼 {pipelineNote} in your pipeline</div>}
       {cta && <div className="text-xs font-bold mt-2" style={{ color: accent }}>{cta} →</div>}
     </div>
   );
@@ -175,15 +176,15 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
       {/* Company target (admin) */}
       {isAdmin && m.companyTarget > 0 && (
         <div className="mb-4">
-          <GoalStat label="Company monthly target" achieved={m.salesThisMonthUsd} target={m.companyTarget} accent="#050A1F" motivational="The month is young — let's rack up the first wins!" />
+          <GoalStat label="Company monthly target" achieved={m.salesThisMonthUsd} target={m.companyTarget} accent="#050A1F" motivational="The month is young — let's rack up the first wins!" pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} />
         </div>
       )}
 
       {/* Top metric row: sales-focused, all in goal format where a target exists */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         {me && me.salesTarget > 0
-          ? <GoalStat label="Your sales this month" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A" motivational="First sale of the month is waiting for you! 🚀" />
-          : <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)} sub={`${m.convertedThisMonth} converted`} accent="#16A34A" />}
+          ? <GoalStat label="Sales achieved / monthly target" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A" motivational="First sale of the month is waiting for you! 🚀" pipelineNote={me.pipelineUsd > 0 ? usd(me.pipelineUsd) : null} />
+          : <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)} sub={m.pipelineUsd > 0 ? `💼 ${usd(m.pipelineUsd)} in pipeline` : `${m.convertedThisMonth} converted`} accent="#16A34A" />}
         <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
         <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
         <PlainStat label="Converted" value={m.convertedThisMonth} accent="#059669" onClick={onViewConverted} cta="View this month" />
