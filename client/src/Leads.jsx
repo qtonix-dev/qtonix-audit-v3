@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
-import { COUNTRY_NAMES, COUNTRY_TIMEZONES } from './countries.js';
+import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
 
 // Multi-select with type-to-filter (same UX as country, but multiple values).
 export function MultiSelectCombobox({ options, values, onChange, placeholder, className }) {
@@ -57,6 +57,28 @@ export function TimezoneField({ country, value, onChange, className }) {
   return <input className={className} value={value || ''} onChange={(e) => onChange(e.target.value)} placeholder="e.g. GMT+5:30" />;
 }
 
+
+// Phone input whose country code + digit grouping follow the selected country.
+// The dial code prefix is shown as a fixed chip; the user types only the local
+// number and it's formatted live. Stores the full "+<code> <number>" string.
+export function PhoneField({ value, country, onChange, className, placeholder }) {
+  const dial = dialFor(country);
+  // Strip the code+plus for the editable portion.
+  const local = String(value || '').replace(/^\+\d+\s*/, '');
+  const reformat = (raw) => onChange(formatPhone(raw, country));
+  return (
+    <div className="flex">
+      <span className="inline-flex items-center rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 px-2.5 text-sm font-bold text-slate-500 whitespace-nowrap">+{dial}</span>
+      <input
+        className={`${className} rounded-l-none`}
+        value={local}
+        placeholder={placeholder || 'number'}
+        onChange={(e) => reformat(e.target.value)}
+        onBlur={(e) => reformat(e.target.value)}
+      />
+    </div>
+  );
+}
 
 export function CountryCombobox({ value, onChange, className }) {
   const [open, setOpen] = useState(false);
@@ -197,18 +219,20 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       {loading ? (
         <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>
       ) : items.length === 0 ? (
-        <div className="text-slate-400 text-sm py-12 text-center bg-white rounded-2xl border border-slate-100">No leads yet. Click “New lead” to add one.</div>
+        <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-100">
+          <div className="text-4xl mb-2">📇</div>
+          No leads yet. Click “New lead” to add one.
+        </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold">
-                <th className="text-left px-4 py-3">Name</th>
-                <th className="text-left px-4 py-3">Email</th>
-                <th className="text-left px-4 py-3">Phone</th>
-                <th className="text-left px-4 py-3">Website</th>
+              <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                <th className="text-left px-4 py-3">Lead</th>
+                <th className="text-left px-4 py-3">Contact</th>
                 <th className="text-left px-4 py-3">Source</th>
                 <th className="text-left px-4 py-3">Status</th>
+                <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
                 <th className="text-left px-4 py-3">Last activity</th>
               </tr>
@@ -217,20 +241,41 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               {items.map((l) => {
                 const sm = statusMeta(config, l.status);
                 const stale = staleness(l);
+                const deals = l.deals || [];
+                const openDeals = deals.filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
+                const wonDeals = deals.filter((d) => d.stage === 'closed_won');
                 return (
-                  <tr key={l._id} onClick={() => onOpen(l)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
-                    <td className="px-4 py-3 font-bold text-[#050A1F]">
-                      <div className="flex items-center gap-2">
-                        {fullName(l)}
-                        {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱ {stale.days}d</span>}
+                  <tr key={l._id} onClick={() => onOpen(l)} className="border-t border-slate-50 hover:bg-orange-50/30 cursor-pointer transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: sm.color + '1a', color: sm.color }}>
+                          {(fullName(l)[0] || '?').toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-[#050A1F] flex items-center gap-1.5">
+                            <span className="truncate">{fullName(l)}</span>
+                            {openDeals.length > 0 && <span title={`${openDeals.length} open deal(s)`} className="text-[10px]">💰</span>}
+                            {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱{stale.days}d</span>}
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate">{l.website || '—'}</div>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-500">{l.email || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500">{l.mobile || l.phone || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500">{l.leadSource || '—'}</td>
-                    <td className="px-4 py-3"><span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>
-                    <td className="px-4 py-3 text-slate-500">{l.ownerName}</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
+                      <div className="text-[11px] text-slate-400">{l.mobile || l.phone || ''}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{l.leadSource || '—'}</td>
+                    <td className="px-4 py-3"><span className="rounded-full px-2.5 py-1 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>
+                    <td className="px-4 py-3">
+                      {deals.length === 0 ? <span className="text-slate-300 text-xs">—</span> : (
+                        <div className="flex items-center gap-1.5">
+                          {openDeals.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{openDeals.length} open</span>}
+                          {wonDeals.length > 0 && <span className="rounded-md bg-green-50 text-green-600 px-1.5 py-0.5 text-[10px] font-bold">{wonDeals.length} won</span>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
                   </tr>
                 );
@@ -427,8 +472,8 @@ export function NewLead({ user, onCreated, onCancel }) {
           <div><label className={lab}>Website</label><input className={inp} value={f.website} onChange={(e) => set('website', e.target.value)} placeholder="https://…" /></div>
           <div><label className={lab}>Email</label><input className={inp} value={f.email} onChange={(e) => set('email', e.target.value)} /></div>
           <div><label className={lab}>Secondary email</label><input className={inp} value={f.secondaryEmail} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
-          <div><label className={lab}>Mobile</label><input className={inp} value={f.mobile} onChange={(e) => set('mobile', e.target.value)} /></div>
-          <div><label className={lab}>Phone</label><input className={inp} value={f.phone} onChange={(e) => set('phone', e.target.value)} /></div>
+          <div><label className={lab}>Mobile</label><PhoneField className={inp} value={f.mobile} country={f.country} onChange={(v) => set('mobile', v)} /></div>
+          <div><label className={lab}>Phone</label><PhoneField className={inp} value={f.phone} country={f.country} onChange={(v) => set('phone', v)} /></div>
         </div>
 
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100 pb-1">Classification</div>
@@ -473,7 +518,7 @@ export function NewLead({ user, onCreated, onCancel }) {
 
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100 pb-1">Location</div>
         <div className="grid grid-cols-3 gap-4">
-          <div><label className={lab}>Country</label><CountryCombobox className={inp} value={f.country} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); else set('timezone', ''); }} /></div>
+          <div><label className={lab}>Country</label><CountryCombobox className={inp} value={f.country} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); else set('timezone', ''); if (f.mobile) set('mobile', formatPhone(f.mobile, v)); if (f.phone) set('phone', formatPhone(f.phone, v)); }} /></div>
           <div><label className={lab}>City</label><input className={inp} value={f.city} onChange={(e) => set('city', e.target.value)} /></div>
           <div><label className={lab}>Time zone</label><TimezoneField className={inp} country={f.country} value={f.timezone} onChange={(v) => set('timezone', v)} /></div>
         </div>
@@ -532,31 +577,39 @@ export function LeadDetail({ user, leadId, onBack }) {
     <div>
       <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to leads</button>
 
-      {/* Header: name + tags inline, owner/last-activity, quick actions */}
-      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
-        <div className="min-w-0">
+      {/* Header: avatar + name + status/tags, owner/last-activity, quick actions */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-5 mb-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-start gap-4 min-w-0">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-extrabold shrink-0" style={{ background: sm.color + '1a', color: sm.color }}>
+              {(fullName(lead)[0] || '?').toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
+                <button onClick={() => openEdit('status')} title="Click to change status"
+                  className="rounded-full px-3 py-1 text-[11px] font-bold text-white hover:opacity-90 cursor-pointer" style={{ background: sm.color }}>{sm.label} ▾</button>
+                {(lead.tags || []).map((t) => (
+                  <button key={t} onClick={() => openEdit('tags')} title="Click to edit tags"
+                    className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold hover:bg-orange-100 cursor-pointer">{t}</button>
+                ))}
+                <button onClick={() => openEdit('tags')} title="Add or edit tags"
+                  className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">+ tag</button>
+              </div>
+              <div className="text-sm text-slate-400 mt-1.5">
+                {lead.website && <><a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:underline">{lead.website.replace(/^https?:\/\//, '')}</a><span className="mx-2">·</span></>}
+                Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
+                <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
+              </div>
+            </div>
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
-            <button onClick={() => openEdit('status')} title="Click to change status"
-              className="rounded-full px-3 py-1 text-[11px] font-bold text-white hover:opacity-90 cursor-pointer" style={{ background: sm.color }}>{sm.label} ▾</button>
-            {(lead.tags || []).map((t) => (
-              <button key={t} onClick={() => openEdit('tags')} title="Click to edit tags"
-                className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold hover:bg-orange-100 cursor-pointer">{t}</button>
-            ))}
-            <button onClick={() => openEdit('tags')} title="Add or edit tags"
-              className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">+ tag</button>
+            <button onClick={() => setQuickModal('note')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Note</button>
+            <button onClick={() => setQuickModal('task')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">✅ Task</button>
+            <button onClick={() => setQuickModal('call')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📞 Call</button>
+            <button onClick={() => setQuickModal('deal')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">💰 Deal</button>
+            <button onClick={() => openEdit('all')} className="rounded-md px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>✏️ Edit</button>
           </div>
-          <div className="text-sm text-slate-400 mt-1.5">
-            Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
-            <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => setQuickModal('note')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Add note</button>
-          <button onClick={() => setQuickModal('task')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">✅ Add task</button>
-          <button onClick={() => setQuickModal('call')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📞 Add call</button>
-          <button onClick={() => setQuickModal('deal')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">💰 Add deal</button>
-          <button onClick={() => openEdit('all')} className="rounded-md px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>✏️ Edit lead</button>
         </div>
       </div>
 
@@ -794,7 +847,8 @@ function ActivityTab({ lead, config, user, onChange }) {
 function ActivityModal({ kind, lead, config, onClose, onSaved }) {
   const isCall = kind === 'call';
   const [f, setF] = useState({
-    mode: 'scheduled', agenda: '', title: '', date: '', time: '', timezone: '',
+    mode: 'scheduled', agenda: '', title: '', date: '', time: '',
+    timezone: lead.timezone || '',
     description: '', priority: 'Medium', dueDate: '', reminderOn: false, durationMin: '',
   });
   const [busy, setBusy] = useState(false);
@@ -832,7 +886,12 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
               <div><label className={lab}>Date</label><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
               <div><label className={lab}>Time</label><input type="time" className={inp} value={f.time} onChange={(e) => set('time', e.target.value)} /></div>
             </div>
-            <div><label className={lab}>Time zone</label><input className={inp} value={f.timezone} onChange={(e) => set('timezone', e.target.value)} placeholder="e.g. GMT+5:30" /></div>
+            <div>
+              <label className={lab}>Time zone (from lead)</label>
+              {lead.timezone
+                ? <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">🌐 {lead.timezone}<span className="text-[10px] text-slate-400">auto</span></div>
+                : <TimezoneField className={inp} country={lead.country} value={f.timezone} onChange={(v) => set('timezone', v)} />}
+            </div>
             {f.mode === 'done' && (
               <div><label className={lab}>How long did the call last? (minutes)</label><input type="number" min="0" className={inp} value={f.durationMin} onChange={(e) => set('durationMin', e.target.value)} placeholder="e.g. 15" /></div>
             )}
@@ -896,9 +955,9 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
             {section === 'all' && <div><label className={lab}>First name</label><input className={inp} value={draft.firstName || ''} onChange={(e) => set('firstName', e.target.value)} /></div>}
             {section === 'all' && <div><label className={lab}>Last name</label><input className={inp} value={draft.lastName || ''} onChange={(e) => set('lastName', e.target.value)} /></div>}
             <div><label className={lab}>Email</label><input className={inp} value={draft.email || ''} onChange={(e) => set('email', e.target.value)} /></div>
-            <div><label className={lab}>Mobile</label><input className={inp} value={draft.mobile || ''} onChange={(e) => set('mobile', e.target.value)} /></div>
-            <div><label className={lab}>Phone</label><input className={inp} value={draft.phone || ''} onChange={(e) => set('phone', e.target.value)} /></div>
-            <div><label className={lab}>Country</label><CountryCombobox className={inp} value={draft.country || ''} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); }} /></div>
+            <div><label className={lab}>Mobile</label><PhoneField className={inp} value={draft.mobile || ''} country={draft.country} onChange={(v) => set('mobile', v)} /></div>
+            <div><label className={lab}>Phone</label><PhoneField className={inp} value={draft.phone || ''} country={draft.country} onChange={(v) => set('phone', v)} /></div>
+            <div><label className={lab}>Country</label><CountryCombobox className={inp} value={draft.country || ''} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); if (draft.mobile) set('mobile', formatPhone(draft.mobile, v)); if (draft.phone) set('phone', formatPhone(draft.phone, v)); }} /></div>
             <div><label className={lab}>City</label><input className={inp} value={draft.city || ''} onChange={(e) => set('city', e.target.value)} /></div>
             <div><label className={lab}>Time zone</label><TimezoneField className={inp} country={draft.country} value={draft.timezone} onChange={(v) => set('timezone', v)} /></div>
           </div>
@@ -1320,6 +1379,12 @@ function DealsPipeline({ user, onOpenLead }) {
   };
 
   const stageTotal = (sid) => deals.filter((d) => d.stage === sid).reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  const paidInfo = (d) => {
+    const insts = d.installments || [];
+    if (insts.length <= 1) return null;
+    const paid = insts.filter((i) => i.paid).length;
+    return `${paid}/${insts.length} paid`;
+  };
 
   if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading pipeline…</div>;
 
@@ -1336,28 +1401,38 @@ function DealsPipeline({ user, onOpenLead }) {
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => { const d = deals.find((x) => x.id === dragId); if (d) moveDeal(d, s.id); setDragId(null); }}
-              className="shrink-0 w-64 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="px-3 py-2.5 border-b border-slate-100 flex items-center justify-between">
+              className="shrink-0 w-64 bg-slate-50/70 rounded-2xl border border-slate-100">
+              <div className="px-3 py-2.5 rounded-t-2xl flex items-center justify-between" style={{ background: s.color + '12' }}>
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
                   <span className="text-xs font-bold text-[#050A1F]">{s.label}</span>
-                  <span className="text-[10px] text-slate-400">({col.length})</span>
                 </div>
+                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: s.color + '22', color: s.color }}>{col.length}</span>
               </div>
-              <div className="px-2 py-1 text-[10px] font-bold text-slate-400">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</div>
-              <div className="p-2 space-y-2 min-h-[120px]">
-                {col.map((d) => (
-                  <div key={d.id} draggable
-                    onDragStart={() => setDragId(d.id)}
-                    onClick={() => onOpenLead(d.leadId)}
-                    className="bg-white rounded-lg border border-slate-200 p-3 cursor-grab active:cursor-grabbing hover:border-slate-300">
-                    <div className="font-bold text-xs text-[#050A1F] truncate">{d.name}</div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">{fmtMoney(d)}</div>
-                    <div className="text-[10px] text-slate-400 mt-1 truncate">{d.leadName}{d.service ? ` · ${d.service}` : ''}</div>
-                    {d.expectedClose && <div className="text-[10px] text-slate-400 mt-0.5">close {d.expectedClose}</div>}
-                  </div>
-                ))}
-                {col.length === 0 && <div className="text-[11px] text-slate-300 text-center py-6">Drop deals here</div>}
+              <div className="px-3 py-1.5 text-[11px] font-bold text-slate-500 border-b border-slate-100">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</div>
+              <div className="p-2 space-y-2 min-h-[140px]">
+                {col.map((d) => {
+                  const pinfo = paidInfo(d);
+                  return (
+                    <div key={d.id} draggable
+                      onDragStart={() => setDragId(d.id)}
+                      onClick={() => onOpenLead(d.leadId)}
+                      className="bg-white rounded-xl border border-slate-200 p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-orange-200 transition">
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="font-bold text-xs text-[#050A1F] truncate">{d.name}</div>
+                        {d.saleType === 'cross' && <span className="text-[8px] font-bold bg-purple-100 text-purple-600 px-1 rounded shrink-0">CROSS</span>}
+                      </div>
+                      <div className="text-sm font-extrabold text-[#050A1F] mt-1">{fmtMoney(d)}</div>
+                      <div className="text-[10px] text-slate-400 mt-1 truncate">{d.leadName}{d.service ? ` · ${d.service}` : ''}</div>
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        {d.planType && d.planType !== 'one-time' && <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{d.planType}</span>}
+                        {pinfo && <span className="text-[9px] font-bold bg-green-50 text-green-600 px-1.5 py-0.5 rounded">💵 {pinfo}</span>}
+                        {d.expectedClose && <span className="text-[9px] text-slate-400">📅 {d.expectedClose}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {col.length === 0 && <div className="text-[11px] text-slate-300 text-center py-8">Drop deals here</div>}
               </div>
             </div>
           );

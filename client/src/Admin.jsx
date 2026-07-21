@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
+import { formatPhone } from './countries.js';
 
 /**
  * Qtonix Site Analysis — admin panel.
@@ -58,6 +59,19 @@ function AvatarPreview({ name, src, size = 56 }) {
   const initials = (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   if (src) return <img src={src} alt={name} className="rounded-full object-cover border border-slate-200" style={{ width: size, height: size }} />;
   return <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center" style={{ width: size, height: size, fontSize: size * 0.36 }}>{initials}</div>;
+}
+
+// India-locked phone input for staff (all agents/managers are in India). Shows
+// a fixed +91 chip and formats as 9812-345-678.
+function IndiaPhone({ value, onChange }) {
+  const local = String(value || '').replace(/^\+91\s*/, '');
+  return (
+    <div className="flex">
+      <span className="inline-flex items-center rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 px-2.5 text-sm font-bold text-slate-500">+91</span>
+      <input className={inputCls + ' rounded-l-none'} value={local} placeholder="9812-345-678"
+        onChange={(e) => onChange(formatPhone(e.target.value, 'India'))} onBlur={(e) => onChange(formatPhone(e.target.value, 'India'))} />
+    </div>
+  );
 }
 const input = inputCls;
 const Btn = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md', title }) => {
@@ -533,7 +547,7 @@ function OrgChart({ users, onReassign, onMoveManager }) {
 }
 
 function Users({ me, say }) {
-  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } } };
+  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } } };
   const [users, setUsers] = useState([]);
   const [f, setF] = useState(blank);
   const [show, setShow] = useState(false);
@@ -613,7 +627,7 @@ function Users({ me, say }) {
             <Field label="Name *"><input className={inputCls} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Nancy" /></Field>
             <Field label="Email *"><input className={inputCls} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="nancy@qtonix.com" /></Field>
             <Field label="Password *" hint="At least 8 characters"><input type="password" className={inputCls} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
-            <Field label="Phone" hint="Appears on their report covers"><input className={inputCls} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91-…" /></Field>
+            <Field label="Phone" hint="Appears on their report covers"><IndiaPhone value={f.phone} onChange={(v) => setF({ ...f, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="admin">Admin</option></select></Field>
             <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
@@ -645,7 +659,7 @@ function Users({ me, say }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
-            <Field label="Phone"><input className={inputCls} value={edit.phone || ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></Field>
+            <Field label="Phone"><IndiaPhone value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="admin">Admin</option></select></Field>
             <Field label="Team"><select className={inputCls} value={edit.team || 'Bhubaneswar'} onChange={(e) => setEdit({ ...edit, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>

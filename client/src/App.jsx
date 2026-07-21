@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
-import { CountryCombobox } from './Leads.jsx';
+import { CountryCombobox, PhoneField } from './Leads.jsx';
+import { formatPhone } from './countries.js';
 import Dashboard from './Dashboard.jsx';
 
 /**
@@ -395,7 +396,7 @@ function NewReport({ user, initialLeadId, onQueued, onBack }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer phone *</label>
-              <input value={form.customerPhone} onChange={(e) => set('customerPhone', e.target.value)} placeholder="+91-…"
+              <PhoneField value={form.customerPhone} country={form.customerCountry} onChange={(v) => set('customerPhone', v)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
             </div>
             <div>
@@ -405,7 +406,7 @@ function NewReport({ user, initialLeadId, onQueued, onBack }) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer country</label>
-              <CountryCombobox value={form.customerCountry} onChange={(v) => set('customerCountry', v)}
+              <CountryCombobox value={form.customerCountry} onChange={(v) => { set('customerCountry', v); if (form.customerPhone) set('customerPhone', formatPhone(form.customerPhone, v)); }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
             </div>
           </div>
