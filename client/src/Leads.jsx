@@ -1007,25 +1007,71 @@ function DealsTab({ lead, config, onChange }) {
 }
 
 function DealModal({ lead, config, deal, onClose, onSaved }) {
-  const [f, setF] = useState(deal || { name: '', stage: (config.dealStages && config.dealStages[0] && config.dealStages[0].id) || 'qualification', currency: (config.dealCurrencies && config.dealCurrencies[0]) || 'USD', amount: '', expectedClose: '', service: '', remark: '' });
+  // Auto deal name = "Customer Name + website" for new deals.
+  const autoName = `${fullName(lead)}${lead.website ? ' · ' + lead.website.replace(/^https?:\/\//, '') : ''}`;
+  const [f, setF] = useState(deal || {
+    name: autoName,
+    stage: (config.dealStages && config.dealStages[0] && config.dealStages[0].id) || 'qualification',
+    currency: (config.dealCurrencies && config.dealCurrencies[0]) || 'USD',
+    amount: '', expectedClose: '', service: '', remark: '',
+    planType: 'one-time', paymentStructure: 'full', installmentCount: 2,
+    installments: [],
+  });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
+
+  // Preview installment rows (client-side) so the agent sees the split. If the
+  // deal already has a saved schedule, edit those rows directly.
+  const existing = Array.isArray(f.installments) && f.installments.length ? f.installments : null;
+  const previewInstallments = () => {
+    const n = Math.max(1, Math.min(24, Number(f.installmentCount) || 1));
+    const total = Number(f.amount) || 0;
+    const per = Math.floor(total / n);
+    const start = f.expectedClose ? new Date(f.expectedClose) : new Date();
+    const rows = [];
+    let alloc = 0;
+    for (let i = 0; i < n; i++) {
+      const due = new Date(start); due.setMonth(due.getMonth() + i);
+      const amt = i === n - 1 ? total - alloc : per; alloc += amt;
+      rows.push({ id: `inst_new_${i}`, seq: i + 1, amount: amt, dueDate: due.toISOString().slice(0, 10), paid: false, paidDate: null });
+    }
+    return rows;
+  };
+  const rows = existing || (f.paymentStructure === 'installments' ? previewInstallments() : []);
+  const setRow = (i, k, v) => {
+    const next = rows.map((r, ri) => (ri === i ? { ...r, [k]: v } : r));
+    setF((s) => ({ ...s, installments: next }));
+  };
+
   const save = async () => {
-    if (!f.name.trim()) { alert('Deal name is required.'); return; }
+    if (!String(f.name).trim()) { alert('Deal name is required.'); return; }
     setBusy(true);
     try {
+      const payload = { ...f };
+      if (f.paymentStructure === 'installments') payload.installments = rows;
       const u = deal
-        ? await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify(f) })
-        : await api(`/leads/${lead._id}/deals`, { method: 'POST', body: JSON.stringify(f) });
+        ? await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : await api(`/leads/${lead._id}/deals`, { method: 'POST', body: JSON.stringify(payload) });
       onSaved(u);
     } catch (e) { alert(e.message); }
     setBusy(false);
   };
+
+  const markPaid = async (inst) => {
+    if (!deal) { alert('Save the deal first, then mark installments paid.'); return; }
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, { method: 'PATCH', body: JSON.stringify({ paid: !inst.paid }) });
+      const d = (u.deals || []).find((x) => x.id === deal.id);
+      if (d) setF((s) => ({ ...s, installments: d.installments }));
+      onSaved(u);
+    } catch (e) { alert(e.message); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-[#050A1F] mb-4">{deal ? 'Edit deal' : '💰 Add deal'}</h3>
         <div className="space-y-3">
           <div><label className={lab}>Deal name</label><input className={inp} value={f.name} onChange={(e) => set('name', e.target.value)} /></div>
@@ -1036,11 +1082,23 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
               {(config.servicesInterested || []).map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div>
-            <label className={lab}>Stage</label>
-            <select className={inp} value={f.stage} onChange={(e) => set('stage', e.target.value)}>
-              {(config.dealStages || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lab}>Plan type</label>
+              <select className={inp} value={f.planType} onChange={(e) => set('planType', e.target.value)}>
+                <option value="one-time">One-time (project)</option>
+                <option value="3-month">3-month plan</option>
+                <option value="6-month">6-month plan</option>
+                <option value="12-month">12-month plan</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label className={lab}>Stage</label>
+              <select className={inp} value={f.stage} onChange={(e) => set('stage', e.target.value)}>
+                {(config.dealStages || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1049,9 +1107,44 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
                 {(config.dealCurrencies || ['USD']).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div><label className={lab}>Amount</label><input type="number" className={inp} value={f.amount} onChange={(e) => set('amount', e.target.value)} /></div>
+            <div><label className={lab}>Total amount</label><input type="number" className={inp} value={f.amount} onChange={(e) => set('amount', e.target.value)} /></div>
           </div>
-          <div><label className={lab}>Expected closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+          <div><label className={lab}>Expected / actual closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+
+          {/* Payment structure */}
+          <div>
+            <label className={lab}>How is the customer paying?</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => set('paymentStructure', 'full')} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'full' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>Full payment</button>
+              <button type="button" onClick={() => set('paymentStructure', 'installments')} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'installments' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>In installments</button>
+            </div>
+          </div>
+
+          {f.paymentStructure === 'installments' && (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+              {!existing && (
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="text-[11px] font-bold text-slate-500">Number of installments</label>
+                  <input type="number" min="1" max="24" className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm" value={f.installmentCount} onChange={(e) => set('installmentCount', e.target.value)} />
+                </div>
+              )}
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Schedule (dates & amounts editable)</div>
+              <div className="space-y-1.5">
+                {rows.map((r, i) => (
+                  <div key={r.id} className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-slate-400 w-5">#{r.seq}</span>
+                    <input type="number" className="w-24 rounded border border-slate-200 px-2 py-1 text-xs" value={r.amount} onChange={(e) => setRow(i, 'amount', Number(e.target.value) || 0)} />
+                    <input type="date" className="flex-1 rounded border border-slate-200 px-2 py-1 text-xs" value={r.dueDate} onChange={(e) => setRow(i, 'dueDate', e.target.value)} />
+                    {deal ? (
+                      <button type="button" onClick={() => markPaid(r)} className={`rounded px-2 py-1 text-[10px] font-bold ${r.paid ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}`}>{r.paid ? '✓ Paid' : 'Mark paid'}</button>
+                    ) : <span className="text-[10px] text-slate-300 w-14 text-center">—</span>}
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-2">First installment is due on the closing date; the rest are spaced monthly. Adjust any date if the customer pays early or late.</div>
+            </div>
+          )}
+
           <div><label className={lab}>Remark</label><textarea rows={2} className={inp} value={f.remark} onChange={(e) => set('remark', e.target.value)} /></div>
         </div>
         <div className="flex justify-end gap-2 mt-5">
@@ -1103,9 +1196,9 @@ function ReportsTab({ lead, onChange }) {
 }
 
 // Top-level Leads view controller — switches between list / new / detail.
-export default function Leads({ user, initialView, initialUntouched }) {
+export default function Leads({ user, initialView, initialUntouched, initialLeadId, initialConvertedMonth }) {
   const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
-  const [activeId, setActiveId] = useState(null);
+  const [activeId, setActiveId] = useState(initialLeadId || null);
   const [untouched, setUntouched] = useState(initialUntouched || null);
   const openDetail = (id) => { setActiveId(id); setView('detail'); };
   const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
@@ -1120,7 +1213,7 @@ export default function Leads({ user, initialView, initialUntouched }) {
       )}
       {view === 'list' && <LeadsList user={user} untouchedFilter={untouched} onClearUntouched={() => setUntouched(null)} onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && <DealsPipeline user={user} onOpenLead={openDetail} />}
-      {view === 'converted' && <ConvertedLeads user={user} onOpen={openDetail} />}
+      {view === 'converted' && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
       {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView('list')} />}
       {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} onBack={() => setView('list')} />}
     </div>
@@ -1128,16 +1221,24 @@ export default function Leads({ user, initialView, initialUntouched }) {
 }
 
 // ---- Converted leads (managers/admins only) --------------------------------
-function ConvertedLeads({ user, onOpen }) {
+function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
+  const [monthOnly, setMonthOnly] = useState(!!thisMonthOnly);
   useEffect(() => {
     Promise.all([api('/leads/converted'), api('/leads/config')])
       .then(([r, cfg]) => { setItems(r.items || []); setConfig(cfg.config || {}); })
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
   }, []);
+
+  const inThisMonth = (l) => {
+    if (!l.convertedAt) return false;
+    const d = new Date(l.convertedAt), n = new Date();
+    return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
+  };
+  const shown = monthOnly ? items.filter(inThisMonth) : items;
 
   // Sum of closed-won deals per lead (display currency as-entered; USD sums are
   // computed on the dashboard where FX rates are applied).
@@ -1147,12 +1248,17 @@ function ConvertedLeads({ user, onOpen }) {
   if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
   return (
     <div>
-      <div className="mb-4">
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted leads</h1>
-        <div className="text-sm text-slate-400">{items.length} converted{user.role === 'manager' ? ' in your team' : ''}</div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted leads</h1>
+          <div className="text-sm text-slate-400">{shown.length} converted{monthOnly ? ' this month' : ''}{user.role === 'manager' ? ' in your team' : ''}</div>
+        </div>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+          <input type="checkbox" checked={monthOnly} onChange={(e) => setMonthOnly(e.target.checked)} /> This month only
+        </label>
       </div>
-      {items.length === 0 ? (
-        <div className="text-slate-300 text-sm py-12 text-center bg-white rounded-2xl border border-slate-100">No converted leads yet. A lead converts when one of its deals is marked Closed Won.</div>
+      {shown.length === 0 ? (
+        <div className="text-slate-300 text-sm py-12 text-center bg-white rounded-2xl border border-slate-100">No converted leads{monthOnly ? ' this month' : ' yet'}. A lead converts when one of its deals is marked Closed Won.</div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
           <table className="w-full text-sm">
@@ -1166,7 +1272,7 @@ function ConvertedLeads({ user, onOpen }) {
               </tr>
             </thead>
             <tbody>
-              {items.map((l) => (
+              {shown.map((l) => (
                 <tr key={l._id} onClick={() => onOpen(l._id)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
                   <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}</td>
                   <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>

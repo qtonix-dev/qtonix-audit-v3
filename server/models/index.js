@@ -112,6 +112,9 @@ const User = sequelize.define(
     active: { type: DataTypes.BOOLEAN, defaultValue: true },
     reportsRun: { type: DataTypes.INTEGER, defaultValue: 0 },
     lastLogin: { type: DataTypes.DATE },
+    // Small profile photo as a data URL (base64). Kept in the DB so it survives
+    // Railway's ephemeral filesystem. Shown on the leaderboard.
+    avatar: { type: DataTypes.TEXT, allowNull: true },
   },
   { tableName: 'users', indexes: [{ fields: ['role'] }] }
 );
@@ -244,6 +247,8 @@ const Lead = sequelize.define(
 
     lastActivityAt: { type: DataTypes.DATE },
     convertedAt: { type: DataTypes.DATE },
+    // Set whenever ownership changes to a (new) user — powers "assigned today".
+    assignedAt: { type: DataTypes.DATE },
     // If this lead originated from a migrated report, keep the link.
     sourceReportId: { type: DataTypes.INTEGER },
   },

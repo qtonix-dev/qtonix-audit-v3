@@ -27,6 +27,38 @@ const api = async (path, opts = {}) => {
 
 // ---- UI atoms (mirror the sandbox) ----
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent';
+
+// Read an image file and downscale to a small square JPEG data URL (so avatars
+// stay tiny in the DB). Returns a base64 data URL string.
+function fileToAvatar(file, size = 128) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        // Cover-crop to a centered square.
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width - min) / 2, sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Small avatar preview with initials fallback.
+function AvatarPreview({ name, src, size = 56 }) {
+  const initials = (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  if (src) return <img src={src} alt={name} className="rounded-full object-cover border border-slate-200" style={{ width: size, height: size }} />;
+  return <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center" style={{ width: size, height: size, fontSize: size * 0.36 }}>{initials}</div>;
+}
 const input = inputCls;
 const Btn = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md', title }) => {
   const sz = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-5 py-2.5 text-sm';
@@ -545,7 +577,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, phone: edit.phone, designation: edit.designation, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -596,6 +628,21 @@ function Users({ me, say }) {
       {edit && (
         <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: C.blue }}>
           <h3 className="font-bold text-sm mb-4" style={{ color: C.navy }}>Edit {edit.name}</h3>
+          <div className="flex items-center gap-4 mb-4">
+            <AvatarPreview name={edit.name} src={edit.avatar} size={56} />
+            <div>
+              <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 cursor-pointer hover:bg-slate-50">
+                Upload photo
+                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                  const file = e.target.files && e.target.files[0];
+                  if (!file) return;
+                  try { const dataUrl = await fileToAvatar(file); setEdit({ ...edit, avatar: dataUrl }); } catch { setErr('Could not read that image.'); }
+                }} />
+              </label>
+              {edit.avatar && <button onClick={() => setEdit({ ...edit, avatar: null })} className="ml-2 text-xs font-bold text-red-500">Remove</button>}
+              <div className="text-[10px] text-slate-400 mt-1">Shown on the sales leaderboard. Square photos look best.</div>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="Phone"><input className={inputCls} value={edit.phone || ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></Field>

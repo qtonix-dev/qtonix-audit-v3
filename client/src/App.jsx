@@ -737,8 +737,10 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-6 py-8">
         {view === 'dashboard' && <Dashboard user={user}
           onGoLeads={() => { setLeadsEntry({ view: 'list' }); setView('leads'); }}
-          onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }} />}
-        {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} />}
+          onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }}
+          onViewConverted={() => { setLeadsEntry({ view: 'converted', convertedMonth: true }); setView('leads'); }}
+          onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
+        {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
         )}

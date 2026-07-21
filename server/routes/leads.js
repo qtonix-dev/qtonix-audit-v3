@@ -53,6 +53,34 @@ function pushTimeline(lead, type, text, author) {
   lead.lastActivityAt = new Date();
 }
 
+// Build an installment schedule for a deal. `count` installments split the
+// total amount; the first is due on `startDate` (the win date), each subsequent
+// one +1 month. Amounts distribute evenly with any rounding remainder on the
+// last. Dates and amounts are overridable later by admin/manager.
+function buildInstallments(total, count, startDate) {
+  const n = Math.max(1, Math.min(36, Number(count) || 1));
+  const start = startDate ? new Date(startDate) : new Date();
+  const per = Math.floor((Number(total) || 0) / n);
+  const out = [];
+  let allocated = 0;
+  for (let i = 0; i < n; i++) {
+    const due = new Date(start);
+    due.setMonth(due.getMonth() + i);
+    const amt = i === n - 1 ? (Number(total) || 0) - allocated : per;
+    allocated += amt;
+    out.push({
+      id: `inst_${Date.now()}_${i}`,
+      seq: i + 1,
+      amount: amt,
+      dueDate: due.toISOString().slice(0, 10),
+      paid: false,
+      paidDate: null,
+    });
+  }
+  return out;
+}
+
+
 /** GET /api/leads — list leads visible to the current user (with search/filter). */
 router.get('/', requireAuth, async (req, res, next) => {
   try {
@@ -170,10 +198,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const { User, Settings } = require('../models');
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
     const fx = (settings && settings.crmConfig && settings.crmConfig.fxRates) || { USD: 1 };
-    const toUsd = (amount, currency) => {
-      const rate = fx[currency] || 1;
-      return rate ? Number(amount || 0) / rate : Number(amount || 0);
-    };
+    const toUsd = (amount, currency) => { const rate = fx[currency] || 1; return rate ? Number(amount || 0) / rate : Number(amount || 0); };
 
     const where = await visibilityWhere(req.user);
     const leads = await Lead.findAll({ where });
@@ -185,39 +210,59 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
     let salesThisMonthUsd = 0, convertedThisMonth = 0;
-    // Per-owner tallies for the leaderboard.
+    let newSalesUsd = 0, crossSalesUsd = 0, newSalesCount = 0, crossSalesCount = 0;
     const byOwner = {};
-    const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, conversions: 0, leads: 0, transfersToday: 0 });
+    const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0 });
+    const genTodayList = [], assignedTodayList = [], untouchedList = [];
+
+    // Per shift/branch tally (by closed-won collected USD this month).
+    const byShift = {}; // key `${team}·${shift}`
 
     for (const l of leads) {
       const created = l.createdAt ? new Date(l.createdAt) : null;
       ensure(l.ownerId, l.ownerName);
       byOwner[l.ownerId].leads++;
-      if (l.status !== 'converted') {
-        totalLeads++;
-        if (created && created >= startOfDay) generatedToday++;
-        const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
-        if (last && last < in3d) untouched++;
-      }
-      if (created && created >= startOfDay) assignedToday++;
 
-      // Sales from won deals this month.
-      for (const d of (l.deals || [])) {
-        if (d.stage === 'closed_won') {
-          const when = l.convertedAt ? new Date(l.convertedAt) : (d.createdAt ? new Date(d.createdAt) : null);
-          if (when && when >= startOfMonth) {
-            const usd = toUsd(d.amount, d.currency);
+      const isConverted = l.status === 'converted';
+      if (!isConverted) {
+        totalLeads++;
+        if (created && created >= startOfDay) { generatedToday++; if (genTodayList.length < 8) genTodayList.push(leadBrief(l)); }
+        const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
+        if (last && last < in3d) { untouched++; if (untouchedList.length < 8) untouchedList.push(leadBrief(l)); }
+      }
+      const assignedAt = l.assignedAt ? new Date(l.assignedAt) : created;
+      if (assignedAt && assignedAt >= startOfDay) { assignedToday++; if (assignedTodayList.length < 8) assignedTodayList.push(leadBrief(l)); }
+
+      if (isConverted && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) { convertedThisMonth++; byOwner[l.ownerId].conversions++; }
+
+      // Sales = installments actually collected (paid) this month. First paid
+      // installment of a lead's first deal = new sale; everything else = cross.
+      const wonDeals = (l.deals || []).filter((d) => d.stage === 'closed_won');
+      // Order deals by wonAt/createdAt so "first deal" is stable.
+      wonDeals.sort((a, b) => new Date(a.wonAt || a.createdAt || 0) - new Date(b.wonAt || b.createdAt || 0));
+      let leadHasCountedNew = false;
+      wonDeals.forEach((d, di) => {
+        const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        insts.forEach((it) => {
+          if (!it.paid || !it.paidDate) return;
+          const pd = new Date(it.paidDate);
+          const usd = toUsd(it.amount, d.currency);
+          // classify new vs cross: the very first paid installment of the first
+          // deal is a new sale; all others are cross sales.
+          const isNew = di === 0 && it.seq === 1 && !leadHasCountedNew;
+          if (isNew) leadHasCountedNew = true;
+          if (pd >= startOfMonth) {
             salesThisMonthUsd += usd;
             byOwner[l.ownerId].salesUsd += usd;
+            if (isNew) { newSalesUsd += usd; newSalesCount++; byOwner[l.ownerId].newSalesUsd += usd; }
+            else { crossSalesUsd += usd; crossSalesCount++; byOwner[l.ownerId].crossSalesUsd += usd; }
+            const key = `${l.ownerTeam}·${l.ownerShift}`;
+            byShift[key] = byShift[key] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0 };
+            byShift[key].salesUsd += usd;
           }
-        }
-      }
-      if (l.status === 'converted' && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) {
-        convertedThisMonth++;
-        byOwner[l.ownerId].conversions++;
-      }
+        });
+      });
 
-      // Pre-sales daily transfers: count call activities marked done today.
       for (const a of (l.activities || [])) {
         if (a.kind === 'call' && a.status === 'done') {
           const t = a.date ? new Date(a.date) : (a.createdAt ? new Date(a.createdAt) : null);
@@ -226,23 +271,17 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
     }
 
-    // Attach each owner's targets (from the users table) for progress %.
-    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId'] });
-    const targetsById = {};
-    owners.forEach((u) => { targetsById[u.id] = u.targets || {}; });
+    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId', 'avatar'] });
+    const targetsById = {}, avatarById = {}, nameById = {};
+    owners.forEach((u) => { targetsById[u.id] = u.targets || {}; avatarById[u.id] = u.avatar || null; nameById[u.id] = u.name; });
 
-    // Seed the leaderboard with agents who have a sales target but no leads yet,
-    // so everyone competing is visible (at 0) — but only within the viewer's
-    // scope: admin sees all agents; a manager sees their own agents.
     const inScope = (u) => {
       if (req.user.role === 'admin') return true;
       if (req.user.role === 'manager') return u.managerId === req.user.id || u.id === req.user.id;
       return u.id === req.user.id;
     };
     owners.forEach((u) => {
-      if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled && inScope(u)) {
-        ensure(u.id, u.name);
-      }
+      if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled && inScope(u)) ensure(u.id, u.name);
     });
 
     const leaderboard = Object.values(byOwner).map((o) => {
@@ -252,100 +291,74 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       const pct = salesTarget > 0 ? Math.min(100, Math.round((o.salesUsd / salesTarget) * 100)) : null;
       const remaining = salesTarget > 0 ? Math.max(0, salesTarget - o.salesUsd) : 0;
       return {
-        ...o, salesTarget, pct, remaining,
-        hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
+        ...o, avatar: avatarById[o.ownerId] || null,
+        salesTarget, pct, remaining, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
         transferDailyTarget: transferTg ? Number(transferTg.daily || 0) : 0,
-        transferMonthlyTarget: transferTg ? Number(transferTg.monthly || 0) : 0,
       };
     }).sort((a, b) => b.salesUsd - a.salesUsd);
 
-    // Transfer leaderboard (pre-sales): who has transferred the most calls today.
     const transferBoard = leaderboard
       .filter((o) => o.transferDailyTarget > 0 || o.transfersToday > 0)
-      .map((o) => ({
-        ownerId: o.ownerId, name: o.name,
-        transfersToday: o.transfersToday,
-        dailyTarget: o.transferDailyTarget,
-        pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null,
-        remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0,
-      }))
+      .map((o) => ({ ownerId: o.ownerId, name: o.name, avatar: o.avatar, transfersToday: o.transfersToday, dailyTarget: o.transferDailyTarget, pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null, remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0 }))
       .sort((a, b) => b.transfersToday - a.transfersToday);
 
-    // Company target = sum of all managers' team targets (admin view). Effective
-    // team target is the override if set, else the auto-sum of that manager's
-    // agents' monthly sales targets.
-    const allUsers = owners;
+    // Company target = sum of managers' effective team targets.
     const agentSalesByMgr = {};
-    allUsers.forEach((u) => {
-      if (u.role === 'agent' && u.managerId && u.targets && u.targets.sales && u.targets.sales.enabled) {
-        agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0);
-      }
-    });
+    owners.forEach((u) => { if (u.role === 'agent' && u.managerId && u.targets && u.targets.sales && u.targets.sales.enabled) agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0); });
     let companyTarget = 0;
-    allUsers.forEach((u) => {
-      if (u.role === 'manager') {
-        const t = u.targets && u.targets.team;
-        const eff = (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0);
-        companyTarget += eff;
-      }
-    });
-    // If no managers/team targets configured, fall back to sum of agent sales targets.
-    if (companyTarget === 0) {
-      allUsers.forEach((u) => {
-        if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled) companyTarget += Number(u.targets.sales.monthly || 0);
-      });
-    }
+    owners.forEach((u) => { if (u.role === 'manager') { const t = u.targets && u.targets.team; companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0); } });
+    if (companyTarget === 0) owners.forEach((u) => { if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled) companyTarget += Number(u.targets.sales.monthly || 0); });
 
-    // 6-month sales trend (USD), across the viewer's scope, by conversion month.
+    // 6-month trend (collected USD by paid date) within scope.
     const trend = [];
     for (let i = 5; i >= 0; i--) {
       const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      let sum = 0, conv = 0;
+      let sum = 0;
       for (const l of leads) {
         for (const d of (l.deals || [])) {
-          if (d.stage === 'closed_won') {
-            const when = l.convertedAt ? new Date(l.convertedAt) : (d.createdAt ? new Date(d.createdAt) : null);
-            if (when && when >= mStart && when < mEnd) sum += toUsd(d.amount, d.currency);
+          if (d.stage !== 'closed_won') continue;
+          for (const it of (d.installments || [])) {
+            if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= mStart && pd < mEnd) sum += toUsd(it.amount, d.currency); }
           }
         }
-        if (l.status === 'converted' && l.convertedAt) {
-          const c = new Date(l.convertedAt);
-          if (c >= mStart && c < mEnd) conv++;
-        }
       }
-      trend.push({
-        month: mStart.toLocaleString('en-US', { month: 'short' }),
-        year: mStart.getFullYear(),
-        salesUsd: Math.round(sum),
-        conversions: conv,
-        pct: companyTarget > 0 ? Math.round((sum / companyTarget) * 100) : null,
-      });
+      trend.push({ month: mStart.toLocaleString('en-US', { month: 'short' }), year: mStart.getFullYear(), salesUsd: Math.round(sum), pct: companyTarget > 0 ? Math.round((sum / companyTarget) * 100) : null });
     }
 
-    // Current user's personal progress (for agent/manager self view).
+    // Top shift/branch this month.
+    const shiftBoard = Object.values(byShift).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) })).sort((a, b) => b.salesUsd - a.salesUsd);
+    const topShift = shiftBoard[0] || null;
+
     const meRow = leaderboard.find((o) => o.ownerId === req.user.id) || null;
-    const myTargets = targetsById[req.user.id] || {};
 
     res.json({
       role: req.user.role,
       metrics: {
         totalLeads, generatedToday, assignedToday, untouched,
         salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
+        newSalesUsd: Math.round(newSalesUsd), crossSalesUsd: Math.round(crossSalesUsd),
+        newSalesCount, crossSalesCount,
         companyTarget: Math.round(companyTarget),
         companyPct: companyTarget > 0 ? Math.round((salesThisMonthUsd / companyTarget) * 100) : null,
+        generatedTarget: targetForToday(targetsById[req.user.id], 'transfer'),
       },
-      me: meRow ? {
-        salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining,
-        transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget,
-      } : null,
-      myTargets,
-      leaderboard,
-      transferBoard,
-      trend,
+      lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList },
+      me: meRow ? { salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining, transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget, newSalesUsd: meRow.newSalesUsd, crossSalesUsd: meRow.crossSalesUsd } : null,
+      leaderboard, transferBoard, trend, shiftBoard, topShift,
     });
   } catch (e) { next(e); }
 });
+
+// Small helper: a compact lead descriptor for dashboard mini-tables.
+function leadBrief(l) {
+  return { _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)', website: l.website || '', ownerName: l.ownerName, status: l.status, lastActivityAt: l.lastActivityAt };
+}
+function targetForToday(targets, kind) {
+  if (!targets) return 0;
+  if (kind === 'transfer' && targets.transfer && targets.transfer.enabled) return Number(targets.transfer.daily || 0);
+  return 0;
+}
 
 router.get('/converted', requireAuth, async (req, res, next) => {
   try {
@@ -456,6 +469,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       timezone: String(b.timezone || '').slice(0, 80),
       additionalInfo: String(b.additionalInfo || '').slice(0, 10000),
       lastActivityAt: new Date(),
+      assignedAt: new Date(),
       timeline: [{ type: 'created', text: 'Lead created', time: new Date().toISOString(), author: req.user.name }],
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.create', target: lead.website || lead.email, ip: req.ip });
@@ -478,6 +492,7 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
       lead.ownerId = owner.id; lead.ownerName = owner.name;
       lead.ownerTeam = owner.team || lead.ownerTeam; lead.ownerShift = owner.shift || lead.ownerShift;
       pushTimeline(lead, 'owner', `Owner changed to ${owner.name}`, author);
+      lead.assignedAt = new Date();
     }
     if (b.status !== undefined && b.status !== lead.status) {
       pushTimeline(lead, 'status', `Status changed to "${b.status}"`, author);
@@ -617,21 +632,57 @@ router.post('/:id/deals', requireAuth, async (req, res, next) => {
     const b = req.body || {};
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Deal name is required.' });
     const list = Array.isArray(lead.deals) ? lead.deals : [];
+
+    // New vs Cross sale: if the lead already has any closed-won deal (i.e. it's
+    // already a won client), this new deal is a cross-sale; otherwise it's a
+    // new sale. (Installment-level attribution is resolved when each is paid.)
+    const alreadyWon = list.some((d) => d.stage === 'closed_won') || lead.status === 'converted';
+    const saleType = alreadyWon ? 'cross' : 'new';
+
+    const amount = Number(b.amount) || 0;
+    const stage = String(b.stage || 'qualification').slice(0, 40);
+    const winDate = stage === 'closed_won' ? new Date() : null;
+
+    // Payment plan. structure = 'full' | 'installments'. When installments,
+    // build the schedule (overridable client rows can also be passed directly).
+    const paymentStructure = b.paymentStructure === 'installments' ? 'installments' : 'full';
+    let installments = [];
+    if (paymentStructure === 'installments') {
+      if (Array.isArray(b.installments) && b.installments.length) {
+        installments = b.installments.map((it, i) => ({
+          id: it.id || `inst_${Date.now()}_${i}`, seq: i + 1,
+          amount: Number(it.amount) || 0,
+          dueDate: it.dueDate || '', paid: !!it.paid, paidDate: it.paidDate || null,
+        }));
+      } else {
+        installments = buildInstallments(amount, b.installmentCount || 1, winDate || b.expectedClose || new Date());
+      }
+    } else {
+      // Full payment = a single installment equal to the amount, due at win.
+      installments = [{ id: `inst_${Date.now()}_0`, seq: 1, amount, dueDate: (winDate ? winDate.toISOString().slice(0, 10) : (b.expectedClose || '')), paid: false, paidDate: null }];
+    }
+
     const deal = {
       id: `d_${Date.now()}`,
       name: String(b.name).slice(0, 200),
-      stage: String(b.stage || 'qualification').slice(0, 40),
+      stage,
       currency: String(b.currency || 'USD').slice(0, 8),
-      amount: Number(b.amount) || 0,
+      amount,
       expectedClose: b.expectedClose || '',
       service: String(b.service || '').slice(0, 120),
       remark: String(b.remark || '').slice(0, 2000),
+      saleType,
+      planType: String(b.planType || 'one-time').slice(0, 40), // one-time | 3-month | 6-month | 12-month | custom
+      planDuration: String(b.planDuration || '').slice(0, 40),
+      paymentStructure,
+      installments,
+      wonAt: winDate ? winDate.toISOString() : null,
       createdBy: req.user.name,
       createdAt: new Date().toISOString(),
     };
     list.push(deal);
     lead.deals = list; lead.changed('deals', true);
-    pushTimeline(lead, 'deal', `Deal added: ${deal.name} (${deal.currency} ${deal.amount})`, req.user.name);
+    pushTimeline(lead, 'deal', `Deal added: ${deal.name} (${deal.currency} ${deal.amount}, ${saleType === 'new' ? 'new sale' : 'cross-sale'})`, req.user.name);
     if (deal.stage === 'closed_won' && lead.status !== 'converted') {
       lead.status = 'converted';
       lead.convertedAt = new Date();
@@ -652,18 +703,62 @@ router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
     if (!deal) return res.status(404).json({ error: 'Deal not found.' });
     const b = req.body || {};
     const before = deal.stage;
-    for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
+    for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark', 'planType', 'planDuration']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
     if (b.amount !== undefined) deal.amount = Number(b.amount) || 0;
+
+    // Replace installment schedule if provided (edits to amounts/dates/paid).
+    if (Array.isArray(b.installments)) {
+      deal.installments = b.installments.map((it, i) => ({
+        id: it.id || `inst_${Date.now()}_${i}`, seq: i + 1,
+        amount: Number(it.amount) || 0,
+        dueDate: it.dueDate || '', paid: !!it.paid,
+        paidDate: it.paid ? (it.paidDate || new Date().toISOString().slice(0, 10)) : null,
+      }));
+      deal.paymentStructure = deal.installments.length > 1 ? 'installments' : (deal.paymentStructure || 'full');
+    }
+
     if (b.stage && b.stage !== before) {
       pushTimeline(lead, 'deal', `Deal "${deal.name}" moved to ${deal.stage}`, req.user.name);
-      // Closing a deal as won converts the lead. It then leaves the main list
-      // and appears on the Converted Leads page.
-      if (b.stage === 'closed_won' && lead.status !== 'converted') {
-        lead.status = 'converted';
-        lead.convertedAt = new Date();
-        pushTimeline(lead, 'status', 'Lead converted (deal closed won)', req.user.name);
+      if (b.stage === 'closed_won') {
+        // Stamp win date; seed installment due-dates from it if not already set.
+        deal.wonAt = deal.wonAt || new Date().toISOString();
+        if (Array.isArray(deal.installments) && deal.installments.length && !deal.installments[0].dueDate) {
+          const seeded = buildInstallments(deal.amount, deal.installments.length, deal.wonAt);
+          deal.installments = deal.installments.map((it, i) => ({ ...it, dueDate: it.dueDate || seeded[i].dueDate, amount: it.amount || seeded[i].amount }));
+        }
+        if (lead.status !== 'converted') {
+          lead.status = 'converted';
+          lead.convertedAt = new Date();
+          pushTimeline(lead, 'status', 'Lead converted (deal closed won)', req.user.name);
+        }
       }
     }
+    lead.deals = list; lead.changed('deals', true);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Mark a single installment paid/unpaid (or override its date/amount). The
+// paid date is what the dashboard counts as collected sales.
+router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    const list = Array.isArray(lead.deals) ? lead.deals : [];
+    const deal = list.find((d) => d.id === req.params.dealId);
+    if (!deal) return res.status(404).json({ error: 'Deal not found.' });
+    const inst = (deal.installments || []).find((it) => it.id === req.params.instId);
+    if (!inst) return res.status(404).json({ error: 'Installment not found.' });
+    const b = req.body || {};
+    if (b.paid !== undefined) {
+      inst.paid = !!b.paid;
+      inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
+      if (b.paid) pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount})`, req.user.name);
+    }
+    if (b.dueDate !== undefined) inst.dueDate = b.dueDate;
+    if (b.amount !== undefined) inst.amount = Number(b.amount) || 0;
     lead.deals = list; lead.changed('deals', true);
     await lead.save();
     res.json(lead.toJSON());

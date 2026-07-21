@@ -200,7 +200,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -229,6 +229,12 @@ router.put('/users/:id', async (req, res, next) => {
     }
     if (aliases !== undefined) user.aliases = Array.isArray(aliases) ? aliases : String(aliases).split(',').map((a) => a.trim()).filter(Boolean);
     if (active !== undefined) user.active = !!active;
+    // Avatar as a data URL (base64). Guard size (~200KB of base64) to keep the
+    // row small; the client downscales before upload.
+    if (avatar !== undefined) {
+      if (avatar && String(avatar).length > 300000) return res.status(400).json({ error: 'Image too large — please use a smaller photo.' });
+      user.avatar = avatar || null;
+    }
     if (password) {
       if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
       user.passwordHash = await bcrypt.hash(password, 12);
