@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
 import { CountryCombobox } from './Leads.jsx';
+import Dashboard from './Dashboard.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -647,8 +648,9 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       if (p.get('leadRun')) return 'new';
-      return p.get('q') ? 'list' : 'new';
-    } catch { return 'new'; }
+      if (p.get('q')) return 'list';
+      return 'dashboard';
+    } catch { return 'dashboard'; }
   });
   const [leadRunId] = useState(() => {
     try { return new URLSearchParams(window.location.search).get('leadRun') || null; }
@@ -657,6 +659,7 @@ export default function App() {
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
   const [dueCount, setDueCount] = useState(0);
+  const [leadsEntry, setLeadsEntry] = useState({ view: 'list' });
 
   useEffect(() => {
     if (!user) return;
@@ -685,6 +688,7 @@ export default function App() {
   const isAdmin = user.role === 'admin';
 
   const nav = [
+    { id: 'dashboard', label: 'Dashboard' },
     { id: 'leads', label: 'Leads' },
     { id: 'new', label: 'New report' },
     { id: 'list', label: isAdmin ? 'All reports' : 'My reports' },
@@ -731,7 +735,10 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {view === 'leads' && <Leads user={user} />}
+        {view === 'dashboard' && <Dashboard user={user}
+          onGoLeads={() => { setLeadsEntry({ view: 'list' }); setView('leads'); }}
+          onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }} />}
+        {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
         )}

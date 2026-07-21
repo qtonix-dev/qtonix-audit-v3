@@ -160,6 +160,109 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
 /** GET /api/leads/converted — leads with status 'converted'. Managers and
     admins only. Manager sees conversions within their scope; admin sees all.
     Declared before /:id so "converted" isn't captured as an id. */
+// ---------------------------------------------------------------------------
+// GET /api/leads/dashboard — metrics + leaderboard for the current user's
+// visibility scope. Sales are summed from Closed Won deals converted to USD via
+// admin-maintained FX rates, within the current calendar month.
+// ---------------------------------------------------------------------------
+router.get('/dashboard', requireAuth, async (req, res, next) => {
+  try {
+    const { User, Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const fx = (settings && settings.crmConfig && settings.crmConfig.fxRates) || { USD: 1 };
+    const toUsd = (amount, currency) => {
+      const rate = fx[currency] || 1;
+      return rate ? Number(amount || 0) / rate : Number(amount || 0);
+    };
+
+    const where = await visibilityWhere(req.user);
+    const leads = await Lead.findAll({ where });
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const in3d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
+    let salesThisMonthUsd = 0, convertedThisMonth = 0;
+    // Per-owner tallies for the leaderboard.
+    const byOwner = {};
+    const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, conversions: 0, leads: 0, transfersToday: 0 });
+
+    for (const l of leads) {
+      const created = l.createdAt ? new Date(l.createdAt) : null;
+      ensure(l.ownerId, l.ownerName);
+      byOwner[l.ownerId].leads++;
+      if (l.status !== 'converted') {
+        totalLeads++;
+        if (created && created >= startOfDay) generatedToday++;
+        const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
+        if (last && last < in3d) untouched++;
+      }
+      if (created && created >= startOfDay) assignedToday++;
+
+      // Sales from won deals this month.
+      for (const d of (l.deals || [])) {
+        if (d.stage === 'closed_won') {
+          const when = l.convertedAt ? new Date(l.convertedAt) : (d.createdAt ? new Date(d.createdAt) : null);
+          if (when && when >= startOfMonth) {
+            const usd = toUsd(d.amount, d.currency);
+            salesThisMonthUsd += usd;
+            byOwner[l.ownerId].salesUsd += usd;
+          }
+        }
+      }
+      if (l.status === 'converted' && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) {
+        convertedThisMonth++;
+        byOwner[l.ownerId].conversions++;
+      }
+
+      // Pre-sales daily transfers: count call activities marked done today.
+      for (const a of (l.activities || [])) {
+        if (a.kind === 'call' && a.status === 'done') {
+          const t = a.date ? new Date(a.date) : (a.createdAt ? new Date(a.createdAt) : null);
+          if (t && t >= startOfDay) byOwner[l.ownerId].transfersToday++;
+        }
+      }
+    }
+
+    // Attach each owner's targets (from the users table) for progress %.
+    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId'] });
+    const targetsById = {};
+    owners.forEach((u) => { targetsById[u.id] = u.targets || {}; });
+
+    // Seed the leaderboard with agents who have a sales target but no leads yet,
+    // so everyone competing is visible (at 0) — but only within the viewer's
+    // scope: admin sees all agents; a manager sees their own agents.
+    const inScope = (u) => {
+      if (req.user.role === 'admin') return true;
+      if (req.user.role === 'manager') return u.managerId === req.user.id || u.id === req.user.id;
+      return u.id === req.user.id;
+    };
+    owners.forEach((u) => {
+      if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled && inScope(u)) {
+        ensure(u.id, u.name);
+      }
+    });
+
+    const leaderboard = Object.values(byOwner).map((o) => {
+      const tg = targetsById[o.ownerId] || {};
+      const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
+      const pct = salesTarget > 0 ? Math.min(100, Math.round((o.salesUsd / salesTarget) * 100)) : null;
+      const remaining = salesTarget > 0 ? Math.max(0, salesTarget - o.salesUsd) : 0;
+      return { ...o, salesTarget, pct, remaining, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget };
+    }).sort((a, b) => b.salesUsd - a.salesUsd);
+
+    res.json({
+      metrics: {
+        totalLeads, generatedToday, assignedToday, untouched,
+        salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
+      },
+      leaderboard,
+    });
+  } catch (e) { next(e); }
+});
+
 router.get('/converted', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'manager') {

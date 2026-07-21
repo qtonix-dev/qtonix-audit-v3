@@ -279,13 +279,20 @@ const SHIFTS = ['Morning', 'Night'];
 
 // Job type + reporting manager + targets — shared by create and edit forms.
 // `state` is the form object (f or edit); `patch` applies a partial update.
-function TargetsAndReporting({ state, patch, managers }) {
+function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
   const role = state.role;
   const t = state.targets || { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } };
   const setT = (next) => patch({ targets: { ...t, ...next } });
   const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 
   if (role === 'admin') return null;
+
+  // For a manager: the agents currently reporting to them and their targets.
+  const myId = state.id || state._id;
+  const teamAgents = role === 'manager' && myId
+    ? allUsers.filter((u) => u.role === 'agent' && u.active !== false && u.managerId === myId)
+    : [];
+  const teamSum = teamAgents.reduce((s, a) => s + Number((a.targets && a.targets.sales && a.targets.sales.monthly) || 0), 0);
 
   return (
     <div className="col-span-2 rounded-lg bg-slate-50 border border-slate-100 p-4 space-y-4">
@@ -306,13 +313,46 @@ function TargetsAndReporting({ state, patch, managers }) {
         </div>
       )}
 
-      {/* Manager team target */}
+      {/* Manager team target — auto-summed from team members' monthly sales
+          targets, with a manual override. */}
       {role === 'manager' && (
-        <label className="flex items-center gap-3 text-sm">
-          <input type="checkbox" checked={!!t.team.enabled} onChange={(e) => setT({ team: { ...t.team, enabled: e.target.checked } })} />
-          <span className="font-bold text-slate-700">Monthly team sales target (USD)</span>
-          {t.team.enabled && <input type="number" min="0" className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm" value={t.team.monthly || ''} onChange={(e) => setT({ team: { ...t.team, monthly: Number(e.target.value) || 0 } })} />}
-        </label>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-slate-700 text-sm">Monthly team sales target (USD)</span>
+            <span className="text-[11px] text-slate-400">Auto-sum of team: <b className="text-slate-600">${teamSum.toLocaleString()}</b></span>
+          </div>
+          {teamAgents.length > 0 ? (
+            <div className="rounded-lg border border-slate-100 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-slate-100 text-slate-400 text-left"><th className="px-3 py-1.5">Agent</th><th className="px-3 py-1.5">Type</th><th className="px-3 py-1.5">Daily transfers</th><th className="px-3 py-1.5">Monthly sales (USD)</th></tr></thead>
+                <tbody>
+                  {teamAgents.map((a) => (
+                    <tr key={a.id || a._id} className="border-t border-slate-100">
+                      <td className="px-3 py-1.5 font-semibold text-slate-700">{a.name}</td>
+                      <td className="px-3 py-1.5 text-slate-500">{a.jobType === 'presales' ? 'Pre-Sales' : 'BDE'}</td>
+                      <td className="px-3 py-1.5 text-slate-500">{(a.targets && a.targets.transfer && a.targets.transfer.enabled) ? a.targets.transfer.daily : '—'}</td>
+                      <td className="px-3 py-1.5 text-slate-500">${Number((a.targets && a.targets.sales && a.targets.sales.monthly) || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-slate-200 bg-slate-50 font-bold">
+                    <td className="px-3 py-1.5" colSpan={3}>Team total</td>
+                    <td className="px-3 py-1.5">${teamSum.toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : <div className="text-[11px] text-slate-300 italic">No agents report to this manager yet.</div>}
+
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!t.team.override} onChange={(e) => setT({ team: { ...t.team, enabled: true, override: e.target.checked, monthly: e.target.checked ? (t.team.monthly || teamSum) : teamSum } })} />
+            <span className="text-slate-600">Manually override the team target</span>
+            <input type="number" min="0" disabled={!t.team.override}
+              className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-400"
+              value={t.team.override ? (t.team.monthly || '') : teamSum}
+              onChange={(e) => setT({ team: { ...t.team, enabled: true, monthly: Number(e.target.value) || 0 } })} />
+          </label>
+          <p className="text-[11px] text-slate-400">Without an override, the team target auto-updates as agents join, leave, or change their sales targets.</p>
+        </div>
       )}
 
       {/* Agent targets: Transfer and/or Sales */}
@@ -350,83 +390,112 @@ function TargetsAndReporting({ state, patch, managers }) {
   );
 }
 
-// Org chart: Branch(Team) → Shift → Manager → Agents. Drag an agent card onto
-// a manager to reassign them (inherits that manager's team+shift).
-function OrgChart({ users, onReassign }) {
-  const [dragUser, setDragUser] = useState(null);
-  const managers = users.filter((u) => u.role === 'manager' && u.active !== false);
-  const admins = users.filter((u) => u.role === 'admin');
-  const agents = users.filter((u) => u.role === 'agent' && u.active !== false);
-  const teams = Array.from(new Set(managers.map((m) => m.team))).sort();
+// Org chart: role tiers (Admin → Managers → Agents) shown at the top, then a
+// per-branch / per-shift breakdown. Agents drag onto a manager to reassign;
+// managers drag onto a branch+shift to move. Uses dataTransfer for reliable
+// HTML5 drag-and-drop.
+function OrgChart({ users, onReassign, onMoveManager }) {
+  const [drag, setDrag] = useState(null); // { kind:'agent'|'manager', user }
+  const active = (u) => u.active !== false;
+  const admins = users.filter((u) => u.role === 'admin' && active(u));
+  const managers = users.filter((u) => u.role === 'manager' && active(u));
+  const agents = users.filter((u) => u.role === 'agent' && active(u));
+  const teams = Array.from(new Set([...managers.map((m) => m.team), 'Bhubaneswar', 'Kolkata'])).filter(Boolean);
   const shifts = ['Morning', 'Night'];
-  const agentsFor = (mgr) => agents.filter((a) => (a.managerId === (mgr.id || mgr._id)));
-  const unassigned = agents.filter((a) => !a.managerId || !managers.some((m) => (m.id || m._id) === a.managerId));
+  const idOf = (u) => u.id || u._id;
+  const agentsFor = (mgr) => agents.filter((a) => a.managerId === idOf(mgr));
+  const unassigned = agents.filter((a) => !a.managerId || !managers.some((m) => idOf(m) === a.managerId));
 
-  const jobBadge = (a) => a.jobType === 'presales'
+  const JobBadge = ({ a }) => a.jobType === 'presales'
     ? <span className="text-[8px] font-bold bg-purple-100 text-purple-600 px-1 rounded">PRE-SALES</span>
     : <span className="text-[8px] font-bold bg-blue-100 text-blue-600 px-1 rounded">BDE</span>;
 
   const AgentCard = ({ a }) => (
-    <div draggable onDragStart={() => setDragUser(a)} onDragEnd={() => setDragUser(null)}
-      className="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs cursor-grab active:cursor-grabbing flex items-center justify-between gap-2">
+    <div draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idOf(a))); setDrag({ kind: 'agent', user: a }); }}
+      onDragEnd={() => setDrag(null)}
+      className="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs cursor-grab active:cursor-grabbing flex items-center justify-between gap-2 shadow-sm">
       <span className="font-semibold text-slate-700 truncate">{a.name}</span>
-      {jobBadge(a)}
+      <JobBadge a={a} />
+    </div>
+  );
+
+  const ManagerChip = ({ m }) => (
+    <div draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idOf(m))); setDrag({ kind: 'manager', user: m }); }}
+      onDragEnd={() => setDrag(null)}
+      className="rounded-md bg-[#2563EB] text-white px-2.5 py-1 text-xs font-bold cursor-grab active:cursor-grabbing inline-block">
+      {m.name}
     </div>
   );
 
   return (
-    <div className="bg-slate-50 rounded-2xl border border-slate-100 p-5">
-      <p className="text-xs text-slate-400 mb-4">Drag an agent card onto a manager to move them. They inherit that manager's branch and shift.</p>
-
-      {/* Admin tier */}
-      <div className="flex justify-center mb-2">
-        <div className="rounded-lg bg-[#050A1F] text-white px-4 py-1.5 text-xs font-bold">
-          {admins.map((a) => a.name).join(', ') || 'Admin'} · Admin
+    <div className="space-y-6">
+      {/* Role tiers overview */}
+      <div className="bg-slate-50 rounded-2xl border border-slate-100 p-5">
+        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-3">Roles</div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="w-20 text-xs font-bold text-slate-500 shrink-0">Admin</span>
+            <div className="flex flex-wrap gap-2">{admins.map((a) => <span key={idOf(a)} className="rounded-md bg-[#050A1F] text-white px-3 py-1 text-xs font-bold">{a.name}</span>)}</div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-20 text-xs font-bold text-slate-500 shrink-0">Managers</span>
+            <div className="flex flex-wrap gap-2">{managers.map((m) => <span key={idOf(m)} className="rounded-md bg-[#2563EB] text-white px-3 py-1 text-xs font-bold">{m.name}</span>)}{managers.length === 0 && <span className="text-xs text-slate-300 italic">None</span>}</div>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="w-20 text-xs font-bold text-slate-500 shrink-0 pt-1">Agents</span>
+            <div className="flex flex-wrap gap-2">{agents.map((a) => <span key={idOf(a)} className="rounded-md bg-white border border-slate-200 text-slate-600 px-3 py-1 text-xs font-semibold">{a.name}</span>)}{agents.length === 0 && <span className="text-xs text-slate-300 italic">None</span>}</div>
+          </div>
         </div>
       </div>
-      <div className="h-4 w-px bg-slate-300 mx-auto mb-2" />
 
-      <div className="space-y-6">
-        {teams.map((team) => (
-          <div key={team} className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-extrabold text-[#050A1F] mb-3">🏢 {team}</div>
-            <div className="grid grid-cols-2 gap-4">
-              {shifts.map((shift) => {
-                const shiftMgrs = managers.filter((m) => m.team === team && m.shift === shift);
-                return (
-                  <div key={shift} className="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                    <div className="text-[11px] font-bold text-slate-400 uppercase mb-2">{shift === 'Morning' ? '🌅' : '🌙'} {shift} shift</div>
-                    {shiftMgrs.length === 0 && <div className="text-[11px] text-slate-300 italic">No manager assigned</div>}
-                    <div className="space-y-3">
-                      {shiftMgrs.map((mgr) => (
-                        <div key={mgr.id || mgr._id}
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={() => { if (dragUser) { onReassign(dragUser.id || dragUser._id, mgr); setDragUser(null); } }}
-                          className="rounded-lg border-2 border-dashed border-slate-200 p-2">
-                          <div className="rounded-md bg-[#2563EB] text-white px-2.5 py-1 text-xs font-bold mb-2">{mgr.name} · Manager</div>
-                          <div className="space-y-1.5 pl-2">
-                            {agentsFor(mgr).map((a) => <AgentCard key={a.id || a._id} a={a} />)}
-                            {agentsFor(mgr).length === 0 && <div className="text-[10px] text-slate-300 italic px-1">Drop agents here</div>}
+      {/* Branch → Shift → Manager → Agents */}
+      <div className="bg-slate-50 rounded-2xl border border-slate-100 p-5">
+        <p className="text-xs text-slate-400 mb-4">Drag an <b>agent</b> onto a manager to reassign them. Drag a <b>manager</b> onto a branch+shift header to move their team there.</p>
+        <div className="space-y-6">
+          {teams.map((team) => (
+            <div key={team} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-extrabold text-[#050A1F] mb-3">🏢 {team}</div>
+              <div className="grid grid-cols-2 gap-4">
+                {shifts.map((shift) => {
+                  const shiftMgrs = managers.filter((m) => m.team === team && m.shift === shift);
+                  return (
+                    <div key={shift}
+                      onDragOver={(e) => { if (drag && drag.kind === 'manager') e.preventDefault(); }}
+                      onDrop={(e) => { e.preventDefault(); if (drag && drag.kind === 'manager') { onMoveManager(idOf(drag.user), team, shift); setDrag(null); } }}
+                      className={`rounded-lg border p-3 ${drag && drag.kind === 'manager' ? 'border-blue-300 border-dashed bg-blue-50/40' : 'border-slate-100 bg-slate-50'}`}>
+                      <div className="text-[11px] font-bold text-slate-400 uppercase mb-2">{shift === 'Morning' ? '🌅' : '🌙'} {shift} shift</div>
+                      {shiftMgrs.length === 0 && <div className="text-[11px] text-slate-300 italic">Drop a manager here</div>}
+                      <div className="space-y-3">
+                        {shiftMgrs.map((mgr) => (
+                          <div key={idOf(mgr)}
+                            onDragOver={(e) => { if (drag && drag.kind === 'agent') e.preventDefault(); }}
+                            onDrop={(e) => { e.preventDefault(); if (drag && drag.kind === 'agent') { onReassign(idOf(drag.user), mgr); setDrag(null); } }}
+                            className={`rounded-lg border-2 border-dashed p-2 ${drag && drag.kind === 'agent' ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200'}`}>
+                            <ManagerChip m={mgr} />
+                            <div className="space-y-1.5 pl-2 mt-2">
+                              {agentsFor(mgr).map((a) => <AgentCard key={idOf(a)} a={a} />)}
+                              {agentsFor(mgr).length === 0 && <div className="text-[10px] text-slate-300 italic px-1">Drop agents here</div>}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-
-      {unassigned.length > 0 && (
-        <div className="mt-6 rounded-xl border-2 border-dashed border-amber-200 bg-amber-50 p-4">
-          <div className="text-xs font-bold text-amber-700 mb-2">⚠️ Unassigned agents (drag onto a manager)</div>
-          <div className="grid grid-cols-3 gap-2">
-            {unassigned.map((a) => <AgentCard key={a.id || a._id} a={a} />)}
-          </div>
+          ))}
         </div>
-      )}
+
+        {unassigned.length > 0 && (
+          <div className="mt-6 rounded-xl border-2 border-dashed border-amber-200 bg-amber-50 p-4">
+            <div className="text-xs font-bold text-amber-700 mb-2">⚠️ Unassigned agents — drag onto a manager</div>
+            <div className="grid grid-cols-3 gap-2">{unassigned.map((a) => <AgentCard key={idOf(a)} a={a} />)}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -445,6 +514,14 @@ function Users({ me, say }) {
   const reassign = async (userId, manager) => {
     try {
       await api(`/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify({ managerId: manager.id || manager._id, team: manager.team, shift: manager.shift }) });
+      load();
+    } catch (e) { setErr(e.message); }
+  };
+
+  // Move a manager (and their whole scope) to a different branch+shift.
+  const moveManager = async (managerId, team, shift) => {
+    try {
+      await api(`/admin/users/${managerId}`, { method: 'PUT', body: JSON.stringify({ team, shift, managerScopes: [{ team, shift }] }) });
       load();
     } catch (e) { setErr(e.message); }
   };
@@ -495,7 +572,7 @@ function Users({ me, say }) {
         </div>
       </div>
 
-      {uview === 'org' && <OrgChart users={users} onReassign={reassign} />}
+      {uview === 'org' && <OrgChart users={users} onReassign={reassign} onMoveManager={moveManager} />}
 
       {show && (
         <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: C.orange }}>
@@ -510,7 +587,7 @@ function Users({ me, say }) {
             <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
             <Field label="Shift"><select className={inputCls} value={f.shift} onChange={(e) => setF({ ...f, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
             <div className="col-span-2"><Field label="Alias names" hint="Pseudonyms used with clients — comma-separated (e.g. Nina, Nicky)"><input className={inputCls} value={f.aliases} onChange={(e) => setF({ ...f, aliases: e.target.value })} placeholder="Nina, Nicky" /></Field></div>
-            <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} />
+            <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} allUsers={users} />
           </div>
           <div className="flex justify-end mt-4"><Btn variant="dark" onClick={create}>Create user</Btn></div>
         </div>
@@ -546,7 +623,7 @@ function Users({ me, say }) {
               </div>
             )}
             <div className="col-span-2"><Field label="Alias names" hint="Comma-separated"><input className={inputCls} value={Array.isArray(edit.aliases) ? edit.aliases.join(', ') : (edit.aliases || '')} onChange={(e) => setEdit({ ...edit, aliases: e.target.value })} /></Field></div>
-            <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} />
+            <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} allUsers={users} />
             <Field label="New password" hint="Leave blank to keep the current one"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} placeholder="New password…" /></Field>
           </div>
           <div className="flex justify-end gap-2 mt-4">

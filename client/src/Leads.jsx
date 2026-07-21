@@ -537,8 +537,14 @@ export function LeadDetail({ user, leadId, onBack }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
-            <span className="rounded-full px-3 py-1 text-[11px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
-            {(lead.tags || []).map((t) => <span key={t} className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold">{t}</span>)}
+            <button onClick={() => openEdit('status')} title="Click to change status"
+              className="rounded-full px-3 py-1 text-[11px] font-bold text-white hover:opacity-90 cursor-pointer" style={{ background: sm.color }}>{sm.label} ▾</button>
+            {(lead.tags || []).map((t) => (
+              <button key={t} onClick={() => openEdit('tags')} title="Click to edit tags"
+                className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold hover:bg-orange-100 cursor-pointer">{t}</button>
+            ))}
+            <button onClick={() => openEdit('tags')} title="Add or edit tags"
+              className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">+ tag</button>
           </div>
           <div className="text-sm text-slate-400 mt-1.5">
             Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
@@ -865,12 +871,25 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
   const show = (s) => section === 'all' || section === s;
-  const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info' };
+  const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info', status: 'Change lead status' };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-[#050A1F] mb-4">{titles[section] || 'Edit lead'}</h3>
+
+        {show('status') && (
+          <div className="mb-4">
+            <label className={lab}>Lead status</label>
+            <div className="flex flex-wrap gap-1.5">
+              {(config.leadStatuses || []).map((s) => (
+                <button key={s.id} type="button" onClick={() => set('status', s.id)}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-bold border ${draft.status === s.id ? 'text-white border-transparent' : 'text-slate-500 border-slate-200'}`}
+                  style={draft.status === s.id ? { background: s.color } : {}}>{s.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {show('basic') && (
           <div className="grid grid-cols-2 gap-4 mb-4">
