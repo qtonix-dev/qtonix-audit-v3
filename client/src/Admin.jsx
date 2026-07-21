@@ -277,13 +277,179 @@ function ApiKeys({ settings, setSettings, say }) {
 const TEAMS = ['Bhubaneswar', 'Kolkata'];
 const SHIFTS = ['Morning', 'Night'];
 
+// Job type + reporting manager + targets — shared by create and edit forms.
+// `state` is the form object (f or edit); `patch` applies a partial update.
+function TargetsAndReporting({ state, patch, managers }) {
+  const role = state.role;
+  const t = state.targets || { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } };
+  const setT = (next) => patch({ targets: { ...t, ...next } });
+  const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+
+  if (role === 'admin') return null;
+
+  return (
+    <div className="col-span-2 rounded-lg bg-slate-50 border border-slate-100 p-4 space-y-4">
+      {role === 'agent' && (
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Job type">
+            <select className={inputCls} value={state.jobType || 'bde'} onChange={(e) => patch({ jobType: e.target.value })}>
+              <option value="bde">Business Development Executive</option>
+              <option value="presales">Pre-Sales Executive</option>
+            </select>
+          </Field>
+          <Field label="Reports to (manager)">
+            <select className={inputCls} value={state.managerId || ''} onChange={(e) => patch({ managerId: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">— Select manager —</option>
+              {managers.map((m) => <option key={m.id || m._id} value={m.id || m._id}>{m.name}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
+
+      {/* Manager team target */}
+      {role === 'manager' && (
+        <label className="flex items-center gap-3 text-sm">
+          <input type="checkbox" checked={!!t.team.enabled} onChange={(e) => setT({ team: { ...t.team, enabled: e.target.checked } })} />
+          <span className="font-bold text-slate-700">Monthly team sales target (USD)</span>
+          {t.team.enabled && <input type="number" min="0" className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm" value={t.team.monthly || ''} onChange={(e) => setT({ team: { ...t.team, monthly: Number(e.target.value) || 0 } })} />}
+        </label>
+      )}
+
+      {/* Agent targets: Transfer and/or Sales */}
+      {role === 'agent' && (
+        <div className="space-y-3">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">Targets (all in USD)</div>
+          <div className="flex gap-6">
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+              <input type="checkbox" checked={!!t.transfer.enabled} onChange={(e) => setT({ transfer: { ...t.transfer, enabled: e.target.checked } })} /> Transfer
+            </label>
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+              <input type="checkbox" checked={!!t.sales.enabled} onChange={(e) => setT({ sales: { ...t.sales, enabled: e.target.checked } })} /> Sales
+            </label>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {t.transfer.enabled && (
+              <Field label="Daily transfers">
+                <input type="number" min="0" className={numCls} value={t.transfer.daily || ''} onChange={(e) => setT({ transfer: { ...t.transfer, daily: Number(e.target.value) || 0 } })} placeholder="e.g. 3" />
+              </Field>
+            )}
+            {t.transfer.enabled && (
+              <Field label="Monthly transfers">
+                <input type="number" min="0" className={numCls} value={t.transfer.monthly || ''} onChange={(e) => setT({ transfer: { ...t.transfer, monthly: Number(e.target.value) || 0 } })} />
+              </Field>
+            )}
+            {t.sales.enabled && (
+              <Field label="Monthly sales (USD)">
+                <input type="number" min="0" className={numCls} value={t.sales.monthly || ''} onChange={(e) => setT({ sales: { ...t.sales, monthly: Number(e.target.value) || 0 } })} />
+              </Field>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Org chart: Branch(Team) → Shift → Manager → Agents. Drag an agent card onto
+// a manager to reassign them (inherits that manager's team+shift).
+function OrgChart({ users, onReassign }) {
+  const [dragUser, setDragUser] = useState(null);
+  const managers = users.filter((u) => u.role === 'manager' && u.active !== false);
+  const admins = users.filter((u) => u.role === 'admin');
+  const agents = users.filter((u) => u.role === 'agent' && u.active !== false);
+  const teams = Array.from(new Set(managers.map((m) => m.team))).sort();
+  const shifts = ['Morning', 'Night'];
+  const agentsFor = (mgr) => agents.filter((a) => (a.managerId === (mgr.id || mgr._id)));
+  const unassigned = agents.filter((a) => !a.managerId || !managers.some((m) => (m.id || m._id) === a.managerId));
+
+  const jobBadge = (a) => a.jobType === 'presales'
+    ? <span className="text-[8px] font-bold bg-purple-100 text-purple-600 px-1 rounded">PRE-SALES</span>
+    : <span className="text-[8px] font-bold bg-blue-100 text-blue-600 px-1 rounded">BDE</span>;
+
+  const AgentCard = ({ a }) => (
+    <div draggable onDragStart={() => setDragUser(a)} onDragEnd={() => setDragUser(null)}
+      className="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs cursor-grab active:cursor-grabbing flex items-center justify-between gap-2">
+      <span className="font-semibold text-slate-700 truncate">{a.name}</span>
+      {jobBadge(a)}
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-50 rounded-2xl border border-slate-100 p-5">
+      <p className="text-xs text-slate-400 mb-4">Drag an agent card onto a manager to move them. They inherit that manager's branch and shift.</p>
+
+      {/* Admin tier */}
+      <div className="flex justify-center mb-2">
+        <div className="rounded-lg bg-[#050A1F] text-white px-4 py-1.5 text-xs font-bold">
+          {admins.map((a) => a.name).join(', ') || 'Admin'} · Admin
+        </div>
+      </div>
+      <div className="h-4 w-px bg-slate-300 mx-auto mb-2" />
+
+      <div className="space-y-6">
+        {teams.map((team) => (
+          <div key={team} className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-sm font-extrabold text-[#050A1F] mb-3">🏢 {team}</div>
+            <div className="grid grid-cols-2 gap-4">
+              {shifts.map((shift) => {
+                const shiftMgrs = managers.filter((m) => m.team === team && m.shift === shift);
+                return (
+                  <div key={shift} className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                    <div className="text-[11px] font-bold text-slate-400 uppercase mb-2">{shift === 'Morning' ? '🌅' : '🌙'} {shift} shift</div>
+                    {shiftMgrs.length === 0 && <div className="text-[11px] text-slate-300 italic">No manager assigned</div>}
+                    <div className="space-y-3">
+                      {shiftMgrs.map((mgr) => (
+                        <div key={mgr.id || mgr._id}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => { if (dragUser) { onReassign(dragUser.id || dragUser._id, mgr); setDragUser(null); } }}
+                          className="rounded-lg border-2 border-dashed border-slate-200 p-2">
+                          <div className="rounded-md bg-[#2563EB] text-white px-2.5 py-1 text-xs font-bold mb-2">{mgr.name} · Manager</div>
+                          <div className="space-y-1.5 pl-2">
+                            {agentsFor(mgr).map((a) => <AgentCard key={a.id || a._id} a={a} />)}
+                            {agentsFor(mgr).length === 0 && <div className="text-[10px] text-slate-300 italic px-1">Drop agents here</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {unassigned.length > 0 && (
+        <div className="mt-6 rounded-xl border-2 border-dashed border-amber-200 bg-amber-50 p-4">
+          <div className="text-xs font-bold text-amber-700 mb-2">⚠️ Unassigned agents (drag onto a manager)</div>
+          <div className="grid grid-cols-3 gap-2">
+            {unassigned.map((a) => <AgentCard key={a.id || a._id} a={a} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Users({ me, say }) {
-  const blank = { name: '', email: '', password: '', role: 'agent', phone: '', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '' };
+  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } } };
   const [users, setUsers] = useState([]);
   const [f, setF] = useState(blank);
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [edit, setEdit] = useState(null);
+  const [uview, setUview] = useState('list');
+
+  // Reassign an agent to a manager (and inherit that manager's team+shift so
+  // the org chart and lead visibility stay consistent). Used by drag-and-drop.
+  const reassign = async (userId, manager) => {
+    try {
+      await api(`/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify({ managerId: manager.id || manager._id, team: manager.team, shift: manager.shift }) });
+      load();
+    } catch (e) { setErr(e.message); }
+  };
+
+  const managers = users.filter((u) => u.role === 'manager' && u.active !== false);
 
   const load = () => api('/admin/users').then(setUsers).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -302,7 +468,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, phone: edit.phone, designation: edit.designation, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, phone: edit.phone, designation: edit.designation, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -320,8 +486,16 @@ function Users({ me, say }) {
       {err && <div className="mb-4"><Note tone="bad">{err}</Note></div>}
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-slate-500">{users.filter((u) => u.active).length} active · {users.length} total</p>
-        <Btn onClick={() => { setShow(!show); setErr(''); }}>{show ? 'Cancel' : '+ Add user'}</Btn>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => setUview('list')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>List</button>
+            <button onClick={() => setUview('org')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'org' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Org chart</button>
+          </div>
+          <Btn onClick={() => { setShow(!show); setErr(''); }}>{show ? 'Cancel' : '+ Add user'}</Btn>
+        </div>
       </div>
+
+      {uview === 'org' && <OrgChart users={users} onReassign={reassign} />}
 
       {show && (
         <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: C.orange }}>
@@ -336,6 +510,7 @@ function Users({ me, say }) {
             <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
             <Field label="Shift"><select className={inputCls} value={f.shift} onChange={(e) => setF({ ...f, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
             <div className="col-span-2"><Field label="Alias names" hint="Pseudonyms used with clients — comma-separated (e.g. Nina, Nicky)"><input className={inputCls} value={f.aliases} onChange={(e) => setF({ ...f, aliases: e.target.value })} placeholder="Nina, Nicky" /></Field></div>
+            <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} />
           </div>
           <div className="flex justify-end mt-4"><Btn variant="dark" onClick={create}>Create user</Btn></div>
         </div>
@@ -371,6 +546,7 @@ function Users({ me, say }) {
               </div>
             )}
             <div className="col-span-2"><Field label="Alias names" hint="Comma-separated"><input className={inputCls} value={Array.isArray(edit.aliases) ? edit.aliases.join(', ') : (edit.aliases || '')} onChange={(e) => setEdit({ ...edit, aliases: e.target.value })} /></Field></div>
+            <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} />
             <Field label="New password" hint="Leave blank to keep the current one"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} placeholder="New password…" /></Field>
           </div>
           <div className="flex justify-end gap-2 mt-4">
@@ -380,7 +556,7 @@ function Users({ me, say }) {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      {uview === 'list' && <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
@@ -407,7 +583,7 @@ function Users({ me, say }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
       <p className="text-[11px] text-slate-400 mt-3">Deactivating is a soft delete — their reports are preserved and keep working.</p>
     </div>
   );
@@ -455,6 +631,8 @@ function CrmFields({ say }) {
       <LabelListEditor title="Lead statuses" items={cfg.leadStatuses || []} onChange={(l) => setList('leadStatuses', l)} />
       <LabelListEditor title="Deal stages" items={cfg.dealStages || []} onChange={(l) => setList('dealStages', l)} />
 
+      <FxRatesEditor rates={cfg.fxRates || { USD: 1 }} currencies={cfg.dealCurrencies || ['USD']} onChange={(r) => setList('fxRates', r)} />
+
       <div className="flex justify-end sticky bottom-4">
         <button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{saving ? 'Saving…' : 'Save CRM fields'}</button>
       </div>
@@ -485,6 +663,28 @@ function StringListEditor({ title, hint, items, onChange }) {
         <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Add an option…"
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
         <button onClick={add} className="rounded-lg bg-[#050A1F] px-4 py-2 text-sm font-bold text-white">Add</button>
+      </div>
+    </div>
+  );
+}
+
+// FX rates: units of each currency per 1 USD. Deal amounts / rate = USD.
+function FxRatesEditor({ rates, currencies, onChange }) {
+  const set = (cur, val) => onChange({ ...rates, [cur]: Number(val) || 0 });
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Currency conversion rates</div>
+      <p className="text-[11px] text-slate-400 mb-3">Units of each currency per <b>1 USD</b>. Deals in other currencies are divided by their rate to get USD for targets and the leaderboard. USD is always 1.</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {currencies.map((cur) => (
+          <div key={cur} className="flex items-center gap-2">
+            <span className="w-12 text-sm font-bold text-slate-600">{cur}</span>
+            <input type="number" step="0.0001" min="0" disabled={cur === 'USD'}
+              value={cur === 'USD' ? 1 : (rates[cur] ?? '')}
+              onChange={(e) => set(cur, e.target.value)}
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:bg-slate-50 disabled:text-slate-400" />
+          </div>
+        ))}
       </div>
     </div>
   );

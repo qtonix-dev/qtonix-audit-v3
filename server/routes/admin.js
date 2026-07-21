@@ -173,7 +173,7 @@ router.get('/users', async (req, res) => {
 
 router.post('/users', async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes } = req.body || {};
+    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes, jobType, managerId, targets } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -187,6 +187,9 @@ router.post('/users', async (req, res, next) => {
       team: ['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar',
       shift: ['Morning', 'Night'].includes(shift) ? shift : 'Morning',
       managerScopes: validRole === 'manager' && Array.isArray(managerScopes) ? managerScopes : [],
+      jobType: validRole === 'agent' ? (['bde', 'presales'].includes(jobType) ? jobType : 'bde') : null,
+      managerId: validRole === 'agent' && managerId ? Number(managerId) : null,
+      targets: targets && typeof targets === 'object' ? targets : undefined,
       aliases: Array.isArray(aliases) ? aliases : (aliases ? String(aliases).split(',').map((a) => a.trim()).filter(Boolean) : []),
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.create', target: user.email, ip: req.ip });
@@ -197,7 +200,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -215,6 +218,15 @@ router.put('/users/:id', async (req, res, next) => {
     if (managerScopes !== undefined) user.managerScopes = Array.isArray(managerScopes) ? managerScopes : [];
     // Clear scopes if no longer a manager.
     if (user.role !== 'manager') user.managerScopes = [];
+    if (targets !== undefined && targets && typeof targets === 'object') { user.targets = targets; user.changed('targets', true); }
+    // Job type + reporting manager only apply to agents.
+    if (user.role === 'agent') {
+      if (jobType !== undefined) user.jobType = ['bde', 'presales'].includes(jobType) ? jobType : 'bde';
+      if (managerId !== undefined) user.managerId = managerId ? Number(managerId) : null;
+    } else {
+      user.jobType = null;
+      user.managerId = null;
+    }
     if (aliases !== undefined) user.aliases = Array.isArray(aliases) ? aliases : String(aliases).split(',').map((a) => a.trim()).filter(Boolean);
     if (active !== undefined) user.active = !!active;
     if (password) {

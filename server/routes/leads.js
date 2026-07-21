@@ -57,11 +57,18 @@ function pushTimeline(lead, type, text, author) {
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const where = await visibilityWhere(req.user);
-    const { q, status, source, ownerId, country } = req.query;
+    const { q, status, source, ownerId, country, untouched } = req.query;
     if (status) where.status = status;
+    else where.status = { [Op.ne]: 'converted' }; // converted leads live on their own page
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
     if (country) where.country = country;
+    // "untouched": no activity for 3+ days (stale) — used by the dashboard box.
+    if (untouched) {
+      const days = untouched === '7' ? 7 : 3;
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      where.lastActivityAt = { [Op.lt]: cutoff };
+    }
     if (q) {
       const like = { [Op.like]: `%${q}%` };
       where[Op.and] = [
@@ -147,6 +154,21 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
     }
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.bulk_import', target: `${created} leads`, ip: req.ip });
     res.status(201).json({ created, skipped });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/leads/converted — leads with status 'converted'. Managers and
+    admins only. Manager sees conversions within their scope; admin sees all.
+    Declared before /:id so "converted" isn't captured as an id. */
+router.get('/converted', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Only managers and admins can view converted leads.' });
+    }
+    const where = await visibilityWhere(req.user);
+    where.status = 'converted';
+    const leads = await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']], limit: 1000 });
+    res.json({ items: leads.map((l) => l.toJSON()) });
   } catch (e) { next(e); }
 });
 
@@ -423,6 +445,11 @@ router.post('/:id/deals', requireAuth, async (req, res, next) => {
     list.push(deal);
     lead.deals = list; lead.changed('deals', true);
     pushTimeline(lead, 'deal', `Deal added: ${deal.name} (${deal.currency} ${deal.amount})`, req.user.name);
+    if (deal.stage === 'closed_won' && lead.status !== 'converted') {
+      lead.status = 'converted';
+      lead.convertedAt = new Date();
+      pushTimeline(lead, 'status', 'Lead converted (deal closed won)', req.user.name);
+    }
     await lead.save();
     res.json(lead.toJSON());
   } catch (e) { next(e); }
@@ -440,7 +467,16 @@ router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
     const before = deal.stage;
     for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
     if (b.amount !== undefined) deal.amount = Number(b.amount) || 0;
-    if (b.stage && b.stage !== before) pushTimeline(lead, 'deal', `Deal "${deal.name}" moved to ${deal.stage}`, req.user.name);
+    if (b.stage && b.stage !== before) {
+      pushTimeline(lead, 'deal', `Deal "${deal.name}" moved to ${deal.stage}`, req.user.name);
+      // Closing a deal as won converts the lead. It then leaves the main list
+      // and appears on the Converted Leads page.
+      if (b.stage === 'closed_won' && lead.status !== 'converted') {
+        lead.status = 'converted';
+        lead.convertedAt = new Date();
+        pushTimeline(lead, 'status', 'Lead converted (deal closed won)', req.user.name);
+      }
+    }
     lead.deals = list; lead.changed('deals', true);
     await lead.save();
     res.json(lead.toJSON());

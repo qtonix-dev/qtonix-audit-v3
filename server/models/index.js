@@ -89,6 +89,21 @@ const User = sequelize.define(
     // Pseudonyms an agent uses with clients (comma-separated list stored as JSON).
     aliases: { type: DataTypes.JSON, defaultValue: [] },
     role: { type: DataTypes.ENUM('agent', 'manager', 'admin'), defaultValue: 'agent' },
+    // Finer job classification within the 'agent' role. 'bde' = Business
+    // Development Executive (cold calls + inbound, monthly sales target);
+    // 'presales' = Pre-Sales Executive (cold calls only, daily transfer target
+    // + monthly sales target). Managers/admins leave this null.
+    jobType: { type: DataTypes.ENUM('bde', 'presales'), allowNull: true },
+    // Reporting line: BDE/Pre-Sales report to a manager (managerId set);
+    // managers report directly to admin (managerId null).
+    managerId: { type: DataTypes.INTEGER, allowNull: true },
+    // Targets (all monetary values in USD). Shape:
+    // { transfer: { enabled, daily, monthly }, sales: { enabled, monthly },
+    //   team: { enabled, monthly } }  — team only meaningful for managers.
+    targets: {
+      type: DataTypes.JSON,
+      defaultValue: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } },
+    },
     // For managers: which team+shift groups they oversee, e.g.
     // [{ team:'Bhubaneswar', shift:'Morning' }, { team:'Kolkata', shift:'Night' }].
     // A manager sees every lead owned by an agent whose team+shift matches any
@@ -228,6 +243,7 @@ const Lead = sequelize.define(
     timeline: { type: DataTypes.JSON, defaultValue: [] },
 
     lastActivityAt: { type: DataTypes.DATE },
+    convertedAt: { type: DataTypes.DATE },
     // If this lead originated from a migrated report, keep the link.
     sourceReportId: { type: DataTypes.INTEGER },
   },
@@ -299,6 +315,7 @@ const Settings = sequelize.define(
           { id: 'proposal', label: 'Proposal sent', color: '#0D9488' },
           { id: 'negotiation', label: 'Negotiating', color: '#CA8A04' },
           { id: 'won', label: 'Won', color: '#16A34A' },
+          { id: 'converted', label: 'Converted', color: '#059669' },
           { id: 'lost', label: 'Lost', color: '#DC2626' },
         ],
         servicesInterested: [
@@ -319,6 +336,10 @@ const Settings = sequelize.define(
         ],
         dealCurrencies: ['USD', 'INR', 'EUR', 'GBP', 'AUD'],
         taskPriorities: ['Low', 'Medium', 'High', 'Urgent'],
+        // Admin-maintained FX rates: units of the currency per 1 USD. Deal
+        // amounts in other currencies are divided by their rate to get USD for
+        // target/leaderboard maths. USD is always 1.
+        fxRates: { USD: 1, INR: 83, EUR: 0.92, GBP: 0.79, AUD: 1.52 },
       },
     },
 
@@ -457,6 +478,15 @@ async function initDb({ sync = true } = {}) {
     s.crmConfig = Settings.rawAttributes.crmConfig.defaultValue;
     s.changed('crmConfig', true);
     await s.save();
+  } else {
+    // Merge any newly-added config keys (e.g. fxRates) into existing installs
+    // without disturbing the admin's customised lists.
+    const defaults = Settings.rawAttributes.crmConfig.defaultValue;
+    let touched = false;
+    for (const k of Object.keys(defaults)) {
+      if (s.crmConfig[k] === undefined) { s.crmConfig[k] = defaults[k]; touched = true; }
+    }
+    if (touched) { s.changed('crmConfig', true); await s.save(); }
   }
   return s;
 }

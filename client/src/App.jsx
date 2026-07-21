@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
+import { CountryCombobox } from './Leads.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -402,7 +403,7 @@ function NewReport({ user, initialLeadId, onQueued }) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer country</label>
-              <input value={form.customerCountry} onChange={(e) => set('customerCountry', e.target.value)} placeholder="Malaysia"
+              <CountryCombobox value={form.customerCountry} onChange={(v) => set('customerCountry', v)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
             </div>
           </div>

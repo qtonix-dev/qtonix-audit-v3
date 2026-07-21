@@ -61,19 +61,30 @@ export function TimezoneField({ country, value, onChange, className }) {
 export function CountryCombobox({ value, onChange, className }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const matches = (q ? COUNTRY_NAMES.filter((c) => c.toLowerCase().includes(q.toLowerCase())) : COUNTRY_NAMES).slice(0, 60);
+  const [rect, setRect] = useState(null);
+  const inputRef = React.useRef(null);
+  const matches = (q ? COUNTRY_NAMES.filter((c) => c.toLowerCase().includes(q.toLowerCase())) : COUNTRY_NAMES).slice(0, 80);
+
+  const openList = () => {
+    if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+    setOpen(true); setQ('');
+  };
+
   return (
     <div className="relative">
       <input
+        ref={inputRef}
         className={className}
         value={open ? q : (value || '')}
         placeholder="Type to search countries…"
-        onFocus={() => { setOpen(true); setQ(''); }}
+        onFocus={openList}
         onChange={(e) => setQ(e.target.value)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
       />
-      {open && (
-        <div className="absolute z-30 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+      {/* Fixed positioning so the list is never clipped by a scrolling modal. */}
+      {open && rect && (
+        <div className="fixed z-[60] max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white shadow-xl"
+          style={{ top: rect.bottom + 4, left: rect.left, width: rect.width }}>
           {matches.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No match</div>}
           {matches.map((c) => (
             <button key={c} type="button" onMouseDown={() => { onChange(c); setOpen(false); }}
@@ -96,13 +107,23 @@ export function CountryCombobox({ value, onChange, className }) {
 const fmtDate = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const fullName = (l) => `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)';
 
+// Days since a lead was last touched, and a staleness bucket for badges.
+function staleness(l) {
+  const t = l.lastActivityAt || l.updatedAt;
+  if (!t) return null;
+  const days = Math.floor((Date.now() - new Date(t).getTime()) / (24 * 60 * 60 * 1000));
+  if (days >= 7) return { days, level: 'red', label: `${days}d untouched` };
+  if (days >= 3) return { days, level: 'amber', label: `${days}d untouched` };
+  return null;
+}
+
 function statusMeta(config, id) {
   const s = (config.leadStatuses || []).find((x) => x.id === id);
   return s || { id, label: id, color: '#64748B' };
 }
 
 // ---- Lead list -------------------------------------------------------------
-export function LeadsList({ user, onOpen, onNew }) {
+export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
   const [owners, setOwners] = useState([]);
@@ -121,6 +142,7 @@ export function LeadsList({ user, onOpen, onNew }) {
       if (statusFilter) params.set('status', statusFilter);
       if (ownerFilter) params.set('ownerId', ownerFilter);
       if (countryFilter) params.set('country', countryFilter);
+      if (untouchedFilter) params.set('untouched', String(untouchedFilter));
       const [res, cfg] = await Promise.all([
         api(`/leads${params.toString() ? '?' + params.toString() : ''}`),
         api('/leads/config'),
@@ -132,13 +154,19 @@ export function LeadsList({ user, onOpen, onNew }) {
     setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter]);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold text-[#050A1F]">Leads</h1>
+          {untouchedFilter && (
+            <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-red-50 text-red-600 px-3 py-1 text-xs font-bold">
+              Showing leads untouched for {untouchedFilter}+ days
+              <button onClick={onClearUntouched} className="hover:text-red-800">✕ clear</button>
+            </div>
+          )}
           <div className="text-sm text-slate-400">{items.length} total{user.role !== 'admin' ? ' · your visibility' : ''}</div>
         </div>
         <div className="flex items-center gap-2">
@@ -188,16 +216,22 @@ export function LeadsList({ user, onOpen, onNew }) {
             <tbody>
               {items.map((l) => {
                 const sm = statusMeta(config, l.status);
+                const stale = staleness(l);
                 return (
                   <tr key={l._id} onClick={() => onOpen(l)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
-                    <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}</td>
+                    <td className="px-4 py-3 font-bold text-[#050A1F]">
+                      <div className="flex items-center gap-2">
+                        {fullName(l)}
+                        {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱ {stale.days}d</span>}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-slate-500">{l.email || '—'}</td>
                     <td className="px-4 py-3 text-slate-500">{l.mobile || l.phone || '—'}</td>
                     <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>
                     <td className="px-4 py-3 text-slate-500">{l.leadSource || '—'}</td>
                     <td className="px-4 py-3"><span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>
                     <td className="px-4 py-3 text-slate-500">{l.ownerName}</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.lastActivityAt)}</td>
+                    <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
                   </tr>
                 );
               })}
@@ -1050,22 +1084,82 @@ function ReportsTab({ lead, onChange }) {
 }
 
 // Top-level Leads view controller — switches between list / new / detail.
-export default function Leads({ user }) {
-  const [view, setView] = useState('list'); // list | pipeline | new | detail
+export default function Leads({ user, initialView, initialUntouched }) {
+  const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
   const [activeId, setActiveId] = useState(null);
+  const [untouched, setUntouched] = useState(initialUntouched || null);
   const openDetail = (id) => { setActiveId(id); setView('detail'); };
+  const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
   return (
     <div>
-      {(view === 'list' || view === 'pipeline') && (
+      {(view === 'list' || view === 'pipeline' || view === 'converted') && (
         <div className="flex items-center gap-1 mb-5 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 List</button>
           <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>
+          {isManagerOrAdmin && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
         </div>
       )}
-      {view === 'list' && <LeadsList user={user} onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
+      {view === 'list' && <LeadsList user={user} untouchedFilter={untouched} onClearUntouched={() => setUntouched(null)} onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && <DealsPipeline user={user} onOpenLead={openDetail} />}
+      {view === 'converted' && <ConvertedLeads user={user} onOpen={openDetail} />}
       {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView('list')} />}
       {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} onBack={() => setView('list')} />}
+    </div>
+  );
+}
+
+// ---- Converted leads (managers/admins only) --------------------------------
+function ConvertedLeads({ user, onOpen }) {
+  const [items, setItems] = useState([]);
+  const [config, setConfig] = useState({});
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    Promise.all([api('/leads/converted'), api('/leads/config')])
+      .then(([r, cfg]) => { setItems(r.items || []); setConfig(cfg.config || {}); })
+      .catch((e) => console.error(e))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Sum of closed-won deals per lead (display currency as-entered; USD sums are
+  // computed on the dashboard where FX rates are applied).
+  const wonValue = (l) => (l.deals || []).filter((d) => d.stage === 'closed_won')
+    .map((d) => `${d.currency} ${Number(d.amount || 0).toLocaleString()}`).join(', ') || '—';
+
+  if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+  return (
+    <div>
+      <div className="mb-4">
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted leads</h1>
+        <div className="text-sm text-slate-400">{items.length} converted{user.role === 'manager' ? ' in your team' : ''}</div>
+      </div>
+      {items.length === 0 ? (
+        <div className="text-slate-300 text-sm py-12 text-center bg-white rounded-2xl border border-slate-100">No converted leads yet. A lead converts when one of its deals is marked Closed Won.</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold">
+                <th className="text-left px-4 py-3">Name</th>
+                <th className="text-left px-4 py-3">Website</th>
+                <th className="text-left px-4 py-3">Owner</th>
+                <th className="text-left px-4 py-3">Won deals</th>
+                <th className="text-left px-4 py-3">Converted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((l) => (
+                <tr key={l._id} onClick={() => onOpen(l._id)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
+                  <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}</td>
+                  <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{l.ownerName}</td>
+                  <td className="px-4 py-3 text-green-600 font-semibold">{wonValue(l)}</td>
+                  <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
