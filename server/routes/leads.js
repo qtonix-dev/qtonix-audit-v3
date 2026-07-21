@@ -248,17 +248,101 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const leaderboard = Object.values(byOwner).map((o) => {
       const tg = targetsById[o.ownerId] || {};
       const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
+      const transferTg = (tg.transfer && tg.transfer.enabled) ? tg.transfer : null;
       const pct = salesTarget > 0 ? Math.min(100, Math.round((o.salesUsd / salesTarget) * 100)) : null;
       const remaining = salesTarget > 0 ? Math.max(0, salesTarget - o.salesUsd) : 0;
-      return { ...o, salesTarget, pct, remaining, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget };
+      return {
+        ...o, salesTarget, pct, remaining,
+        hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
+        transferDailyTarget: transferTg ? Number(transferTg.daily || 0) : 0,
+        transferMonthlyTarget: transferTg ? Number(transferTg.monthly || 0) : 0,
+      };
     }).sort((a, b) => b.salesUsd - a.salesUsd);
 
+    // Transfer leaderboard (pre-sales): who has transferred the most calls today.
+    const transferBoard = leaderboard
+      .filter((o) => o.transferDailyTarget > 0 || o.transfersToday > 0)
+      .map((o) => ({
+        ownerId: o.ownerId, name: o.name,
+        transfersToday: o.transfersToday,
+        dailyTarget: o.transferDailyTarget,
+        pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null,
+        remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0,
+      }))
+      .sort((a, b) => b.transfersToday - a.transfersToday);
+
+    // Company target = sum of all managers' team targets (admin view). Effective
+    // team target is the override if set, else the auto-sum of that manager's
+    // agents' monthly sales targets.
+    const allUsers = owners;
+    const agentSalesByMgr = {};
+    allUsers.forEach((u) => {
+      if (u.role === 'agent' && u.managerId && u.targets && u.targets.sales && u.targets.sales.enabled) {
+        agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0);
+      }
+    });
+    let companyTarget = 0;
+    allUsers.forEach((u) => {
+      if (u.role === 'manager') {
+        const t = u.targets && u.targets.team;
+        const eff = (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0);
+        companyTarget += eff;
+      }
+    });
+    // If no managers/team targets configured, fall back to sum of agent sales targets.
+    if (companyTarget === 0) {
+      allUsers.forEach((u) => {
+        if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled) companyTarget += Number(u.targets.sales.monthly || 0);
+      });
+    }
+
+    // 6-month sales trend (USD), across the viewer's scope, by conversion month.
+    const trend = [];
+    for (let i = 5; i >= 0; i--) {
+      const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      let sum = 0, conv = 0;
+      for (const l of leads) {
+        for (const d of (l.deals || [])) {
+          if (d.stage === 'closed_won') {
+            const when = l.convertedAt ? new Date(l.convertedAt) : (d.createdAt ? new Date(d.createdAt) : null);
+            if (when && when >= mStart && when < mEnd) sum += toUsd(d.amount, d.currency);
+          }
+        }
+        if (l.status === 'converted' && l.convertedAt) {
+          const c = new Date(l.convertedAt);
+          if (c >= mStart && c < mEnd) conv++;
+        }
+      }
+      trend.push({
+        month: mStart.toLocaleString('en-US', { month: 'short' }),
+        year: mStart.getFullYear(),
+        salesUsd: Math.round(sum),
+        conversions: conv,
+        pct: companyTarget > 0 ? Math.round((sum / companyTarget) * 100) : null,
+      });
+    }
+
+    // Current user's personal progress (for agent/manager self view).
+    const meRow = leaderboard.find((o) => o.ownerId === req.user.id) || null;
+    const myTargets = targetsById[req.user.id] || {};
+
     res.json({
+      role: req.user.role,
       metrics: {
         totalLeads, generatedToday, assignedToday, untouched,
         salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
+        companyTarget: Math.round(companyTarget),
+        companyPct: companyTarget > 0 ? Math.round((salesThisMonthUsd / companyTarget) * 100) : null,
       },
+      me: meRow ? {
+        salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining,
+        transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget,
+      } : null,
+      myTargets,
       leaderboard,
+      transferBoard,
+      trend,
     });
   } catch (e) { next(e); }
 });

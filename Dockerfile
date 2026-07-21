@@ -46,5 +46,7 @@ COPY . .
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# 8. Create tables + admin (safe to re-run), then start the server.
-CMD ["sh", "-c", "npm run seed && npm start"]
+# 8. Start the server. The app ensures its own tables + admin at boot (with DB
+# retry), so a transient seed failure must never block startup — run seed
+# best-effort and always start the server.
+CMD ["sh", "-c", "npm run seed || echo 'seed skipped'; npm start"]

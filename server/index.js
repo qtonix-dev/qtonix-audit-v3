@@ -42,6 +42,10 @@ app.get('/demo', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/demo.html'));
 });
 
+// Lightweight liveness probe — never touches the DB, so the platform can tell
+// the process is up even during a database blip and won't kill the container.
+app.get('/healthz', (req, res) => res.status(200).send('ok'));
+
 app.get('/api/health', async (req, res) => {
   let db = false;
   try { await sequelize.authenticate(); db = true; } catch { db = false; }
@@ -67,10 +71,41 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 
-initDb()
-  .then(async () => {
-    console.log(`Database connected (${sequelize.getDialect()})`);
+// Process-level safety nets. On a hosted platform an unhandled error must not
+// take the whole container down (which makes the domain stop resolving). Log
+// loudly and keep serving; the platform's own health checks can recycle us if
+// truly wedged.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
 
+// Connect to the DB with retries instead of exiting on the first failure —
+// on Railway the database can lag the app during a co-deploy/restart.
+async function connectWithRetry(attempt = 1) {
+  const MAX = 10;
+  try {
+    await initDb();
+    console.log(`Database connected (${sequelize.getDialect()})`);
+    return true;
+  } catch (e) {
+    console.error(`Database connect attempt ${attempt}/${MAX} failed:`, e.message);
+    if (attempt >= MAX) {
+      // Start the server anyway so the domain resolves and /healthz responds;
+      // routes that need the DB will error individually until it recovers.
+      console.error('Proceeding to listen without a confirmed DB connection.');
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 15000)));
+    return connectWithRetry(attempt + 1);
+  }
+}
+
+connectWithRetry()
+  .then(async (connected) => {
+    if (connected) {
     // -- Boot-time admin safety net. Never throws (so it can't cause a 502).
     // Ensures the admin account exists. If RESET_ADMIN=true, it also overwrites
     // the admin password with the current ADMIN_PASSWORD — set that variable,
@@ -113,6 +148,7 @@ initDb()
     } catch (e) {
       console.error('[migrate] leads migration skipped:', e.message);
     }
+    } // end if (connected)
 
     app.listen(PORT, () => {
       console.log(`API listening on :${PORT}`);
@@ -120,6 +156,6 @@ initDb()
     });
   })
   .catch((e) => {
-    console.error('Database connection failed:', e.message);
-    process.exit(1);
+    console.error('Boot error (continuing to listen):', e.message);
+    app.listen(PORT, () => console.log(`API listening on :${PORT} (degraded)`));
   });
