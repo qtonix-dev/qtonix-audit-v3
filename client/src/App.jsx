@@ -139,7 +139,7 @@ function Login({ onSignIn }) {
 
 // ---------------------------------------------------------------------------
 
-function NewReport({ user, onQueued }) {
+function NewReport({ user, initialLeadId, onQueued }) {
   const [form, setForm] = useState({
     website: '', businessName: '', customerName: '',
     services: ['SEO'], country: 'us', location: '',
@@ -155,6 +155,16 @@ function NewReport({ user, onQueued }) {
   const [busy, setBusy] = useState(false);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // If arriving from a lead's "Run report" button, switch to lead mode and
+  // pre-fill from that lead immediately.
+  useEffect(() => {
+    if (initialLeadId) {
+      setSourceMode('lead');
+      pickLead(initialLeadId);
+    }
+    // eslint-disable-next-line
+  }, [initialLeadId]);
 
   // Load the user's leads when they switch to "From an existing lead".
   useEffect(() => {
@@ -638,8 +648,15 @@ function ReportList({ isAdmin, onOpen }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get('q') ? 'list' : 'new'; }
-    catch { return 'new'; }
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('leadRun')) return 'new';
+      return p.get('q') ? 'list' : 'new';
+    } catch { return 'new'; }
+  });
+  const [leadRunId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('leadRun') || null; }
+    catch { return null; }
   });
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
@@ -720,7 +737,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-6 py-8">
         {view === 'leads' && <Leads user={user} />}
         {view === 'new' && !activeReport && (
-          <NewReport user={user} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
+          <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} />
         )}
         {view === 'progress' && activeReport && (
           <Progress

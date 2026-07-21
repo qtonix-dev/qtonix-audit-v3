@@ -97,6 +97,79 @@ router.get('/config', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** POST /api/leads/bulk — create many leads at once (CSV/Excel import).
+    Body: { rows: [ {firstName, lastName, website, email, ...}, ... ] }.
+    Each row is validated lightly; rows without a first name are skipped and
+    reported. Owner defaults to the importing user unless they're admin/manager
+    and supply a valid ownerId per row. */
+router.post('/bulk', requireAuth, async (req, res, next) => {
+  try {
+    const rows = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ error: 'No rows to import.' });
+    if (rows.length > 2000) return res.status(400).json({ error: 'Please import at most 2000 rows at a time.' });
+
+    let created = 0;
+    const skipped = [];
+    for (let i = 0; i < rows.length; i++) {
+      const b = rows[i] || {};
+      if (!b.firstName || !String(b.firstName).trim()) { skipped.push({ row: i + 1, reason: 'missing first name' }); continue; }
+      const owner = await resolveOwner(req.user, b.ownerId);
+      try {
+        await Lead.create({
+          ownerId: owner.id, ownerName: owner.name,
+          ownerTeam: owner.team || 'Bhubaneswar', ownerShift: owner.shift || 'Morning',
+          firstName: String(b.firstName).slice(0, 120),
+          lastName: String(b.lastName || '').slice(0, 120),
+          website: String(b.website || '').slice(0, 255),
+          domain: toDomain(b.website),
+          email: String(b.email || '').slice(0, 180),
+          secondaryEmail: String(b.secondaryEmail || '').slice(0, 180),
+          mobile: String(b.mobile || '').slice(0, 40),
+          phone: String(b.phone || '').slice(0, 40),
+          leadSource: String(b.leadSource || '').slice(0, 60),
+          generatedBy: String(b.generatedBy || '').slice(0, 120),
+          status: String(b.status || 'new').slice(0, 40),
+          servicesInterested: Array.isArray(b.servicesInterested) ? b.servicesInterested.slice(0, 30)
+            : (b.servicesInterested ? String(b.servicesInterested).split(/[;|]/).map((x) => x.trim()).filter(Boolean) : []),
+          tags: Array.isArray(b.tags) ? b.tags.slice(0, 30)
+            : (b.tags ? String(b.tags).split(/[;|]/).map((x) => x.trim()).filter(Boolean) : ['New Lead']),
+          country: String(b.country || '').slice(0, 80),
+          city: String(b.city || '').slice(0, 120),
+          timezone: String(b.timezone || '').slice(0, 80),
+          additionalInfo: String(b.additionalInfo || '').slice(0, 10000),
+          lastActivityAt: new Date(),
+          timeline: [{ type: 'created', text: 'Lead imported', time: new Date().toISOString(), author: req.user.name }],
+        });
+        created++;
+      } catch (e) { skipped.push({ row: i + 1, reason: e.message }); }
+    }
+    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.bulk_import', target: `${created} leads`, ip: req.ip });
+    res.status(201).json({ created, skipped });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/leads/deals/board — every deal across the leads visible to the
+    user, flattened with its parent lead info, for the kanban pipeline board.
+    Declared before /:id so "deals" isn't captured as an id. */
+router.get('/deals/board', requireAuth, async (req, res, next) => {
+  try {
+    const where = await visibilityWhere(req.user);
+    const leads = await Lead.findAll({ where, attributes: ['id', 'firstName', 'lastName', 'ownerName', 'deals'] });
+    const deals = [];
+    for (const l of leads) {
+      for (const d of (l.deals || [])) {
+        deals.push({
+          ...d,
+          leadId: l.id,
+          leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
+          ownerName: l.ownerName,
+        });
+      }
+    }
+    res.json({ deals });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/leads/reminders/count — open tasks/calls due today or overdue,
     across the leads visible to the user. Powers the in-app reminder badge.
     Declared before /:id so "reminders" isn't captured as an id. */
