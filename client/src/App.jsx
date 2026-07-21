@@ -143,7 +143,7 @@ function NewReport({ user, initialLeadId, onQueued }) {
   const [form, setForm] = useState({
     website: '', businessName: '', customerName: '',
     services: ['SEO'], country: 'us', location: '',
-    customerPhone: '', customerEmail: '', customerCountry: '', customerCompany: '',
+    customerPhone: '', customerEmail: '', customerCountry: '',
     leadId: null,
   });
   const [sourceMode, setSourceMode] = useState('new'); // 'new' | 'lead'
@@ -403,11 +403,6 @@ function NewReport({ user, initialLeadId, onQueued }) {
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer country</label>
               <input value={form.customerCountry} onChange={(e) => set('customerCountry', e.target.value)} placeholder="Malaysia"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Customer company</label>
-              <input value={form.customerCompany} onChange={(e) => set('customerCompany', e.target.value)} placeholder="Company Ltd."
                 className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]" />
             </div>
           </div>

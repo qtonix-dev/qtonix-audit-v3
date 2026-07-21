@@ -57,9 +57,11 @@ function pushTimeline(lead, type, text, author) {
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const where = await visibilityWhere(req.user);
-    const { q, status, source } = req.query;
+    const { q, status, source, ownerId, country } = req.query;
     if (status) where.status = status;
     if (source) where.leadSource = source;
+    if (ownerId) where.ownerId = ownerId;
+    if (country) where.country = country;
     if (q) {
       const like = { [Op.like]: `%${q}%` };
       where[Op.and] = [

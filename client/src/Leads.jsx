@@ -1,9 +1,63 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
-import { COUNTRY_NAMES } from './countries.js';
+import { COUNTRY_NAMES, COUNTRY_TIMEZONES } from './countries.js';
 
-// Filterable country picker — type to filter, click to select.
+// Multi-select with type-to-filter (same UX as country, but multiple values).
+export function MultiSelectCombobox({ options, values, onChange, placeholder, className }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const sel = values || [];
+  const matches = (q ? options.filter((o) => o.toLowerCase().includes(q.toLowerCase())) : options);
+  const toggle = (o) => onChange(sel.includes(o) ? sel.filter((x) => x !== o) : [...sel, o]);
+  return (
+    <div className="relative">
+      <div className={`${className} min-h-[38px] flex flex-wrap gap-1 items-center cursor-text`} onClick={() => setOpen(true)}>
+        {sel.map((s) => (
+          <span key={s} className="inline-flex items-center gap-1 rounded-full bg-[#2563EB] text-white px-2 py-0.5 text-[11px] font-bold">
+            {s}<button type="button" onClick={(e) => { e.stopPropagation(); toggle(s); }} className="hover:text-slate-200">✕</button>
+          </span>
+        ))}
+        <input className="flex-1 min-w-[80px] outline-none text-sm bg-transparent" value={q} placeholder={sel.length ? '' : (placeholder || 'Type to search…')}
+          onFocus={() => setOpen(true)} onChange={(e) => setQ(e.target.value)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      </div>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {matches.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No match</div>}
+          {matches.map((o) => (
+            <button key={o} type="button" onMouseDown={(e) => { e.preventDefault(); toggle(o); }}
+              className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${sel.includes(o) ? 'font-bold text-[#2563EB]' : 'text-slate-700'}`}>
+              <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center text-[9px] ${sel.includes(o) ? 'bg-[#2563EB] border-[#2563EB] text-white' : 'border-slate-300'}`}>{sel.includes(o) ? '✓' : ''}</span>
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Timezone field that adapts to the selected country: single-zone countries
+// show a read-only auto-filled value; multi-zone countries show a dropdown;
+// unknown countries fall back to free text.
+export function TimezoneField({ country, value, onChange, className }) {
+  const zones = COUNTRY_TIMEZONES[country] || null;
+  if (zones && zones.length === 1) {
+    return <input className={className} value={value || zones[0]} readOnly />;
+  }
+  if (zones && zones.length > 1) {
+    return (
+      <select className={className} value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— Select zone —</option>
+        {zones.map((z) => <option key={z} value={z}>{z}</option>)}
+      </select>
+    );
+  }
+  return <input className={className} value={value || ''} onChange={(e) => onChange(e.target.value)} placeholder="e.g. GMT+5:30" />;
+}
+
+
 export function CountryCombobox({ value, onChange, className }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -51,9 +105,12 @@ function statusMeta(config, id) {
 export function LeadsList({ user, onOpen, onNew }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
+  const [owners, setOwners] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [countryFilter, setCountryFilter] = useState('');
   const [importing, setImporting] = useState(false);
 
   const load = async () => {
@@ -62,12 +119,15 @@ export function LeadsList({ user, onOpen, onNew }) {
       const params = new URLSearchParams();
       if (q) params.set('q', q);
       if (statusFilter) params.set('status', statusFilter);
+      if (ownerFilter) params.set('ownerId', ownerFilter);
+      if (countryFilter) params.set('country', countryFilter);
       const [res, cfg] = await Promise.all([
         api(`/leads${params.toString() ? '?' + params.toString() : ''}`),
         api('/leads/config'),
       ]);
       setItems(res.items || []);
       setConfig(cfg.config || {});
+      setOwners(cfg.owners || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -90,6 +150,16 @@ export function LeadsList({ user, onOpen, onNew }) {
             <option value="">All statuses</option>
             {(config.leadStatuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
+          <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}
+            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+            <option value="">All owners</option>
+            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+          <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}
+            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm max-w-[140px]">
+            <option value="">All countries</option>
+            {Array.from(new Set(items.map((l) => l.country).filter(Boolean))).sort().map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
           <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
           <button onClick={() => setImporting(true)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">⬆ Import CSV</button>
           <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ New lead</button>
@@ -106,6 +176,8 @@ export function LeadsList({ user, onOpen, onNew }) {
             <thead>
               <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold">
                 <th className="text-left px-4 py-3">Name</th>
+                <th className="text-left px-4 py-3">Email</th>
+                <th className="text-left px-4 py-3">Phone</th>
                 <th className="text-left px-4 py-3">Website</th>
                 <th className="text-left px-4 py-3">Source</th>
                 <th className="text-left px-4 py-3">Status</th>
@@ -119,6 +191,8 @@ export function LeadsList({ user, onOpen, onNew }) {
                 return (
                   <tr key={l._id} onClick={() => onOpen(l)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
                     <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}</td>
+                    <td className="px-4 py-3 text-slate-500">{l.email || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500">{l.mobile || l.phone || '—'}</td>
                     <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>
                     <td className="px-4 py-3 text-slate-500">{l.leadSource || '—'}</td>
                     <td className="px-4 py-3"><span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>
@@ -349,12 +423,8 @@ export function NewLead({ user, onCreated, onCancel }) {
 
         <div>
           <label className={lab}>Services interested in</label>
-          <div className="flex flex-wrap gap-1.5">
-            {(config.servicesInterested || []).map((s) => (
-              <button key={s} type="button" onClick={() => toggleArr('servicesInterested', s)}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${f.servicesInterested.includes(s) ? 'bg-[#2563EB] text-white border-transparent' : 'text-slate-500 border-slate-200 hover:border-slate-400'}`}>{s}</button>
-            ))}
-          </div>
+          <MultiSelectCombobox className={inp} options={config.servicesInterested || []} values={f.servicesInterested}
+            onChange={(v) => set('servicesInterested', v)} placeholder="Type to search services…" />
         </div>
 
         <div>
@@ -369,9 +439,9 @@ export function NewLead({ user, onCreated, onCancel }) {
 
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100 pb-1">Location</div>
         <div className="grid grid-cols-3 gap-4">
-          <div><label className={lab}>Country</label><CountryCombobox className={inp} value={f.country} onChange={(v) => set('country', v)} /></div>
+          <div><label className={lab}>Country</label><CountryCombobox className={inp} value={f.country} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); else set('timezone', ''); }} /></div>
           <div><label className={lab}>City</label><input className={inp} value={f.city} onChange={(e) => set('city', e.target.value)} /></div>
-          <div><label className={lab}>Time zone</label><input className={inp} value={f.timezone} onChange={(e) => set('timezone', e.target.value)} placeholder="e.g. GMT+5:30" /></div>
+          <div><label className={lab}>Time zone</label><TimezoneField className={inp} country={f.country} value={f.timezone} onChange={(v) => set('timezone', v)} /></div>
         </div>
 
         <div>
@@ -775,9 +845,9 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
             <div><label className={lab}>Email</label><input className={inp} value={draft.email || ''} onChange={(e) => set('email', e.target.value)} /></div>
             <div><label className={lab}>Mobile</label><input className={inp} value={draft.mobile || ''} onChange={(e) => set('mobile', e.target.value)} /></div>
             <div><label className={lab}>Phone</label><input className={inp} value={draft.phone || ''} onChange={(e) => set('phone', e.target.value)} /></div>
-            <div><label className={lab}>Country</label><input className={inp} value={draft.country || ''} onChange={(e) => set('country', e.target.value)} /></div>
+            <div><label className={lab}>Country</label><CountryCombobox className={inp} value={draft.country || ''} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); }} /></div>
             <div><label className={lab}>City</label><input className={inp} value={draft.city || ''} onChange={(e) => set('city', e.target.value)} /></div>
-            <div><label className={lab}>Time zone</label><input className={inp} value={draft.timezone || ''} onChange={(e) => set('timezone', e.target.value)} /></div>
+            <div><label className={lab}>Time zone</label><TimezoneField className={inp} country={draft.country} value={draft.timezone} onChange={(v) => set('timezone', v)} /></div>
           </div>
         )}
 
@@ -785,10 +855,18 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
           <div className="mb-4">
             <label className={lab}>Tags</label>
             <div className="flex flex-wrap gap-1.5">
-              {(config.tags || []).map((t) => (
-                <button key={t} type="button" onClick={() => toggleArr('tags', t)}
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.tags || []).includes(t) ? 'bg-[#FF6A00] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{t}</button>
-              ))}
+              {/* Union of configured tags and any tags already on the lead — so
+                  legacy tags no longer in the config can still be de-selected. */}
+              {Array.from(new Set([...(config.tags || []), ...(draft.tags || [])])).map((t) => {
+                const on = (draft.tags || []).includes(t);
+                const legacy = !(config.tags || []).includes(t);
+                return (
+                  <button key={t} type="button" onClick={() => toggleArr('tags', t)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${on ? 'bg-[#FF6A00] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>
+                    {t}{legacy && on ? ' ✕' : ''}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -823,12 +901,8 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
             </div>
             <div className="col-span-2">
               <label className={lab}>Services interested in</label>
-              <div className="flex flex-wrap gap-1.5">
-                {(config.servicesInterested || []).map((s) => (
-                  <button key={s} type="button" onClick={() => toggleArr('servicesInterested', s)}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold border ${(draft.servicesInterested || []).includes(s) ? 'bg-[#2563EB] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{s}</button>
-                ))}
-              </div>
+              <MultiSelectCombobox className={inp} options={config.servicesInterested || []} values={draft.servicesInterested || []}
+                onChange={(v) => set('servicesInterested', v)} placeholder="Type to search services…" />
             </div>
           </div>
         )}
