@@ -4,6 +4,51 @@ import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
 import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysUntil, IST_LABEL } from './timezone.js';
 
+
+/**
+ * Small inline SVG icon set. Line icons at a consistent 1.6 stroke weight look
+ * considerably more modern than emoji, and they inherit text colour so they
+ * work on both light and dark buttons.
+ */
+const svg = (path, extra) => function IconCmp({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {path}
+      {extra}
+    </svg>
+  );
+};
+
+export const Icon = {
+  Note: svg(<><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h9L20 8.5v11A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5z" /><path d="M14 3v6h6" /><path d="M8 13h8M8 17h5" /></>),
+  Check: svg(<><path d="M9 11.5 11.5 14 16 9" /><rect x="3.5" y="3.5" width="17" height="17" rx="3.5" /></>),
+  Phone: svg(<path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5z" />),
+  Money: svg(<><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.5a2.5 2.5 0 0 0-2.5-1.5c-1.4 0-2.5.8-2.5 2s1.1 1.8 2.5 2 2.5.6 2.5 2-1.1 2-2.5 2a2.5 2.5 0 0 1-2.5-1.5" /><path d="M12 6.5v11" /></>),
+  Pencil: svg(<><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></>),
+  Trash: svg(<><path d="M4 7h16" /><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" /><path d="M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /><path d="M10 11v6M14 11v6" /></>),
+  Upload: svg(<><path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" /></>),
+  Search: svg(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>),
+  Plus: svg(<><path d="M12 5v14M5 12h14" /></>),
+  Clock: svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></>),
+  Calendar: svg(<><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>),
+  Deal: svg(<><path d="M3.5 8.5h17v10a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" /><path d="M8.5 8.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v2.5" /><path d="M3.5 13h17" /></>),
+};
+
+/** Compact icon+label button used across the lead detail header. */
+export function ActionBtn({ onClick, label, icon, tone = 'default' }) {
+  const base = 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition';
+  const tones = {
+    default: 'border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+    danger: 'border border-red-200 text-red-500 hover:bg-red-50',
+  };
+  return (
+    <button onClick={onClick} className={`${base} ${tones[tone]}`}>
+      {icon}{label}
+    </button>
+  );
+}
+
 // Live clock showing the lead's local time, so agents don't dial at 3am.
 function LeadLocalClock({ timezone }) {
   const [, tick] = useState(0);
@@ -17,7 +62,7 @@ function LeadLocalClock({ timezone }) {
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${w.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}
       title={`${w.label} · ${timezone}`}>
-      🕐 {z.time} {tzShortLabel(timezone)}
+      <Icon.Clock size={13} /> {z.time} {tzShortLabel(timezone)}
       <span className="font-normal opacity-70">{w.ok ? '· ok to call' : '· do not call'}</span>
     </span>
   );
@@ -334,7 +379,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
           <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
           {user.role === 'admin' && (
             <button onClick={() => setImporting(true)} title="Import leads from CSV"
-              className="rounded-lg border border-slate-300 w-9 h-9 flex items-center justify-center text-base text-slate-600 hover:border-slate-400 hover:bg-slate-50">⬆</button>
+              className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50"><Icon.Upload size={16} /></button>
           )}
           <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ New lead</button>
         </div>
@@ -408,7 +453,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                           e.stopPropagation();
                           if (!confirm(`Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.`)) return;
                           try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { alert(err.message); }
-                        }} className="text-slate-300 hover:text-red-500 text-sm">🗑</button>
+                        }} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>
                       </td>
                     )}
                   </tr>
@@ -720,7 +765,12 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
 
   return (
     <div>
-      <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to leads</button>
+      {/* Top row: back on the left, the lead's local time on the right — keeps
+          the action buttons below on a single line. */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to leads</button>
+        {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
+      </div>
 
       {/* Header: avatar + name + status/tags, owner/last-activity, quick actions */}
       <div className="bg-white rounded-2xl border border-slate-100 p-5 mb-6 shadow-sm">
@@ -741,27 +791,30 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
                 <button onClick={() => openEdit('tags')} title="Add or edit tags"
                   className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">+ tag</button>
               </div>
-              <div className="text-sm text-slate-400 mt-1.5 flex items-center gap-2 flex-wrap">
-                <span>
-                  {lead.website && <><a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:underline">{lead.website.replace(/^https?:\/\//, '')}</a><span className="mx-2">·</span></>}
-                  Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
-                  <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
-                </span>
-                {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
+              <div className="text-sm text-slate-400 mt-1.5">
+                {lead.website && <><a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:underline">{lead.website.replace(/^https?:\/\//, '')}</a><span className="mx-2">·</span></>}
+                Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
+                <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={() => setQuickModal('note')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📝 Note</button>
-            <button onClick={() => setQuickModal('task')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">✅ Task</button>
-            <button onClick={() => setQuickModal('call')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📞 Call</button>
-            <button onClick={() => setQuickModal('deal')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">💰 Deal</button>
-            <button onClick={() => openEdit('all')} className="rounded-md px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>✏️ Edit</button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <ActionBtn onClick={() => setQuickModal('note')} label="Note" icon={<Icon.Note />} />
+            <ActionBtn onClick={() => setQuickModal('task')} label="Task" icon={<Icon.Check />} />
+            <ActionBtn onClick={() => setQuickModal('call')} label="Call" icon={<Icon.Phone />} />
+            <ActionBtn onClick={() => setQuickModal('deal')} label="Deal" icon={<Icon.Money />} />
+            <button onClick={() => openEdit('all')}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-white"
+              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              <Icon.Pencil /> Edit
+            </button>
             {user.role === 'admin' && (
-              <button onClick={async () => {
+              <button title="Delete lead" onClick={async () => {
                 if (!confirm(`Permanently delete ${fullName(lead)}?\n\nThis removes the lead and all of its notes, activities and deals from the database. This cannot be undone.`)) return;
                 try { await api(`/leads/${leadId}`, { method: 'DELETE' }); onBack(); } catch (e) { alert(e.message); }
-              }} className="rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50">🗑 Delete lead</button>
+              }} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50">
+                <Icon.Trash /> Delete
+              </button>
             )}
           </div>
         </div>
@@ -1254,6 +1307,19 @@ function DealsTab({ lead, config, user, onChange }) {
     setBusyInst(null);
   };
 
+  // Move an instalment's due date (customer wants to pay early or needs time).
+  const changeDue = async (deal, inst, dueDate, e) => {
+    if (e) e.stopPropagation();
+    setBusyInst(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH', body: JSON.stringify({ dueDate }),
+      });
+      onChange(u);
+    } catch (err) { alert(err.message); }
+    setBusyInst(null);
+  };
+
   // Admin-only hard delete of a deal (for cleaning up bad/legacy records).
   const removeDeal = async (deal, e) => {
     e.stopPropagation();
@@ -1268,7 +1334,7 @@ function DealsTab({ lead, config, user, onChange }) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <div className="text-sm text-slate-500">{deals.length} deal{deals.length === 1 ? '' : 's'}</div>
-        <button onClick={() => setModal('new')} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>💰 Add deal</button>
+        <button onClick={() => setModal('new')} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}><Icon.Plus size={14} /> Add deal</button>
       </div>
       {deals.length === 0 ? <div className="text-slate-300 text-sm py-12 text-center">No deals yet.</div> : (
         <div className="space-y-3">
@@ -1287,7 +1353,7 @@ function DealsTab({ lead, config, user, onChange }) {
                       <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
                       {user && user.role === 'admin' && (
                         <button onClick={(e) => removeDeal(d, e)} title="Delete this deal"
-                          className="text-slate-300 hover:text-red-500 text-sm px-1">🗑</button>
+                          className="text-slate-300 hover:text-red-500 px-1"><Icon.Trash size={15} /></button>
                       )}
                     </div>
                   </div>
@@ -1301,33 +1367,66 @@ function DealsTab({ lead, config, user, onChange }) {
                   {d.remark && <div className="text-xs text-slate-500 mt-1.5">{d.remark}</div>}
                 </div>
 
-                {/* Payment schedule — only meaningful once the deal is won. */}
-                {isWon && insts.length > 0 && (
+                {/* Payment schedule. Shown for ANY deal that has one — not just
+                    won deals — so an agent can plan and adjust instalments while
+                    the deal is still in negotiation. */}
+                {insts.length > 0 && (
                   <div className="border-t border-slate-100 bg-slate-50/70 px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Payments</span>
+                    <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        Payment schedule · {insts.filter((i) => i.paid).length}/{insts.length} paid
+                      </span>
                       <span className="text-[11px] font-bold">
                         <span className="text-green-600">{d.currency} {paidAmt.toLocaleString()} collected</span>
-                        {dueAmt > 0 && <span className="text-amber-600"> · {d.currency} {dueAmt.toLocaleString()} due</span>}
+                        {dueAmt > 0 && <span className="text-amber-600"> · {d.currency} {dueAmt.toLocaleString()} outstanding</span>}
                       </span>
                     </div>
-                    <div className="space-y-1.5">
-                      {insts.map((it) => (
-                        <div key={it.id} className="flex items-center gap-2 text-xs">
-                          <span className="font-bold text-slate-400 w-6">#{it.seq}</span>
-                          <span className="font-semibold text-slate-600 w-24">{d.currency} {Number(it.amount || 0).toLocaleString()}</span>
-                          <span className={`flex-1 ${!it.paid && it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10) ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
-                            {it.paid
-                              ? `paid ${it.paidDate || ''}`
-                              : <>due {it.dueDate || '—'}{it.dueDate ? <span className="ml-1 font-bold">· {dueLabel(it.dueDate)}</span> : null}</>}
-                          </span>
-                          <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
-                            className={`rounded px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
-                            {busyInst === it.id ? '…' : it.paid ? '✓ Paid' : 'Mark paid'}
-                          </button>
-                        </div>
-                      ))}
+
+                    {/* Collection progress */}
+                    <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden mb-3">
+                      <div className="h-full rounded-full bg-green-500"
+                        style={{ width: `${Math.max(2, Math.round((paidAmt / Math.max(1, Number(d.amount) || 1)) * 100))}%` }} />
                     </div>
+
+                    <div className="space-y-1.5">
+                      {insts.map((it) => {
+                        const overdue = !it.paid && it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10);
+                        return (
+                          <div key={it.id}
+                            className={`flex items-center gap-2 text-xs rounded-lg px-2 py-1.5 ${it.paid ? 'bg-green-50' : overdue ? 'bg-red-50' : 'bg-white'}`}>
+                            <span className={`font-bold w-6 shrink-0 ${it.paid ? 'text-green-600' : 'text-slate-400'}`}>#{it.seq}</span>
+                            <span className="font-semibold text-slate-700 w-24 shrink-0">{d.currency} {Number(it.amount || 0).toLocaleString()}</span>
+
+                            {/* Due date stays editable until the money is in. */}
+                            {it.paid ? (
+                              <span className="flex-1 text-green-700 font-semibold">✓ paid {it.paidDate || ''}</span>
+                            ) : (
+                              <span className="flex-1 flex items-center gap-2 min-w-0">
+                                <input type="date" value={it.dueDate || ''} disabled={busyInst === it.id}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => changeDue(d, it, e.target.value, e)}
+                                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 bg-white" />
+                                {it.dueDate && (
+                                  <span className={`text-[10px] font-bold ${overdue ? 'text-red-500' : 'text-slate-400'}`}>
+                                    {dueLabel(it.dueDate)}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+
+                            <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
+                              className={`rounded px-2 py-1 text-[10px] font-bold shrink-0 disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
+                              {busyInst === it.id ? '…' : it.paid ? 'Paid' : 'Mark paid'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!isWon && (
+                      <div className="text-[10px] text-slate-400 mt-2">
+                        Payments only count towards sales once the deal is Closed Won and the instalment is marked paid.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1607,20 +1706,26 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const summarize = (l) => {
     const won = (l.deals || []).filter((d) => d.stage === 'closed_won');
     const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
-    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null, nextInst = null;
+    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
+    const pending = [];
     for (const d of won) {
       booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
         if (it.paid) { instPaid++; collected += toUsd(it.amount, d.currency); }
         else {
-          // Earliest unpaid installment = the next payment to collect.
-          if (!nextInst || (it.dueDate && nextInst.inst.dueDate && it.dueDate < nextInst.inst.dueDate)) nextInst = { deal: d, inst: it };
+          pending.push({ deal: d, inst: it });
           if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
         }
       }
     }
-    return { won, open, booked: Math.round(booked), collected: Math.round(collected), due: Math.round(booked - collected), instTotal, instPaid, nextDue, nextInst };
+    // Soonest due first, undated last, so the most urgent chase is at the top.
+    pending.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
+    return {
+      won, open, booked: Math.round(booked), collected: Math.round(collected),
+      due: Math.round(booked - collected), instTotal, instPaid, nextDue,
+      pending, nextInst: pending[0] || null,
+    };
   };
 
   const filtered = items
@@ -1714,29 +1819,44 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       : <span className="text-slate-400">{fullyPaid ? 'Paid in full' : 'Payment pending'}</span>}
                     {s.due > 0 && <span className="font-bold text-amber-600">${s.due.toLocaleString()} due</span>}
                   </div>
-                  {/* Next payment with amount and a countdown, so managers can
-                      see at a glance who needs chasing. */}
-                  {s.nextInst && (() => {
-                    const n = daysUntil(s.nextInst.inst.dueDate);
-                    const overdue = n != null && n < 0;
-                    const soon = n != null && n >= 0 && n <= 3;
-                    return (
-                      <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold ${overdue ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}>
-                        📅 Next: {s.nextInst.deal.currency} {Number(s.nextInst.inst.amount || 0).toLocaleString()} on {s.nextInst.inst.dueDate || '—'}
-                        <span className="ml-1 font-extrabold">· {dueLabel(s.nextInst.inst.dueDate)}</span>
+                  {/* Every outstanding payment, each individually collectable —
+                      so a manager can mark the 2nd or 3rd instalment paid
+                      without opening the lead. */}
+                  {s.pending.length > 0 && (
+                    <div className="mt-3 space-y-1.5">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        Outstanding · {s.pending.length} payment{s.pending.length === 1 ? '' : 's'}
                       </div>
-                    );
-                  })()}
+                      {s.pending.slice(0, 4).map(({ deal, inst }) => {
+                        const n = daysUntil(inst.dueDate);
+                        const overdue = n != null && n < 0;
+                        const soon = n != null && n >= 0 && n <= 3;
+                        return (
+                          <div key={inst.id}
+                            className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${overdue ? 'bg-red-50' : soon ? 'bg-amber-50' : 'bg-slate-50'}`}>
+                            <span className="text-[10px] font-bold text-slate-400 shrink-0">#{inst.seq}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-slate-700">
+                                {deal.currency} {Number(inst.amount || 0).toLocaleString()}
+                              </div>
+                              <div className={`text-[10px] font-semibold ${overdue ? 'text-red-600' : soon ? 'text-amber-700' : 'text-slate-400'}`}>
+                                {inst.dueDate || 'no date'} · {dueLabel(inst.dueDate)}
+                              </div>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); collect(l, deal, inst); }}
+                              disabled={busy === inst.id}
+                              className="rounded-md bg-[#050A1F] text-white px-2.5 py-1 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
+                              {busy === inst.id ? '…' : 'Mark paid'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {s.pending.length > 4 && (
+                        <div className="text-[10px] text-slate-400">+{s.pending.length - 4} more — open the client to see all</div>
+                      )}
+                    </div>
+                  )}
                 </div>
-
-                {/* Collect the next outstanding payment without leaving the page. */}
-                {s.nextInst && (
-                  <button onClick={(e) => { e.stopPropagation(); collect(l, s.nextInst.deal, s.nextInst.inst); }}
-                    disabled={busy === s.nextInst.inst.id}
-                    className="w-full mt-3 rounded-lg bg-[#050A1F] text-white px-3 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50">
-                    {busy === s.nextInst.inst.id ? 'Saving…' : `✓ Mark ${s.nextInst.deal.currency} ${Number(s.nextInst.inst.amount || 0).toLocaleString()} received`}
-                  </button>
-                )}
 
                 {/* Deal counts + cross-sell prompt */}
                 <div className="flex items-center gap-1.5 mt-3 flex-wrap">
