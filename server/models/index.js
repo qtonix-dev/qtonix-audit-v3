@@ -512,41 +512,73 @@ function defaultPricing() {
  */
 async function pruneDuplicateIndexes() {
   if (sequelize.getDialect() !== 'mysql') return;
-  const tables = ['leads', 'users', 'reports', 'settings', 'audit_logs', 'reviews'];
 
-  for (const table of tables) {
-    let rows;
-    try {
-      [rows] = await sequelize.query(`SHOW INDEX FROM \`${table}\``);
-    } catch {
-      continue; // table doesn't exist yet on a fresh install
-    }
+  // Read the real index layout from information_schema. This is more reliable
+  // than SHOW INDEX (whose result shape varies with how Sequelize unwraps it)
+  // and lets us handle every table in the schema, not a hard-coded list.
+  let rows;
+  try {
+    rows = await sequelize.query(
+      `SELECT TABLE_NAME AS tbl, INDEX_NAME AS idx, NON_UNIQUE AS nonUnique,
+              SEQ_IN_INDEX AS seq, COLUMN_NAME AS col
+         FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+  } catch (e) {
+    console.error('[schema] could not read index metadata:', e.message);
+    return;
+  }
+  if (!rows || rows.length === 0) return;
 
-    // Group index parts into whole indexes, in column order.
-    const byName = {};
-    for (const r of rows) {
-      const name = r.Key_name;
-      byName[name] = byName[name] || { name, unique: r.Non_unique === 0, cols: [] };
-      byName[name].cols[(r.Seq_in_index || 1) - 1] = r.Column_name;
-    }
+  // Rebuild whole indexes from their per-column rows.
+  const tables = {};
+  for (const r of rows) {
+    const t = (tables[r.tbl] = tables[r.tbl] || {});
+    const i = (t[r.idx] = t[r.idx] || { name: r.idx, unique: Number(r.nonUnique) === 0, cols: [] });
+    i.cols[Number(r.seq) - 1] = r.col;
+  }
 
+  for (const [table, indexes] of Object.entries(tables)) {
+    const all = Object.values(indexes);
     const seen = new Set();
     const drop = [];
-    for (const idx of Object.values(byName)) {
-      if (idx.name === 'PRIMARY' || idx.unique) continue; // never touch these
+
+    for (const idx of all) {
+      if (idx.name === 'PRIMARY' || idx.unique) continue; // never drop these
       const sig = idx.cols.join(',');
+      // Keep the first occurrence of each column signature, drop the rest.
+      // Sequelize's generated duplicates are named foo_2, foo_3 … so preferring
+      // the shortest/earliest name keeps the canonical one.
       if (seen.has(sig)) drop.push(idx.name);
       else seen.add(sig);
+    }
+
+    // Safety net: MySQL allows 64 keys per table. If a table is still at or
+    // near the ceiling after removing exact duplicates, shed the numbered
+    // Sequelize copies (name ending _<digits>) until we're comfortably under.
+    const keptCount = all.length - drop.length;
+    if (keptCount > 60) {
+      const numbered = all
+        .filter((i) => i.name !== 'PRIMARY' && !i.unique && /_\d+$/.test(i.name) && !drop.includes(i.name))
+        .sort((a, b) => b.name.localeCompare(a.name));
+      for (const idx of numbered) {
+        if (all.length - drop.length <= 40) break;
+        drop.push(idx.name);
+      }
     }
 
     for (const name of drop) {
       try {
         await sequelize.query(`ALTER TABLE \`${table}\` DROP INDEX \`${name}\``);
       } catch (e) {
-        console.error(`[schema] could not drop index ${table}.${name}:`, e.message);
+        console.error(`[schema] could not drop ${table}.${name}:`, e.message);
       }
     }
-    if (drop.length) console.log(`[schema] ${table}: removed ${drop.length} duplicate index(es)`);
+    if (drop.length) {
+      console.log(`[schema] ${table}: dropped ${drop.length} duplicate index(es), ${all.length - drop.length} remain`);
+    }
   }
 }
 
@@ -571,10 +603,26 @@ async function initDb({ sync = true } = {}) {
     try {
       await sequelize.sync({ alter: true });
     } catch (e) {
-      // If alter still fails, fall back to a plain sync so the app can boot and
-      // serve traffic. Missing columns are far less damaging than being down.
-      console.error('[schema] alter sync failed, falling back to plain sync:', e.message);
-      await sequelize.sync();
+      console.error('[schema] alter sync failed:', e.message);
+      // A second pruning pass, then retry. The first pass may have run before
+      // we knew which table was over the limit.
+      try {
+        await pruneDuplicateIndexes();
+        await sequelize.sync({ alter: true });
+        console.log('[schema] recovered after index cleanup');
+      } catch (e2) {
+        // Still failing: bring the tables up WITHOUT touching indexes at all.
+        // Existing tables keep their current schema; the app boots and serves
+        // traffic, which matters more than a perfectly-migrated schema.
+        console.error('[schema] retry failed, creating tables without index sync:', e2.message);
+        for (const model of Object.values(sequelize.models)) {
+          try {
+            await model.sync({ alter: false });
+          } catch (e3) {
+            console.error(`[schema] ${model.tableName}: ${e3.message}`);
+          }
+        }
+      }
     }
     if (isSqlite) await sequelize.query('PRAGMA foreign_keys = ON');
   }
@@ -607,5 +655,5 @@ async function initDb({ sync = true } = {}) {
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, Review,
-  encrypt, decrypt, initDb, defaultPricing,
+  encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

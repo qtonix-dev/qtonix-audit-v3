@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
-const { initDb, sequelize, User } = require('./models');
+const { initDb, sequelize, User, pruneDuplicateIndexes } = require('./models');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -91,6 +91,18 @@ process.on('uncaughtException', (err) => {
 async function connectWithRetry(attempt = 1) {
   const MAX = 10;
   try {
+    // Repair the schema BEFORE attempting a sync. Sequelize's alter-sync
+    // accumulates duplicate indexes on MySQL and eventually breaches the
+    // 64-key-per-table limit, at which point every sync fails. Pruning has to
+    // happen first, and must not be blocked by the very failure it fixes.
+    if (attempt === 1) {
+      try {
+        await sequelize.authenticate();
+        await pruneDuplicateIndexes();
+      } catch (e) {
+        console.error('[schema] pre-sync index repair skipped:', e.message);
+      }
+    }
     await initDb();
     console.log(`Database connected (${sequelize.getDialect()})`);
     return true;
