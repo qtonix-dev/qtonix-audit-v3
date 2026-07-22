@@ -114,3 +114,17 @@ export function dueLabel(isoDate) {
   if (n === -1) return '1 day overdue';
   return `${Math.abs(n)} days overdue`;
 }
+
+/**
+ * Countdown phrased for a payment chase: "15 days left", "due today",
+ * "7 days overdue". Reads better in brackets next to a date than dueLabel.
+ */
+export function daysLeftLabel(isoDate) {
+  const n = daysUntil(isoDate);
+  if (n === null) return '';
+  if (n === 0) return 'due today';
+  if (n === 1) return '1 day left';
+  if (n > 1) return `${n} days left`;
+  if (n === -1) return '1 day overdue';
+  return `${Math.abs(n)} days overdue`;
+}

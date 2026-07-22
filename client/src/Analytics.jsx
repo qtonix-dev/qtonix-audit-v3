@@ -187,7 +187,7 @@ function MonthBars({ data, valueKey = 'salesUsd', color = '#7DC5E8', money = tru
   );
 }
 
-export default function Analytics({ user }) {
+export default function Analytics({ user, mode = 'analytics', onModeChange }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => { api('/leads/dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
@@ -219,14 +219,26 @@ export default function Analytics({ user }) {
 
   return (
     <div>
-      {/* Header */}
-      <div className="mb-5">
-        <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Sales analytics</h1>
-        <div className="text-sm text-slate-400 mt-0.5">
-          {user.role === 'admin' ? 'Company-wide' : user.role === 'manager' ? 'Your team' : 'Your performance'}
-          <span className="mx-2 text-slate-200">|</span>
-          {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+      {/* Header, matching the overview so switching views feels seamless. */}
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Sales analytics</h1>
+          <div className="text-sm text-slate-400 mt-0.5">
+            {user.role === 'admin' ? 'Company-wide' : user.role === 'manager' ? 'Your team' : 'Your performance'}
+            <span className="mx-2 text-slate-200">|</span>
+            {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+          </div>
         </div>
+        {onModeChange && (
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 shrink-0">
+            {[['overview', 'Overview'], ['analytics', 'Analytics']].map(([id, label]) => (
+              <button key={id} onClick={() => onModeChange(id)}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${mode === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500 hover:text-slate-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Row 1 — headline figures */}

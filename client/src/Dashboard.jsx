@@ -251,7 +251,7 @@ function Leaderboard({ board, user, maxSales }) {
   );
 }
 
-export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday }) {
+export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, mode = 'overview', onModeChange }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [showAwaiting, setShowAwaiting] = useState(false);
@@ -279,10 +279,24 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
 
   return (
     <div className="space-y-5">
-      {/* Greeting */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting}, {user.name.split(' ')[0]} 👋</h1>
-        <div className="text-sm text-slate-400">{isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.'}</div>
+      {/* Greeting, with the view switcher on the right. Managers and admins can
+          flip between the operational overview and the analytics view; agents
+          only ever see the overview, so the switcher is hidden for them. */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting}, {user.name.split(' ')[0]} 👋</h1>
+          <div className="text-sm text-slate-400">{isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.'}</div>
+        </div>
+        {(isAdmin || isManager) && onModeChange && (
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 shrink-0">
+            {[['overview', 'Overview'], ['analytics', 'Analytics']].map(([id, label]) => (
+              <button key={id} onClick={() => onModeChange(id)}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${mode === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500 hover:text-slate-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ROW 1 — Sales vs target + Converted, 50/50 */}

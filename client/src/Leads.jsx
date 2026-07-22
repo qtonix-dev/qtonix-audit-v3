@@ -2,37 +2,35 @@ import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
-import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysUntil, IST_LABEL } from './timezone.js';
+import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, daysUntil, IST_LABEL } from './timezone.js';
 
 
 /**
- * Small inline SVG icon set. Line icons at a consistent 1.6 stroke weight look
- * considerably more modern than emoji, and they inherit text colour so they
- * work on both light and dark buttons.
+ * Inline SVG line icons. Defined as plain components (rather than built by a
+ * factory) so they're trivially debuggable and evaluate lazily at render time.
+ * They inherit text colour, so the same icon works on light and dark buttons.
  */
-const svg = (path, extra) => function IconCmp({ size = 15 }) {
+function IconBase({ size = 15, children }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      {path}
-      {extra}
+      {children}
     </svg>
   );
-};
+}
 
 export const Icon = {
-  Note: svg(<><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h9L20 8.5v11A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5z" /><path d="M14 3v6h6" /><path d="M8 13h8M8 17h5" /></>),
-  Check: svg(<><path d="M9 11.5 11.5 14 16 9" /><rect x="3.5" y="3.5" width="17" height="17" rx="3.5" /></>),
-  Phone: svg(<path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5z" />),
-  Money: svg(<><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.5a2.5 2.5 0 0 0-2.5-1.5c-1.4 0-2.5.8-2.5 2s1.1 1.8 2.5 2 2.5.6 2.5 2-1.1 2-2.5 2a2.5 2.5 0 0 1-2.5-1.5" /><path d="M12 6.5v11" /></>),
-  Pencil: svg(<><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></>),
-  Trash: svg(<><path d="M4 7h16" /><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" /><path d="M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /><path d="M10 11v6M14 11v6" /></>),
-  Upload: svg(<><path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" /></>),
-  Search: svg(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>),
-  Plus: svg(<><path d="M12 5v14M5 12h14" /></>),
-  Clock: svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></>),
-  Calendar: svg(<><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>),
-  Deal: svg(<><path d="M3.5 8.5h17v10a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" /><path d="M8.5 8.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v2.5" /><path d="M3.5 13h17" /></>),
+  Note: (p) => <IconBase {...p}><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h9L20 8.5v11A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5z" /><path d="M14 3v6h6" /><path d="M8 13h8M8 17h5" /></IconBase>,
+  Check: (p) => <IconBase {...p}><rect x="3.5" y="3.5" width="17" height="17" rx="3.5" /><path d="M8.5 12l2.5 2.5 4.5-5" /></IconBase>,
+  Phone: (p) => <IconBase {...p}><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5z" /></IconBase>,
+  Money: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M14.5 9.5A2.5 2.5 0 0 0 12 8c-1.4 0-2.5.8-2.5 2s1.1 1.8 2.5 2 2.5.6 2.5 2-1.1 2-2.5 2a2.5 2.5 0 0 1-2.5-1.5" /><path d="M12 6.5v11" /></IconBase>,
+  Pencil: (p) => <IconBase {...p}><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></IconBase>,
+  Trash: (p) => <IconBase {...p}><path d="M4 7h16" /><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" /><path d="M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /><path d="M10 11v6M14 11v6" /></IconBase>,
+  Upload: (p) => <IconBase {...p}><path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" /></IconBase>,
+  Search: (p) => <IconBase {...p}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></IconBase>,
+  Plus: (p) => <IconBase {...p}><path d="M12 5v14M5 12h14" /></IconBase>,
+  Clock: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></IconBase>,
+  Calendar: (p) => <IconBase {...p}><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></IconBase>,
 };
 
 /** Compact icon+label button used across the lead detail header. */
@@ -1408,7 +1406,7 @@ function DealsTab({ lead, config, user, onChange }) {
                                   className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 bg-white" />
                                 {it.dueDate && (
                                   <span className={`text-[10px] font-bold ${overdue ? 'text-red-500' : 'text-slate-400'}`}>
-                                    {dueLabel(it.dueDate)}
+                                    {daysLeftLabel(it.dueDate)}
                                   </span>
                                 )}
                               </span>
@@ -1819,40 +1817,48 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       : <span className="text-slate-400">{fullyPaid ? 'Paid in full' : 'Payment pending'}</span>}
                     {s.due > 0 && <span className="font-bold text-amber-600">${s.due.toLocaleString()} due</span>}
                   </div>
-                  {/* Every outstanding payment, each individually collectable —
-                      so a manager can mark the 2nd or 3rd instalment paid
-                      without opening the lead. */}
+                  {/* Every outstanding payment: amount, due date, a plain-English
+                      countdown, and its own Mark-paid button — so the 2nd or 3rd
+                      instalment can be collected without opening the lead. */}
                   {s.pending.length > 0 && (
-                    <div className="mt-3 space-y-1.5">
-                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                        Outstanding · {s.pending.length} payment{s.pending.length === 1 ? '' : 's'}
+                    <div className="mt-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+                        Outstanding payments · {s.pending.length}
                       </div>
-                      {s.pending.slice(0, 4).map(({ deal, inst }) => {
-                        const n = daysUntil(inst.dueDate);
-                        const overdue = n != null && n < 0;
-                        const soon = n != null && n >= 0 && n <= 3;
-                        return (
-                          <div key={inst.id}
-                            className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${overdue ? 'bg-red-50' : soon ? 'bg-amber-50' : 'bg-slate-50'}`}>
-                            <span className="text-[10px] font-bold text-slate-400 shrink-0">#{inst.seq}</span>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-bold text-slate-700">
-                                {deal.currency} {Number(inst.amount || 0).toLocaleString()}
-                              </div>
-                              <div className={`text-[10px] font-semibold ${overdue ? 'text-red-600' : soon ? 'text-amber-700' : 'text-slate-400'}`}>
-                                {inst.dueDate || 'no date'} · {dueLabel(inst.dueDate)}
+                      <div className="space-y-1.5">
+                        {s.pending.slice(0, 4).map(({ deal, inst }) => {
+                          const n = daysUntil(inst.dueDate);
+                          const overdue = n != null && n < 0;
+                          const soon = n != null && n >= 0 && n <= 7;
+                          return (
+                            <div key={inst.id}
+                              className={`rounded-lg px-2.5 py-2 ${overdue ? 'bg-red-50 border border-red-100' : soon ? 'bg-amber-50 border border-amber-100' : 'bg-slate-50 border border-slate-100'}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-extrabold text-slate-800">
+                                    {deal.currency} {Number(inst.amount || 0).toLocaleString()}
+                                    <span className="text-[10px] font-bold text-slate-400 ml-1.5">instalment {inst.seq}</span>
+                                  </div>
+                                  <div className={`text-[11px] font-semibold mt-0.5 flex items-center gap-1 ${overdue ? 'text-red-600' : soon ? 'text-amber-700' : 'text-slate-500'}`}>
+                                    <Icon.Calendar size={12} />
+                                    {inst.dueDate || 'no due date'}
+                                    {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
+                                  </div>
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); collect(l, deal, inst); }}
+                                  disabled={busy === inst.id}
+                                  className="rounded-md bg-[#050A1F] text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
+                                  {busy === inst.id ? 'Saving…' : 'Mark paid'}
+                                </button>
                               </div>
                             </div>
-                            <button onClick={(e) => { e.stopPropagation(); collect(l, deal, inst); }}
-                              disabled={busy === inst.id}
-                              className="rounded-md bg-[#050A1F] text-white px-2.5 py-1 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
-                              {busy === inst.id ? '…' : 'Mark paid'}
-                            </button>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                       {s.pending.length > 4 && (
-                        <div className="text-[10px] text-slate-400">+{s.pending.length - 4} more — open the client to see all</div>
+                        <div className="text-[10px] text-slate-400 mt-1.5">
+                          +{s.pending.length - 4} more — open the client to see all
+                        </div>
                       )}
                     </div>
                   )}

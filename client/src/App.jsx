@@ -673,6 +673,8 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [dueCount, setDueCount] = useState(0);
   const [leadsEntry, setLeadsEntry] = useState({ view: 'list' });
+  // Which dashboard view is showing: the operational overview or analytics.
+  const [dashMode, setDashMode] = useState('overview');
   // Bumped whenever a report should be re-fetched (e.g. after a re-run) so the
   // iframe can't serve a stale cached render.
   const [viewNonce, setViewNonce] = useState(() => Date.now());
@@ -706,7 +708,6 @@ export default function App() {
   const isManagerOrAdmin = user && (user.role === 'admin' || user.role === 'manager');
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'analytics', label: 'Analytics' },
     { id: 'leads', label: 'Leads' },
     { id: 'list', label: 'Reports' },
     ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),
@@ -760,12 +761,15 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {view === 'dashboard' && <Dashboard user={user}
+        {view === 'dashboard' && dashMode === 'analytics' && isManagerOrAdmin && (
+          <Analytics user={user} mode={dashMode} onModeChange={setDashMode} />
+        )}
+        {view === 'dashboard' && !(dashMode === 'analytics' && isManagerOrAdmin) && <Dashboard user={user}
+          mode={dashMode} onModeChange={setDashMode}
           onGoLeads={() => { setLeadsEntry({ view: 'list' }); setView('leads'); }}
           onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }}
           onViewConverted={() => { setLeadsEntry({ view: 'converted', convertedMonth: true }); setView('leads'); }}
           onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
-        {view === 'analytics' && <Analytics user={user} />}
         {view === 'reviews' && isManagerOrAdmin && <Reviews user={user} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
         {view === 'new' && !activeReport && (
