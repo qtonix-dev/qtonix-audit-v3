@@ -116,7 +116,7 @@ const User = sequelize.define(
     // Railway's ephemeral filesystem. Shown on the leaderboard.
     avatar: { type: DataTypes.TEXT, allowNull: true },
   },
-  { tableName: 'users', indexes: [{ fields: ['role'] }] }
+  { tableName: 'users', indexes: [{ name: 'idx_users_role', fields: ['role'] }] }
 );
 
 const Report = sequelize.define(
@@ -184,12 +184,15 @@ const Report = sequelize.define(
   },
   {
     tableName: 'reports',
+    // Every index is explicitly named. Without a name, Sequelize's alter-sync
+    // cannot tell an existing index from a new one and appends a numbered
+    // duplicate on each boot, eventually breaching MySQL's 64-key ceiling.
     indexes: [
-      { fields: ['agentId'] },
-      { fields: ['status'] },
-      { fields: ['domain'] }, // powers the 7-day cache lookup
-      { fields: ['isDemo'] },
-      { fields: ['stage'] },  // pipeline filtering
+      { name: 'idx_reports_agent', fields: ['agentId'] },
+      { name: 'idx_reports_status', fields: ['status'] },
+      { name: 'idx_reports_domain', fields: ['domain'] }, // powers the 7-day cache lookup
+      { name: 'idx_reports_is_demo', fields: ['isDemo'] },
+      { name: 'idx_reports_stage', fields: ['stage'] },   // pipeline filtering
     ],
   }
 );
@@ -255,10 +258,10 @@ const Lead = sequelize.define(
   {
     tableName: 'leads',
     indexes: [
-      { fields: ['ownerId'] },
-      { fields: ['ownerTeam', 'ownerShift'] }, // manager visibility
-      { fields: ['domain'] },                  // report auto-linking
-      { fields: ['status'] },
+      { name: 'idx_leads_owner', fields: ['ownerId'] },
+      { name: 'idx_leads_team_shift', fields: ['ownerTeam', 'ownerShift'] }, // manager visibility
+      { name: 'idx_leads_domain', fields: ['domain'] },                      // report auto-linking
+      { name: 'idx_leads_status', fields: ['status'] },
     ],
   }
 );
@@ -395,7 +398,7 @@ const Review = sequelize.define(
   },
   {
     tableName: 'reviews',
-    indexes: [{ fields: ['agentId'] }, { fields: ['period'] }, { fields: ['reviewerId'] }],
+    indexes: [{ name: 'idx_reviews_agent', fields: ['agentId'] }, { name: 'idx_reviews_period', fields: ['period'] }, { name: 'idx_reviews_reviewer', fields: ['reviewerId'] }],
   }
 );
 
@@ -410,7 +413,7 @@ const AuditLog = sequelize.define(
     meta: { type: DataTypes.JSON, defaultValue: {} },
     ip: DataTypes.STRING(60),
   },
-  { tableName: 'audit_logs', indexes: [{ fields: ['userId'] }] }
+  { tableName: 'audit_logs', indexes: [{ name: 'idx_audit_user', fields: ['userId'] }] }
 );
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
@@ -496,6 +499,57 @@ function defaultPricing() {
   };
 }
 
+/**
+ * Sequelize's `sync({ alter: true })` re-creates indexes on every boot without
+ * checking whether an equivalent one already exists. On MySQL this silently
+ * accumulates duplicates (leads_owner_id, leads_owner_id_2, _3 …) until the
+ * table hits the hard limit of 64 keys and every connection fails with
+ * "Too many keys specified; max 64 keys allowed".
+ *
+ * Before syncing we drop the redundant copies, keeping the first index for each
+ * distinct column signature. PRIMARY and UNIQUE keys are never touched, since
+ * dropping those would lose real constraints.
+ */
+async function pruneDuplicateIndexes() {
+  if (sequelize.getDialect() !== 'mysql') return;
+  const tables = ['leads', 'users', 'reports', 'settings', 'audit_logs', 'reviews'];
+
+  for (const table of tables) {
+    let rows;
+    try {
+      [rows] = await sequelize.query(`SHOW INDEX FROM \`${table}\``);
+    } catch {
+      continue; // table doesn't exist yet on a fresh install
+    }
+
+    // Group index parts into whole indexes, in column order.
+    const byName = {};
+    for (const r of rows) {
+      const name = r.Key_name;
+      byName[name] = byName[name] || { name, unique: r.Non_unique === 0, cols: [] };
+      byName[name].cols[(r.Seq_in_index || 1) - 1] = r.Column_name;
+    }
+
+    const seen = new Set();
+    const drop = [];
+    for (const idx of Object.values(byName)) {
+      if (idx.name === 'PRIMARY' || idx.unique) continue; // never touch these
+      const sig = idx.cols.join(',');
+      if (seen.has(sig)) drop.push(idx.name);
+      else seen.add(sig);
+    }
+
+    for (const name of drop) {
+      try {
+        await sequelize.query(`ALTER TABLE \`${table}\` DROP INDEX \`${name}\``);
+      } catch (e) {
+        console.error(`[schema] could not drop index ${table}.${name}:`, e.message);
+      }
+    }
+    if (drop.length) console.log(`[schema] ${table}: removed ${drop.length} duplicate index(es)`);
+  }
+}
+
 /** Connect, create/alter tables, guarantee the settings row exists. */
 async function initDb({ sync = true } = {}) {
   await sequelize.authenticate();
@@ -504,13 +558,24 @@ async function initDb({ sync = true } = {}) {
   // creates missing tables and leaves old ones untouched, causing
   // "Unknown column" errors after a schema change.
   if (sync) {
+    // Clear out index duplicates left by previous alter-syncs first, otherwise
+    // MySQL rejects the sync entirely once a table reaches 64 keys.
+    await pruneDuplicateIndexes();
+
     // SQLite enforces foreign keys during ALTER TABLE, which can fail when
     // adding columns to tables that already hold rows. MySQL (production) does
     // not have this limitation. Briefly relax FK enforcement around sync on
     // SQLite so `alter: true` can add new columns cleanly.
     const isSqlite = sequelize.getDialect() === 'sqlite';
     if (isSqlite) await sequelize.query('PRAGMA foreign_keys = OFF');
-    await sequelize.sync({ alter: true });
+    try {
+      await sequelize.sync({ alter: true });
+    } catch (e) {
+      // If alter still fails, fall back to a plain sync so the app can boot and
+      // serve traffic. Missing columns are far less damaging than being down.
+      console.error('[schema] alter sync failed, falling back to plain sync:', e.message);
+      await sequelize.sync();
+    }
     if (isSqlite) await sequelize.query('PRAGMA foreign_keys = ON');
   }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
