@@ -15,7 +15,7 @@ function Avatar({ name, src, size = 28 }) {
 }
 
 // Metric card in achieved/target (%) format with a $0 motivational message.
-function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational, pipelineNote, awaitingNote }) {
+function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational, pipelineNote, awaitingNote, remainingLabel }) {
   const u = unit || '$';
   const fmt = u === '$' ? usd : (n) => `${n}`;
   const has = target > 0;
@@ -30,19 +30,23 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
       <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
       <div className="text-2xl font-extrabold mt-1" style={{ color: accent }}>
         {fmt(achieved)}{has && <span className="text-slate-300 text-lg"> / {fmt(target)}</span>}
+        {has && <span className="text-sm font-bold text-slate-400 ml-1.5">({pct}%)</span>}
       </div>
       {has && (
         <>
           <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-2">
             <div className="h-full rounded-full" style={{ width: `${Math.max(3, pct)}%`, background: done ? '#16A34A' : near ? '#F59E0B' : accent }} />
           </div>
-          <div className={`text-[11px] font-bold mt-1.5 ${done ? 'text-green-600' : near ? 'text-amber-600' : 'text-slate-400'}`}>
-            {done ? '🎉 Target hit!' : zero ? (motivational || 'Let’s get the first one today! 💪') : near ? `🔥 ${fmt(remaining)} more to go!` : `${pct}% · ${fmt(remaining)} to go`}
+          <div className={`text-[11px] font-bold mt-1.5 ${done ? 'text-green-600' : near ? 'text-amber-600' : 'text-slate-500'}`}>
+            {done ? '🎉 Target achieved!' : zero ? (motivational || 'Let’s get the first one today! 💪')
+              : remainingLabel ? `${fmt(remaining)} to achieve your target`
+              : near ? `🔥 ${fmt(remaining)} more to go!` : `${fmt(remaining)} to go`}
           </div>
         </>
       )}
+      {!has && <div className="text-[11px] text-slate-400 mt-1.5">No target set</div>}
       {awaitingNote && <div className="text-[11px] font-semibold text-amber-600 mt-1">⏳ {awaitingNote} won — counts once collected</div>}
-      {pipelineNote && <div className="text-[11px] font-semibold text-indigo-500 mt-1">💼 {pipelineNote} in your pipeline</div>}
+      {pipelineNote && <div className="text-[11px] font-semibold text-indigo-500 mt-1">💼 {pipelineNote} in pipeline</div>}
       {cta && <div className="text-xs font-bold mt-2" style={{ color: accent }}>{cta} →</div>}
     </div>
   );
@@ -86,7 +90,7 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
       {items.length === 0 ? (
         <div className="text-slate-300 text-sm py-6 text-center">Nothing here yet.</div>
       ) : (
-        <div className="divide-y divide-slate-50 max-h-64 overflow-auto">
+        <div className="divide-y divide-slate-50 overflow-auto" style={{ minHeight: 250, maxHeight: 250 }}>
           {items.map((l) => (
             <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-2">
               <div className="flex items-center gap-2 min-w-0">
@@ -250,6 +254,7 @@ function Leaderboard({ board, user, maxSales }) {
 export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [showAwaiting, setShowAwaiting] = useState(false);
   useEffect(() => { api('/leads/dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
@@ -262,6 +267,11 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
   const isAdmin = user.role === 'admin';
   const isManager = user.role === 'manager';
   const maxSales = Math.max(1, ...board.map((b) => b.salesUsd));
+  const awaiting = data.awaiting || [];
+  const topPerformer = data.topPerformer || null;
+  const shiftBoard = data.shiftBoard || [];
+  // Was the top team decided by the pipeline tie-break?
+  const shiftTied = shiftBoard.length > 1 && shiftBoard[0].salesUsd === shiftBoard[1].salesUsd;
   const topSeller = board.find((b) => b.salesUsd > 0);
   const withTarget = board.filter((b) => b.salesTarget > 0);
   const firstToTarget = withTarget.find((b) => b.hitTarget);
@@ -275,51 +285,37 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
         <div className="text-sm text-slate-400">{isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.'}</div>
       </div>
 
-      {/* ROW 1 — Company target + Converted, side by side 50/50 */}
+      {/* ROW 1 — Sales vs target + Converted, 50/50 */}
       <div className="grid md:grid-cols-2 gap-4">
-        {isAdmin && m.companyTarget > 0 ? (
-          <GoalStat label="Company monthly target" achieved={m.salesThisMonthUsd} target={m.companyTarget} accent="#050A1F"
-            motivational="The month is young — let's rack up the first wins!"
-            pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null}
-            awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
-        ) : me && me.salesTarget > 0 ? (
-          <GoalStat label="Sales achieved / monthly target" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A"
-            motivational="First sale of the month is waiting for you! 🚀"
-            pipelineNote={me.pipelineUsd > 0 ? usd(me.pipelineUsd) : null}
-            awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
-        ) : (
-          <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)}
-            sub={m.awaitingUsd > 0 ? `⏳ ${usd(m.awaitingUsd)} won, awaiting collection` : (m.pipelineUsd > 0 ? `💼 ${usd(m.pipelineUsd)} in pipeline` : `${m.convertedThisMonth} converted`)}
-            accent="#16A34A" />
-        )}
+        <GoalStat
+          label={isAdmin ? 'Sales this month · company target' : isManager ? 'Sales this month · team target' : 'Sales this month · your target'}
+          achieved={m.scopeAchieved} target={m.scopeTarget} accent="#16A34A"
+          motivational="No sales collected yet — the first one is waiting! 🚀"
+          remainingLabel
+          pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} />
         <PlainStat label="Converted this month" value={m.convertedThisMonth}
           sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}
           accent="#059669" onClick={onViewConverted} cta="View converted clients" />
       </div>
 
-      {/* ROW 2 — Sales breakdown */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
-        <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
-        <PlainStat label="Open pipeline" value={usd(m.pipelineUsd)} sub="Deals not yet won" accent="#F59E0B" />
-        <PlainStat label="Awaiting collection" value={usd(m.awaitingUsd)} sub="Won, not yet paid" accent="#DC2626" />
-      </div>
-
-      {/* ROW 3 — Lead generation. Personal target for agents; team-wide for
-          managers and admins, split by how the lead was sourced. */}
+      {/* ROW 2 — Lead generation + sales split + collections */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {me && me.leadGenTarget > 0 ? (
-          <GoalStat label="Leads generated / monthly target" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#"
-            accent="#0891B2" motivational="Add your first lead of the month! 🎯" />
+          <GoalStat label="Leads generated" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#"
+            accent="#0891B2" motivational="Add your first lead of the month! 🎯" remainingLabel />
         ) : (
-          <PlainStat label="Leads generated" value={m.leadsGeneratedMonth} sub={`${m.generatedToday} today`} accent="#0891B2" />
+          <PlainStat label="Leads generated" value={m.leadsGeneratedMonth} sub={`${m.generatedToday} today · ${m.leadsAssignedMonth} assigned`} accent="#0891B2" />
         )}
-        <PlainStat label="Leads assigned" value={m.leadsAssignedMonth} sub={`${m.assignedToday} today`} accent="#2563EB" />
-        <PlainStat label="By pre-sales" value={m.leadsPresalesMonth} sub="This month" accent="#7C3AED" />
-        <PlainStat label="By cold calling" value={m.leadsColdMonth} sub="This month" accent="#FF6A00" />
+        <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
+        <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
+        <PlainStat label="Awaiting collection" value={usd(m.awaitingUsd)}
+          sub={awaiting.length ? `${awaiting.length} payment${awaiting.length === 1 ? '' : 's'} pending` : 'Nothing outstanding'}
+          accent="#DC2626"
+          onClick={(isAdmin || isManager) && awaiting.length ? () => setShowAwaiting(true) : undefined}
+          cta={(isAdmin || isManager) && awaiting.length ? 'Follow up' : undefined} />
       </div>
 
-      {/* ROW 4 — Today's leads + untouched, 50/50 */}
+      {/* ROW 3 — Today's leads + untouched, 50/50, sized for 5 rows */}
       <div className="grid md:grid-cols-2 gap-4">
         <LeadMiniList
           title="Today's leads"
@@ -336,11 +332,54 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />
       </div>
 
-      {/* ROW 5 — Personal transfer goal (pre-sales only) */}
-      {me && me.transferDailyTarget > 0 && (
-        <GoalStat label="Your call transfers today" achieved={me.transfersToday} target={me.transferDailyTarget} unit="#"
-          accent="#2563EB" motivational="Make your first transfer count! ☎️" />
-      )}
+      {/* ROW 4 — Top performer + top team */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-amber-600">🏆 Top performer of the month</div>
+          {topPerformer && topPerformer.salesUsd > 0 ? (
+            <>
+              <div className="flex items-center gap-3 mt-2">
+                <Avatar name={topPerformer.name} src={topPerformer.avatar} size={40} />
+                <div>
+                  <div className="text-xl font-extrabold text-[#050A1F]">{topPerformer.name}</div>
+                  <div className="text-sm text-slate-500">{usd(topPerformer.salesUsd)} collected{topPerformer.salesTarget > 0 ? ` · ${topPerformer.pct}% of target` : ''}</div>
+                </div>
+              </div>
+              {data.topPerformerTied && (
+                <div className="text-[11px] text-amber-700 mt-2">Tied on sales — led on pipeline ({usd(topPerformer.pipelineUsd || 0)}).</div>
+              )}
+            </>
+          ) : <div className="text-sm text-slate-400 mt-2">No sales collected yet this month.</div>}
+        </div>
+        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-5">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">🏅 Top performing team</div>
+          {data.topShift && data.topShift.salesUsd > 0 ? (
+            <>
+              <div className="text-xl font-extrabold text-[#050A1F] mt-2">{data.topShift.team} · {data.topShift.shift}</div>
+              <div className="text-sm text-slate-500">{usd(data.topShift.salesUsd)} in collected sales</div>
+              {shiftTied && <div className="text-[11px] text-indigo-700 mt-2">Tied on sales — led on pipeline ({usd(data.topShift.pipelineUsd || 0)}).</div>}
+            </>
+          ) : <div className="text-sm text-slate-400 mt-2">No team sales yet this month.</div>}
+        </div>
+      </div>
+
+      {/* ROW 5 — Sales trend + leaderboard, 50/50 */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
+            <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
+          </div>
+          <TrendChart trend={data.trend} />
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-extrabold text-[#050A1F]">Sales leaderboard</h2>
+            <span className="text-xs text-slate-400">Collected · USD</span>
+          </div>
+          {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No agents yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
+        </div>
+      </div>
 
       {/* ROW 6 — Lead trends: daily this month + 6-month grouped */}
       <div className="grid lg:grid-cols-2 gap-4">
@@ -360,52 +399,11 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
         </div>
       </div>
 
-      {/* ROW 7 — Highlights */}
-      {(data.topShift || firstToTarget || topSeller) && (
-        <div className="grid md:grid-cols-2 gap-4">
-          {data.topShift && data.topShift.salesUsd > 0 && (
-            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-5">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">🏅 Top shift this month</div>
-              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{data.topShift.team} · {data.topShift.shift}</div>
-              <div className="text-sm text-slate-500">{usd(data.topShift.salesUsd)} in collected sales</div>
-            </div>
-          )}
-          {firstToTarget ? (
-            <div className="rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-5">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-green-600">🎯 First to hit target</div>
-              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{firstToTarget.name}</div>
-              <div className="text-sm text-slate-500">Reached {usd(firstToTarget.salesTarget)} — eligible for incentives</div>
-            </div>
-          ) : topSeller && topSeller.salesUsd > 0 && (
-            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-amber-600">🏆 Top seller this month</div>
-              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{topSeller.name}</div>
-              <div className="text-sm text-slate-500">{usd(topSeller.salesUsd)} in sales</div>
-            </div>
-          )}
-        </div>
+      {/* Personal transfer goal (pre-sales only) */}
+      {me && me.transferDailyTarget > 0 && (
+        <GoalStat label="Your call transfers today" achieved={me.transfersToday} target={me.transferDailyTarget} unit="#"
+          accent="#2563EB" motivational="Make your first transfer count! ☎️" />
       )}
-
-      {/* ROW 8 — Sales trend + leaderboard, 50/50 */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
-            <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
-          </div>
-          <TrendChart trend={data.trend} />
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Sales leaderboard</h2>
-            <span className="text-xs text-slate-400">Collected · USD</span>
-          </div>
-          {isAdmin && board.some((b) => b.role === 'admin') && (
-            <div className="text-[11px] text-slate-400 mb-2">Admin rows are visible to you only and are excluded from company totals.</div>
-          )}
-          {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No team members yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
-        </div>
-      </div>
 
       {/* ROW 9 — Transfer leaderboard */}
       {transferBoard.length > 0 && (
@@ -424,6 +422,43 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
                 <div className="w-24 text-right"><div className="font-extrabold text-xs text-[#050A1F]">{b.transfersToday}{b.dailyTarget > 0 && <span className="text-slate-300 font-normal"> / {b.dailyTarget}</span>}</div>{b.dailyTarget > 0 && <div className={`text-[10px] font-bold ${b.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{b.pct >= 100 ? '✓ done' : `${b.remaining} to go`}</div>}</div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {/* Awaiting-collection followup list (managers & admins) */}
+      {showAwaiting && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowAwaiting(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-extrabold text-[#050A1F]">Payments awaiting collection</h3>
+                <div className="text-xs text-slate-400">{awaiting.length} pending · {usd(m.awaitingUsd)} total</div>
+              </div>
+              <button onClick={() => setShowAwaiting(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold">
+                  <th className="text-left px-3 py-2">Client</th>
+                  <th className="text-left px-3 py-2">Deal</th>
+                  <th className="text-left px-3 py-2">Amount</th>
+                  <th className="text-left px-3 py-2">Due</th>
+                  <th className="text-left px-3 py-2">Owner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {awaiting.map((a) => (
+                  <tr key={`${a.dealId}-${a.instId}`} onClick={() => { setShowAwaiting(false); onViewToday(a.leadId); }}
+                    className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
+                    <td className="px-3 py-2 font-bold text-[#050A1F]">{a.client}</td>
+                    <td className="px-3 py-2 text-slate-500">{a.dealName} <span className="text-slate-300">#{a.seq}</span></td>
+                    <td className="px-3 py-2 font-semibold">{a.currency} {a.amount.toLocaleString()}</td>
+                    <td className={`px-3 py-2 text-xs ${a.overdue ? 'text-red-500 font-bold' : 'text-slate-400'}`}>{a.dueDate || '—'}{a.overdue ? ' · overdue' : ''}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{a.ownerName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

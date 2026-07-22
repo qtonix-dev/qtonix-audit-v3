@@ -548,10 +548,10 @@ export function NewLead({ user, onCreated, onCancel }) {
 }
 
 // ---- Lead detail (shell; tabs filled in later phases) ----------------------
-export function LeadDetail({ user, leadId, onBack }) {
+export function LeadDetail({ user, leadId, onBack, initialTab }) {
   const [lead, setLead] = useState(null);
   const [config, setConfig] = useState({});
-  const [tab, setTab] = useState('timeline');
+  const [tab, setTab] = useState(initialTab || 'timeline');
   const [editSection, setEditSection] = useState(null); // 'all' | 'basic' | 'tags' | 'description' | 'other'
   const [draft, setDraft] = useState(null);
   const [quickModal, setQuickModal] = useState(null); // 'note' | 'task' | 'call' | 'deal'
@@ -1343,7 +1343,10 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
   const [activeId, setActiveId] = useState(initialLeadId || null);
   const [untouched, setUntouched] = useState(initialUntouched || null);
-  const openDetail = (id) => { setActiveId(id); setView('detail'); };
+  const [detailTab, setDetailTab] = useState(null);
+  // `tab` lets callers deep-link straight to a section (e.g. the Deals tab when
+  // a deal is clicked from the pipeline or converted-clients page).
+  const openDetail = (id, tab) => { setActiveId(id); setDetailTab(tab || null); setView('detail'); };
   const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
   return (
     <div>
@@ -1358,7 +1361,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'pipeline' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
       {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView('list')} />}
-      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} onBack={() => setView('list')} />}
+      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} onBack={() => setView(initialView === 'converted' ? 'converted' : 'list')} />}
     </div>
   );
 }
@@ -1477,7 +1480,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             const pct = s.booked > 0 ? Math.round((s.collected / s.booked) * 100) : 0;
             const fullyPaid = s.due <= 0 && s.booked > 0;
             return (
-              <div key={l._id} onClick={() => onOpen(l._id)}
+              <div key={l._id} onClick={() => onOpen(l._id, 'deals')}
                 className="bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer hover:shadow-md hover:border-green-200 transition shadow-sm">
                 <div className="flex items-start gap-3">
                   <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center text-base font-extrabold shrink-0">
@@ -1607,7 +1610,7 @@ function DealsPipeline({ user, onOpenLead }) {
                   return (
                     <div key={d.id} draggable
                       onDragStart={() => setDragId(d.id)}
-                      onClick={() => onOpenLead(d.leadId)}
+                      onClick={() => onOpenLead(d.leadId, 'deals')}
                       className="bg-white rounded-xl border border-slate-200 p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-orange-200 transition">
                       <div className="flex items-start justify-between gap-1">
                         <div className="font-bold text-xs text-[#050A1F] truncate">{d.name}</div>

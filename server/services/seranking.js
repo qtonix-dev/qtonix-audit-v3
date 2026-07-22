@@ -100,6 +100,15 @@ class SERanking {
     });
   }
 
+  /**
+   * Account balance / remaining credits. Free (does not consume credits).
+   * SE Ranking exposes this on the research-API balance endpoint; shape varies
+   * a little between plans so the caller normalises defensively.
+   */
+  getBalance() {
+    return this.request('/balance', {});
+  }
+
   /** Domain overview for one regional DB. Cost: 100 credits. */
   getDomainOverview(domain, source = 'us') {
     return this.request('/domain/overview/db', { source, domain, with_subdomains: 1 });

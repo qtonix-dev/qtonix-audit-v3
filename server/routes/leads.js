@@ -226,6 +226,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const byOwner = {};
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
+    const awaitingList = [];
 
     // Lead-generation analytics. We split by leadSource so the dashboard can
     // show pre-sales vs cold-calling contribution, and bucket by day (current
@@ -320,6 +321,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           const v = toUsd(d.amount, d.currency);
           pipelineUsd += v;
           byOwner[l.ownerId].pipelineUsd = (byOwner[l.ownerId].pipelineUsd || 0) + v;
+          const sk = `${l.ownerTeam}·${l.ownerShift}`;
+          byShift[sk] = byShift[sk] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0, pipelineUsd: 0 };
+          byShift[sk].pipelineUsd += v;
         }
       }
       // Order deals by wonAt/createdAt so "first deal" is stable.
@@ -329,7 +333,20 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
         const adminOwned = isAdminOwned(l.ownerId);
         insts.forEach((it) => {
-          if (!it.paid || !it.paidDate) { if (!adminOwned) awaitingUsd += toUsd(it.amount, d.currency); return; }
+          if (!it.paid || !it.paidDate) {
+            if (!adminOwned) {
+              awaitingUsd += toUsd(it.amount, d.currency);
+              // Keep a followup list of who owes what, soonest due first.
+              awaitingList.push({
+                leadId: l.id, dealId: d.id, instId: it.id,
+                client: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
+                dealName: d.name, currency: d.currency, amount: Number(it.amount || 0),
+                dueDate: it.dueDate || '', seq: it.seq, ownerName: l.ownerName,
+                overdue: !!(it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10)),
+              });
+            }
+            return;
+          }
           const pd = new Date(it.paidDate);
           const usd = toUsd(it.amount, d.currency);
           // classify new vs cross: the very first paid installment of the first
@@ -347,7 +364,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
               if (isNew) { newSalesUsd += usd; newSalesCount++; }
               else { crossSalesUsd += usd; crossSalesCount++; }
               const key = `${l.ownerTeam}·${l.ownerShift}`;
-              byShift[key] = byShift[key] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0 };
+              byShift[key] = byShift[key] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0, pipelineUsd: 0 };
               byShift[key].salesUsd += usd;
             }
           }
@@ -390,8 +407,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         transferDailyTarget: transferTg ? Number(transferTg.daily || 0) : 0,
       };
     })
-      // Managers and agents never see admin rows (admins run demo/test data).
-      .filter((o) => viewerIsAdmin || o.role !== 'admin')
+      // The ranking is an AGENT board. Managers and admins are excluded from
+      // the competitive list, but the viewer always sees their own row so they
+      // can track themselves (a manager's cross-sales land here).
+      .filter((o) => o.role === 'agent' || o.ownerId === req.user.id)
       .sort((a, b) => b.salesUsd - a.salesUsd);
 
     const transferBoard = leaderboard
@@ -405,6 +424,26 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     let companyTarget = 0;
     owners.forEach((u) => { if (u.role === 'manager') { const t = u.targets && u.targets.team; companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0); } });
     if (companyTarget === 0) owners.forEach((u) => { if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled) companyTarget += Number(u.targets.sales.monthly || 0); });
+
+    // The target that applies to THIS viewer's dashboard:
+    //  - admin   → whole company
+    //  - manager → their team's effective target (override or auto-sum)
+    //  - agent   → their own monthly sales target
+    let scopeTarget = 0;
+    if (req.user.role === 'admin') {
+      scopeTarget = companyTarget;
+    } else if (req.user.role === 'manager') {
+      const meUser = owners.find((u) => u.id === req.user.id);
+      const t = meUser && meUser.targets && meUser.targets.team;
+      scopeTarget = (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[req.user.id] || 0);
+    } else {
+      const t = (targetsById[req.user.id] || {}).sales;
+      scopeTarget = (t && t.enabled) ? Number(t.monthly || 0) : 0;
+    }
+    // Achieved against that target. For a manager this is their whole team's
+    // collected sales (which already includes any cross-sales they closed
+    // themselves on converted clients, since those leads are in their scope).
+    const scopeAchieved = salesThisMonthUsd;
 
     // 6-month trend (collected USD by paid date) within scope.
     const trend = [];
@@ -424,8 +463,20 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     }
 
     // Top shift/branch this month.
-    const shiftBoard = Object.values(byShift).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) })).sort((a, b) => b.salesUsd - a.salesUsd);
+    const shiftBoard = Object.values(byShift).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) }))
+      .sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)));
     const topShift = shiftBoard[0] || null;
+
+    // Top performer of the month = highest collected sales; ties broken by who
+    // has the larger open pipeline. Managers/admins are excluded from this
+    // award since it's an agent recognition.
+    const performerPool = leaderboard.filter((o) => o.role === 'agent');
+    const topPerformer = performerPool.length
+      ? performerPool.slice().sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)))[0]
+      : null;
+    // Flag whether the win came down to the pipeline tie-break, so the UI can
+    // explain it rather than looking arbitrary.
+    const topPerformerTied = !!(topPerformer && performerPool.filter((o) => o.salesUsd === topPerformer.salesUsd).length > 1);
 
     const meRow = leaderboard.find((o) => o.ownerId === req.user.id) || null;
 
@@ -440,6 +491,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         newSalesCount, crossSalesCount,
         companyTarget: Math.round(companyTarget),
         companyPct: companyTarget > 0 ? Math.round((salesThisMonthUsd / companyTarget) * 100) : null,
+        // Role-aware target for the row-1 box.
+        scopeTarget: Math.round(scopeTarget),
+        scopeAchieved: Math.round(scopeAchieved),
+        scopePct: scopeTarget > 0 ? Math.round((scopeAchieved / scopeTarget) * 100) : null,
+        scopeRemaining: scopeTarget > 0 ? Math.max(0, Math.round(scopeTarget - scopeAchieved)) : 0,
         generatedTarget: targetForToday(targetsById[req.user.id], 'transfer'),
         // Team-wide lead generation (within the viewer's visibility scope).
         leadsGeneratedMonth: leadsGeneratedMonthTotal,
@@ -459,6 +515,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           ? Number((targetsById[req.user.id] || {}).leadGen.monthly || 0) : 0,
       } : null,
       leaderboard, transferBoard, trend, shiftBoard, topShift,
+      topPerformer, topPerformerTied,
+      awaiting: awaitingList.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 50),
       leadDaily,
       leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold })),
     });
@@ -909,6 +967,15 @@ router.delete('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
     lead.deals = (Array.isArray(lead.deals) ? lead.deals : []).filter((d) => d.id !== req.params.dealId);
     lead.changed('deals', true);
+    // A lead is only "converted" because it had a won deal. If none remain,
+    // send it back to the active lead list so it isn't stranded on the
+    // converted-clients page with nothing behind it.
+    const stillWon = lead.deals.some((d) => d.stage === 'closed_won');
+    if (!stillWon && lead.status === 'converted') {
+      lead.status = 'contacted';
+      lead.convertedAt = null;
+      pushTimeline(lead, 'status', 'Returned to active leads (no won deals remain)', req.user.name);
+    }
     await lead.save();
     res.json(lead.toJSON());
   } catch (e) { next(e); }

@@ -270,6 +270,8 @@ function Branding({ settings, setSettings, say, reload }) {
 // ---------------------------------------------------------------------------
 function ApiKeys({ settings, setSettings, say }) {
   const [tests, setTests] = useState({});
+  const [credits, setCredits] = useState(null);
+  useEffect(() => { api('/admin/seranking-credits').then(setCredits).catch(() => setCredits(null)); }, []);
   const RULES = {
     seranking: { label: 'SE Ranking', required: true, hint: 'Rankings, backlinks, competitors, AI Overview data' },
     anthropic: { label: 'Claude (Anthropic)', required: true, hint: 'AI visibility test, cover tagline, executive summary' },
@@ -309,6 +311,28 @@ function ApiKeys({ settings, setSettings, say }) {
               <Btn size="sm" variant="ghost" onClick={() => test(id)} disabled={t && t.testing}>{t && t.testing ? 'Testing…' : 'Test'}</Btn>
             </div>
             <p className="text-[11px] text-slate-400 mt-1">{r.hint}</p>
+            {id === 'seranking' && credits && (
+              <div className="mt-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                {credits.error ? (
+                  <div className="text-[11px] text-amber-600">Couldn’t read balance: {credits.error}</div>
+                ) : (
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Credits left</div>
+                      <div className="text-base font-extrabold text-[#050A1F]">{credits.remaining != null ? Number(credits.remaining).toLocaleString() : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used this month</div>
+                      <div className="text-base font-extrabold text-[#FF4500]">{Number(credits.usedMonth || 0).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used all time</div>
+                      <div className="text-base font-extrabold text-slate-500">{Number(credits.usedTotal || 0).toLocaleString()}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {t && !t.testing && <div className={`mt-2 text-[11px] font-medium ${t.ok ? 'text-green-600' : 'text-red-600'}`}>{t.ok ? '✓ ' : '✗ '}{t.msg}</div>}
           </div>
         );

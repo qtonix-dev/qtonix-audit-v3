@@ -320,4 +320,43 @@ router.get('/logs', async (req, res) => {
   res.json(logs);
 });
 
+/**
+ * GET /api/admin/seranking-credits — remaining balance from SE Ranking plus the
+ * credits we've consumed through this app (summed from report runs).
+ */
+router.get('/seranking-credits', async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = settings && settings.getKey ? settings.getKey('seranking') : null;
+
+    // Our own usage, straight from the reports we've run.
+    const { Report, Op: SOp } = require('../models');
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const allRows = await Report.findAll({ attributes: ['creditsUsed', 'createdAt'] });
+    let usedTotal = 0, usedMonth = 0;
+    for (const r of allRows) {
+      const c = Number(r.creditsUsed || 0);
+      usedTotal += c;
+      if (r.createdAt && new Date(r.createdAt) >= startOfMonth) usedMonth += c;
+    }
+
+    if (!key) return res.json({ configured: false, usedTotal, usedMonth, remaining: null });
+
+    let remaining = null, raw = null, error = null;
+    try {
+      const { SERanking } = require('../services/seranking');
+      const client = new SERanking(key);
+      raw = await client.getBalance();
+      // Shape varies by plan — pick the first numeric that looks like a balance.
+      const cand = raw && (raw.balance ?? raw.credits ?? raw.available ?? (raw.data && (raw.data.balance ?? raw.data.credits)));
+      remaining = Number.isFinite(Number(cand)) ? Number(cand) : null;
+    } catch (e) {
+      error = e.message;
+    }
+    res.json({ configured: true, remaining, usedTotal, usedMonth, error });
+  } catch (e) {
+    res.json({ configured: false, remaining: null, usedTotal: 0, usedMonth: 0, error: e.message });
+  }
+});
+
 module.exports = router;

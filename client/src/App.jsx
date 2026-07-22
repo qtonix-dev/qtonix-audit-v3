@@ -720,7 +720,14 @@ export default function App() {
             <nav className="flex gap-1">
               {nav.map((n) => (
                 <button key={n.id}
-                  onClick={() => { setView(n.id); setActiveReport(null); }}
+                  onClick={() => {
+                    // Clicking a nav item should always land on that section's
+                    // top-level view. Re-keying the Leads entry resets its
+                    // internal state, otherwise it stays stuck on a detail page.
+                    if (n.id === 'leads') setLeadsEntry({ view: 'list', nonce: Date.now() });
+                    setView(n.id);
+                    setActiveReport(null);
+                  }}
                   className={`relative rounded-md px-3 py-1.5 text-xs font-bold transition ${
                     view === n.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'
                   }`}>
