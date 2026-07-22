@@ -120,6 +120,20 @@ async function crawlHomepage(website) {
   });
   const socialNetworks = Object.keys(socialLinks);
 
+  // ---- Signals for "what does this business actually offer?" ---------------
+  // We collect nav/menu link labels, service-ish internal link labels, and
+  // secondary headings. These get passed to the AI to infer the real service
+  // list (rather than the services our agent selected when running the report).
+  const serviceSignals = [];
+  const pushSignal = (t) => {
+    const s = String(t || '').replace(/\s+/g, ' ').trim();
+    if (s && s.length >= 3 && s.length <= 60 && !serviceSignals.includes(s)) serviceSignals.push(s);
+  };
+  $('nav a, header a, .menu a, #menu a, ul.nav a').each((_, el) => pushSignal($(el).text()));
+  $('a[href*="service"], a[href*="solution"], a[href*="product"], a[href*="what-we-do"]').each((_, el) => pushSignal($(el).text()));
+  $('h2, h3').each((_, el) => pushSignal($(el).text()));
+  const h2s = $('h2').map((_, el) => $(el).text().trim()).get().filter(Boolean).slice(0, 30);
+
   return {
     finalUrl: res.url,
     statusCode: res.status,
@@ -132,6 +146,8 @@ async function crawlHomepage(website) {
     metaDescriptionLength: metaDesc.length,
     h1s,
     h1Count: h1s.length,
+    h2s,
+    serviceSignals: serviceSignals.slice(0, 60),
     wordCount: bodyText.split(/\s+/).filter(Boolean).length,
     imageCount: images.length,
     imagesNoAlt,

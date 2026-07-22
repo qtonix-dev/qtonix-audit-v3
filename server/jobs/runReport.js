@@ -14,7 +14,7 @@ const { runTechnicalAudit, normaliseUrl } = require('../services/crawler');
 const ai = require('../services/aiVisibility');
 const { GooglePlaces } = require('../services/googlePlaces');
 const scoring = require('../services/scoring');
-const { Report, Settings } = require('../models');
+const { Report, Settings, User } = require('../models');
 const { renderReport } = require('../services/renderer');
 
 const STEPS = [
@@ -275,6 +275,27 @@ async function runReport(reportId) {
     const topIssue =
       allIssues.find((i) => i.severity === 'critical') || allIssues[0] || { title: 'None found' };
 
+    // What does THIS business actually offer? Inferred from their own site so
+    // the cover reflects the prospect's business, not the services our agent
+    // selected when running the report. Falls back to the selected services.
+    const detected = await safe(
+      'businessServices',
+      () =>
+        ai.detectBusinessServices(claudeKey, {
+          businessName: report.businessName,
+          website: report.website,
+          title: crawl.title,
+          metaDescription: crawl.metaDescription,
+          h1s: crawl.h1s,
+          h2s: crawl.h2s,
+          serviceSignals: crawl.serviceSignals,
+        }),
+      null
+    );
+    const businessServices = (detected && detected.services && detected.services.length)
+      ? detected.services
+      : (report.services || []);
+
     const headline = await safe(
       'tagline',
       () =>
@@ -352,6 +373,12 @@ async function runReport(reportId) {
     // -- 7. Render.
     await setProgress(reportId, 90, STEPS[6]);
 
+    // Pull the agent's CURRENT contact details so edits in Admin (phone, email,
+    // designation) are reflected on every render, including old reports. Falls
+    // back to the values snapshotted when the report was created.
+    let liveAgent = null;
+    try { if (report.agentId) liveAgent = await User.findByPk(report.agentId); } catch { liveAgent = null; }
+
     const payload = {
       report: {
         id: String(report.id),
@@ -359,13 +386,17 @@ async function runReport(reportId) {
         domain,
         businessName: report.businessName,
         customerName: report.customerName,
-        services: report.services,
+        // Services the BUSINESS offers (scraped + inferred) — used for display.
+        services: businessServices,
+        // Services our agent selected when running the report (drives sections).
+        selectedServices: report.services,
+        businessIndustry: (detected && detected.industry) || '',
         country: source,
         location: report.location,
-        agentName: report.agentName,
-        agentPhone: report.agentPhone,
-        agentEmail: report.agentEmail,
-        agentDesignation: report.agentDesignation,
+        agentName: (liveAgent && liveAgent.name) || report.agentName,
+        agentPhone: (liveAgent && liveAgent.phone) || report.agentPhone,
+        agentEmail: (liveAgent && liveAgent.email) || report.agentEmail,
+        agentDesignation: (liveAgent && liveAgent.designation) || report.agentDesignation,
         date: new Date(),
         validDays: settings.reportValidDays,
       },

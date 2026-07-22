@@ -210,6 +210,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
     let salesThisMonthUsd = 0, convertedThisMonth = 0;
+    let awaitingUsd = 0; // won deals whose installments aren't collected yet
     let pipelineUsd = 0; // open (not won/lost) deal value in USD, motivational
     let newSalesUsd = 0, crossSalesUsd = 0, newSalesCount = 0, crossSalesCount = 0;
     const byOwner = {};
@@ -253,7 +254,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       wonDeals.forEach((d, di) => {
         const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
         insts.forEach((it) => {
-          if (!it.paid || !it.paidDate) return;
+          if (!it.paid || !it.paidDate) { awaitingUsd += toUsd(it.amount, d.currency); return; }
           const pd = new Date(it.paidDate);
           const usd = toUsd(it.amount, d.currency);
           // classify new vs cross: the very first paid installment of the first
@@ -347,6 +348,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         totalLeads, generatedToday, assignedToday, untouched,
         salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
         pipelineUsd: Math.round(pipelineUsd),
+        awaitingUsd: Math.round(awaitingUsd),
         newSalesUsd: Math.round(newSalesUsd), crossSalesUsd: Math.round(crossSalesUsd),
         newSalesCount, crossSalesCount,
         companyTarget: Math.round(companyTarget),

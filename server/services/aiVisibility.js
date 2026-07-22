@@ -407,6 +407,56 @@ async function summariseReviews(apiKey, { businessName, rating, reviewCount, rev
   return (text || '').trim() || null;
 }
 
+/**
+ * Infer the services the BUSINESS actually offers, from real signals scraped
+ * off their site (nav labels, service links, headings) plus the page title and
+ * meta description. This is deliberately separate from the services our agent
+ * ticked when running the report — the cover should describe the prospect's
+ * business, not our pitch.
+ */
+async function detectBusinessServices(apiKey, ctx) {
+  const signals = (ctx.serviceSignals || []).slice(0, 60);
+  // Nothing useful scraped — let the caller fall back.
+  if (!signals.length && !ctx.title && !ctx.metaDescription) return null;
+
+  const text = await callClaude(apiKey, {
+    system: 'You identify what a business sells. Output ONLY valid JSON, no preamble, no fences.',
+    messages: [
+      {
+        role: 'user',
+        content: `Identify the services/products THIS BUSINESS OFFERS to its own customers.
+
+Business: ${ctx.businessName || 'unknown'}
+Website: ${ctx.website || 'unknown'}
+Page title: ${ctx.title || ''}
+Meta description: ${ctx.metaDescription || ''}
+Main heading(s): ${(ctx.h1s || []).slice(0, 5).join(' | ')}
+Section headings: ${(ctx.h2s || []).slice(0, 20).join(' | ')}
+Navigation & link labels scraped from the site:
+${signals.map((s) => `- ${s}`).join('\n')}
+
+Rules:
+- List only what the business SELLS or PROVIDES to its customers.
+- Ignore navigation chrome: Home, About, About Us, Contact, Blog, Careers, Login, Cart, Privacy, Terms, FAQ, Portfolio, Gallery, Testimonials, Reviews.
+- Ignore marketing-agency services (SEO, PPC, social media marketing) UNLESS this business is itself a marketing agency selling them.
+- Use the business's own wording, tidied to Title Case. Max 4 words each.
+- Return 3 to 8 items, most prominent first. If you genuinely cannot tell, return an empty list.
+
+Return JSON exactly:
+{"services":["...","..."],"industry":"short industry label"}`,
+      },
+    ],
+    maxTokens: 400,
+  });
+  const parsed = parseJson(text);
+  if (!parsed || !Array.isArray(parsed.services)) return null;
+  const clean = parsed.services
+    .map((s) => String(s || '').replace(/\s+/g, ' ').trim())
+    .filter((s) => s && s.length <= 40)
+    .slice(0, 8);
+  return clean.length ? { services: clean, industry: parsed.industry || '' } : null;
+}
+
 module.exports = {
   runAiVisibility,
   generateTagline,
@@ -416,4 +466,5 @@ module.exports = {
   assessSocial,
   callClaude,
   analyseAiReadiness,
+  detectBusinessServices,
 };

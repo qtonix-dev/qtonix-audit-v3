@@ -89,25 +89,75 @@ class GooglePlaces {
    * don't pick a same-named business in another city.
    */
   async findPlace({ businessName, location, website }) {
-    const textQuery = [businessName, location].filter(Boolean).join(' ');
-    if (!textQuery) return null;
+    if (!businessName && !website) return null;
 
-    const data = await this._post(
-      SEARCH_URL,
-      { textQuery, maxResultCount: 5 },
-      'places.id,places.displayName,places.websiteUri,places.formattedAddress'
-    );
+    // Build a series of progressively looser queries. Business names often
+    // differ from the GBP listing by punctuation or a legal suffix
+    // ("Mojakdesigns LLC" vs "Mojakdesigns, LLC"), so we try the name as given,
+    // then a punctuation-stripped version, then without the legal suffix, and
+    // finally the bare domain — which is the most reliable identifier.
+    const host = website ? safeHost(website) : null;
+    const bare = host ? host.replace(/^www\./, '') : null;
+    const stripPunct = (s) => String(s || '').replace(/[.,()]/g, ' ').replace(/\s+/g, ' ').trim();
+    const stripSuffix = (s) => stripPunct(s)
+      .replace(/\b(llc|l\.l\.c|inc|incorporated|ltd|limited|co|corp|corporation|pvt|private|llp|plc|gmbh|pty)\b\.?/gi, '')
+      .replace(/\s+/g, ' ').trim();
 
-    const candidates = (data && data.places) || [];
-    if (!candidates.length) return null;
-
-    // Prefer a candidate whose website host matches the audited domain.
-    if (website) {
-      const host = safeHost(website);
-      const matched = candidates.find((p) => host && safeHost(p.websiteUri) === host);
-      if (matched) return matched.id;
+    const nameVariants = [];
+    if (businessName) {
+      nameVariants.push(businessName);
+      const p = stripPunct(businessName);
+      if (p && p !== businessName) nameVariants.push(p);
+      const s = stripSuffix(businessName);
+      if (s && !nameVariants.includes(s)) nameVariants.push(s);
     }
-    return candidates[0].id;
+
+    const queries = [];
+    for (const n of nameVariants) {
+      if (location) queries.push(`${n} ${location}`);
+      queries.push(n);
+    }
+    if (bare) queries.push(bare); // domain-only search as a last resort
+
+    // Normalised comparison key: lowercase alphanumerics only, suffix removed.
+    const key = (s) => stripSuffix(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetKeys = nameVariants.map(key).filter(Boolean);
+
+    let firstAny = null;
+    for (const textQuery of queries) {
+      if (!textQuery) continue;
+      let data;
+      try {
+        data = await this._post(
+          SEARCH_URL,
+          { textQuery, maxResultCount: 5 },
+          'places.id,places.displayName,places.websiteUri,places.formattedAddress'
+        );
+      } catch { continue; }
+
+      const candidates = (data && data.places) || [];
+      if (!candidates.length) continue;
+      if (!firstAny) firstAny = candidates[0];
+
+      // 1) Strongest signal: the listing's website host matches the audited site.
+      if (host) {
+        const matched = candidates.find((p) => safeHost(p.websiteUri) === host);
+        if (matched) return matched.id;
+      }
+
+      // 2) Otherwise accept a name match ignoring punctuation/suffix, in either
+      // direction (listing may be longer or shorter than the name we were given).
+      const named = candidates.find((p) => {
+        const dk = key(p.displayName && (p.displayName.text || p.displayName));
+        if (!dk) return false;
+        return targetKeys.some((tk) => tk && (tk === dk || tk.includes(dk) || dk.includes(tk)));
+      });
+      if (named) return named.id;
+    }
+
+    // Nothing matched confidently. Only fall back to the first result when we
+    // had a name to search on, to avoid attaching an unrelated business.
+    return firstAny ? firstAny.id : null;
   }
 
   async getDetails(placeId) {

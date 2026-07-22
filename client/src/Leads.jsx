@@ -1285,6 +1285,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [monthOnly, setMonthOnly] = useState(!!thisMonthOnly);
+  const [q, setQ] = useState('');
   useEffect(() => {
     Promise.all([api('/leads/converted'), api('/leads/config')])
       .then(([r, cfg]) => { setItems(r.items || []); setConfig(cfg.config || {}); })
@@ -1297,51 +1298,131 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     const d = new Date(l.convertedAt), n = new Date();
     return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
   };
-  const shown = monthOnly ? items.filter(inThisMonth) : items;
+  const fx = config.fxRates || { USD: 1 };
+  const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
 
-  // Sum of closed-won deals per lead (display currency as-entered; USD sums are
-  // computed on the dashboard where FX rates are applied).
-  const wonValue = (l) => (l.deals || []).filter((d) => d.stage === 'closed_won')
-    .map((d) => `${d.currency} ${Number(d.amount || 0).toLocaleString()}`).join(', ') || '—';
+  // Per-client money summary across won deals: total booked, collected, due.
+  const summarize = (l) => {
+    const won = (l.deals || []).filter((d) => d.stage === 'closed_won');
+    const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
+    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
+    for (const d of won) {
+      booked += toUsd(d.amount, d.currency);
+      for (const it of (d.installments || [])) {
+        instTotal++;
+        if (it.paid) { instPaid++; collected += toUsd(it.amount, d.currency); }
+        else if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
+      }
+    }
+    return { won, open, booked: Math.round(booked), collected: Math.round(collected), due: Math.round(booked - collected), instTotal, instPaid, nextDue };
+  };
+
+  const filtered = items
+    .filter((l) => (monthOnly ? inThisMonth(l) : true))
+    .filter((l) => (q ? (fullName(l) + ' ' + (l.website || '') + ' ' + (l.ownerName || '')).toLowerCase().includes(q.toLowerCase()) : true));
+
+  // Page totals.
+  const totals = filtered.reduce((acc, l) => {
+    const s = summarize(l);
+    acc.booked += s.booked; acc.collected += s.collected; acc.due += s.due;
+    return acc;
+  }, { booked: 0, collected: 0, due: 0 });
 
   if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted leads</h1>
-          <div className="text-sm text-slate-400">{shown.length} converted{monthOnly ? ' this month' : ''}{user.role === 'manager' ? ' in your team' : ''}</div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted clients</h1>
+          <div className="text-sm text-slate-400">{filtered.length} client{filtered.length === 1 ? '' : 's'}{monthOnly ? ' converted this month' : ''}{user.role === 'manager' ? ' in your team' : ''}</div>
         </div>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-          <input type="checkbox" checked={monthOnly} onChange={(e) => setMonthOnly(e.target.checked)} /> This month only
-        </label>
+        <div className="flex items-center gap-2">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-500 whitespace-nowrap">
+            <input type="checkbox" checked={monthOnly} onChange={(e) => setMonthOnly(e.target.checked)} /> This month only
+          </label>
+        </div>
       </div>
-      {shown.length === 0 ? (
-        <div className="text-slate-300 text-sm py-12 text-center bg-white rounded-2xl border border-slate-100">No converted leads{monthOnly ? ' this month' : ' yet'}. A lead converts when one of its deals is marked Closed Won.</div>
+
+      {/* Money summary */}
+      {filtered.length > 0 && (
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total booked</div>
+            <div className="text-xl font-extrabold text-[#050A1F] mt-0.5">${totals.booked.toLocaleString()}</div>
+          </div>
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-green-600">Collected</div>
+            <div className="text-xl font-extrabold text-green-700 mt-0.5">${totals.collected.toLocaleString()}</div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Outstanding</div>
+            <div className="text-xl font-extrabold text-amber-700 mt-0.5">${totals.due.toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-100">
+          <div className="text-4xl mb-2">🎉</div>
+          No converted clients{monthOnly ? ' this month' : ' yet'}. A lead converts when one of its deals is marked Closed Won.
+        </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold">
-                <th className="text-left px-4 py-3">Name</th>
-                <th className="text-left px-4 py-3">Website</th>
-                <th className="text-left px-4 py-3">Owner</th>
-                <th className="text-left px-4 py-3">Won deals</th>
-                <th className="text-left px-4 py-3">Converted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((l) => (
-                <tr key={l._id} onClick={() => onOpen(l._id)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
-                  <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}</td>
-                  <td className="px-4 py-3 text-slate-500">{l.website || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{l.ownerName}</td>
-                  <td className="px-4 py-3 text-green-600 font-semibold">{wonValue(l)}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filtered.map((l) => {
+            const s = summarize(l);
+            const pct = s.booked > 0 ? Math.round((s.collected / s.booked) * 100) : 0;
+            const fullyPaid = s.due <= 0 && s.booked > 0;
+            return (
+              <div key={l._id} onClick={() => onOpen(l._id)}
+                className="bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer hover:shadow-md hover:border-green-200 transition shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center text-base font-extrabold shrink-0">
+                    {(fullName(l)[0] || '?').toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-[#050A1F] truncate">{fullName(l)}</div>
+                    <div className="text-[11px] text-slate-400 truncate">{l.website ? l.website.replace(/^https?:\/\//, '') : '—'}</div>
+                  </div>
+                  <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[9px] font-bold shrink-0">CLIENT</span>
+                </div>
+
+                {/* Collected vs booked */}
+                <div className="mt-4">
+                  <div className="flex items-end justify-between mb-1">
+                    <div className="text-lg font-extrabold text-[#050A1F]">${s.collected.toLocaleString()}<span className="text-slate-300 text-sm"> / ${s.booked.toLocaleString()}</span></div>
+                    <div className={`text-xs font-bold ${fullyPaid ? 'text-green-600' : 'text-amber-600'}`}>{pct}%</div>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(3, pct)}%`, background: fullyPaid ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px]">
+                    {s.instTotal > 1
+                      ? <span className="text-slate-400">💵 {s.instPaid}/{s.instTotal} installments paid</span>
+                      : <span className="text-slate-400">{fullyPaid ? 'Paid in full' : 'Payment pending'}</span>}
+                    {s.due > 0 && <span className="font-bold text-amber-600">${s.due.toLocaleString()} due</span>}
+                  </div>
+                  {s.nextDue && <div className="text-[11px] text-slate-400 mt-1">📅 Next payment due {s.nextDue}</div>}
+                </div>
+
+                {/* Deal counts + cross-sell prompt */}
+                <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+                  <span className="rounded-md bg-green-50 text-green-600 px-1.5 py-0.5 text-[10px] font-bold">{s.won.length} won</span>
+                  {s.open.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{s.open.length} open</span>}
+                  <span className="text-[10px] text-slate-400 ml-auto">{fmtDate(l.convertedAt)}</span>
+                </div>
+
+                {s.open.length === 0 && (
+                  <div className="mt-3 rounded-lg bg-purple-50 border border-purple-100 px-2.5 py-2 text-[11px] font-bold text-purple-600">
+                    ✨ Cross-sell opportunity — no open deal right now
+                  </div>
+                )}
+                <div className="text-[11px] text-slate-400 mt-2">Owner: <span className="font-semibold text-slate-500">{l.ownerName}</span></div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
