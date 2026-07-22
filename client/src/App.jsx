@@ -6,6 +6,7 @@ import { formatPhone } from './countries.js';
 import Dashboard from './Dashboard.jsx';
 import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
+import MotivatorTV from './MotivatorTV.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -648,6 +649,13 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
 // ---------------------------------------------------------------------------
 
 export default function App() {
+  // The Motivator TV board runs at /tv/<token>. It's a public, unauthenticated
+  // screen for an office TV, so it short-circuits the whole app shell — no
+  // login, no chrome, just the board.
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/tv/')) {
+    return <MotivatorTV />;
+  }
+
   const [user, setUser] = useState(null);
   const [view, setView] = useState(() => {
     try {

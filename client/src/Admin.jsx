@@ -265,6 +265,100 @@ function Branding({ settings, setSettings, say, reload }) {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// Motivator TV settings
+// ---------------------------------------------------------------------------
+function MotivatorTvSettings({ say }) {
+  const [cfg, setCfg] = useState(null);
+  const [items, setItems] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api('/admin/tv').then((r) => { setCfg(r); setItems(r.announcements || []); }).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const save = async (patch) => {
+    setBusy(true);
+    try {
+      const r = await api('/admin/tv', { method: 'PUT', body: JSON.stringify(patch) });
+      setCfg(r); setItems(r.announcements || []);
+      say && say('Motivator TV updated', 'good');
+    } catch (e) { say && say(e.message, 'bad'); }
+    setBusy(false);
+  };
+
+  if (!cfg) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+
+  const url = cfg.token ? `${window.location.origin}/tv/${cfg.token}` : null;
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-bold" style={{ color: C.navy }}>Motivator TV board</div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              A full-screen sales board for an office TV. It rotates through targets, leaderboards and
+              team standings, with a live countdown to month end.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-bold text-slate-600 shrink-0">
+            <input type="checkbox" checked={!!cfg.enabled} disabled={busy}
+              onChange={(e) => save({ enabled: e.target.checked })} />
+            {cfg.enabled ? 'Enabled' : 'Disabled'}
+          </label>
+        </div>
+
+        {cfg.enabled && url && (
+          <div className="mt-4 rounded-lg bg-slate-50 border border-slate-100 p-3">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Public board URL</div>
+            <div className="flex items-center gap-2">
+              <input readOnly value={url} className={inputCls + ' font-mono text-xs'} onFocus={(e) => e.target.select()} />
+              <Btn size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(url); say && say('URL copied', 'good'); }}>Copy</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => window.open(url, '_blank')}>Open</Btn>
+            </div>
+            <Note tone="warn">
+              This link needs no login — anyone who has it can see your sales figures. Share it only with
+              the office TV, and regenerate it if it ever leaks.
+            </Note>
+            <div className="mt-2">
+              <Btn size="sm" variant="ghost" disabled={busy}
+                onClick={() => { if (confirm('Regenerate the URL? The current link will stop working immediately.')) save({ regenerate: true }); }}>
+                ↻ Regenerate URL
+              </Btn>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold mb-1" style={{ color: C.navy }}>Announcements</div>
+        <p className="text-[11px] text-slate-400 mb-3">Scrolls along the bottom of the board. Keep each line short.</p>
+        <div className="flex gap-2 mb-3">
+          <input className={inputCls} value={draft} onChange={(e) => setDraft(e.target.value)}
+            placeholder="e.g. Team lunch this Friday — great work everyone!"
+            onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { save({ announcements: [...items, draft.trim()] }); setDraft(''); } }} />
+          <Btn size="sm" onClick={() => { if (draft.trim()) { save({ announcements: [...items, draft.trim()] }); setDraft(''); } }}>Add</Btn>
+        </div>
+        {items.length === 0 ? (
+          <div className="text-[11px] text-slate-300 italic">No announcements yet.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {items.map((a, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                <span className="flex-1 text-sm text-slate-600">📢 {a}</span>
+                <button onClick={() => save({ announcements: items.filter((_, j) => j !== i) })}
+                  className="text-slate-300 hover:text-red-500 text-sm">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // API keys
 // ---------------------------------------------------------------------------
@@ -989,9 +1083,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['limits', 'Limits']];
-  // Save applies to tabs backed by the settings object (not Users, which saves inline).
-  const showSave = tab !== 'users' && tab !== 'crm';
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['tv', 'Motivator TV'], ['limits', 'Limits']];
+  // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -1021,6 +1115,7 @@ export default function Admin() {
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
+        {tab === 'tv' && <MotivatorTvSettings say={say} />}
         {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}
 
         <ActivityLog />

@@ -363,4 +363,44 @@ router.get('/seranking-credits', async (req, res) => {
   }
 });
 
+/**
+ * Motivator TV admin: enable/disable the board, regenerate its access token,
+ * and manage the announcement ticker.
+ */
+router.get('/tv', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({
+      enabled: !!(s && s.tvEnabled),
+      token: (s && s.tvToken) || null,
+      announcements: (s && Array.isArray(s.tvAnnouncements)) ? s.tvAnnouncements : [],
+    });
+  } catch (e) { next(e); }
+});
+
+router.put('/tv', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!s) return res.status(500).json({ error: 'Settings not initialised.' });
+    const b = req.body || {};
+
+    if (b.enabled !== undefined) {
+      s.tvEnabled = !!b.enabled;
+      // Mint a token the first time the board is switched on.
+      if (s.tvEnabled && !s.tvToken) s.tvToken = require('crypto').randomBytes(24).toString('hex');
+    }
+    if (b.regenerate) s.tvToken = require('crypto').randomBytes(24).toString('hex');
+    if (b.announcements !== undefined && Array.isArray(b.announcements)) {
+      s.tvAnnouncements = b.announcements.map((a) => String(a || '').slice(0, 300)).filter(Boolean).slice(0, 20);
+      s.changed('tvAnnouncements', true);
+    }
+    await s.save();
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'tv.settings',
+      target: s.tvEnabled ? 'enabled' : 'disabled', ip: req.ip,
+    });
+    res.json({ enabled: !!s.tvEnabled, token: s.tvToken, announcements: s.tvAnnouncements || [] });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

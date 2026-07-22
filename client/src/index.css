@@ -13,3 +13,7 @@ body { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -a
 .rich-text i, .rich-text em { font-style: italic; }
 .rich-text u { text-decoration: underline; }
 .rich-text a { color: #2563EB; text-decoration: underline; }
+
+/* Motivator TV announcement ticker. */
+@keyframes tv-ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.tv-ticker { display: inline-block; animation: tv-ticker-scroll 40s linear infinite; }

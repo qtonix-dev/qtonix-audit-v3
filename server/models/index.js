@@ -350,6 +350,15 @@ const Settings = sequelize.define(
 
     reportValidDays: { type: DataTypes.INTEGER, defaultValue: 14 },
     dailyReportLimit: { type: DataTypes.INTEGER, defaultValue: 20 },
+    /**
+     * Motivator TV settings. The board runs on an unauthenticated public URL
+     * (a TV browser can't log in), so access is controlled by a long random
+     * token that an admin can regenerate to revoke a leaked link.
+     */
+    tvToken: { type: DataTypes.STRING(64) },
+    tvEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+    // Ticker messages shown along the bottom of the board.
+    tvAnnouncements: { type: DataTypes.JSON, defaultValue: [] },
     cacheDays: { type: DataTypes.INTEGER, defaultValue: 7 },
     defaultCountry: { type: DataTypes.STRING(4), defaultValue: 'us' },
   },
