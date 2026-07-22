@@ -109,6 +109,90 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
   );
 }
 
+// Daily lead volume for the current month (line + area).
+function LeadDailyChart({ daily }) {
+  if (!daily || daily.length === 0) return null;
+  const W = 560, H = 140, padL = 28, padB = 18;
+  const max = Math.max(1, ...daily.map((d) => d.total));
+  const stepX = (W - padL - 8) / Math.max(1, daily.length - 1);
+  const x = (i) => padL + i * stepX;
+  const y = (v) => H - padB - (v / max) * (H - padB - 10);
+  const line = daily.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.total).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(daily.length - 1).toFixed(1)},${H - padB} L${x(0).toFixed(1)},${H - padB} Z`;
+  const today = new Date().getDate();
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }}>
+      {[0, 0.5, 1].map((g) => (
+        <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#e2e8f0" strokeWidth="1" />
+      ))}
+      <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
+      <text x={4} y={y(0) + 4} fontSize="8" fill="#94a3b8">0</text>
+      <path d={area} fill="url(#leadArea)" opacity="0.35" />
+      <path d={line} fill="none" stroke="#0891B2" strokeWidth="2" strokeLinejoin="round" />
+      {daily.map((d, i) => (d.day === today ? <circle key={i} cx={x(i)} cy={y(d.total)} r="3.5" fill="#0891B2" /> : null))}
+      {daily.map((d, i) => (d.day % 5 === 0 || d.day === 1 ? (
+        <text key={`t${i}`} x={x(i)} y={H - 4} textAnchor="middle" fontSize="8" fill="#94a3b8">{d.day}</text>
+      ) : null))}
+      <defs>
+        <linearGradient id="leadArea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#0891B2" /><stop offset="100%" stopColor="#0891B2" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+// 6-month grouped bars: total / cold calling / pre-sales.
+function LeadMonthlyChart({ monthly }) {
+  if (!monthly || monthly.length === 0) return null;
+  const W = 560, H = 150, padL = 26, padB = 26;
+  const max = Math.max(1, ...monthly.map((m) => m.total));
+  const groupW = (W - padL - 8) / monthly.length;
+  const barW = Math.min(14, (groupW - 12) / 3);
+  const y = (v) => H - padB - (v / max) * (H - padB - 12);
+  const series = [
+    { key: 'total', color: '#0891B2', label: 'Total' },
+    { key: 'cold', color: '#FF6A00', label: 'Cold calling' },
+    { key: 'presales', color: '#7C3AED', label: 'Pre-sales' },
+  ];
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-1 flex-wrap">
+        {series.map((s) => (
+          <span key={s.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} />{s.label}
+          </span>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }}>
+        {[0, 0.5, 1].map((g) => (
+          <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#e2e8f0" strokeWidth="1" />
+        ))}
+        <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
+        {monthly.map((m, i) => {
+          const gx = padL + i * groupW + 6;
+          return (
+            <g key={i}>
+              {series.map((s, si) => {
+                const v = m[s.key] || 0;
+                const bx = gx + si * (barW + 3);
+                const bh = Math.max(0, H - padB - y(v));
+                return (
+                  <g key={s.key}>
+                    <rect x={bx} y={y(v)} width={barW} height={bh} rx="2.5" fill={s.color} />
+                    {v > 0 && <text x={bx + barW / 2} y={y(v) - 3} textAnchor="middle" fontSize="7.5" fontWeight="bold" fill="#050A1F">{v}</text>}
+                  </g>
+                );
+              })}
+              <text x={gx + (barW * 3 + 6) / 2} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.month}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function TrendChart({ trend }) {
   if (!trend || trend.length === 0) return null;
   const W = 520, H = 150, pad = 26;
@@ -184,33 +268,59 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
   const greeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
 
   return (
-    <div>
-      <div className="mb-6">
+    <div className="space-y-5">
+      {/* Greeting */}
+      <div>
         <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting}, {user.name.split(' ')[0]} 👋</h1>
         <div className="text-sm text-slate-400">{isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.'}</div>
       </div>
 
-      {/* Company target (admin) */}
-      {isAdmin && m.companyTarget > 0 && (
-        <div className="mb-4">
-          <GoalStat label="Company monthly target" achieved={m.salesThisMonthUsd} target={m.companyTarget} accent="#050A1F" motivational="The month is young — let's rack up the first wins!" pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
-        </div>
-      )}
-
-      {/* Top metric row: sales-focused, all in goal format where a target exists */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        {me && me.salesTarget > 0
-          ? <GoalStat label="Sales achieved / monthly target" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A" motivational="First sale of the month is waiting for you! 🚀" pipelineNote={me.pipelineUsd > 0 ? usd(me.pipelineUsd) : null} awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
-          : <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)} sub={m.awaitingUsd > 0 ? `⏳ ${usd(m.awaitingUsd)} won, awaiting collection` : (m.pipelineUsd > 0 ? `💼 ${usd(m.pipelineUsd)} in pipeline` : `${m.convertedThisMonth} converted`)} accent="#16A34A" />}
-        {me && me.leadGenTarget > 0
-          ? <GoalStat label="Leads generated / monthly target" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#" accent="#0891B2" motivational="Add your first lead of the month! 🎯" />
-          : <PlainStat label="Leads generated today" value={m.generatedToday} sub={me && me.leadsGeneratedMonth ? `${me.leadsGeneratedMonth} this month` : 'this month: —'} accent="#0891B2" />}
-        <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
-        <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
+      {/* ROW 1 — Company target + Converted, side by side 50/50 */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {isAdmin && m.companyTarget > 0 ? (
+          <GoalStat label="Company monthly target" achieved={m.salesThisMonthUsd} target={m.companyTarget} accent="#050A1F"
+            motivational="The month is young — let's rack up the first wins!"
+            pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null}
+            awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
+        ) : me && me.salesTarget > 0 ? (
+          <GoalStat label="Sales achieved / monthly target" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A"
+            motivational="First sale of the month is waiting for you! 🚀"
+            pipelineNote={me.pipelineUsd > 0 ? usd(me.pipelineUsd) : null}
+            awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
+        ) : (
+          <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)}
+            sub={m.awaitingUsd > 0 ? `⏳ ${usd(m.awaitingUsd)} won, awaiting collection` : (m.pipelineUsd > 0 ? `💼 ${usd(m.pipelineUsd)} in pipeline` : `${m.convertedThisMonth} converted`)}
+            accent="#16A34A" />
+        )}
+        <PlainStat label="Converted this month" value={m.convertedThisMonth}
+          sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}
+          accent="#059669" onClick={onViewConverted} cta="View converted clients" />
       </div>
 
-      {/* Two 50/50 mini-list boxes */}
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
+      {/* ROW 2 — Sales breakdown */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
+        <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
+        <PlainStat label="Open pipeline" value={usd(m.pipelineUsd)} sub="Deals not yet won" accent="#F59E0B" />
+        <PlainStat label="Awaiting collection" value={usd(m.awaitingUsd)} sub="Won, not yet paid" accent="#DC2626" />
+      </div>
+
+      {/* ROW 3 — Lead generation. Personal target for agents; team-wide for
+          managers and admins, split by how the lead was sourced. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {me && me.leadGenTarget > 0 ? (
+          <GoalStat label="Leads generated / monthly target" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#"
+            accent="#0891B2" motivational="Add your first lead of the month! 🎯" />
+        ) : (
+          <PlainStat label="Leads generated" value={m.leadsGeneratedMonth} sub={`${m.generatedToday} today`} accent="#0891B2" />
+        )}
+        <PlainStat label="Leads assigned" value={m.leadsAssignedMonth} sub={`${m.assignedToday} today`} accent="#2563EB" />
+        <PlainStat label="By pre-sales" value={m.leadsPresalesMonth} sub="This month" accent="#7C3AED" />
+        <PlainStat label="By cold calling" value={m.leadsColdMonth} sub="This month" accent="#FF6A00" />
+      </div>
+
+      {/* ROW 4 — Today's leads + untouched, 50/50 */}
+      <div className="grid md:grid-cols-2 gap-4">
         <LeadMiniList
           title="Today's leads"
           count={m.generatedToday + m.assignedToday}
@@ -226,68 +336,82 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />
       </div>
 
-      {/* Converted clients shortcut */}
-      <div className="mb-4">
-        <PlainStat label="Converted this month" value={m.convertedThisMonth} accent="#059669" onClick={onViewConverted} cta="View converted clients" />
+      {/* ROW 5 — Personal transfer goal (pre-sales only) */}
+      {me && me.transferDailyTarget > 0 && (
+        <GoalStat label="Your call transfers today" achieved={me.transfersToday} target={me.transferDailyTarget} unit="#"
+          accent="#2563EB" motivational="Make your first transfer count! ☎️" />
+      )}
+
+      {/* ROW 6 — Lead trends: daily this month + 6-month grouped */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-extrabold text-[#050A1F]">Leads this month</h2>
+            <span className="text-xs text-slate-400">Day by day</span>
+          </div>
+          <LeadDailyChart daily={data.leadDaily} />
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-extrabold text-[#050A1F]">Lead trend</h2>
+            <span className="text-xs text-slate-400">Last 6 months</span>
+          </div>
+          <LeadMonthlyChart monthly={data.leadMonthly} />
+        </div>
       </div>
 
-      {/* Personal transfer goal (pre-sales) */}
-      {me && me.transferDailyTarget > 0 && (
-        <div className="mb-4">
-          <GoalStat label="Your call transfers today" achieved={me.transfersToday} target={me.transferDailyTarget} unit="#" accent="#2563EB" motivational="Make your first transfer count! ☎️" />
+      {/* ROW 7 — Highlights */}
+      {(data.topShift || firstToTarget || topSeller) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          {data.topShift && data.topShift.salesUsd > 0 && (
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-5">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">🏅 Top shift this month</div>
+              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{data.topShift.team} · {data.topShift.shift}</div>
+              <div className="text-sm text-slate-500">{usd(data.topShift.salesUsd)} in collected sales</div>
+            </div>
+          )}
+          {firstToTarget ? (
+            <div className="rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-5">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-green-600">🎯 First to hit target</div>
+              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{firstToTarget.name}</div>
+              <div className="text-sm text-slate-500">Reached {usd(firstToTarget.salesTarget)} — eligible for incentives</div>
+            </div>
+          ) : topSeller && topSeller.salesUsd > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-amber-600">🏆 Top seller this month</div>
+              <div className="text-xl font-extrabold text-[#050A1F] mt-1">{topSeller.name}</div>
+              <div className="text-sm text-slate-500">{usd(topSeller.salesUsd)} in sales</div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Top performer highlights */}
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
-        {data.topShift && data.topShift.salesUsd > 0 && (
-          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-5">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">🏅 Top shift this month</div>
-            <div className="text-xl font-extrabold text-[#050A1F] mt-1">{data.topShift.team} · {data.topShift.shift}</div>
-            <div className="text-sm text-slate-500">{usd(data.topShift.salesUsd)} in collected sales</div>
-          </div>
-        )}
-        {firstToTarget ? (
-          <div className="rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-5">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-green-600">🎯 First to hit target</div>
-            <div className="text-xl font-extrabold text-[#050A1F] mt-1">{firstToTarget.name}</div>
-            <div className="text-sm text-slate-500">Reached {usd(firstToTarget.salesTarget)} — eligible for incentives</div>
-          </div>
-        ) : topSeller && (
-          <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-amber-600">🏆 Top seller this month</div>
-            <div className="text-xl font-extrabold text-[#050A1F] mt-1">{topSeller.name}</div>
-            <div className="text-sm text-slate-500">{usd(topSeller.salesUsd)} in sales</div>
-          </div>
-        )}
-      </div>
-
-      {/* Trend + Leaderboard side by side (50/50) */}
-      <div className="grid lg:grid-cols-2 gap-4 mb-4">
+      {/* ROW 8 — Sales trend + leaderboard, 50/50 */}
+      <div className="grid lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-extrabold text-[#050A1F]">Sales trend</h2>
+            <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
             <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
           </div>
           <TrendChart trend={data.trend} />
         </div>
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-extrabold text-[#050A1F]">Sales leaderboard</h2>
+            <h2 className="text-base font-extrabold text-[#050A1F]">Sales leaderboard</h2>
             <span className="text-xs text-slate-400">Collected · USD</span>
           </div>
           {isAdmin && board.some((b) => b.role === 'admin') && (
             <div className="text-[11px] text-slate-400 mb-2">Admin rows are visible to you only and are excluded from company totals.</div>
           )}
-          {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No sales yet this month.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
+          {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No team members yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
         </div>
       </div>
 
-      {/* Transfer leaderboard */}
+      {/* ROW 9 — Transfer leaderboard */}
       {transferBoard.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-extrabold text-[#050A1F]">Call transfers today</h2>
+            <h2 className="text-base font-extrabold text-[#050A1F]">Call transfers today</h2>
             <span className="text-xs text-slate-400">Pre-sales · daily target</span>
           </div>
           <div className="space-y-2">

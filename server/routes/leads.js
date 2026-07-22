@@ -227,6 +227,27 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
 
+    // Lead-generation analytics. We split by leadSource so the dashboard can
+    // show pre-sales vs cold-calling contribution, and bucket by day (current
+    // month) and by month (last 6) for the trend charts.
+    const isPresales = (s) => /pre[\s-]?sales/i.test(String(s || ''));
+    const isColdCall = (s) => /cold[\s-]?call/i.test(String(s || ''));
+    let leadsGeneratedMonthTotal = 0, leadsPresalesMonth = 0, leadsColdMonth = 0;
+    let leadsAssignedMonthTotal = 0;
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const leadDaily = Array.from({ length: daysInMonth }, (_, i) => ({
+      day: i + 1, total: 0, presales: 0, cold: 0,
+    }));
+    const leadMonthly = [];
+    for (let i = 5; i >= 0; i--) {
+      const ms = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      leadMonthly.push({
+        month: ms.toLocaleString('en-US', { month: 'short' }), year: ms.getFullYear(),
+        start: ms, end: new Date(now.getFullYear(), now.getMonth() - i + 1, 1),
+        total: 0, presales: 0, cold: 0,
+      });
+    }
+
     // Per shift/branch tally (by closed-won collected USD this month).
     const byShift = {}; // key `${team}·${shift}`
 
@@ -237,6 +258,31 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
       // Lead generation: created this month / today, credited to the owner.
       if (created && created >= startOfMonth) byOwner[l.ownerId].leadsGeneratedMonth++;
+
+      const pres = isPresales(l.leadSource) || isPresales(l.generatedBy);
+      const cold = isColdCall(l.leadSource) || isColdCall(l.generatedBy);
+
+      if (created && created >= startOfMonth) {
+        leadsGeneratedMonthTotal++;
+        if (pres) leadsPresalesMonth++;
+        if (cold) leadsColdMonth++;
+        const dIdx = created.getDate() - 1;
+        if (leadDaily[dIdx]) {
+          leadDaily[dIdx].total++;
+          if (pres) leadDaily[dIdx].presales++;
+          if (cold) leadDaily[dIdx].cold++;
+        }
+      }
+      if (created) {
+        for (const b of leadMonthly) {
+          if (created >= b.start && created < b.end) {
+            b.total++;
+            if (pres) b.presales++;
+            if (cold) b.cold++;
+            break;
+          }
+        }
+      }
 
       const isConverted = l.status === 'converted';
       if (!isConverted) {
@@ -251,6 +297,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       const createdToday = created && created >= startOfDay;
       const assignedAt = l.assignedAt ? new Date(l.assignedAt) : created;
       const reassignedToday = assignedAt && assignedAt >= startOfDay && created && (assignedAt - created > 60 * 1000);
+      if (assignedAt && assignedAt >= startOfMonth && created && (assignedAt - created > 60 * 1000)) leadsAssignedMonthTotal++;
 
       if (createdToday) {
         generatedToday++;
@@ -324,7 +371,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       return u.id === req.user.id;
     };
     owners.forEach((u) => {
-      if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled && inScope(u)) ensure(u.id, u.name);
+      // Seed every in-scope active user (agents AND managers), so the whole
+      // team appears on the leaderboard even at zero sales. Admins are seeded
+      // too but filtered out for non-admin viewers further down.
+      if (u.active !== false && inScope(u)) ensure(u.id, u.name);
     });
 
     const leaderboard = Object.values(byOwner).map((o) => {
@@ -391,6 +441,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         companyTarget: Math.round(companyTarget),
         companyPct: companyTarget > 0 ? Math.round((salesThisMonthUsd / companyTarget) * 100) : null,
         generatedTarget: targetForToday(targetsById[req.user.id], 'transfer'),
+        // Team-wide lead generation (within the viewer's visibility scope).
+        leadsGeneratedMonth: leadsGeneratedMonthTotal,
+        leadsAssignedMonth: leadsAssignedMonthTotal,
+        leadsPresalesMonth: leadsPresalesMonth,
+        leadsColdMonth: leadsColdMonth,
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList },
       me: meRow ? {
@@ -404,6 +459,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           ? Number((targetsById[req.user.id] || {}).leadGen.monthly || 0) : 0,
       } : null,
       leaderboard, transferBoard, trend, shiftBoard, topShift,
+      leadDaily,
+      leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold })),
     });
   } catch (e) { next(e); }
 });
