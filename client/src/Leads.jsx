@@ -145,6 +145,99 @@ function statusMeta(config, id) {
 }
 
 // ---- Lead list -------------------------------------------------------------
+// Shared pager: page buttons plus a per-page selector (10/20/50/100).
+export function Pagination({ page, pages, total, perPage, onPage, onPerPage, label = 'items' }) {
+  if (!total) return null;
+  const from = (page - 1) * perPage + 1;
+  const to = Math.min(total, page * perPage);
+  // Show a compact window of page numbers around the current page.
+  const nums = [];
+  const start = Math.max(1, Math.min(page - 2, pages - 4));
+  for (let i = start; i <= Math.min(pages, start + 4); i++) nums.push(i);
+  return (
+    <div className="flex items-center justify-between gap-3 mt-4 flex-wrap">
+      <div className="text-xs text-slate-400">Showing {from}–{to} of {total} {label}</div>
+      <div className="flex items-center gap-2">
+        {pages > 1 && (
+          <div className="flex items-center gap-1">
+            <button onClick={() => onPage(Math.max(1, page - 1))} disabled={page === 1}
+              className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-500 disabled:opacity-40 hover:border-slate-300">‹</button>
+            {start > 1 && <span className="text-xs text-slate-300 px-1">…</span>}
+            {nums.map((n) => (
+              <button key={n} onClick={() => onPage(n)}
+                className={`rounded-md px-2.5 py-1 text-xs font-bold ${n === page ? 'bg-[#050A1F] text-white' : 'border border-slate-200 text-slate-500 hover:border-slate-300'}`}>{n}</button>
+            ))}
+            {start + 4 < pages && <span className="text-xs text-slate-300 px-1">…</span>}
+            <button onClick={() => onPage(Math.min(pages, page + 1))} disabled={page === pages}
+              className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-500 disabled:opacity-40 hover:border-slate-300">›</button>
+          </div>
+        )}
+        <select value={perPage} onChange={(e) => onPerPage(Number(e.target.value))}
+          className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold text-slate-500">
+          {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n} / page</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// Lightweight rich-text editor (contentEditable + execCommand). Avoids pulling
+// in a heavy dependency; stores HTML. Toolbar covers the formatting sales notes
+// actually need: bold/italic/underline, lists, and clearing formatting.
+export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
+  const ref = React.useRef(null);
+  const [focused, setFocused] = useState(false);
+
+  // Only write into the DOM when the incoming value genuinely differs, so we
+  // don't clobber the caret position while the user is typing.
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value || '')) {
+      ref.current.innerHTML = value || '';
+    }
+  }, [value]);
+
+  const exec = (cmd, arg) => {
+    document.execCommand(cmd, false, arg || null);
+    if (ref.current) onChange(ref.current.innerHTML);
+    if (ref.current) ref.current.focus();
+  };
+  const Btn = ({ cmd, arg, children, title }) => (
+    <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); exec(cmd, arg); }}
+      className="w-7 h-7 rounded text-xs font-bold text-slate-600 hover:bg-slate-200">{children}</button>
+  );
+  const isEmpty = !value || value === '<br>' || value === '<div><br></div>';
+
+  return (
+    <div className={`rounded-lg border ${focused ? 'border-orange-400 ring-2 ring-orange-100' : 'border-slate-300'}`}>
+      <div className="flex items-center gap-0.5 border-b border-slate-200 px-1.5 py-1 bg-slate-50 rounded-t-lg">
+        <Btn cmd="bold" title="Bold"><b>B</b></Btn>
+        <Btn cmd="italic" title="Italic"><i>I</i></Btn>
+        <Btn cmd="underline" title="Underline"><u>U</u></Btn>
+        <span className="w-px h-4 bg-slate-200 mx-1" />
+        <Btn cmd="insertUnorderedList" title="Bullet list">• —</Btn>
+        <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
+        <span className="w-px h-4 bg-slate-200 mx-1" />
+        <Btn cmd="removeFormat" title="Clear formatting">✕</Btn>
+      </div>
+      <div className="relative">
+        {isEmpty && !focused && placeholder && (
+          <div className="absolute top-2 left-3 text-sm text-slate-300 pointer-events-none">{placeholder}</div>
+        )}
+        <div
+          ref={ref}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={() => onChange(ref.current.innerHTML)}
+          onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
+          onFocus={() => setFocused(true)}
+          className="px-3 py-2 text-sm outline-none overflow-auto rich-text"
+          style={{ minHeight }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
@@ -155,6 +248,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   const [ownerFilter, setOwnerFilter] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
   const [importing, setImporting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
+  const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
 
   const load = async () => {
     setLoading(true);
@@ -165,18 +261,23 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       if (ownerFilter) params.set('ownerId', ownerFilter);
       if (countryFilter) params.set('country', countryFilter);
       if (untouchedFilter) params.set('untouched', String(untouchedFilter));
+      params.set('page', String(page));
+      params.set('perPage', String(perPage));
       const [res, cfg] = await Promise.all([
         api(`/leads${params.toString() ? '?' + params.toString() : ''}`),
         api('/leads/config'),
       ]);
       setItems(res.items || []);
+      setPageInfo({ total: res.total || 0, pages: res.pages || 1 });
       setConfig(cfg.config || {});
       setOwners(cfg.owners || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage]);
+  // Any filter change should send the user back to the first page.
+  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [statusFilter, ownerFilter, countryFilter, untouchedFilter]);
 
   return (
     <div>
@@ -211,7 +312,10 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
             {Array.from(new Set(items.map((l) => l.country).filter(Boolean))).sort().map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
-          <button onClick={() => setImporting(true)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">⬆ Import CSV</button>
+          {user.role === 'admin' && (
+            <button onClick={() => setImporting(true)} title="Import leads from CSV"
+              className="rounded-lg border border-slate-300 w-9 h-9 flex items-center justify-center text-base text-slate-600 hover:border-slate-400 hover:bg-slate-50">⬆</button>
+          )}
           <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ New lead</button>
         </div>
       </div>
@@ -293,6 +397,10 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
             </tbody>
           </table>
         </div>
+      )}
+      {!loading && items.length > 0 && (
+        <Pagination page={page} pages={pageInfo.pages} total={pageInfo.total} perPage={perPage}
+          onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="leads" />
       )}
       {importing && <CsvImportModal onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
     </div>
@@ -466,14 +574,22 @@ export function NewLead({ user, onCreated, onCancel }) {
       {error && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
-        {canAssign && (
+        {/* Owner + country up top: country drives phone codes and timezone, so
+            it belongs before the contact fields are filled in. */}
+        <div className={`grid ${canAssign ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+          {canAssign && (
+            <div>
+              <label className={lab}>Lead owner</label>
+              <select className={inp} value={f.ownerId} onChange={(e) => set('ownerId', Number(e.target.value))}>
+                {owners.map((o) => <option key={o.id} value={o.id}>{o.name}{o.role !== 'agent' ? ` (${o.role})` : ''}</option>)}
+              </select>
+            </div>
+          )}
           <div>
-            <label className={lab}>Lead owner</label>
-            <select className={inp} value={f.ownerId} onChange={(e) => set('ownerId', Number(e.target.value))}>
-              {owners.map((o) => <option key={o.id} value={o.id}>{o.name}{o.role !== 'agent' ? ` (${o.role})` : ''}</option>)}
-            </select>
+            <label className={lab}>Country</label>
+            <CountryCombobox className={inp} value={f.country} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); else set('timezone', ''); if (f.mobile) set('mobile', formatPhone(f.mobile, v)); if (f.phone) set('phone', formatPhone(f.phone, v)); }} />
           </div>
-        )}
+        </div>
 
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100 pb-1">Contact information</div>
         <div className="grid grid-cols-2 gap-4">
@@ -528,14 +644,13 @@ export function NewLead({ user, onCreated, onCancel }) {
 
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100 pb-1">Location</div>
         <div className="grid grid-cols-3 gap-4">
-          <div><label className={lab}>Country</label><CountryCombobox className={inp} value={f.country} onChange={(v) => { const z = COUNTRY_TIMEZONES[v]; set('country', v); if (z && z.length === 1) set('timezone', z[0]); else set('timezone', ''); if (f.mobile) set('mobile', formatPhone(f.mobile, v)); if (f.phone) set('phone', formatPhone(f.phone, v)); }} /></div>
           <div><label className={lab}>City</label><input className={inp} value={f.city} onChange={(e) => set('city', e.target.value)} /></div>
           <div><label className={lab}>Time zone</label><TimezoneField className={inp} country={f.country} value={f.timezone} onChange={(v) => set('timezone', v)} /></div>
         </div>
 
         <div>
           <label className={lab}>Additional information</label>
-          <textarea rows={3} className={inp} value={f.additionalInfo} onChange={(e) => set('additionalInfo', e.target.value)} />
+          <RichText value={f.additionalInfo} onChange={(v) => set('additionalInfo', v)} placeholder="Anything useful about this lead…" minHeight={110} />
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -651,7 +766,9 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
 
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
             <SectionHead title="Description" section="description" />
-            <div className="text-sm text-slate-600 whitespace-pre-wrap">{lead.additionalInfo || <span className="text-slate-300">No description</span>}</div>
+            {lead.additionalInfo
+              ? <div className="text-sm text-slate-600 rich-text" dangerouslySetInnerHTML={{ __html: lead.additionalInfo }} />
+              : <div className="text-sm text-slate-300">No description</div>}
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
@@ -661,7 +778,21 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
               <Row k="Secondary email" v={lead.secondaryEmail} />
               <Row k="Generated by" v={lead.generatedBy} />
               <Row k="Lead status" v={sm.label} />
-              <Row k="Service interested in" v={(lead.servicesInterested || []).join(', ')} />
+              {/* Services are edited far too often to be buried in the modal —
+                  surface them as clickable chips with an inline add button. */}
+              <div className="flex items-start justify-between gap-2 py-1">
+                <span className="text-slate-400 shrink-0">Service interested in</span>
+                <div className="flex flex-wrap gap-1 justify-end">
+                  {(lead.servicesInterested || []).map((sv) => (
+                    <button key={sv} onClick={() => openEdit('services')}
+                      className="rounded-full bg-teal-50 text-teal-700 px-2 py-0.5 text-[11px] font-bold hover:bg-teal-100">{sv}</button>
+                  ))}
+                  <button onClick={() => openEdit('services')}
+                    className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">
+                    {(lead.servicesInterested || []).length ? '+ edit' : '+ add service'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -703,7 +834,7 @@ function QuickNoteModal({ lead, onClose, onSaved }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async () => {
-    if (!text.trim()) return;
+    if (!plainText(text)) return;
     setBusy(true);
     try { const u = await api(`/leads/${lead._id}/notes`, { method: 'POST', body: JSON.stringify({ text }) }); onSaved(u); }
     catch (e) { alert(e.message); } setBusy(false);
@@ -751,6 +882,9 @@ function Timeline({ lead }) {
   );
 }
 
+// Strip tags to check whether rich-text content is actually empty.
+const plainText = (html) => String(html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
 // ---- Notes tab -------------------------------------------------------------
 function NotesTab({ lead, onChange }) {
   const [text, setText] = useState('');
@@ -767,16 +901,17 @@ function NotesTab({ lead, onChange }) {
   };
   return (
     <div>
-      <div className="flex gap-2 mb-4">
-        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…"
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-        <button onClick={add} disabled={busy || !text.trim()} className="rounded-lg px-4 py-2 text-sm font-bold text-white self-start disabled:opacity-40" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Add</button>
+      <div className="mb-4">
+        <RichText value={text} onChange={setText} placeholder="Add a note…" minHeight={90} />
+        <div className="flex justify-end mt-2">
+          <button onClick={add} disabled={busy || !plainText(text)} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Add note</button>
+        </div>
       </div>
       {notes.length === 0 ? <div className="text-slate-300 text-sm py-12 text-center">No notes yet.</div> : (
         <div className="space-y-2">
           {notes.map((n) => (
             <div key={n.id} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-              <div className="text-sm text-slate-700 whitespace-pre-wrap">{n.text}</div>
+              <div className="text-sm text-slate-700 rich-text" dangerouslySetInnerHTML={{ __html: n.text || '' }} />
               <div className="text-[10px] text-slate-400 mt-1">{n.author} · {fmtDate(n.time)}</div>
             </div>
           ))}
@@ -902,12 +1037,11 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
               <div><label className={lab}>Date</label><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
               <div><label className={lab}>Time</label><input type="time" className={inp} value={f.time} onChange={(e) => set('time', e.target.value)} /></div>
             </div>
-            <div>
-              <label className={lab}>Time zone (from lead)</label>
-              {lead.timezone
-                ? <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">🌐 {lead.timezone}<span className="text-[10px] text-slate-400">auto</span></div>
-                : <TimezoneField className={inp} country={lead.country} value={f.timezone} onChange={(v) => set('timezone', v)} />}
-            </div>
+            {/* Timezone is taken from the lead automatically — shown as a hint
+                next to the time rather than as a field to fill in. */}
+            {lead.timezone && (
+              <div className="text-[11px] text-slate-400 -mt-1">🌐 Lead's time zone: <span className="font-semibold text-slate-500">{lead.timezone}</span></div>
+            )}
             {f.mode === 'done' && (
               <div><label className={lab}>How long did the call last? (minutes)</label><input type="number" min="0" className={inp} value={f.durationMin} onChange={(e) => set('durationMin', e.target.value)} placeholder="e.g. 15" /></div>
             )}
@@ -946,12 +1080,20 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
   const show = (s) => section === 'all' || section === s;
-  const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info', status: 'Change lead status' };
+  const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info', status: 'Change lead status', services: 'Services interested in' };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-[#050A1F] mb-4">{titles[section] || 'Edit lead'}</h3>
+
+        {show('services') && (
+          <div className="mb-4">
+            <label className={lab}>Services interested in</label>
+            <MultiSelectCombobox className={inp} options={config.servicesInterested || []} values={draft.servicesInterested || []}
+              onChange={(v) => set('servicesInterested', v)} placeholder="Type to search services…" />
+          </div>
+        )}
 
         {show('status') && (
           <div className="mb-4">
@@ -1002,7 +1144,7 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
         {show('description') && (
           <div className="mb-4">
             <label className={lab}>Description</label>
-            <textarea rows={4} className={inp} value={draft.additionalInfo || ''} onChange={(e) => set('additionalInfo', e.target.value)} />
+            <RichText value={draft.additionalInfo || ''} onChange={(v) => set('additionalInfo', v)} placeholder="Anything useful about this lead…" minHeight={130} />
           </div>
         )}
 
@@ -1371,7 +1513,10 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
-  const [monthOnly, setMonthOnly] = useState(!!thisMonthOnly);
+  const [period, setPeriod] = useState(thisMonthOnly ? 'thisMonth' : 'all');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
+  const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
 
@@ -1386,12 +1531,20 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
-  useEffect(() => {
-    Promise.all([api('/leads/converted'), api('/leads/config')])
-      .then(([r, cfg]) => { setItems(r.items || []); setConfig(cfg.config || {}); })
+  const load = () => {
+    setLoading(true);
+    const params = new URLSearchParams({ period, page: String(page), perPage: String(perPage) });
+    Promise.all([api(`/leads/converted?${params}`), api('/leads/config')])
+      .then(([r, cfg]) => {
+        setItems(r.items || []);
+        setPageInfo({ total: r.total || 0, pages: r.pages || 1 });
+        setConfig(cfg.config || {});
+      })
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [period, page, perPage]);
+  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [period]);
 
   const inThisMonth = (l) => {
     if (!l.convertedAt) return false;
@@ -1422,7 +1575,6 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   };
 
   const filtered = items
-    .filter((l) => (monthOnly ? inThisMonth(l) : true))
     .filter((l) => (q ? (fullName(l) + ' ' + (l.website || '') + ' ' + (l.ownerName || '')).toLowerCase().includes(q.toLowerCase()) : true));
 
   // Page totals.
@@ -1439,14 +1591,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted clients</h1>
-          <div className="text-sm text-slate-400">{filtered.length} client{filtered.length === 1 ? '' : 's'}{monthOnly ? ' converted this month' : ''}{user.role === 'manager' ? ' in your team' : ''}</div>
+          <div className="text-sm text-slate-400">{pageInfo.total} client{pageInfo.total === 1 ? '' : 's'}{user.role === 'manager' ? ' in your team' : ''}</div>
         </div>
         <div className="flex items-center gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-500 whitespace-nowrap">
-            <input type="checkbox" checked={monthOnly} onChange={(e) => setMonthOnly(e.target.checked)} /> This month only
-          </label>
+          <select value={period} onChange={(e) => setPeriod(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600">
+            <option value="thisMonth">This month</option>
+            <option value="lastMonth">Last month</option>
+            <option value="last3">Last 3 months</option>
+            <option value="thisYear">This year</option>
+            <option value="all">All time</option>
+          </select>
         </div>
       </div>
 
@@ -1471,7 +1628,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       {filtered.length === 0 ? (
         <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-100">
           <div className="text-4xl mb-2">🎉</div>
-          No converted clients{monthOnly ? ' this month' : ' yet'}. A lead converts when one of its deals is marked Closed Won.
+          No converted clients for this period. A lead converts when one of its deals is marked Closed Won.
         </div>
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1536,6 +1693,67 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Full client table — easier to scan than cards once the list grows. */}
+      {filtered.length > 0 && (
+        <div className="mt-6">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients</div>
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                  <th className="text-left px-4 py-3">Client</th>
+                  <th className="text-left px-4 py-3">Website</th>
+                  <th className="text-left px-4 py-3">Owner</th>
+                  <th className="text-left px-4 py-3">Collected / booked</th>
+                  <th className="text-left px-4 py-3">Outstanding</th>
+                  <th className="text-left px-4 py-3">Deals</th>
+                  <th className="text-left px-4 py-3">Converted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((l) => {
+                  const s = summarize(l);
+                  const pct = s.booked > 0 ? Math.round((s.collected / s.booked) * 100) : 0;
+                  return (
+                    <tr key={`row-${l._id}`} onClick={() => onOpen(l._id, 'deals')}
+                      className="border-t border-slate-50 hover:bg-green-50/30 cursor-pointer transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-green-50 text-green-600 flex items-center justify-center text-xs font-bold shrink-0">
+                            {(fullName(l)[0] || '?').toUpperCase()}
+                          </div>
+                          <span className="font-bold text-[#050A1F]">{fullName(l)}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{l.website ? l.website.replace(/^https?:\/\//, '') : '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-[#050A1F] text-xs">${s.collected.toLocaleString()} <span className="text-slate-300">/ ${s.booked.toLocaleString()}</span></div>
+                        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1 w-24">
+                          <div className="h-full rounded-full" style={{ width: `${Math.max(3, pct)}%`, background: s.due <= 0 ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+                        </div>
+                      </td>
+                      <td className={`px-4 py-3 text-xs font-bold ${s.due > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+                        {s.due > 0 ? `$${s.due.toLocaleString()}` : 'Paid in full'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded-md bg-green-50 text-green-600 px-1.5 py-0.5 text-[10px] font-bold">{s.won.length} won</span>
+                          {s.open.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{s.open.length} open</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={page} pages={pageInfo.pages} total={pageInfo.total} perPage={perPage}
+            onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="clients" />
         </div>
       )}
     </div>

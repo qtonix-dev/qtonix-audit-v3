@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
-import { CountryCombobox, PhoneField } from './Leads.jsx';
+import { CountryCombobox, PhoneField, Pagination } from './Leads.jsx';
 import { formatPhone } from './countries.js';
 import Dashboard from './Dashboard.jsx';
 
@@ -527,17 +527,18 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
     catch { return ''; }
   });
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     setLoading(true);
     try {
-      setData(await api(`/reports?page=${page}&limit=15${q ? `&q=${encodeURIComponent(q)}` : ''}`));
+      setData(await api(`/reports?page=${page}&limit=${perPage}${q ? `&q=${encodeURIComponent(q)}` : ''}`));
     } catch { /* surfaced by empty state */ }
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page, perPage]);
   useEffect(() => { const t = setTimeout(() => { setPage(1); load(); }, 350); return () => clearTimeout(t); }, [q]);
 
   const download = async (id, name) => {
@@ -636,19 +637,8 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
       </div>
 
 
-      {data.pages > 1 && (
-        <div className="flex justify-center gap-2 mt-4">
-          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-30">
-            Previous
-          </button>
-          <span className="px-3 py-1.5 text-xs text-slate-500">Page {page} of {data.pages}</span>
-          <button disabled={page >= data.pages} onClick={() => setPage((p) => p + 1)}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-30">
-            Next
-          </button>
-        </div>
-      )}
+      <Pagination page={page} pages={data.pages || 1} total={data.total || 0} perPage={perPage}
+        onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="reports" />
     </div>
   );
 }

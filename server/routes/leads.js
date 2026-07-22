@@ -104,8 +104,23 @@ router.get('/', requireAuth, async (req, res, next) => {
         { [Op.or]: [{ firstName: like }, { lastName: like }, { email: like }, { website: like }, { domain: like }] },
       ];
     }
-    const leads = await Lead.findAll({ where, order: [['lastActivityAt', 'DESC'], ['createdAt', 'DESC']], limit: 500 });
-    res.json({ items: leads.map((l) => l.toJSON()) });
+    // Pagination: `page` (1-based) and `perPage` (10/20/50/100). Returns the
+    // slice plus totals so the client can render page controls.
+    const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const { count, rows } = await Lead.findAndCountAll({
+      where,
+      order: [['lastActivityAt', 'DESC'], ['createdAt', 'DESC']],
+      limit: perPage,
+      offset: (page - 1) * perPage,
+    });
+    res.json({
+      items: rows.map((l) => l.toJSON()),
+      total: count,
+      page,
+      perPage,
+      pages: Math.max(1, Math.ceil(count / perPage)),
+    });
   } catch (e) { next(e); }
 });
 
@@ -540,8 +555,39 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     }
     const where = await visibilityWhere(req.user);
     where.status = 'converted';
-    const leads = await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']], limit: 1000 });
-    res.json({ items: leads.map((l) => l.toJSON()) });
+
+    // Period filter: thisMonth | lastMonth | last3 | thisYear | all
+    const period = String(req.query.period || 'all');
+    const now = new Date();
+    let from = null, to = null;
+    if (period === 'thisMonth') {
+      from = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (period === 'lastMonth') {
+      from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      to = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (period === 'last3') {
+      from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    } else if (period === 'thisYear') {
+      from = new Date(now.getFullYear(), 0, 1);
+    }
+    if (from) {
+      where.convertedAt = to ? { [Op.gte]: from, [Op.lt]: to } : { [Op.gte]: from };
+    }
+
+    const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const { count, rows } = await Lead.findAndCountAll({
+      where,
+      order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']],
+      limit: perPage,
+      offset: (page - 1) * perPage,
+    });
+    res.json({
+      items: rows.map((l) => l.toJSON()),
+      total: count, page, perPage,
+      pages: Math.max(1, Math.ceil(count / perPage)),
+      period,
+    });
   } catch (e) { next(e); }
 });
 
