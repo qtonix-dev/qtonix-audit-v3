@@ -336,7 +336,14 @@ router.get('/:id/view', requireAuth, async (req, res, next) => {
     } else if (!report.htmlPath || !fs.existsSync(report.htmlPath)) {
       return res.status(404).send('Report not available yet.');
     }
-    res.sendFile(path.resolve(report.htmlPath));
+    // The HTML is regenerated on every view (and after a re-run), so the browser
+    // must never serve a cached copy — otherwise a re-run appears to change
+    // nothing.
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+    res.sendFile(path.resolve(report.htmlPath), { etag: false, lastModified: false });
   } catch (e) {
     next(e);
   }
@@ -446,6 +453,37 @@ router.post('/:id/retry', requireAuth, async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+});
+
+/**
+ * DELETE /api/reports/:id — admin-only hard delete. Removes the database row
+ * and the generated PDF from disk. Also unlinks the report from any lead that
+ * referenced it, so no dangling pointers remain.
+ */
+router.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can delete reports.' });
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+
+    // Remove the rendered PDF if it's still on disk.
+    try { if (report.pdfPath && fs.existsSync(report.pdfPath)) fs.unlinkSync(report.pdfPath); } catch { /* best effort */ }
+
+    // Clear the link from any lead that was created from / attached to it.
+    try {
+      const { Lead } = require('../models');
+      const linked = await Lead.findAll({ where: { sourceReportId: report.id } });
+      for (const l of linked) { l.sourceReportId = null; await l.save(); }
+    } catch { /* best effort */ }
+
+    const label = report.businessName || report.domain;
+    await report.destroy();
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'report.delete',
+      target: label, ip: req.ip,
+    });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

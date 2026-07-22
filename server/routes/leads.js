@@ -208,13 +208,23 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const in3d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
+    // Load users up-front so we know each lead owner's role while tallying.
+    // Admin-owned sales are deliberately kept out of company totals and out of
+    // the leaderboard that agents/managers see (admins run demo/test data);
+    // they're only surfaced back to admins themselves.
+    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId', 'avatar'] });
+    const roleById = {};
+    owners.forEach((u) => { roleById[u.id] = u.role; });
+    const viewerIsAdmin = req.user.role === 'admin';
+    const isAdminOwned = (ownerId) => roleById[ownerId] === 'admin';
+
     let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
     let salesThisMonthUsd = 0, convertedThisMonth = 0;
     let awaitingUsd = 0; // won deals whose installments aren't collected yet
     let pipelineUsd = 0; // open (not won/lost) deal value in USD, motivational
     let newSalesUsd = 0, crossSalesUsd = 0, newSalesCount = 0, crossSalesCount = 0;
     const byOwner = {};
-    const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0 });
+    const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
 
     // Per shift/branch tally (by closed-won collected USD this month).
@@ -225,15 +235,32 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       ensure(l.ownerId, l.ownerName);
       byOwner[l.ownerId].leads++;
 
+      // Lead generation: created this month / today, credited to the owner.
+      if (created && created >= startOfMonth) byOwner[l.ownerId].leadsGeneratedMonth++;
+
       const isConverted = l.status === 'converted';
       if (!isConverted) {
         totalLeads++;
-        if (created && created >= startOfDay) { generatedToday++; if (genTodayList.length < 8) genTodayList.push(leadBrief(l)); }
         const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
         if (last && last < in3d) { untouched++; if (untouchedList.length < 8) untouchedList.push(leadBrief(l)); }
       }
+
+      // "Generated today" = created today. "Assigned today" = handed to a
+      // different owner today (assignedAt moved after creation). Keeping them
+      // distinct so the admin view can label each with its own icon.
+      const createdToday = created && created >= startOfDay;
       const assignedAt = l.assignedAt ? new Date(l.assignedAt) : created;
-      if (assignedAt && assignedAt >= startOfDay) { assignedToday++; if (assignedTodayList.length < 8) assignedTodayList.push(leadBrief(l)); }
+      const reassignedToday = assignedAt && assignedAt >= startOfDay && created && (assignedAt - created > 60 * 1000);
+
+      if (createdToday) {
+        generatedToday++;
+        byOwner[l.ownerId].leadsGeneratedToday++;
+        if (genTodayList.length < 12) genTodayList.push({ ...leadBrief(l), kind: 'generated' });
+      }
+      if (reassignedToday) {
+        assignedToday++;
+        if (assignedTodayList.length < 12) assignedTodayList.push({ ...leadBrief(l), kind: 'assigned' });
+      }
 
       if (isConverted && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) { convertedThisMonth++; byOwner[l.ownerId].conversions++; }
 
@@ -253,8 +280,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       let leadHasCountedNew = false;
       wonDeals.forEach((d, di) => {
         const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        const adminOwned = isAdminOwned(l.ownerId);
         insts.forEach((it) => {
-          if (!it.paid || !it.paidDate) { awaitingUsd += toUsd(it.amount, d.currency); return; }
+          if (!it.paid || !it.paidDate) { if (!adminOwned) awaitingUsd += toUsd(it.amount, d.currency); return; }
           const pd = new Date(it.paidDate);
           const usd = toUsd(it.amount, d.currency);
           // classify new vs cross: the very first paid installment of the first
@@ -262,13 +290,19 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           const isNew = di === 0 && it.seq === 1 && !leadHasCountedNew;
           if (isNew) leadHasCountedNew = true;
           if (pd >= startOfMonth) {
-            salesThisMonthUsd += usd;
+            // Per-owner tally always happens (drives the admin-only leaderboard
+            // row); company-wide figures skip admin-owned deals.
             byOwner[l.ownerId].salesUsd += usd;
-            if (isNew) { newSalesUsd += usd; newSalesCount++; byOwner[l.ownerId].newSalesUsd += usd; }
-            else { crossSalesUsd += usd; crossSalesCount++; byOwner[l.ownerId].crossSalesUsd += usd; }
-            const key = `${l.ownerTeam}·${l.ownerShift}`;
-            byShift[key] = byShift[key] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0 };
-            byShift[key].salesUsd += usd;
+            if (isNew) byOwner[l.ownerId].newSalesUsd += usd;
+            else byOwner[l.ownerId].crossSalesUsd += usd;
+            if (!adminOwned) {
+              salesThisMonthUsd += usd;
+              if (isNew) { newSalesUsd += usd; newSalesCount++; }
+              else { crossSalesUsd += usd; crossSalesCount++; }
+              const key = `${l.ownerTeam}·${l.ownerShift}`;
+              byShift[key] = byShift[key] || { team: l.ownerTeam, shift: l.ownerShift, salesUsd: 0 };
+              byShift[key].salesUsd += usd;
+            }
           }
         });
       });
@@ -281,7 +315,6 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
     }
 
-    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId', 'avatar'] });
     const targetsById = {}, avatarById = {}, nameById = {};
     owners.forEach((u) => { targetsById[u.id] = u.targets || {}; avatarById[u.id] = u.avatar || null; nameById[u.id] = u.name; });
 
@@ -302,10 +335,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       const remaining = salesTarget > 0 ? Math.max(0, salesTarget - o.salesUsd) : 0;
       return {
         ...o, avatar: avatarById[o.ownerId] || null,
+        role: roleById[o.ownerId] || 'agent',
         salesTarget, pct, remaining, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
         transferDailyTarget: transferTg ? Number(transferTg.daily || 0) : 0,
       };
-    }).sort((a, b) => b.salesUsd - a.salesUsd);
+    })
+      // Managers and agents never see admin rows (admins run demo/test data).
+      .filter((o) => viewerIsAdmin || o.role !== 'admin')
+      .sort((a, b) => b.salesUsd - a.salesUsd);
 
     const transferBoard = leaderboard
       .filter((o) => o.transferDailyTarget > 0 || o.transfersToday > 0)
@@ -356,7 +393,16 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         generatedTarget: targetForToday(targetsById[req.user.id], 'transfer'),
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList },
-      me: meRow ? { salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining, transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget, newSalesUsd: meRow.newSalesUsd, crossSalesUsd: meRow.crossSalesUsd, pipelineUsd: Math.round(meRow.pipelineUsd || 0) } : null,
+      me: meRow ? {
+        salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining,
+        transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget,
+        newSalesUsd: meRow.newSalesUsd, crossSalesUsd: meRow.crossSalesUsd,
+        pipelineUsd: Math.round(meRow.pipelineUsd || 0),
+        leadsGeneratedMonth: meRow.leadsGeneratedMonth || 0,
+        leadsGeneratedToday: meRow.leadsGeneratedToday || 0,
+        leadGenTarget: ((targetsById[req.user.id] || {}).leadGen && (targetsById[req.user.id] || {}).leadGen.enabled)
+          ? Number((targetsById[req.user.id] || {}).leadGen.monthly || 0) : 0,
+      } : null,
       leaderboard, transferBoard, trend, shiftBoard, topShift,
     });
   } catch (e) { next(e); }
@@ -528,6 +574,12 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can delete leads.' });
     const lead = await Lead.findByPk(req.params.id);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    // Detach any reports that pointed at this lead so nothing dangles.
+    try {
+      const { Report } = require('../models');
+      const linked = await Report.findAll({ where: { leadId: lead.id } });
+      for (const r of linked) { r.leadId = null; await r.save(); }
+    } catch { /* best effort */ }
     await lead.destroy();
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.delete', target: lead.website || lead.email, ip: req.ip });
     res.json({ ok: true });

@@ -327,7 +327,7 @@ const SHIFTS = ['Morning', 'Night'];
 // `state` is the form object (f or edit); `patch` applies a partial update.
 function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
   const role = state.role;
-  const t = state.targets || { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } };
+  const t = state.targets || { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } };
   const setT = (next) => patch({ targets: { ...t, ...next } });
   const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 
@@ -412,6 +412,9 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
             <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
               <input type="checkbox" checked={!!t.sales.enabled} onChange={(e) => setT({ sales: { ...t.sales, enabled: e.target.checked } })} /> Sales
             </label>
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+              <input type="checkbox" checked={!!(t.leadGen && t.leadGen.enabled)} onChange={(e) => setT({ leadGen: { ...(t.leadGen || {}), enabled: e.target.checked } })} /> Lead generation
+            </label>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {t.transfer.enabled && (
@@ -427,6 +430,11 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
             {t.sales.enabled && (
               <Field label="Monthly sales (USD)">
                 <input type="number" min="0" className={numCls} value={t.sales.monthly || ''} onChange={(e) => setT({ sales: { ...t.sales, monthly: Number(e.target.value) || 0 } })} />
+              </Field>
+            )}
+            {t.leadGen && t.leadGen.enabled && (
+              <Field label="Monthly leads to generate">
+                <input type="number" min="0" className={numCls} value={t.leadGen.monthly || ''} onChange={(e) => setT({ leadGen: { ...t.leadGen, monthly: Number(e.target.value) || 0 } })} placeholder="e.g. 40" />
               </Field>
             )}
           </div>
@@ -547,7 +555,7 @@ function OrgChart({ users, onReassign, onMoveManager }) {
 }
 
 function Users({ me, say }) {
-  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } } };
+  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } } };
   const [users, setUsers] = useState([]);
   const [f, setF] = useState(blank);
   const [show, setShow] = useState(false);

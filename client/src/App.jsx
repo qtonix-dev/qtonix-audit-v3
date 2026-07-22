@@ -621,6 +621,14 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                 {r.leadId && (
                   <span className="text-[10px] text-slate-400 shrink-0 ml-1">🔗 Linked to a lead</span>
                 )}
+                {isAdmin && (
+                  <button onClick={async () => {
+                    if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
+                    try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); }
+                  }} className="rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 inline-flex items-center gap-1 shrink-0 ml-auto">
+                    <span aria-hidden>🗑</span> Delete
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -665,6 +673,9 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [dueCount, setDueCount] = useState(0);
   const [leadsEntry, setLeadsEntry] = useState({ view: 'list' });
+  // Bumped whenever a report should be re-fetched (e.g. after a re-run) so the
+  // iframe can't serve a stale cached render.
+  const [viewNonce, setViewNonce] = useState(() => Date.now());
 
   useEffect(() => {
     if (!user) return;
@@ -751,12 +762,12 @@ export default function App() {
         {view === 'progress' && activeReport && (
           <Progress
             reportId={activeReport._id}
-            onDone={() => setView('list')}
+            onDone={() => { setViewNonce(Date.now()); setView('list'); }}
             onBack={() => { setActiveReport(null); setView('new'); }}
           />
         )}
         {view === 'list' && (
-          <ReportList isAdmin={isAdmin} onOpen={(r) => { setActiveReport(r); setView('report'); }} onNewReport={() => { setActiveReport(null); setView('new'); }} />
+          <ReportList isAdmin={isAdmin} onOpen={(r) => { setActiveReport(r); setViewNonce(Date.now()); setView('report'); }} onNewReport={() => { setActiveReport(null); setView('new'); }} />
         )}
         {view === 'report' && activeReport && (
           <div>
@@ -776,9 +787,19 @@ export default function App() {
                   if (!confirm('Re-run this analysis with fresh data? This uses API credits and replaces the current results.')) return;
                   try {
                     await api(`/reports/${activeReport._id}/retry`, { method: 'POST' });
+                    setViewNonce(Date.now());
                     setView('progress');
                   } catch (e) { alert(e.message); }
                 }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">↻ Re-run report</button>
+                {isAdmin && (
+                  <button onClick={async () => {
+                    if (!confirm(`Permanently delete this report for ${activeReport.businessName}?\n\nThis removes it from the database along with its PDF. This cannot be undone.`)) return;
+                    try {
+                      await api(`/reports/${activeReport._id}`, { method: 'DELETE' });
+                      setActiveReport(null); setView('list');
+                    } catch (e) { alert(e.message); }
+                  }} className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50">🗑 Delete</button>
+                )}
                 <button onClick={async () => {
                   const token = localStorage.getItem('qtx_token');
                   const res = await fetch(`${API_BASE}/api/reports/${activeReport._id}/download`, { headers: { Authorization: `Bearer ${token}` } });
@@ -789,7 +810,7 @@ export default function App() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
-              <iframe title="report" src={`${API_BASE}/api/reports/${activeReport._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`} className="w-full h-full border-0" />
+              <iframe key={viewNonce} title="report" src={`${API_BASE}/api/reports/${activeReport._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}&v=${viewNonce}`} className="w-full h-full border-0" />
             </div>
           </div>
         )}

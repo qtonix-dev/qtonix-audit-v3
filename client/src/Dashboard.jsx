@@ -61,7 +61,7 @@ function PlainStat({ label, value, sub, accent, onClick, cta }) {
 }
 
 // Mini lead table for the today/untouched boxes.
-function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel }) {
+function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner }) {
   return (
     <div className="rounded-2xl border p-5" style={{ borderColor: accent + '33', background: '#fff' }}>
       <div className="flex items-center justify-between mb-3">
@@ -71,20 +71,36 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
             {count}{target > 0 && <span className="text-slate-300 text-lg"> / {target}</span>}
             {target > 0 && count < target && <span className="text-xs font-bold text-slate-400 ml-2">{target - count} more to go</span>}
           </div>
+          {breakdown && (
+            <div className="flex items-center gap-3 mt-1">
+              {breakdown.map((b) => (
+                <span key={b.label} className="text-[11px] font-bold" style={{ color: b.color }}>
+                  {b.icon} {b.value} {b.label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <button onClick={onSeeAll} className="text-xs font-bold" style={{ color: accent }}>{seeAllLabel || 'See all'} →</button>
       </div>
       {items.length === 0 ? (
         <div className="text-slate-300 text-sm py-6 text-center">Nothing here yet.</div>
       ) : (
-        <div className="divide-y divide-slate-50">
+        <div className="divide-y divide-slate-50 max-h-64 overflow-auto">
           {items.map((l) => (
-            <div key={l._id} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded">
-              <div className="min-w-0">
-                <div className="font-semibold text-sm text-[#050A1F] truncate">{l.name}</div>
-                <div className="text-[11px] text-slate-400 truncate">{l.website || l.ownerName}</div>
+            <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {l.kind && <span title={l.kind === 'generated' ? 'Generated today' : 'Assigned today'} className="text-xs shrink-0">{l.kind === 'generated' ? '✨' : '📥'}</span>}
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm text-[#050A1F] truncate">{l.name}</div>
+                  <div className="text-[11px] text-slate-400 truncate">
+                    {showOwner && l.ownerName ? <span className="font-semibold text-slate-500">{l.ownerName}</span> : null}
+                    {showOwner && l.ownerName && l.website ? ' · ' : ''}
+                    {l.website || (!showOwner ? l.ownerName : '')}
+                  </div>
+                </div>
               </div>
-              <span className="text-slate-300 text-xs">→</span>
+              <span className="text-slate-300 text-xs shrink-0">→</span>
             </div>
           ))}
         </div>
@@ -186,18 +202,33 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
         {me && me.salesTarget > 0
           ? <GoalStat label="Sales achieved / monthly target" achieved={me.salesUsd} target={me.salesTarget} accent="#16A34A" motivational="First sale of the month is waiting for you! 🚀" pipelineNote={me.pipelineUsd > 0 ? usd(me.pipelineUsd) : null} awaitingNote={m.awaitingUsd > 0 ? usd(m.awaitingUsd) : null} />
           : <PlainStat label="Sales this month" value={usd(m.salesThisMonthUsd)} sub={m.awaitingUsd > 0 ? `⏳ ${usd(m.awaitingUsd)} won, awaiting collection` : (m.pipelineUsd > 0 ? `💼 ${usd(m.pipelineUsd)} in pipeline` : `${m.convertedThisMonth} converted`)} accent="#16A34A" />}
+        {me && me.leadGenTarget > 0
+          ? <GoalStat label="Leads generated / monthly target" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#" accent="#0891B2" motivational="Add your first lead of the month! 🎯" />
+          : <PlainStat label="Leads generated today" value={m.generatedToday} sub={me && me.leadsGeneratedMonth ? `${me.leadsGeneratedMonth} this month` : 'this month: —'} accent="#0891B2" />}
         <PlainStat label="New sales" value={usd(m.newSalesUsd)} sub={`${m.newSalesCount} first-time`} accent="#2563EB" />
         <PlainStat label="Cross sales" value={usd(m.crossSalesUsd)} sub={`${m.crossSalesCount} repeat/upsell`} accent="#7C3AED" />
-        <PlainStat label="Converted" value={m.convertedThisMonth} accent="#059669" onClick={onViewConverted} cta="View this month" />
       </div>
 
       {/* Two 50/50 mini-list boxes */}
       <div className="grid md:grid-cols-2 gap-4 mb-4">
-        <LeadMiniList title="Generated / assigned today" count={m.generatedToday} target={me && me.transferDailyTarget ? 0 : 0}
-          items={(lists.generatedToday && lists.generatedToday.length ? lists.generatedToday : lists.assignedToday) || []}
+        <LeadMiniList
+          title="Today's leads"
+          count={m.generatedToday + m.assignedToday}
+          breakdown={[
+            { icon: '✨', label: 'generated', value: m.generatedToday, color: '#7C3AED' },
+            { icon: '📥', label: 'assigned', value: m.assignedToday, color: '#0891B2' },
+          ]}
+          items={[...(lists.generatedToday || []), ...(lists.assignedToday || [])]}
+          showOwner={isAdmin || isManager}
           accent="#7C3AED" onOpenLead={(id) => onViewToday(id)} onSeeAll={onGoLeads} seeAllLabel="All leads" />
-        <LeadMiniList title="Untouched 3+ days" count={m.untouched} target={0} items={lists.untouched || []}
+        <LeadMiniList title="Untouched 3+ days" count={m.untouched} items={lists.untouched || []}
+          showOwner={isAdmin || isManager}
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />
+      </div>
+
+      {/* Converted clients shortcut */}
+      <div className="mb-4">
+        <PlainStat label="Converted this month" value={m.convertedThisMonth} accent="#059669" onClick={onViewConverted} cta="View converted clients" />
       </div>
 
       {/* Personal transfer goal (pre-sales) */}
@@ -245,6 +276,9 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
             <h2 className="text-lg font-extrabold text-[#050A1F]">Sales leaderboard</h2>
             <span className="text-xs text-slate-400">Collected · USD</span>
           </div>
+          {isAdmin && board.some((b) => b.role === 'admin') && (
+            <div className="text-[11px] text-slate-400 mb-2">Admin rows are visible to you only and are excluded from company totals.</div>
+          )}
           {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No sales yet this month.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
         </div>
       </div>

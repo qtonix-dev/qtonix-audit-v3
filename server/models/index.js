@@ -102,7 +102,7 @@ const User = sequelize.define(
     //   team: { enabled, monthly } }  — team only meaningful for managers.
     targets: {
       type: DataTypes.JSON,
-      defaultValue: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 } },
+      defaultValue: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } },
     },
     // For managers: which team+shift groups they oversee, e.g.
     // [{ team:'Bhubaneswar', shift:'Morning' }, { team:'Kolkata', shift:'Night' }].

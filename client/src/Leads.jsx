@@ -235,6 +235,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
                 <th className="text-left px-4 py-3">Last activity</th>
+                {user.role === 'admin' && <th className="px-4 py-3"></th>}
               </tr>
             </thead>
             <tbody>
@@ -277,6 +278,15 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
+                    {user.role === 'admin' && (
+                      <td className="px-4 py-3 text-right">
+                        <button title="Delete lead" onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm(`Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.`)) return;
+                          try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { alert(err.message); }
+                        }} className="text-slate-300 hover:text-red-500 text-sm">🗑</button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -609,6 +619,12 @@ export function LeadDetail({ user, leadId, onBack }) {
             <button onClick={() => setQuickModal('call')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">📞 Call</button>
             <button onClick={() => setQuickModal('deal')} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400">💰 Deal</button>
             <button onClick={() => openEdit('all')} className="rounded-md px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>✏️ Edit</button>
+            {user.role === 'admin' && (
+              <button onClick={async () => {
+                if (!confirm(`Permanently delete ${fullName(lead)}?\n\nThis removes the lead and all of its notes, activities and deals from the database. This cannot be undone.`)) return;
+                try { await api(`/leads/${leadId}`, { method: 'DELETE' }); onBack(); } catch (e) { alert(e.message); }
+              }} className="rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50">🗑 Delete lead</button>
+            )}
           </div>
         </div>
       </div>
@@ -664,7 +680,7 @@ export function LeadDetail({ user, leadId, onBack }) {
             {tab === 'timeline' && <Timeline lead={lead} />}
             {tab === 'notes' && <NotesTab lead={lead} onChange={setLead} />}
             {tab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
-            {tab === 'deals' && <DealsTab lead={lead} config={config} onChange={setLead} />}
+            {tab === 'deals' && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
             {tab === 'reports' && <ReportsTab lead={lead} onChange={setLead} />}
           </div>
         </div>
@@ -1029,7 +1045,7 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
 }
 
 // ---- Deals tab -------------------------------------------------------------
-function DealsTab({ lead, config, onChange }) {
+function DealsTab({ lead, config, user, onChange }) {
   const [modal, setModal] = useState(null); // null | 'new' | deal object
   const [busyInst, setBusyInst] = useState(null);
   const deals = Array.isArray(lead.deals) ? lead.deals : [];
@@ -1047,6 +1063,16 @@ function DealsTab({ lead, config, onChange }) {
       onChange(u);
     } catch (err) { alert(err.message); }
     setBusyInst(null);
+  };
+
+  // Admin-only hard delete of a deal (for cleaning up bad/legacy records).
+  const removeDeal = async (deal, e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete the deal "${deal.name}"?\n\nThis removes it and its payment schedule permanently. This cannot be undone.`)) return;
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'DELETE' });
+      onChange(u);
+    } catch (err) { alert(err.message); }
   };
 
   return (
@@ -1068,7 +1094,13 @@ function DealsTab({ lead, config, onChange }) {
                 <div onClick={() => setModal(d)} className="px-4 py-3 cursor-pointer">
                   <div className="flex items-center justify-between">
                     <div className="font-bold text-sm text-[#050A1F]">{d.name}</div>
-                    <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
+                      {user && user.role === 'admin' && (
+                        <button onClick={(e) => removeDeal(d, e)} title="Delete this deal"
+                          className="text-slate-300 hover:text-red-500 text-sm px-1">🗑</button>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
