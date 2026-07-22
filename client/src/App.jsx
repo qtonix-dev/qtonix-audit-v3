@@ -773,6 +773,13 @@ export default function App() {
               <div className="flex gap-2">
                 <button onClick={() => { setActiveReport(null); setView('list'); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">Back to reports</button>
                 <button onClick={async () => {
+                  if (!confirm('Re-run this analysis with fresh data? This uses API credits and replaces the current results.')) return;
+                  try {
+                    await api(`/reports/${activeReport._id}/retry`, { method: 'POST' });
+                    setView('progress');
+                  } catch (e) { alert(e.message); }
+                }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">↻ Re-run report</button>
+                <button onClick={async () => {
                   const token = localStorage.getItem('qtx_token');
                   const res = await fetch(`${API_BASE}/api/reports/${activeReport._id}/download`, { headers: { Authorization: `Bearer ${token}` } });
                   if (!res.ok) return alert("That PDF isn't ready yet.");

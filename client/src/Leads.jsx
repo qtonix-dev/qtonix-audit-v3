@@ -1031,8 +1031,24 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
 // ---- Deals tab -------------------------------------------------------------
 function DealsTab({ lead, config, onChange }) {
   const [modal, setModal] = useState(null); // null | 'new' | deal object
+  const [busyInst, setBusyInst] = useState(null);
   const deals = Array.isArray(lead.deals) ? lead.deals : [];
   const stageMeta = (id) => (config.dealStages || []).find((s) => s.id === id) || { id, label: id, color: '#64748B' };
+
+  // Mark an installment paid/unpaid straight from the list — no need to open
+  // the deal. This is what feeds collected sales on the dashboard.
+  const togglePaid = async (deal, inst, e) => {
+    e.stopPropagation();
+    setBusyInst(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH', body: JSON.stringify({ paid: !inst.paid }),
+      });
+      onChange(u);
+    } catch (err) { alert(err.message); }
+    setBusyInst(null);
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -1040,21 +1056,57 @@ function DealsTab({ lead, config, onChange }) {
         <button onClick={() => setModal('new')} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>💰 Add deal</button>
       </div>
       {deals.length === 0 ? <div className="text-slate-300 text-sm py-12 text-center">No deals yet.</div> : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {deals.map((d) => {
             const sm = stageMeta(d.stage);
+            const insts = d.installments || [];
+            const paidAmt = insts.filter((i) => i.paid).reduce((s, i) => s + Number(i.amount || 0), 0);
+            const dueAmt = Number(d.amount || 0) - paidAmt;
+            const isWon = d.stage === 'closed_won';
             return (
-              <div key={d.id} onClick={() => setModal(d)} className="rounded-lg border border-slate-100 hover:border-slate-300 px-4 py-3 cursor-pointer">
-                <div className="flex items-center justify-between">
-                  <div className="font-bold text-sm text-[#050A1F]">{d.name}</div>
-                  <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
+              <div key={d.id} className="rounded-xl border border-slate-100 hover:border-slate-200 overflow-hidden">
+                <div onClick={() => setModal(d)} className="px-4 py-3 cursor-pointer">
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-sm text-[#050A1F]">{d.name}</div>
+                    <div className="font-extrabold text-sm text-[#050A1F]">{d.currency} {Number(d.amount).toLocaleString()}</div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
+                    {d.saleType === 'cross' && <span className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-600">CROSS-SALE</span>}
+                    {d.planType && d.planType !== 'one-time' && <span className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-slate-100 text-slate-500">{d.planType}</span>}
+                    {d.service && <span className="text-[11px] text-slate-500">{d.service}</span>}
+                    {d.expectedClose && <span className="text-[11px] text-slate-400">· close {d.expectedClose}</span>}
+                  </div>
+                  {d.remark && <div className="text-xs text-slate-500 mt-1.5">{d.remark}</div>}
                 </div>
-                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span>
-                  {d.service && <span className="text-[11px] text-slate-500">{d.service}</span>}
-                  {d.expectedClose && <span className="text-[11px] text-slate-400">· close {d.expectedClose}</span>}
-                </div>
-                {d.remark && <div className="text-xs text-slate-500 mt-1.5">{d.remark}</div>}
+
+                {/* Payment schedule — only meaningful once the deal is won. */}
+                {isWon && insts.length > 0 && (
+                  <div className="border-t border-slate-100 bg-slate-50/70 px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Payments</span>
+                      <span className="text-[11px] font-bold">
+                        <span className="text-green-600">{d.currency} {paidAmt.toLocaleString()} collected</span>
+                        {dueAmt > 0 && <span className="text-amber-600"> · {d.currency} {dueAmt.toLocaleString()} due</span>}
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {insts.map((it) => (
+                        <div key={it.id} className="flex items-center gap-2 text-xs">
+                          <span className="font-bold text-slate-400 w-6">#{it.seq}</span>
+                          <span className="font-semibold text-slate-600 w-24">{d.currency} {Number(it.amount || 0).toLocaleString()}</span>
+                          <span className={`flex-1 ${!it.paid && it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10) ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+                            {it.paid ? `paid ${it.paidDate || ''}` : `due ${it.dueDate || '—'}`}
+                          </span>
+                          <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
+                            className={`rounded px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
+                            {busyInst === it.id ? '…' : it.paid ? '✓ Paid' : 'Mark paid'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1286,6 +1338,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [loading, setLoading] = useState(true);
   const [monthOnly, setMonthOnly] = useState(!!thisMonthOnly);
   const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(null);
+
+  // Mark the next outstanding installment as received, straight from the card.
+  const collect = async (lead, deal, inst) => {
+    setBusy(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH', body: JSON.stringify({ paid: true }),
+      });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { alert(e.message); }
+    setBusy(null);
+  };
   useEffect(() => {
     Promise.all([api('/leads/converted'), api('/leads/config')])
       .then(([r, cfg]) => { setItems(r.items || []); setConfig(cfg.config || {}); })
@@ -1305,16 +1370,20 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const summarize = (l) => {
     const won = (l.deals || []).filter((d) => d.stage === 'closed_won');
     const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
-    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
+    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null, nextInst = null;
     for (const d of won) {
       booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
         if (it.paid) { instPaid++; collected += toUsd(it.amount, d.currency); }
-        else if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
+        else {
+          // Earliest unpaid installment = the next payment to collect.
+          if (!nextInst || (it.dueDate && nextInst.inst.dueDate && it.dueDate < nextInst.inst.dueDate)) nextInst = { deal: d, inst: it };
+          if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
+        }
       }
     }
-    return { won, open, booked: Math.round(booked), collected: Math.round(collected), due: Math.round(booked - collected), instTotal, instPaid, nextDue };
+    return { won, open, booked: Math.round(booked), collected: Math.round(collected), due: Math.round(booked - collected), instTotal, instPaid, nextDue, nextInst };
   };
 
   const filtered = items
@@ -1406,6 +1475,15 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                   </div>
                   {s.nextDue && <div className="text-[11px] text-slate-400 mt-1">📅 Next payment due {s.nextDue}</div>}
                 </div>
+
+                {/* Collect the next outstanding payment without leaving the page. */}
+                {s.nextInst && (
+                  <button onClick={(e) => { e.stopPropagation(); collect(l, s.nextInst.deal, s.nextInst.inst); }}
+                    disabled={busy === s.nextInst.inst.id}
+                    className="w-full mt-3 rounded-lg bg-[#050A1F] text-white px-3 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50">
+                    {busy === s.nextInst.inst.id ? 'Saving…' : `✓ Mark ${s.nextInst.deal.currency} ${Number(s.nextInst.inst.amount || 0).toLocaleString()} received`}
+                  </button>
+                )}
 
                 {/* Deal counts + cross-sell prompt */}
                 <div className="flex items-center gap-1.5 mt-3 flex-wrap">

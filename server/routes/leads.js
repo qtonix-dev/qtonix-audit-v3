@@ -734,6 +734,11 @@ router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
       if (b.stage === 'closed_won') {
         // Stamp win date; seed installment due-dates from it if not already set.
         deal.wonAt = deal.wonAt || new Date().toISOString();
+        // Guarantee a payment schedule exists so the money can be collected.
+        if (!Array.isArray(deal.installments) || deal.installments.length === 0) {
+          deal.installments = buildInstallments(deal.amount, 1, deal.wonAt);
+          deal.paymentStructure = deal.paymentStructure || 'full';
+        }
         if (Array.isArray(deal.installments) && deal.installments.length && !deal.installments[0].dueDate) {
           const seeded = buildInstallments(deal.amount, deal.installments.length, deal.wonAt);
           deal.installments = deal.installments.map((it, i) => ({ ...it, dueDate: it.dueDate || seeded[i].dueDate, amount: it.amount || seeded[i].amount }));
@@ -761,6 +766,17 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     const list = Array.isArray(lead.deals) ? lead.deals : [];
     const deal = list.find((d) => d.id === req.params.dealId);
     if (!deal) return res.status(404).json({ error: 'Deal not found.' });
+    // Legacy deals (created before payment schedules existed) may have no
+    // installments. Backfill a single full-payment installment so the money can
+    // still be marked collected.
+    if (!Array.isArray(deal.installments) || deal.installments.length === 0) {
+      deal.installments = [{
+        id: `inst_${Date.now()}_0`, seq: 1, amount: Number(deal.amount) || 0,
+        dueDate: (deal.wonAt ? String(deal.wonAt).slice(0, 10) : (deal.expectedClose || new Date().toISOString().slice(0, 10))),
+        paid: false, paidDate: null,
+      }];
+      deal.paymentStructure = deal.paymentStructure || 'full';
+    }
     const inst = (deal.installments || []).find((it) => it.id === req.params.instId);
     if (!inst) return res.status(404).json({ error: 'Installment not found.' });
     const b = req.body || {};
