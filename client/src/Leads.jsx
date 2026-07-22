@@ -2,6 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
+import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysUntil, IST_LABEL } from './timezone.js';
+
+// Live clock showing the lead's local time, so agents don't dial at 3am.
+function LeadLocalClock({ timezone }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30000); // refresh every 30s
+    return () => clearInterval(t);
+  }, []);
+  const z = nowInZone(timezone);
+  if (!z) return null;
+  const w = callWindow(z.hour);
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${w.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}
+      title={`${w.label} · ${timezone}`}>
+      🕐 {z.time} {tzShortLabel(timezone)}
+      <span className="font-normal opacity-70">{w.ok ? '· ok to call' : '· do not call'}</span>
+    </span>
+  );
+}
 
 // Multi-select with type-to-filter (same UX as country, but multiple values).
 export function MultiSelectCombobox({ options, values, onChange, placeholder, className }) {
@@ -721,10 +741,13 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
                 <button onClick={() => openEdit('tags')} title="Add or edit tags"
                   className="rounded-full border border-dashed border-slate-300 text-slate-400 px-2 py-0.5 text-[11px] font-bold hover:border-slate-400 hover:text-slate-600">+ tag</button>
               </div>
-              <div className="text-sm text-slate-400 mt-1.5">
-                {lead.website && <><a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:underline">{lead.website.replace(/^https?:\/\//, '')}</a><span className="mx-2">·</span></>}
-                Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
-                <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
+              <div className="text-sm text-slate-400 mt-1.5 flex items-center gap-2 flex-wrap">
+                <span>
+                  {lead.website && <><a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:underline">{lead.website.replace(/^https?:\/\//, '')}</a><span className="mx-2">·</span></>}
+                  Owner: <span className="font-semibold text-slate-600">{lead.ownerName}</span>
+                  <span className="mx-2">·</span>Last activity {fmtDate(lead.lastActivityAt)}
+                </span>
+                {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
               </div>
             </div>
           </div>
@@ -965,7 +988,18 @@ function ActivityTab({ lead, config, user, onChange }) {
         {a.kind === 'task' && a.description && <div className="text-xs text-slate-500 mt-1">{a.description}</div>}
         <div className="text-[10px] text-slate-400 mt-1">
           {a.kind === 'call'
-            ? <>{a.mode === 'done' ? 'Logged' : 'Scheduled'}{a.date ? ` · ${a.date}${a.time ? ' ' + a.time : ''}` : ''}{a.timezone ? ` (${a.timezone})` : ''}{a.durationMin ? ` · ${a.durationMin} min` : ''}{a.reminder && a.reminder.on ? ' · 🔔 reminder' : ''}</>
+            ? <>
+                {a.mode === 'done' ? 'Logged' : 'Scheduled'}
+                {a.date ? ` · ${a.date}${a.time ? ' ' + a.time : ''}` : ''}
+                {a.timezone ? ` ${tzShortLabel(a.timezone)}` : ''}
+                {/* Show the IST equivalent so the team knows their own time. */}
+                {(() => {
+                  const ist = a.date && a.time && a.timezone ? toIST(a.date, a.time, a.timezone) : null;
+                  return ist ? <span className="font-semibold text-slate-500"> · {ist.time} IST{ist.dayShift}</span> : null;
+                })()}
+                {a.durationMin ? ` · ${a.durationMin} min` : ''}
+                {a.reminder && a.reminder.on ? ' · 🔔 reminder' : ''}
+              </>
             : <>{a.dueDate ? `Due ${a.dueDate}` : 'No due date'}</>}
           <span className="ml-1">· {a.createdBy}</span>
         </div>
@@ -1034,13 +1068,26 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
           <div className="space-y-3">
             <div><label className={lab}>Call agenda</label><input className={inp} value={f.agenda} onChange={(e) => set('agenda', e.target.value)} placeholder="What's the call about?" /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className={lab}>Date</label><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
-              <div><label className={lab}>Time</label><input type="time" className={inp} value={f.time} onChange={(e) => set('time', e.target.value)} /></div>
+              <div><label className={lab}>Date{lead.timezone ? ' (customer local)' : ''}</label><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
+              <div><label className={lab}>Time{lead.timezone ? ` (${tzShortLabel(lead.timezone)})` : ''}</label><input type="time" className={inp} value={f.time} onChange={(e) => set('time', e.target.value)} /></div>
             </div>
-            {/* Timezone is taken from the lead automatically — shown as a hint
-                next to the time rather than as a field to fill in. */}
+            {/* The agent enters the CUSTOMER's local time; we show the IST
+                equivalent underneath so they know when to actually be at their
+                desk. Timezone comes from the lead — never re-entered. */}
             {lead.timezone && (
-              <div className="text-[11px] text-slate-400 -mt-1">🌐 Lead's time zone: <span className="font-semibold text-slate-500">{lead.timezone}</span></div>
+              <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 -mt-1">
+                <div className="text-[11px] text-slate-400">🌐 Customer time zone: <span className="font-semibold text-slate-500">{lead.timezone}</span></div>
+                {(() => {
+                  const ist = toIST(f.date, f.time, lead.timezone);
+                  if (!ist) return <div className="text-[11px] text-slate-300 mt-0.5">Pick a date and time to see the IST equivalent.</div>;
+                  return (
+                    <div className="text-sm font-bold text-[#050A1F] mt-1">
+                      ⏰ Your time: {ist.time} IST
+                      <span className="font-normal text-slate-400 text-[11px] ml-1.5">{ist.date}{ist.dayShift}</span>
+                    </div>
+                  );
+                })()}
+              </div>
             )}
             {f.mode === 'done' && (
               <div><label className={lab}>How long did the call last? (minutes)</label><input type="number" min="0" className={inp} value={f.durationMin} onChange={(e) => set('durationMin', e.target.value)} placeholder="e.g. 15" /></div>
@@ -1270,7 +1317,9 @@ function DealsTab({ lead, config, user, onChange }) {
                           <span className="font-bold text-slate-400 w-6">#{it.seq}</span>
                           <span className="font-semibold text-slate-600 w-24">{d.currency} {Number(it.amount || 0).toLocaleString()}</span>
                           <span className={`flex-1 ${!it.paid && it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10) ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
-                            {it.paid ? `paid ${it.paidDate || ''}` : `due ${it.dueDate || '—'}`}
+                            {it.paid
+                              ? `paid ${it.paidDate || ''}`
+                              : <>due {it.dueDate || '—'}{it.dueDate ? <span className="ml-1 font-bold">· {dueLabel(it.dueDate)}</span> : null}</>}
                           </span>
                           <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
                             className={`rounded px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
@@ -1665,7 +1714,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       : <span className="text-slate-400">{fullyPaid ? 'Paid in full' : 'Payment pending'}</span>}
                     {s.due > 0 && <span className="font-bold text-amber-600">${s.due.toLocaleString()} due</span>}
                   </div>
-                  {s.nextDue && <div className="text-[11px] text-slate-400 mt-1">📅 Next payment due {s.nextDue}</div>}
+                  {/* Next payment with amount and a countdown, so managers can
+                      see at a glance who needs chasing. */}
+                  {s.nextInst && (() => {
+                    const n = daysUntil(s.nextInst.inst.dueDate);
+                    const overdue = n != null && n < 0;
+                    const soon = n != null && n >= 0 && n <= 3;
+                    return (
+                      <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold ${overdue ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}>
+                        📅 Next: {s.nextInst.deal.currency} {Number(s.nextInst.inst.amount || 0).toLocaleString()} on {s.nextInst.inst.dueDate || '—'}
+                        <span className="ml-1 font-extrabold">· {dueLabel(s.nextInst.inst.dueDate)}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Collect the next outstanding payment without leaving the page. */}

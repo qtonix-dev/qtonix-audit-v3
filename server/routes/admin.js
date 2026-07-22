@@ -184,8 +184,10 @@ router.post('/users', async (req, res, next) => {
     const user = await User.create({
       name, email: String(email).toLowerCase(), passwordHash: await bcrypt.hash(password, 12),
       role: validRole, phone: phone || '', designation: designation || 'Sales Executive',
-      team: ['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar',
-      shift: ['Morning', 'Night'].includes(shift) ? shift : 'Morning',
+      // Admins sit outside the branch/shift structure — they oversee every
+      // group and act as direct in-charge wherever no manager is assigned.
+      team: validRole === 'admin' ? null : (['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar'),
+      shift: validRole === 'admin' ? null : (['Morning', 'Night'].includes(shift) ? shift : 'Morning'),
       managerScopes: validRole === 'manager' && Array.isArray(managerScopes) ? managerScopes : [],
       jobType: validRole === 'agent' ? (['bde', 'presales'].includes(jobType) ? jobType : 'bde') : null,
       managerId: validRole === 'agent' && managerId ? Number(managerId) : null,
@@ -215,6 +217,8 @@ router.put('/users/:id', async (req, res, next) => {
     if (designation !== undefined) user.designation = designation;
     if (team !== undefined && ['Bhubaneswar', 'Kolkata'].includes(team)) user.team = team;
     if (shift !== undefined && ['Morning', 'Night'].includes(shift)) user.shift = shift;
+    // Admins have no branch/shift — they oversee all groups.
+    if (user.role === 'admin') { user.team = null; user.shift = null; }
     if (managerScopes !== undefined) user.managerScopes = Array.isArray(managerScopes) ? managerScopes : [];
     // Clear scopes if no longer a manager.
     if (user.role !== 'manager') user.managerScopes = [];

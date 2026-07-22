@@ -544,7 +544,29 @@ function OrgChart({ users, onReassign, onMoveManager }) {
                       onDrop={(e) => { e.preventDefault(); if (drag && drag.kind === 'manager') { onMoveManager(idOf(drag.user), team, shift); setDrag(null); } }}
                       className={`rounded-lg border p-3 ${drag && drag.kind === 'manager' ? 'border-blue-300 border-dashed bg-blue-50/40' : 'border-slate-100 bg-slate-50'}`}>
                       <div className="text-[11px] font-bold text-slate-400 uppercase mb-2">{shift === 'Morning' ? '🌅' : '🌙'} {shift} shift</div>
-                      {shiftMgrs.length === 0 && <div className="text-[11px] text-slate-300 italic">Drop a manager here</div>}
+                      {/* No manager for this group → the admin is the direct
+                          in-charge, and agents still need somewhere to land. */}
+                      {shiftMgrs.length === 0 && (() => {
+                        const orphans = agents.filter((a) => a.team === team && a.shift === shift);
+                        return (
+                          <div
+                            onDragOver={(e) => { if (drag && drag.kind === 'agent') e.preventDefault(); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              if (drag && drag.kind === 'agent') { onReassign(idOf(drag.user), { id: null, team, shift }); setDrag(null); }
+                            }}
+                            className={`rounded-lg border-2 border-dashed p-2 ${drag && drag.kind === 'agent' ? 'border-blue-300 bg-blue-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
+                            <div className="rounded-md bg-[#050A1F] text-white px-2.5 py-1 text-xs font-bold inline-block">
+                              {admins.map((a) => a.name).join(', ') || 'Admin'} · direct in-charge
+                            </div>
+                            <div className="text-[10px] text-amber-700 mt-1">No manager assigned — admin oversees this group.</div>
+                            <div className="space-y-1.5 pl-2 mt-2">
+                              {orphans.map((a) => <AgentCard key={idOf(a)} a={a} />)}
+                              {orphans.length === 0 && <div className="text-[10px] text-slate-300 italic px-1">Drop agents here</div>}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div className="space-y-3">
                         {shiftMgrs.map((mgr) => (
                           <div key={idOf(mgr)}
@@ -591,7 +613,10 @@ function Users({ me, say }) {
   // the org chart and lead visibility stay consistent). Used by drag-and-drop.
   const reassign = async (userId, manager) => {
     try {
-      await api(`/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify({ managerId: manager.id || manager._id, team: manager.team, shift: manager.shift }) });
+      // manager.id may be null when dropping into an admin-led group (a
+      // branch+shift with no manager) — the agent then reports to the admin.
+      const mid = manager.id || manager._id || null;
+      await api(`/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify({ managerId: mid, team: manager.team, shift: manager.shift }) });
       load();
     } catch (e) { setErr(e.message); }
   };
