@@ -545,14 +545,22 @@ async function pruneDuplicateIndexes() {
     const seen = new Set();
     const drop = [];
 
-    for (const idx of all) {
-      if (idx.name === 'PRIMARY' || idx.unique) continue; // never drop these
+    // Sort so the canonical name is considered first: Sequelize's duplicates are
+    // suffixed _2, _3 …, so the shortest name for a given signature is the
+    // original one worth keeping.
+    const ordered = all.slice().sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name));
+
+    for (const idx of ordered) {
+      if (idx.name === 'PRIMARY') continue; // never drop the primary key
       const sig = idx.cols.join(',');
-      // Keep the first occurrence of each column signature, drop the rest.
-      // Sequelize's generated duplicates are named foo_2, foo_3 … so preferring
-      // the shortest/earliest name keeps the canonical one.
-      if (seen.has(sig)) drop.push(idx.name);
-      else seen.add(sig);
+      // Unique indexes are deduplicated too, but keyed separately so a UNIQUE
+      // index is never mistaken for a plain one covering the same column.
+      // `users.email` is the usual casualty: `unique: true` makes alter-sync add
+      // email_2, email_3 … on every deploy, and those copies enforce nothing the
+      // first one doesn't already guarantee.
+      const key = (idx.unique ? 'U:' : 'K:') + sig;
+      if (seen.has(key)) drop.push(idx.name);
+      else seen.add(key);
     }
 
     // Safety net: MySQL allows 64 keys per table. If a table is still at or
@@ -561,7 +569,7 @@ async function pruneDuplicateIndexes() {
     const keptCount = all.length - drop.length;
     if (keptCount > 60) {
       const numbered = all
-        .filter((i) => i.name !== 'PRIMARY' && !i.unique && /_\d+$/.test(i.name) && !drop.includes(i.name))
+        .filter((i) => i.name !== 'PRIMARY' && /_\d+$/.test(i.name) && !drop.includes(i.name))
         .sort((a, b) => b.name.localeCompare(a.name));
       for (const idx of numbered) {
         if (all.length - drop.length <= 40) break;

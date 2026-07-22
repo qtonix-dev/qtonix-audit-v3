@@ -30,6 +30,8 @@ export const Icon = {
   Search: (p) => <IconBase {...p}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></IconBase>,
   Plus: (p) => <IconBase {...p}><path d="M12 5v14M5 12h14" /></IconBase>,
   Clock: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></IconBase>,
+  Mail: (p) => <IconBase {...p}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m3.5 7 8.5 6 8.5-6" /></IconBase>,
+  Pin: (p) => <IconBase {...p}><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></IconBase>,
   Calendar: (p) => <IconBase {...p}><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></IconBase>,
 };
 
@@ -753,7 +755,9 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
     } catch (e) { alert(e.message); }
   };
 
-  const Icon = ({ children }) => <span className="inline-block w-4 text-slate-400 mr-2">{children}</span>;
+  // NB: named RowIcon, not Icon — a local `Icon` would shadow the imported SVG
+  // icon set used by the header buttons and blank the whole page.
+  const RowIcon = ({ children }) => <span className="inline-block w-4 text-slate-400 mr-2">{children}</span>;
   const SectionHead = ({ title, section }) => (
     <div className="flex items-center justify-between mb-3">
       <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">{title}</div>
@@ -824,10 +828,10 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
             <SectionHead title="Basic info" section="basic" />
             <div className="space-y-2 text-sm text-slate-700">
-              <div><Icon>✉️</Icon>{lead.email || <span className="text-slate-300">—</span>}</div>
-              <div><Icon>📱</Icon>{lead.mobile || <span className="text-slate-300">—</span>}</div>
-              <div><Icon>☎️</Icon>{lead.phone || <span className="text-slate-300">—</span>}</div>
-              <div><Icon>📍</Icon>{[lead.city, lead.country].filter(Boolean).join(', ') || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Mail size={14} /></span>{lead.email || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.mobile || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.phone || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Pin size={14} /></span>{[lead.city, lead.country].filter(Boolean).join(', ') || <span className="text-slate-300">—</span>}</div>
             </div>
           </div>
 
