@@ -4,6 +4,8 @@ import Leads from './Leads.jsx';
 import { CountryCombobox, PhoneField, Pagination } from './Leads.jsx';
 import { formatPhone } from './countries.js';
 import Dashboard from './Dashboard.jsx';
+import Analytics from './Analytics.jsx';
+import Reviews from './Reviews.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -693,10 +695,13 @@ export default function App() {
   const signOut = () => { localStorage.removeItem('qtx_token'); setUser(null); };
   const isAdmin = user.role === 'admin';
 
+  const isManagerOrAdmin = user && (user.role === 'admin' || user.role === 'manager');
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
+    { id: 'analytics', label: 'Analytics' },
     { id: 'leads', label: 'Leads' },
     { id: 'list', label: 'Reports' },
+    ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),
   ];
 
   return (
@@ -752,6 +757,8 @@ export default function App() {
           onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }}
           onViewConverted={() => { setLeadsEntry({ view: 'converted', convertedMonth: true }); setView('leads'); }}
           onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
+        {view === 'analytics' && <Analytics user={user} />}
+        {view === 'reviews' && isManagerOrAdmin && <Reviews user={user} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />

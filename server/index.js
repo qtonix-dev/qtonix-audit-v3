@@ -12,6 +12,7 @@ const reports = require('./routes/reports');
 const admin = require('./routes/admin');
 const demo = require('./routes/demo');
 const leads = require('./routes/leads');
+const reviews = require('./routes/reviews');
 
 const app = express();
 
@@ -34,6 +35,7 @@ app.use('/api/reports', reports);
 app.use('/api/admin', admin);
 app.use('/api/demo', demo);
 app.use('/api/leads', leads);
+app.use('/api/reviews', reviews);
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.

@@ -356,6 +356,40 @@ const Settings = sequelize.define(
   { tableName: 'settings' }
 );
 
+/**
+ * A 1-to-1 performance review recorded by a manager (or by the admin when the
+ * agent's branch+shift has no manager). Kept as a running history so HR can see
+ * whether an underperformer was actually spoken to, and what was agreed.
+ */
+const Review = sequelize.define(
+  'Review',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    agentId: { type: DataTypes.INTEGER, allowNull: false },
+    agentName: DataTypes.STRING(120),
+    reviewerId: { type: DataTypes.INTEGER, allowNull: false },
+    reviewerName: DataTypes.STRING(120),
+    // Which month this review covers, as 'YYYY-MM'.
+    period: { type: DataTypes.STRING(7), allowNull: false },
+    // System-computed bucket at the time of review: 'top' | 'ok' | 'attention'.
+    band: { type: DataTypes.STRING(20) },
+    // Snapshot of the numbers the conversation was based on, so later readers
+    // see what the manager saw rather than today's figures.
+    snapshot: { type: DataTypes.JSON, defaultValue: {} },
+    // The manager's own words.
+    feedback: { type: DataTypes.TEXT },
+    actionPlan: { type: DataTypes.TEXT },
+    // Whether the 1-to-1 actually happened.
+    metOn: { type: DataTypes.DATEONLY },
+    // Escalation flag for HR.
+    needsHr: { type: DataTypes.BOOLEAN, defaultValue: false },
+  },
+  {
+    tableName: 'reviews',
+    indexes: [{ fields: ['agentId'] }, { fields: ['period'] }, { fields: ['reviewerId'] }],
+  }
+);
+
 const AuditLog = sequelize.define(
   'AuditLog',
   {
@@ -498,6 +532,6 @@ async function initDb({ sync = true } = {}) {
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog,
+  User, Report, Lead, Settings, AuditLog, Review,
   encrypt, decrypt, initDb, defaultPricing,
 };
