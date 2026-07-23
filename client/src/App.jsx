@@ -567,6 +567,10 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
   useEffect(() => { const t = setTimeout(() => { setPage(1); load(); }, 350); return () => clearTimeout(t); }, [q]);
 
   const download = async (id, name) => {
+    if (IS_DEMO) {
+      alert('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
+      return;
+    }
     const token = localStorage.getItem('qtx_token');
     const res = await fetch(`${API_BASE}/api/reports/${id}/download`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return alert('That PDF isn\'t ready yet.');
@@ -873,6 +877,10 @@ export default function App() {
                   }} className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50">🗑 Delete</button>
                 )}
                 <button onClick={async () => {
+                  if (IS_DEMO) {
+                    alert('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
+                    return;
+                  }
                   const token = localStorage.getItem('qtx_token');
                   const res = await fetch(`${API_BASE}/api/reports/${activeReport._id}/download`, { headers: { Authorization: `Bearer ${token}` } });
                   if (!res.ok) return alert("That PDF isn't ready yet.");
@@ -882,7 +890,19 @@ export default function App() {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white" style={{ height: '80vh' }}>
-              <iframe key={viewNonce} title="report" src={`${API_BASE}/api/reports/${activeReport._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}&v=${viewNonce}`} className="w-full h-full border-0" />
+              {IS_DEMO ? (
+                <div className="w-full h-full flex items-center justify-center p-8 text-center">
+                  <div className="max-w-sm">
+                    <div className="text-sm font-bold text-[#050A1F]">Report preview isn't available in the demo</div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      The sample reports listed here aren't real audits, so there's no PDF behind them.
+                      In the live app this panel shows the full branded report, ready to send to the client.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <iframe key={viewNonce} title="report" src={`${API_BASE}/api/reports/${activeReport._id}/view?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}&v=${viewNonce}`} className="w-full h-full border-0" />
+              )}
             </div>
           </div>
         )}

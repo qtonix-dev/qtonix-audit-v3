@@ -110,6 +110,48 @@ function makeLead(i, r, { converted = false } = {}) {
   };
 
   if (converted) {
+    // Every third converted client is a recurring retainer rather than a
+    // one-off sale, so the demo shows both billing models side by side.
+    const isRecurring = i % 3 === 1;
+    if (isRecurring) {
+      const monthly = 400 + (i % 4) * 150;
+      const wonAt = daysAgo(70 + (i % 20));
+      const interval = ['monthly', 'quarterly', 'half-yearly', 'yearly'][i % 4];
+      const step = { monthly: 1, quarterly: 3, 'half-yearly': 6, yearly: 12 }[interval];
+      const cycles = [];
+      // Two collected cycles behind us, three upcoming to chase. Anchored so
+      // the next due date is always near today, whatever the interval — a
+      // yearly contract seeded from its start date would otherwise show
+      // upcoming billings several years out.
+      const anchor = new Date();
+      anchor.setMonth(anchor.getMonth() - step * 2);
+      for (let c = 0; c < 5; c++) {
+        const due = new Date(anchor);
+        due.setMonth(due.getMonth() + step * c);
+        cycles.push({
+          id: `demo_inst_${i}_${c}`, seq: c + 1, amount: monthly,
+          dueDate: ymd(due), paid: c < 2,
+          paidDate: c < 2 ? ymd(due) : null,
+          gateway: c < 2 ? ['PayPal', 'Stripe', 'Wire Transfer'][c % 3] : undefined,
+          recurring: true,
+        });
+      }
+      lead.deals = [{
+        id: `demo_deal_${i}`,
+        name: `${company} — Monthly retainer`,
+        stage: 'closed_won', currency: 'USD', amount: monthly,
+        service: 'Complete Digital Marketing',
+        expectedClose: ymd(wonAt), wonAt: iso(wonAt),
+        planType: 'recurring', recurringInterval: interval,
+        paymentStructure: 'full', remark: 'Demo recurring contract.',
+        installments: cycles,
+      }];
+      lead.timeline = [
+        { type: 'status', text: 'Converted to client (payment received)', time: iso(wonAt), author: owner.name },
+      ];
+      return lead;
+    }
+
     // A three-part payment plan with the first installment collected — exactly
     // the shape that exercises the Outstanding column and the "+" expander.
     const total = 1200 + (i % 6) * 400;
@@ -125,6 +167,7 @@ function makeLead(i, r, { converted = false } = {}) {
       service: pick(r, SERVICES),
       expectedClose: ymd(wonAt),
       wonAt: iso(wonAt),
+      planType: 'one-time',
       paymentStructure: 'installments',
       remark: 'Demo deal.',
       installments: [

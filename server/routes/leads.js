@@ -81,6 +81,43 @@ function buildInstallments(total, count, startDate) {
 }
 
 
+/**
+ * Months between billings for each recurring interval.
+ */
+const RECURRING_MONTHS = { monthly: 1, quarterly: 3, 'half-yearly': 6, yearly: 12 };
+
+/**
+ * Build the next `count` billing cycles for a recurring deal. Unlike
+ * installments — which split one total between them — every recurring cycle
+ * charges the FULL amount, because the customer is being billed again rather
+ * than paying off a single sale.
+ *
+ * We generate a rolling window (3 by default) rather than an infinite schedule:
+ * a recurring contract has no natural end, and the admin only needs to see what
+ * is coming up in order to mark it collected.
+ */
+function buildRecurringCycles(amount, interval, startDate, count = 3, existingCount = 0) {
+  const step = RECURRING_MONTHS[interval] || 1;
+  const start = startDate ? new Date(startDate) : new Date();
+  const out = [];
+  const stamp = Date.now();
+  for (let i = 0; i < count; i++) {
+    const due = new Date(start);
+    due.setMonth(due.getMonth() + step * (existingCount + i));
+    out.push({
+      id: `inst_${stamp}_r${existingCount + i}`,
+      seq: existingCount + i + 1,
+      amount: Number(amount) || 0,
+      dueDate: due.toISOString().slice(0, 10),
+      paid: false,
+      paidDate: null,
+      recurring: true,
+    });
+  }
+  return out;
+}
+
+
 /** GET /api/leads — list leads visible to the current user (with search/filter). */
 router.get('/', requireAuth, async (req, res, next) => {
   try {
@@ -231,7 +268,12 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const roleById = {};
     owners.forEach((u) => { roleById[u.id] = u.role; });
     const viewerIsAdmin = req.user.role === 'admin';
-    const isAdminOwned = (ownerId) => roleById[ownerId] === 'admin';
+    // Admin-owned deals are normally kept out of company totals and the
+    // leaderboard, because admins run test and demo data that would otherwise
+    // distort what agents and managers see. An admin looking at their own
+    // dashboard, however, wants the truth with nothing hidden — so for an admin
+    // viewer nothing is excluded at all.
+    const isAdminOwned = (ownerId) => !viewerIsAdmin && roleById[ownerId] === 'admin';
 
     let totalLeads = 0, generatedToday = 0, assignedToday = 0, untouched = 0;
     let salesThisMonthUsd = 0, convertedThisMonth = 0;
@@ -422,10 +464,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         transferDailyTarget: transferTg ? Number(transferTg.daily || 0) : 0,
       };
     })
-      // The ranking is an AGENT board. Managers and admins are excluded from
-      // the competitive list, but the viewer always sees their own row so they
-      // can track themselves (a manager's cross-sales land here).
-      .filter((o) => o.role === 'agent' || o.ownerId === req.user.id)
+      // The ranking is an AGENT board for agents and managers: managers and
+      // admins are excluded from the competitive list, though the viewer always
+      // sees their own row so they can track themselves. An admin viewer sees
+      // everyone, unfiltered.
+      .filter((o) => viewerIsAdmin || o.role === 'agent' || o.ownerId === req.user.id)
       .sort((a, b) => b.salesUsd - a.salesUsd);
 
     const transferBoard = leaderboard
@@ -868,11 +911,18 @@ router.post('/:id/deals', requireAuth, async (req, res, next) => {
     const stage = String(b.stage || 'qualification').slice(0, 40);
     const winDate = stage === 'closed_won' ? new Date() : null;
 
-    // Payment plan. structure = 'full' | 'installments'. When installments,
-    // build the schedule (overridable client rows can also be passed directly).
+    // Payment plan. planType = 'one-time' | 'recurring' | 'installments'.
+    // structure = 'full' | 'installments'. A recurring deal bills the full
+    // amount every cycle, so we seed the next few billing dates instead of
+    // splitting one total.
+    const planType = ['one-time', 'recurring', 'installments'].includes(String(b.planType))
+      ? String(b.planType) : 'one-time';
+    const recurringInterval = RECURRING_MONTHS[b.recurringInterval] ? String(b.recurringInterval) : 'monthly';
     const paymentStructure = b.paymentStructure === 'installments' ? 'installments' : 'full';
     let installments = [];
-    if (paymentStructure === 'installments') {
+    if (planType === 'recurring') {
+      installments = buildRecurringCycles(amount, recurringInterval, winDate || b.expectedClose || new Date(), 3, 0);
+    } else if (paymentStructure === 'installments') {
       if (Array.isArray(b.installments) && b.installments.length) {
         installments = b.installments.map((it, i) => ({
           id: it.id || `inst_${Date.now()}_${i}`, seq: i + 1,
@@ -897,7 +947,8 @@ router.post('/:id/deals', requireAuth, async (req, res, next) => {
       service: String(b.service || '').slice(0, 120),
       remark: String(b.remark || '').slice(0, 2000),
       saleType,
-      planType: String(b.planType || 'one-time').slice(0, 40), // one-time | 3-month | 6-month | 12-month | custom
+      planType, // one-time | recurring | installments
+      recurringInterval: planType === 'recurring' ? recurringInterval : null,
       planDuration: String(b.planDuration || '').slice(0, 40),
       paymentStructure,
       installments,
@@ -993,13 +1044,50 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     const inst = (deal.installments || []).find((it) => it.id === req.params.instId);
     if (!inst) return res.status(404).json({ error: 'Installment not found.' });
     const b = req.body || {};
+    // Which gateway the money arrived through. Recorded per payment because a
+    // client may pay one installment by card and the next by bank transfer.
+    const GATEWAYS = ['PayPal', 'Stripe', 'Wire Transfer'];
+    if (b.gateway !== undefined) {
+      inst.gateway = GATEWAYS.includes(String(b.gateway)) ? String(b.gateway) : '';
+    }
     if (b.paid !== undefined) {
       inst.paid = !!b.paid;
       inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
-      if (b.paid) pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount})`, req.user.name);
+      if (!b.paid) inst.gateway = '';
+      if (b.paid) {
+        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''})`, req.user.name);
+      }
     }
     if (b.dueDate !== undefined) inst.dueDate = b.dueDate;
     if (b.amount !== undefined) inst.amount = Number(b.amount) || 0;
+
+    // A recurring contract has no end date, so top the schedule back up to
+    // three upcoming cycles whenever one is collected. Without this the client
+    // would run out of billing dates after the initial three.
+    if (deal.planType === 'recurring' && inst.paid) {
+      const unpaid = (deal.installments || []).filter((it) => !it.paid).length;
+      if (unpaid < 3) {
+        const sorted = (deal.installments || []).slice()
+          .sort((a, b2) => String(a.dueDate || '').localeCompare(String(b2.dueDate || '')));
+        const last = sorted[sorted.length - 1];
+        const step = RECURRING_MONTHS[deal.recurringInterval || 'monthly'] || 1;
+        const anchor = last && last.dueDate ? new Date(last.dueDate) : new Date();
+        const need = 3 - unpaid;
+        const extra = [];
+        for (let i = 0; i < need; i++) {
+          const due = new Date(anchor);
+          due.setMonth(due.getMonth() + step * (i + 1));
+          extra.push({
+            id: `inst_${Date.now()}_x${i}`,
+            seq: deal.installments.length + i + 1,
+            amount: Number(deal.amount) || 0,
+            dueDate: due.toISOString().slice(0, 10),
+            paid: false, paidDate: null, recurring: true,
+          });
+        }
+        deal.installments = [...deal.installments, ...extra];
+      }
+    }
 
     // Money in the door means the deal is won. As soon as ANY installment is
     // collected we promote the deal to Closed Won, so the pipeline reflects

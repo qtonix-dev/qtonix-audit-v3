@@ -140,20 +140,167 @@ function moneyRollup() {
 
 router.get('/leads/dashboard', (req, res) => {
   const m = moneyRollup();
-  const board = demoData.users().filter((u) => u.role === 'agent').map((u, i) => ({
-    id: u.id, name: u.name, team: u.team, shift: u.shift,
-    newSales: 4 - (i % 3), crossSales: 2 + (i % 2),
-    collectedUsd: Math.round(m.collected / 5) + i * 400, targetUsd: u.targetUsd,
-  })).sort((a, b) => b.collectedUsd - a.collectedUsd);
+  const staff = demoData.users();
+  const agents = staff.filter((u) => u.role === 'agent');
+
+  // IMPORTANT: this must mirror the REAL /leads/dashboard response shape
+  // exactly. The Dashboard and Analytics screens read data.metrics.*, data.me
+  // and data.lists directly, so a missing key crashes them to a blank page.
+  const leaderboard = agents.map((u, i) => {
+    const salesUsd = Math.round(m.collected / Math.max(1, agents.length)) + i * 350;
+    const salesTarget = u.targetUsd || 6000;
+    return {
+      ownerId: u.id, name: u.name, avatar: null, role: 'agent',
+      salesUsd, newSalesUsd: Math.round(salesUsd * 0.6), crossSalesUsd: Math.round(salesUsd * 0.4),
+      conversions: 2 + (i % 3), leads: 8 + i, transfersToday: 2 + (i % 4),
+      leadsGeneratedMonth: 12 + i, leadsGeneratedToday: 1 + (i % 3),
+      pipelineUsd: 3000 + i * 800,
+      salesTarget, pct: Math.min(100, Math.round((salesUsd / salesTarget) * 100)),
+      remaining: Math.max(0, salesTarget - salesUsd),
+      hitTarget: salesUsd >= salesTarget, transferDailyTarget: 5,
+    };
+  }).sort((a, b) => b.salesUsd - a.salesUsd);
+
+  const leads = demoData.leads();
+  const converted = leads.filter((l) => l.status === 'converted');
+  const pendingList = [];
+  for (const l of converted) {
+    for (const d of (l.deals || [])) {
+      for (const it of (d.installments || [])) {
+        if (!it.paid) {
+          pendingList.push({
+            leadId: l._id, dealId: d.id, instId: it.id,
+            client: `${l.firstName} ${l.lastName}`, dealName: d.name,
+            currency: d.currency, amount: Number(it.amount || 0),
+            dueDate: it.dueDate || '', seq: it.seq, ownerName: l.ownerName,
+            overdue: !!(it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10)),
+          });
+        }
+      }
+    }
+  }
+  pendingList.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+
+  const companyTarget = agents.reduce((s, u) => s + (u.targetUsd || 0), 0);
+  const top = leaderboard[0] || null;
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const today = new Date().getDate();
 
   res.json({
     demo: true,
-    totals: { ...m, leads: demoData.leads().length, converted: demoData.leads().filter((l) => l.status === 'converted').length },
-    leaderboard: board,
+    role: 'manager',
+    metrics: {
+      totalLeads: leads.length,
+      generatedToday: 3, assignedToday: 2, untouched: 4,
+      salesThisMonthUsd: m.collected,
+      convertedThisMonth: converted.length,
+      pipelineUsd: 18400,
+      awaitingUsd: m.due,
+      newSalesUsd: Math.round(m.collected * 0.62), crossSalesUsd: Math.round(m.collected * 0.38),
+      newSalesCount: 7, crossSalesCount: 5,
+      companyTarget,
+      companyPct: companyTarget > 0 ? Math.round((m.collected / companyTarget) * 100) : null,
+      scopeTarget: companyTarget, scopeAchieved: m.collected,
+      scopePct: companyTarget > 0 ? Math.round((m.collected / companyTarget) * 100) : null,
+      scopeRemaining: Math.max(0, companyTarget - m.collected),
+      generatedTarget: 5,
+      leadsGeneratedMonth: 64, leadsAssignedMonth: 58,
+      leadsPresalesMonth: 31, leadsColdMonth: 33,
+    },
+    lists: {
+      generatedToday: leads.slice(0, 3).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
+      assignedToday: leads.slice(3, 5).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
+      untouched: leads.slice(5, 9).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
+    },
+    me: {
+      salesUsd: top ? top.salesUsd : 0, salesTarget: 12000,
+      pct: top ? Math.min(100, Math.round((top.salesUsd / 12000) * 100)) : 0,
+      remaining: top ? Math.max(0, 12000 - top.salesUsd) : 12000,
+      transfersToday: 3, transferDailyTarget: 5,
+      newSalesUsd: top ? top.newSalesUsd : 0, crossSalesUsd: top ? top.crossSalesUsd : 0,
+      pipelineUsd: 6200, leadsGeneratedMonth: 18, leadsGeneratedToday: 2, leadGenTarget: 30,
+    },
+    leaderboard,
+    transferBoard: leaderboard.map((o) => ({
+      ownerId: o.ownerId, name: o.name, avatar: null, transfersToday: o.transfersToday,
+      dailyTarget: o.transferDailyTarget, pct: Math.min(100, Math.round((o.transfersToday / 5) * 100)),
+      remaining: Math.max(0, 5 - o.transfersToday),
+    })),
     trend: [
       { month: 'Feb', usd: 8200 }, { month: 'Mar', usd: 9600 }, { month: 'Apr', usd: 11400 },
       { month: 'May', usd: 10250 }, { month: 'Jun', usd: 13100 }, { month: 'Jul', usd: m.collected },
     ],
+    shiftBoard: [
+      { team: 'Bhubaneswar', shift: 'Morning', salesUsd: Math.round(m.collected * 0.4), pipelineUsd: 7200 },
+      { team: 'Kolkata', shift: 'Night', salesUsd: Math.round(m.collected * 0.35), pipelineUsd: 6100 },
+      { team: 'Bhubaneswar', shift: 'Night', salesUsd: Math.round(m.collected * 0.25), pipelineUsd: 5100 },
+    ],
+    topShift: { team: 'Bhubaneswar', shift: 'Morning', salesUsd: Math.round(m.collected * 0.4) },
+    topPerformer: top, topPerformerTied: false,
+    awaiting: pendingList.slice(0, 50),
+    leadDaily: Array.from({ length: daysInMonth }, (_, i) => ({
+      day: i + 1, total: i < today ? 1 + ((i * 3) % 5) : 0,
+      presales: i < today ? ((i * 2) % 3) : 0, cold: i < today ? (i % 3) : 0,
+    })),
+    leadMonthly: [
+      { month: 'Feb', year: 2026, total: 48, presales: 22, cold: 26 },
+      { month: 'Mar', year: 2026, total: 55, presales: 26, cold: 29 },
+      { month: 'Apr', year: 2026, total: 61, presales: 30, cold: 31 },
+      { month: 'May', year: 2026, total: 57, presales: 27, cold: 30 },
+      { month: 'Jun', year: 2026, total: 66, presales: 33, cold: 33 },
+      { month: 'Jul', year: 2026, total: 64, presales: 31, cold: 33 },
+    ],
+  });
+});
+
+// Endpoints the shell polls or loads on navigation. Without these the demo
+// throws on boot and renders a blank page.
+router.get('/leads/reminders/count', (req, res) => res.json({ due: 3, items: [] }));
+router.get('/reviews/history/:agentId', (req, res) => res.json({ items: [], demo: true }));
+
+// Reviews. Must mirror the real shape ({ period, groups, agents, canReviewAll })
+// — the screen reads data.agents and data.groups directly.
+router.get('/reviews', (req, res) => {
+  const staff = demoData.users();
+  const agents = staff.filter((u) => u.role === 'agent');
+  const managers = staff.filter((u) => u.role === 'manager');
+  const period = String(req.query.period || new Date().toISOString().slice(0, 7));
+  res.json({
+    demo: true,
+    period,
+    groups: managers.map((mgr) => ({
+      team: mgr.team, shift: mgr.shift, adminLed: false,
+      manager: { id: mgr.id, name: mgr.name },
+      agentCount: agents.filter((a) => a.team === mgr.team).length,
+    })),
+    agents: agents.map((a, i) => ({
+      agentId: a.id, agentName: a.name, name: a.name, avatar: null,
+      team: a.team, shift: a.shift,
+      managerId: (managers.find((m) => m.team === a.team) || {}).id || null,
+      salesUsd: 2200 + i * 450, salesTarget: a.targetUsd || 6000,
+      pct: Math.min(100, Math.round(((2200 + i * 450) / (a.targetUsd || 6000)) * 100)),
+      band: i === 0 ? 'top' : i < 3 ? 'ok' : 'attention',
+      conversions: 3 + (i % 3), leadsGeneratedMonth: 14 + i,
+      review: i % 2 === 0 ? {
+        id: 1000 + i, agentId: a.id, period, band: 'ok',
+        feedback: 'Demo review — steady month, good call quality.',
+        actionPlan: 'Focus on follow-up speed for warm leads.',
+        reviewerName: (managers[0] || {}).name || 'Demo Manager',
+        metOn: new Date().toISOString().slice(0, 10),
+      } : null,
+    })),
+    canReviewAll: false,
+  });
+});
+router.get('/admin/settings', (req, res) => {
+  const s = req.demoSettings;
+  res.json({
+    companyName: s.companyName, companyShort: s.companyShort, website: s.website,
+    email: s.email, phone: s.phone, address: s.address, logoPath: s.logoPath,
+    colors: s.colors, fontFamily: s.fontFamily, pricing: s.pricing,
+    crmConfig: s.crmConfig, reportValidDays: s.reportValidDays,
+    dailyReportLimit: s.dailyReportLimit, cacheDays: s.cacheDays,
+    defaultCountry: s.defaultCountry, apiKeys: {}, demo: true,
   });
 });
 
@@ -169,7 +316,6 @@ router.get('/admin/users', (req, res) => res.json({ items: demoData.users(), tot
 // --- analytics --------------------------------------------------------------
 
 router.get('/analytics', (req, res) => res.json({ demo: true, ...moneyRollup(), leaderboard: [] }));
-router.get('/reviews', (req, res) => res.json({ items: [], total: 0, demo: true }));
 
 /**
  * Writes: acknowledged, never stored. Returning the payload keeps optimistic UI

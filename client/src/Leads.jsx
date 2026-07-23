@@ -1454,6 +1454,7 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
     currency: (config.dealCurrencies && config.dealCurrencies[0]) || 'USD',
     amount: '', expectedClose: '', service: '', remark: '',
     planType: 'one-time', paymentStructure: 'full', installmentCount: 2,
+    recurringInterval: 'monthly',
     installments: [],
   });
   const [busy, setBusy] = useState(false);
@@ -1550,16 +1551,59 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
           </div>
           <div><label className={lab}>Expected / actual closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
 
-          {/* Payment structure */}
+          {/* Plan type drives everything below it. */}
           <div>
-            <label className={lab}>How is the customer paying?</label>
+            <label className={lab}>Plan type</label>
             <div className="flex gap-2">
-              <button type="button" onClick={() => set('paymentStructure', 'full')} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'full' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>Full payment</button>
-              <button type="button" onClick={() => set('paymentStructure', 'installments')} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'installments' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>In installments</button>
+              {[['one-time', 'One time'], ['recurring', 'Recurring'], ['installments', 'Installments']].map(([id, label]) => (
+                <button key={id} type="button"
+                  onClick={() => {
+                    set('planType', id);
+                    // Keep paymentStructure consistent with the plan so the
+                    // backend still receives the shape it expects.
+                    if (id === 'installments') set('paymentStructure', 'installments');
+                    else if (id === 'recurring') set('paymentStructure', 'full');
+                    else set('paymentStructure', 'full');
+                  }}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${
+                    (f.planType || 'one-time') === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'
+                  }`}>{label}</button>
+              ))}
             </div>
           </div>
 
-          {f.paymentStructure === 'installments' && (
+          {/* One time — the customer can still choose to split it. */}
+          {(f.planType || 'one-time') === 'one-time' && (
+            <div>
+              <label className={lab}>How is the customer paying?</label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => set('paymentStructure', 'full')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'full' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>Full payment</button>
+                <button type="button" onClick={() => set('paymentStructure', 'installments')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${f.paymentStructure === 'installments' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>In installments</button>
+              </div>
+            </div>
+          )}
+
+          {/* Recurring — always paid in full each cycle; pick the cycle. */}
+          {f.planType === 'recurring' && (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+              <label className={lab}>Billing frequency</label>
+              <select className={inp} value={f.recurringInterval || 'monthly'}
+                onChange={(e) => set('recurringInterval', e.target.value)}>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly (3 months)</option>
+                <option value="half-yearly">Every 6 months</option>
+                <option value="yearly">Yearly</option>
+              </select>
+              <div className="text-[10px] text-slate-400 mt-2">
+                The amount above is charged in full every cycle. Upcoming billing dates appear on the
+                client's row in Converted clients, where you can mark each one collected.
+              </div>
+            </div>
+          )}
+
+          {(f.planType === 'installments' || (f.planType === 'one-time' && f.paymentStructure === 'installments')) && (
             <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
               {!existing && (
                 <div className="flex items-center gap-2 mb-2">
@@ -1689,14 +1733,18 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     setBusy(null);
   };
 
+  // Which installment is awaiting a gateway choice before it can be collected.
+  const [payFor, setPayFor] = useState(null); // { lead, deal, inst }
+
   // Mark the next outstanding installment as received, straight from the card.
-  const collect = async (lead, deal, inst) => {
+  const collect = async (lead, deal, inst, gateway) => {
     setBusy(inst.id);
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
-        method: 'PATCH', body: JSON.stringify({ paid: true }),
+        method: 'PATCH', body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}) }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+      setPayFor(null);
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
@@ -1736,12 +1784,21 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
     const pending = [];
     for (const d of won) {
-      booked += toUsd(d.amount, d.currency);
+      const isRecurring = d.planType === 'recurring';
+      // A one-off sale books its whole value up front, so outstanding = booked
+      // minus collected. A recurring contract has no total — future cycles are
+      // not a debt the client owes — so it books only what has actually been
+      // billed and collected, and its upcoming dates show as reminders rather
+      // than as money outstanding.
+      if (!isRecurring) booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
-        if (it.paid) { instPaid++; collected += toUsd(it.amount, d.currency); }
-        else {
-          pending.push({ deal: d, inst: it });
+        if (it.paid) {
+          instPaid++;
+          collected += toUsd(it.amount, d.currency);
+          if (isRecurring) booked += toUsd(it.amount, d.currency);
+        } else {
+          pending.push({ deal: d, inst: it, recurring: isRecurring });
           if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
         }
       }
@@ -1988,19 +2045,26 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       <tr className="bg-amber-50/30">
                         <td colSpan={8} className="px-4 py-3">
                           <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600 mb-2">
-                            Pending payments · {s.pending.length}
+                            Upcoming &amp; pending payments · {s.pending.length}
                           </div>
                           <div className="space-y-1.5">
-                            {s.pending.map(({ deal: d, inst: it }) => {
+                            {s.pending.map(({ deal: d, inst: it, recurring }) => {
                               const overdue = it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10);
                               return (
                                 <div key={it.id}
                                   className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
-                                  <span className="text-[10px] font-bold text-slate-400 w-16 shrink-0">#{it.seq}</span>
+                                  <span className="text-[10px] font-bold text-slate-400 w-16 shrink-0">
+                                    {recurring ? 'Cycle' : '#'}{it.seq}
+                                  </span>
                                   <span className="text-xs font-bold text-[#050A1F] w-28 shrink-0">
                                     {d.currency} {Number(it.amount || 0).toLocaleString()}
                                   </span>
-                                  <span className="text-[11px] text-slate-400 truncate max-w-[180px]" title={d.name}>{d.name}</span>
+                                  <span className="text-[11px] text-slate-400 truncate max-w-[180px]" title={d.name}>
+                                    {d.name}
+                                    {recurring && <span className="ml-1 rounded bg-blue-50 text-blue-600 px-1 py-0.5 text-[9px] font-bold">
+                                      {({ monthly: 'Monthly', quarterly: 'Quarterly', 'half-yearly': '6-monthly', yearly: 'Yearly' })[d.recurringInterval] || 'Recurring'}
+                                    </span>}
+                                  </span>
                                   <label className="flex items-center gap-1.5 ml-auto">
                                     <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Due</span>
                                     <input
@@ -2013,7 +2077,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                       }`} />
                                   </label>
                                   <button
-                                    onClick={() => collect(l, d, it)}
+                                    onClick={() => setPayFor({ lead: l, deal: d, inst: it })}
                                     disabled={busy === it.id}
                                     className="rounded-md px-3 py-1.5 text-[11px] font-bold text-white inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
                                     style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
@@ -2034,6 +2098,38 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           </div>
           <Pagination page={page} pages={pageInfo.pages} total={pageInfo.total} perPage={perPage}
             onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="clients" />
+        </div>
+      )}
+
+      {/* Which gateway did the money arrive through? Asked at the moment of
+          collection, because the same client may pay by card one cycle and by
+          bank transfer the next. */}
+      {payFor && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setPayFor(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
+            <div className="text-sm text-slate-500 mt-1">
+              {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · {payFor.deal.name}
+            </div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mt-4 mb-2">
+              Where did the payment come in?
+            </div>
+            <div className="space-y-2">
+              {['PayPal', 'Stripe', 'Wire Transfer'].map((g) => (
+                <button key={g}
+                  disabled={busy === payFor.inst.id}
+                  onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, g)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:border-orange-300 hover:bg-orange-50 hover:text-[#FF4500] transition-colors disabled:opacity-50">
+                  {g}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setPayFor(null)}
+              className="w-full mt-3 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>
