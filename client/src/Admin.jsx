@@ -267,6 +267,90 @@ function Branding({ settings, setSettings, say, reload }) {
 
 
 // ---------------------------------------------------------------------------
+// Demo / training mode
+// ---------------------------------------------------------------------------
+function DemoModeSettings({ say }) {
+  const [cfg, setCfg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api('/admin/demo-app').then(setCfg).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const save = async (patch) => {
+    setBusy(true);
+    try {
+      const r = await api('/admin/demo-app', { method: 'PUT', body: JSON.stringify(patch) });
+      setCfg(r);
+      say && say('Demo mode updated', 'good');
+    } catch (e) { say && say(e.message, 'bad'); }
+    setBusy(false);
+  };
+
+  if (!cfg) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+
+  const url = cfg.token ? `${window.location.origin}/demo-app/${cfg.token}` : null;
+  const since = cfg.startedAt ? new Date(cfg.startedAt).toLocaleString('en-GB') : null;
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-bold" style={{ color: C.navy }}>Demo / training mode</div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Creates a temporary link to a full copy of the app filled with sample clients, deals and
+              reports. Perfect for walking new agents through the product — they can click anything
+              without touching real data.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-bold text-slate-600 shrink-0">
+            <input type="checkbox" checked={!!cfg.enabled} disabled={busy}
+              onChange={(e) => save({ enabled: e.target.checked })} />
+            {cfg.enabled ? 'Enabled' : 'Disabled'}
+          </label>
+        </div>
+
+        {cfg.enabled && url && (
+          <div className="mt-4 rounded-lg bg-slate-50 border border-slate-100 p-3">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Training URL</div>
+            <div className="flex items-center gap-2">
+              <input readOnly value={url} className={inputCls + ' font-mono text-xs'} onFocus={(e) => e.target.select()} />
+              <Btn size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(url); say && say('URL copied', 'good'); }}>Copy</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => window.open(url, '_blank')}>Open</Btn>
+            </div>
+            {since && <div className="text-[10px] text-slate-400 mt-2">Live since {since}</div>}
+            <Note tone="warn">
+              Anyone with this link can open the demo without logging in. It only ever shows made-up
+              data — never a real client — but switch it off when the training session is over.
+            </Note>
+            <div className="mt-2">
+              <Btn size="sm" variant="ghost" disabled={busy}
+                onClick={() => { if (confirm('Regenerate the URL? The current link will stop working immediately.')) save({ regenerate: true }); }}>
+                ↻ Regenerate URL
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-3 gap-3 text-[11px]">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="font-bold text-slate-600 mb-0.5">Sample data</div>
+            <div className="text-slate-400">30 leads, 12 clients with part-paid plans, 12 reports, 7 staff.</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="font-bold text-slate-600 mb-0.5">Nothing is saved</div>
+            <div className="text-slate-400">Edits are accepted so buttons work, then discarded on refresh.</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="font-bold text-slate-600 mb-0.5">Separate from live</div>
+            <div className="text-slate-400">Your real leads, reports and figures are never loaded here.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Motivator TV settings
 // ---------------------------------------------------------------------------
 function MotivatorTvSettings({ say }) {
@@ -1083,7 +1167,7 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['tv', 'Motivator TV'], ['limits', 'Limits']];
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv';
 
@@ -1116,6 +1200,7 @@ export default function Admin() {
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'tv' && <MotivatorTvSettings say={say} />}
+        {tab === 'demo' && <DemoModeSettings say={say} />}
         {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}
 
         <ActivityLog />

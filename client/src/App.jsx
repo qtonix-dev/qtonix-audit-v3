@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
-import { CountryCombobox, PhoneField, Pagination } from './Leads.jsx';
+import { CountryCombobox, PhoneField, Pagination, Icon } from './Leads.jsx';
 import { formatPhone } from './countries.js';
 import Dashboard from './Dashboard.jsx';
 import Analytics from './Analytics.jsx';
@@ -54,8 +54,30 @@ const COUNTRIES = [
   { code: 'sa', name: 'Saudi Arabia' }, { code: 'qa', name: 'Qatar' },
 ];
 
+/**
+ * Training mode. When the app is opened at /demo-app/<token> every component
+ * keeps calling api('/leads') exactly as before, but the request is rewritten
+ * to /api/demo-app/<token>/leads and answered with fabricated data. Because the
+ * redirect happens here — the single choke point every screen already uses — no
+ * individual component needs to know it is running in a demo.
+ */
+export const DEMO_TOKEN = (() => {
+  const m = typeof window !== 'undefined' && window.location.pathname.match(/^\/demo-app\/([A-Za-z0-9]+)/);
+  return m ? m[1] : null;
+})();
+export const IS_DEMO = !!DEMO_TOKEN;
+
 export const api = async (path, opts = {}) => {
   const token = localStorage.getItem('qtx_token');
+  if (DEMO_TOKEN) {
+    const res = await fetch(`${API_BASE}/api/demo-app/${DEMO_TOKEN}${path.split('?')[0]}${path.includes('?') ? '?' + path.split('?')[1] : ''}`, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Not available in the demo.');
+    return data;
+  }
   const res = await fetch(API_BASE + '/api' + path, {
     ...opts,
     headers: {
@@ -601,38 +623,42 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                     {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
                     <StatusPill status={r.status} />
                     {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
+                    {r.leadId && <span className="text-[10px] text-slate-400">· Linked to a lead</span>}
                   </div>
                 </div>
-              </div>
 
-              {/* Action bar — report actions only. Lead/CRM lives in the Leads tab now. */}
-              <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
-                {r.status === 'complete' && (
-                  <>
-                    <button onClick={() => onOpen(r)} className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-400 inline-flex items-center gap-1 shrink-0">
-                      <span aria-hidden>👁️</span> View report
+                {/* Actions sit on the same row, pushed right, so the card stays
+                    one compact line instead of growing an extra button row. */}
+                <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                  {r.status === 'complete' && (
+                    <>
+                      <button onClick={() => onOpen(r)} title="View report"
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300 hover:bg-slate-50 inline-flex items-center gap-1.5">
+                        <Icon.Eye size={14} /> <span className="hidden sm:inline">View</span>
+                      </button>
+                      <button onClick={() => download(r._id, r.businessName)} title="Download PDF"
+                        className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5"
+                        style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                        <Icon.Download size={14} /> <span className="hidden sm:inline">PDF</span>
+                      </button>
+                    </>
+                  )}
+                  {r.status === 'failed' && (
+                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} title="Retry this report"
+                      className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5">
+                      <Icon.Refresh size={14} /> <span className="hidden sm:inline">Retry</span>
                     </button>
-                    <button onClick={() => download(r._id, r.businessName)} className="rounded-md px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1 shrink-0" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                      <span aria-hidden>⬇️</span> Download PDF
+                  )}
+                  {isAdmin && (
+                    <button onClick={async () => {
+                      if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
+                      try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); }
+                    }} title="Delete report"
+                      className="rounded-lg border border-slate-200 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-colors">
+                      <Icon.Trash size={14} />
                     </button>
-                  </>
-                )}
-                {r.status === 'failed' && (
-                  <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} className="rounded-md border border-red-300 px-2.5 py-1.5 text-xs font-bold text-red-600 inline-flex items-center gap-1 shrink-0">
-                    <span aria-hidden>🔄</span> Retry
-                  </button>
-                )}
-                {r.leadId && (
-                  <span className="text-[10px] text-slate-400 shrink-0 ml-1">🔗 Linked to a lead</span>
-                )}
-                {isAdmin && (
-                  <button onClick={async () => {
-                    if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
-                    try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); }
-                  }} className="rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 inline-flex items-center gap-1 shrink-0 ml-auto">
-                    <span aria-hidden>🗑</span> Delete
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -689,6 +715,14 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    // Training link: no account needed, so sign in as the synthetic demo user.
+    if (IS_DEMO) {
+      api('/me')
+        .then((d) => setUser(d.user))
+        .catch(() => setUser(null))
+        .finally(() => setBooting(false));
+      return;
+    }
     const token = localStorage.getItem('qtx_token');
     if (!token) return setBooting(false);
     api('/auth/me')
@@ -699,6 +733,20 @@ export default function App() {
 
   if (booting) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
+  }
+  // An expired or revoked training link should say so plainly — showing a login
+  // form to a trainee who was never given an account is just confusing.
+  if (!user && IS_DEMO) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-6">
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 max-w-sm text-center">
+          <div className="text-lg font-extrabold text-[#050A1F]">Demo link not active</div>
+          <p className="text-sm text-slate-500 mt-2">
+            This training link has been turned off or replaced. Ask your administrator for a current one.
+          </p>
+        </div>
+      </div>
+    );
   }
   if (!user) return <Login onSignIn={setUser} />;
 
@@ -715,6 +763,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      {/* Unmissable reminder that none of this is real, so a training figure is
+          never mistaken for a live client number. */}
+      {IS_DEMO && (
+        <div className="text-white text-center text-[11px] font-bold py-1.5 px-4"
+          style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+          DEMO / TRAINING MODE — sample data only. Nothing you change here is saved.
+        </div>
+      )}
       <header className="bg-[#050A1F] border-b border-white/10">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-8">

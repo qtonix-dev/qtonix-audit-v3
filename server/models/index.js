@@ -362,6 +362,18 @@ const Settings = sequelize.define(
     tvEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
     // Ticker messages shown along the bottom of the board.
     tvAnnouncements: { type: DataTypes.JSON, defaultValue: [] },
+    /**
+     * Training / demo mode. When an admin enables it we mint a long random
+     * token; the app is then reachable at /demo-app/<token> preloaded with
+     * fabricated data so agents can be shown the whole product without seeing
+     * (or being able to touch) real client records. Regenerating the token
+     * instantly kills any link that has been shared too widely.
+     */
+    demoAppEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+    demoAppToken: { type: DataTypes.STRING(64) },
+    // When the current demo link was switched on, purely so the admin screen
+    // can show "running since ..." and nudge them to turn it off again.
+    demoAppStartedAt: { type: DataTypes.DATE },
     cacheDays: { type: DataTypes.INTEGER, defaultValue: 7 },
     defaultCountry: { type: DataTypes.STRING(4), defaultValue: 'us' },
   },

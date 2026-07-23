@@ -29,6 +29,10 @@ export const Icon = {
   Upload: (p) => <IconBase {...p}><path d="M12 16V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" /></IconBase>,
   Search: (p) => <IconBase {...p}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></IconBase>,
   Plus: (p) => <IconBase {...p}><path d="M12 5v14M5 12h14" /></IconBase>,
+  Minus: (p) => <IconBase {...p}><path d="M5 12h14" /></IconBase>,
+  Eye: (p) => <IconBase {...p}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></IconBase>,
+  Download: (p) => <IconBase {...p}><path d="M12 4v12" /><path d="m7.5 11.5 4.5 4.5 4.5-4.5" /><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" /></IconBase>,
+  Refresh: (p) => <IconBase {...p}><path d="M20 12a8 8 0 1 1-2.3-5.6" /><path d="M20 4v4h-4" /></IconBase>,
   Clock: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></IconBase>,
   Mail: (p) => <IconBase {...p}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m3.5 7 8.5 6 8.5-6" /></IconBase>,
   Pin: (p) => <IconBase {...p}><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></IconBase>,
@@ -1669,6 +1673,21 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
+  // Which client rows are expanded in the table to show their pending payments.
+  const [expanded, setExpanded] = useState({});
+  const toggleRow = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
+
+  // Change an installment's due date without leaving the table.
+  const reschedule = async (lead, deal, inst, dueDate) => {
+    setBusy(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH', body: JSON.stringify({ dueDate }),
+      });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { alert(e.message); }
+    setBusy(null);
+  };
 
   // Mark the next outstanding installment as received, straight from the card.
   const collect = async (lead, deal, inst) => {
@@ -1706,8 +1725,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
   // Per-client money summary across won deals: total booked, collected, due.
   const summarize = (l) => {
-    const won = (l.deals || []).filter((d) => d.stage === 'closed_won');
-    const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
+    // A deal counts towards the money figures once it is Closed Won *or* once
+    // any installment has actually been collected. Marking a payment now
+    // auto-promotes the deal to Closed Won, but older deals (and anything an
+    // admin drags back to an open stage) would otherwise vanish from the
+    // totals and make Outstanding read a misleading zero.
+    const hasPayment = (d) => (d.installments || []).some((it) => it.paid);
+    const won = (l.deals || []).filter((d) => d.stage === 'closed_won' || (d.stage !== 'closed_lost' && hasPayment(d)));
+    const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost' && !hasPayment(d));
     let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
     const pending = [];
     for (const d of won) {
@@ -1895,6 +1920,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                  <th className="w-9 px-2 py-3"></th>
                   <th className="text-left px-4 py-3">Client</th>
                   <th className="text-left px-4 py-3">Website</th>
                   <th className="text-left px-4 py-3">Owner</th>
@@ -1908,9 +1934,26 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                 {filtered.map((l) => {
                   const s = summarize(l);
                   const pct = s.booked > 0 ? Math.round((s.collected / s.booked) * 100) : 0;
+                  const isOpen = !!expanded[l._id];
                   return (
-                    <tr key={`row-${l._id}`} onClick={() => onOpen(l._id, 'deals')}
+                    <React.Fragment key={`row-${l._id}`}>
+                    <tr onClick={() => onOpen(l._id, 'deals')}
                       className="border-t border-slate-50 hover:bg-green-50/30 cursor-pointer transition-colors">
+                      {/* Expander — opens the pending payments panel in place. */}
+                      <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                        {s.pending.length > 0 ? (
+                          <button
+                            onClick={() => toggleRow(l._id)}
+                            title={isOpen ? 'Hide pending payments' : `Show ${s.pending.length} pending payment${s.pending.length === 1 ? '' : 's'}`}
+                            className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
+                              isOpen ? 'border-orange-300 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50'
+                            }`}>
+                            {isOpen ? <Icon.Minus size={13} /> : <Icon.Plus size={13} />}
+                          </button>
+                        ) : (
+                          <span className="w-6 h-6 flex items-center justify-center text-green-500" title="Paid in full"><Icon.Check size={13} /></span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           <div className="w-8 h-8 rounded-full bg-green-50 text-green-600 flex items-center justify-center text-xs font-bold shrink-0">
@@ -1938,6 +1981,52 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
                     </tr>
+
+                    {/* Pending payments, editable in place — no need to open the
+                        lead just to move a date or record a payment. */}
+                    {isOpen && s.pending.length > 0 && (
+                      <tr className="bg-amber-50/30">
+                        <td colSpan={8} className="px-4 py-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600 mb-2">
+                            Pending payments · {s.pending.length}
+                          </div>
+                          <div className="space-y-1.5">
+                            {s.pending.map(({ deal: d, inst: it }) => {
+                              const overdue = it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10);
+                              return (
+                                <div key={it.id}
+                                  className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
+                                  <span className="text-[10px] font-bold text-slate-400 w-16 shrink-0">#{it.seq}</span>
+                                  <span className="text-xs font-bold text-[#050A1F] w-28 shrink-0">
+                                    {d.currency} {Number(it.amount || 0).toLocaleString()}
+                                  </span>
+                                  <span className="text-[11px] text-slate-400 truncate max-w-[180px]" title={d.name}>{d.name}</span>
+                                  <label className="flex items-center gap-1.5 ml-auto">
+                                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Due</span>
+                                    <input
+                                      type="date"
+                                      value={it.dueDate || ''}
+                                      disabled={busy === it.id}
+                                      onChange={(e) => reschedule(l, d, it, e.target.value)}
+                                      className={`rounded-md border px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-orange-400 ${
+                                        overdue ? 'border-red-200 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600'
+                                      }`} />
+                                  </label>
+                                  <button
+                                    onClick={() => collect(l, d, it)}
+                                    disabled={busy === it.id}
+                                    className="rounded-md px-3 py-1.5 text-[11px] font-bold text-white inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
+                                    style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                                    <Icon.Money size={12} /> {busy === it.id ? 'Saving…' : 'Mark paid'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

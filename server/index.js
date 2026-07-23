@@ -11,6 +11,7 @@ const auth = require('./routes/auth');
 const reports = require('./routes/reports');
 const admin = require('./routes/admin');
 const demo = require('./routes/demo');
+const demoApp = require('./routes/demoApp');
 const leads = require('./routes/leads');
 const reviews = require('./routes/reviews');
 const tv = require('./routes/tv');
@@ -35,6 +36,9 @@ app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
 app.use('/api/demo', demo);
+// Shareable training sandbox: /api/demo-app/<token>/... — token-gated inside
+// the router, serving fabricated data only. See routes/demoApp.js.
+app.use('/api/demo-app/:token', demoApp);
 app.use('/api/leads', leads);
 app.use('/api/reviews', reviews);
 app.use('/api/tv', tv);
@@ -63,7 +67,10 @@ app.get('/api/health', async (req, res) => {
 const clientDist = path.join(__dirname, '../client/dist');
 if (require('fs').existsSync(clientDist)) {
   app.use(express.static(clientDist));
-  app.get(/^\/(?!api|uploads|demo).*/, (req, res) => {
+  // Exclude the API, uploads and the standalone /demo page — but NOT
+  // /demo-app/<token>, which is the React app running in training mode and so
+  // must fall through to index.html like any other client route.
+  app.get(/^\/(?!api\/|api$|uploads|demo(?:$|\/)).*/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }

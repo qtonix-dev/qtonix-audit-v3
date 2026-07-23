@@ -1,7 +1,7 @@
 {
   "name": "qtonix-site-analysis",
   "version": "1.0.0",
-  "description": "Qtonix free complete site analysis report generator \u2014 React + Node + MySQL",
+  "description": "Qtonix free complete site analysis report generator — React + Node + MySQL",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -22,7 +22,6 @@
     "helmet": "^7.1.0",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
-    "mongodb-memory-server": "^11.2.0",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.23.0",
     "sequelize": "^6.37.8",

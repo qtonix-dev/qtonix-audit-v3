@@ -364,6 +364,51 @@ router.get('/seranking-credits', async (req, res) => {
 });
 
 /**
+ * Demo / training mode. Switching it on mints a random token and exposes the
+ * whole app at /demo-app/<token> filled with fabricated data, so agents can be
+ * trained on the live interface without touching a real client record.
+ * Regenerating the token instantly invalidates any link already shared.
+ */
+router.get('/demo-app', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({
+      enabled: !!(s && s.demoAppEnabled),
+      token: (s && s.demoAppToken) || null,
+      startedAt: (s && s.demoAppStartedAt) || null,
+    });
+  } catch (e) { next(e); }
+});
+
+router.put('/demo-app', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!s) return res.status(500).json({ error: 'Settings not initialised.' });
+    const b = req.body || {};
+
+    if (b.enabled !== undefined) {
+      const turningOn = !!b.enabled && !s.demoAppEnabled;
+      s.demoAppEnabled = !!b.enabled;
+      // Mint a token the first time it is switched on, and stamp the start so
+      // the admin screen can show how long the link has been live.
+      if (s.demoAppEnabled && !s.demoAppToken) s.demoAppToken = require('crypto').randomBytes(24).toString('hex');
+      if (turningOn) s.demoAppStartedAt = new Date();
+      if (!s.demoAppEnabled) s.demoAppStartedAt = null;
+    }
+    if (b.regenerate) {
+      s.demoAppToken = require('crypto').randomBytes(24).toString('hex');
+      s.demoAppStartedAt = new Date();
+    }
+    await s.save();
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'demoApp.settings',
+      target: s.demoAppEnabled ? 'enabled' : 'disabled', ip: req.ip,
+    });
+    res.json({ enabled: !!s.demoAppEnabled, token: s.demoAppToken, startedAt: s.demoAppStartedAt });
+  } catch (e) { next(e); }
+});
+
+/**
  * Motivator TV admin: enable/disable the board, regenerate its access token,
  * and manage the announcement ticker.
  */

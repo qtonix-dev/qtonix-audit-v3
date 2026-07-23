@@ -1000,6 +1000,30 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     }
     if (b.dueDate !== undefined) inst.dueDate = b.dueDate;
     if (b.amount !== undefined) inst.amount = Number(b.amount) || 0;
+
+    // Money in the door means the deal is won. As soon as ANY installment is
+    // collected we promote the deal to Closed Won, so the pipeline reflects
+    // reality and the converted-clients page counts the booked/outstanding
+    // amounts (its money maths only looks at won deals).
+    if (inst.paid && deal.stage !== 'closed_won' && deal.stage !== 'closed_lost') {
+      deal.stage = 'closed_won';
+      deal.wonAt = deal.wonAt || new Date();
+      // Seed any missing due dates from the win date so the remaining
+      // installments have a chase schedule.
+      if (Array.isArray(deal.installments) && deal.installments.length && !deal.installments[0].dueDate) {
+        const seeded = buildInstallments(deal.amount, deal.installments.length, deal.wonAt);
+        deal.installments = deal.installments.map((it, i) => ({
+          ...it, dueDate: it.dueDate || seeded[i].dueDate, amount: it.amount || seeded[i].amount,
+        }));
+      }
+      pushTimeline(lead, 'deal', `Deal "${deal.name}" moved to Closed Won (payment received)`, req.user.name);
+      if (lead.status !== 'converted') {
+        lead.status = 'converted';
+        lead.convertedAt = lead.convertedAt || new Date();
+        pushTimeline(lead, 'status', 'Converted to client (payment received)', req.user.name);
+      }
+    }
+
     lead.deals = list; lead.changed('deals', true);
     await lead.save();
     res.json(lead.toJSON());
