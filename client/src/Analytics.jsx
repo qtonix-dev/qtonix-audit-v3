@@ -31,7 +31,7 @@ function Widget({ title, subtitle, children, className = '' }) {
   );
 }
 
-function BigNumber({ title, value, sub, tone, pct }) {
+function BigNumber({ title, value, sub, tone, pct, split }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200/70 p-5 flex flex-col">
       <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
@@ -46,6 +46,19 @@ function BigNumber({ title, value, sub, tone, pct }) {
           </div>
         )}
         {sub && <div className="text-xs text-slate-400 mt-2">{sub}</div>}
+        {/* Admin-only breakdown: team-generated vs admin-owned. */}
+        {split && (
+          <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Agents &amp; managers</div>
+              <div className="text-sm font-extrabold text-[#050A1F]">{split.team}</div>
+            </div>
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Admin-owned</div>
+              <div className="text-sm font-extrabold text-slate-400">{split.admin}</div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -246,9 +259,11 @@ export default function Analytics({ user, mode = 'analytics', onModeChange }) {
         <BigNumber title="Total target" value={usd(target)} sub="Monthly sales target" />
         <BigNumber title="Total actual to date" value={usd(achieved)} pct={pct}
           sub={pct != null ? `${pct}% of target achieved` : 'Collected this month'}
+          split={m.teamSalesUsd != null ? { team: usd(m.teamSalesUsd), admin: usd(m.adminSalesUsd || 0) } : null}
           tone={pct >= 100 ? '#16A34A' : undefined} />
         <BigNumber title="Open pipeline" value={usd(m.pipelineUsd)} sub="Deals not yet won" tone="#4C9FE8" />
-        <BigNumber title="Awaiting collection" value={usd(m.awaitingUsd)} sub="Won, not yet paid" tone="#D97706" />
+        <BigNumber title="Awaiting collection" value={usd(m.awaitingUsd)} sub="Won, not yet paid" tone="#D97706"
+          split={m.teamAwaitingUsd != null ? { team: usd(m.teamAwaitingUsd), admin: usd(Math.max(0, (m.awaitingUsd || 0) - m.teamAwaitingUsd)) } : null} />
       </div>
 
       {/* Row 2 — money split, quota, sellers */}

@@ -280,6 +280,12 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     let awaitingUsd = 0; // won deals whose installments aren't collected yet
     let pipelineUsd = 0; // open (not won/lost) deal value in USD, motivational
     let newSalesUsd = 0, crossSalesUsd = 0, newSalesCount = 0, crossSalesCount = 0;
+    // Parallel tally that always excludes admin-owned deals. An admin viewer
+    // sees both: the company figure (everything, including their own test and
+    // house accounts) and the team figure (what agents and managers actually
+    // brought in) — so the two can be told apart at a glance.
+    let teamSalesUsd = 0, teamNewSalesUsd = 0, teamCrossSalesUsd = 0;
+    let teamNewCount = 0, teamCrossCount = 0, teamAwaitingUsd = 0;
     const byOwner = {};
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
@@ -389,8 +395,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       wonDeals.forEach((d, di) => {
         const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
         const adminOwned = isAdminOwned(l.ownerId);
+        // True regardless of who is viewing — drives the team-only split.
+        const ownerIsAdmin = roleById[l.ownerId] === 'admin';
         insts.forEach((it) => {
           if (!it.paid || !it.paidDate) {
+            if (!ownerIsAdmin) teamAwaitingUsd += toUsd(it.amount, d.currency);
             if (!adminOwned) {
               awaitingUsd += toUsd(it.amount, d.currency);
               // Keep a followup list of who owes what, soonest due first.
@@ -416,6 +425,13 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
             byOwner[l.ownerId].salesUsd += usd;
             if (isNew) byOwner[l.ownerId].newSalesUsd += usd;
             else byOwner[l.ownerId].crossSalesUsd += usd;
+            // Team-only split: what agents and managers brought in, never
+            // admin-owned deals, whoever is looking.
+            if (!ownerIsAdmin) {
+              teamSalesUsd += usd;
+              if (isNew) { teamNewSalesUsd += usd; teamNewCount++; }
+              else { teamCrossSalesUsd += usd; teamCrossCount++; }
+            }
             if (!adminOwned) {
               salesThisMonthUsd += usd;
               if (isNew) { newSalesUsd += usd; newSalesCount++; }
@@ -560,6 +576,19 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         leadsAssignedMonth: leadsAssignedMonthTotal,
         leadsPresalesMonth: leadsPresalesMonth,
         leadsColdMonth: leadsColdMonth,
+        // Admin-only breakdown. `salesThisMonthUsd` above is everything the
+        // viewer can see; these are the same figures counting only deals owned
+        // by agents and managers, so an admin can separate real team
+        // performance from their own house/test accounts. Null for non-admins,
+        // who never see admin-owned money in the first place.
+        teamSalesUsd: viewerIsAdmin ? Math.round(teamSalesUsd) : null,
+        teamNewSalesUsd: viewerIsAdmin ? Math.round(teamNewSalesUsd) : null,
+        teamCrossSalesUsd: viewerIsAdmin ? Math.round(teamCrossSalesUsd) : null,
+        teamNewSalesCount: viewerIsAdmin ? teamNewCount : null,
+        teamCrossSalesCount: viewerIsAdmin ? teamCrossCount : null,
+        teamAwaitingUsd: viewerIsAdmin ? Math.round(teamAwaitingUsd) : null,
+        adminSalesUsd: viewerIsAdmin ? Math.round(salesThisMonthUsd - teamSalesUsd) : null,
+        teamCompanyPct: viewerIsAdmin && companyTarget > 0 ? Math.round((teamSalesUsd / companyTarget) * 100) : null,
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList },
       me: meRow ? {

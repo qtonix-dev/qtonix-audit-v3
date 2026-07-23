@@ -312,21 +312,40 @@ function DemoModeSettings({ say }) {
 
         {cfg.enabled && url && (
           <div className="mt-4 rounded-lg bg-slate-50 border border-slate-100 p-3">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Training URL</div>
-            <div className="flex items-center gap-2">
-              <input readOnly value={url} className={inputCls + ' font-mono text-xs'} onFocus={(e) => e.target.select()} />
-              <Btn size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(url); say && say('URL copied', 'good'); }}>Copy</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => window.open(url, '_blank')}>Open</Btn>
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">
+              Training URLs — one per seat
             </div>
+            <p className="text-[11px] text-slate-400 mb-2">
+              Give agents the agent link so the demo matches what they'll actually see on day one.
+              The manager and admin links show the wider views.
+            </p>
+            {[
+              ['agent', 'Agent', 'Own leads and the agent leaderboard'],
+              ['manager', 'Manager', "Their team's leads and figures"],
+              ['admin', 'Admin', 'Everything, company-wide'],
+            ].map(([role, label, hint]) => {
+              const roleUrl = `${url}?role=${role}`;
+              return (
+                <div key={role} className="mb-2 last:mb-0">
+                  <div className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 text-[11px] font-bold text-slate-600">{label}</span>
+                    <input readOnly value={roleUrl} className={inputCls + ' font-mono text-[11px]'} onFocus={(e) => e.target.select()} />
+                    <Btn size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(roleUrl); say && say(`${label} URL copied`, 'good'); }}>Copy</Btn>
+                    <Btn size="sm" variant="ghost" onClick={() => window.open(roleUrl, '_blank')}>Open</Btn>
+                  </div>
+                  <div className="text-[10px] text-slate-400 ml-[4.5rem] mt-0.5">{hint}</div>
+                </div>
+              );
+            })}
             {since && <div className="text-[10px] text-slate-400 mt-2">Live since {since}</div>}
             <Note tone="warn">
-              Anyone with this link can open the demo without logging in. It only ever shows made-up
+              Anyone with a link can open the demo without logging in. It only ever shows made-up
               data — never a real client — but switch it off when the training session is over.
             </Note>
             <div className="mt-2">
               <Btn size="sm" variant="ghost" disabled={busy}
-                onClick={() => { if (confirm('Regenerate the URL? The current link will stop working immediately.')) save({ regenerate: true }); }}>
-                ↻ Regenerate URL
+                onClick={() => { if (confirm('Regenerate the URL? All current links will stop working immediately.')) save({ regenerate: true }); }}>
+                ↻ Regenerate URLs
               </Btn>
             </div>
           </div>

@@ -15,7 +15,7 @@ function Avatar({ name, src, size = 28 }) {
 }
 
 // Metric card in achieved/target (%) format with a $0 motivational message.
-function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational, pipelineNote, awaitingNote, remainingLabel }) {
+function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivational, pipelineNote, awaitingNote, remainingLabel, splitNote }) {
   const u = unit || '$';
   const fmt = u === '$' ? usd : (n) => `${n}`;
   const has = target > 0;
@@ -45,6 +45,20 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
         </>
       )}
       {!has && <div className="text-[11px] text-slate-400 mt-1.5">No target set</div>}
+      {/* Admin-only: separates what the team brought in from admin-owned deals,
+          so house/test accounts don't get mistaken for team performance. */}
+      {splitNote && (
+        <div className="mt-2 pt-2 border-t border-slate-200/70 grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Agents &amp; managers</div>
+            <div className="text-sm font-extrabold text-[#050A1F]">{splitNote.team}</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Admin-owned</div>
+            <div className="text-sm font-extrabold text-slate-400">{splitNote.admin}</div>
+          </div>
+        </div>
+      )}
       {awaitingNote && <div className="text-[11px] font-semibold text-amber-600 mt-1">⏳ {awaitingNote} won — counts once collected</div>}
       {pipelineNote && <div className="text-[11px] font-semibold text-indigo-500 mt-1">💼 {pipelineNote} in pipeline</div>}
       {cta && <div className="text-xs font-bold mt-2" style={{ color: accent }}>{cta} →</div>}
@@ -306,6 +320,7 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
           achieved={m.scopeAchieved} target={m.scopeTarget} accent="#16A34A"
           motivational="No sales collected yet — the first one is waiting! 🚀"
           remainingLabel
+          splitNote={isAdmin && m.teamSalesUsd != null ? { team: usd(m.teamSalesUsd), admin: usd(m.adminSalesUsd || 0) } : null}
           pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} />
         <PlainStat label="Converted this month" value={m.convertedThisMonth}
           sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}

@@ -66,11 +66,20 @@ export const DEMO_TOKEN = (() => {
   return m ? m[1] : null;
 })();
 export const IS_DEMO = !!DEMO_TOKEN;
+// Which seat the demo is being shown from: ?role=agent|manager|admin.
+export const DEMO_ROLE = (() => {
+  if (typeof window === 'undefined') return 'manager';
+  const r = new URLSearchParams(window.location.search).get('role');
+  return ['agent', 'manager', 'admin'].includes(r) ? r : 'manager';
+})();
 
 export const api = async (path, opts = {}) => {
   const token = localStorage.getItem('qtx_token');
   if (DEMO_TOKEN) {
-    const res = await fetch(`${API_BASE}/api/demo-app/${DEMO_TOKEN}${path.split('?')[0]}${path.includes('?') ? '?' + path.split('?')[1] : ''}`, {
+    const [base, qs] = path.split('?');
+    const params = new URLSearchParams(qs || '');
+    params.set('role', DEMO_ROLE); // keeps server-side scoping in step with the UI
+    const res = await fetch(`${API_BASE}/api/demo-app/${DEMO_TOKEN}${base}?${params.toString()}`, {
       ...opts,
       headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
     });
@@ -770,9 +779,19 @@ export default function App() {
       {/* Unmissable reminder that none of this is real, so a training figure is
           never mistaken for a live client number. */}
       {IS_DEMO && (
-        <div className="text-white text-center text-[11px] font-bold py-1.5 px-4"
+        <div className="text-white text-[11px] font-bold py-1.5 px-4 flex items-center justify-center gap-3 flex-wrap"
           style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-          DEMO / TRAINING MODE — sample data only. Nothing you change here is saved.
+          <span>DEMO / TRAINING MODE — sample data only. Nothing you change here is saved.</span>
+          <span className="flex items-center gap-1">
+            <span className="opacity-80">Viewing as</span>
+            {['agent', 'manager', 'admin'].map((r) => (
+              <button key={r}
+                onClick={() => { window.location.search = `?role=${r}`; }}
+                className={`rounded px-2 py-0.5 capitalize transition-colors ${
+                  DEMO_ROLE === r ? 'bg-white text-[#FF4500]' : 'bg-white/20 hover:bg-white/30'
+                }`}>{r}</button>
+            ))}
+          </span>
         </div>
       )}
       <header className="bg-[#050A1F] border-b border-white/10">

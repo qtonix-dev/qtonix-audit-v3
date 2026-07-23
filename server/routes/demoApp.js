@@ -43,12 +43,33 @@ router.use(async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/** The synthetic identity a demo visitor is "logged in" as. */
-const DEMO_USER = {
-  _id: 'demo_user_admin', id: 9999, name: 'Demo Manager', role: 'manager',
-  email: 'demo@example.com', team: 'Bhubaneswar', shift: 'Morning',
-  active: true, targetUsd: 12000, demo: true,
+/**
+ * The synthetic identity a demo visitor is "logged in" as.
+ *
+ * The role is switchable (?role=agent|manager|admin) so one link can show the
+ * product from any seat: an agent sees only their own leads and the agent
+ * leaderboard, a manager sees their team, an admin sees everything. Trainers
+ * hand agents the ?role=agent link so what they're shown matches what they'll
+ * actually get on day one.
+ */
+const DEMO_USERS = {
+  agent: {
+    _id: 'demo_user_agent', id: 9001, name: 'Priya Demo', role: 'agent',
+    email: 'priya@demo.example.com', team: 'Bhubaneswar', shift: 'Morning',
+    active: true, targetUsd: 6000, demo: true,
+  },
+  manager: {
+    _id: 'demo_user_manager', id: 9010, name: 'Karan Demo', role: 'manager',
+    email: 'karan@demo.example.com', team: 'Bhubaneswar', shift: 'Morning',
+    active: true, targetUsd: 12000, demo: true,
+  },
+  admin: {
+    _id: 'demo_user_admin', id: 9999, name: 'Demo Admin', role: 'admin',
+    email: 'admin@demo.example.com', team: 'Bhubaneswar', shift: 'Morning',
+    active: true, targetUsd: 12000, demo: true,
+  },
 };
+const demoUser = (req) => DEMO_USERS[String(req.query.role || '').toLowerCase()] || DEMO_USERS.manager;
 
 const paginate = (items, req) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -61,7 +82,7 @@ const paginate = (items, req) => {
 };
 
 // --- identity ---------------------------------------------------------------
-router.get('/me', (req, res) => res.json({ user: DEMO_USER, demo: true }));
+router.get('/me', (req, res) => res.json({ user: demoUser(req), demo: true }));
 
 // --- branding ---------------------------------------------------------------
 router.get('/settings/public', (req, res) => {
@@ -72,9 +93,24 @@ router.get('/settings/public', (req, res) => {
   });
 });
 
+/**
+ * Restrict the fabricated book to what the current seat would really see:
+ * an agent only their own leads, a manager their team's, an admin everything.
+ * Without this an agent demo would show the whole company and misrepresent
+ * what they'll get on their first day.
+ */
+function scoped(req, list) {
+  const u = demoUser(req);
+  if (u.role === 'admin') return list;
+  if (u.role === 'manager') return list.filter((l) => l.ownerTeam === u.team);
+  return list.filter((l) => l.ownerId === u.id);
+}
+
 // --- reports ----------------------------------------------------------------
 router.get('/reports', (req, res) => {
+  const u = demoUser(req);
   let items = demoData.reports();
+  if (u.role === 'agent') items = items.filter((r) => r.agentId === u.id);
   const q = (req.query.q || '').toLowerCase();
   if (q) items = items.filter((r) => (r.businessName + r.domain).toLowerCase().includes(q));
   res.json(paginate(items, req));
@@ -88,7 +124,7 @@ router.get('/reports/:id', (req, res) => {
 
 // --- leads ------------------------------------------------------------------
 router.get('/leads', (req, res) => {
-  let items = demoData.leads().filter((l) => l.status !== 'converted');
+  let items = scoped(req, demoData.leads()).filter((l) => l.status !== 'converted');
   const q = (req.query.q || '').toLowerCase();
   if (q) items = items.filter((l) => (l.firstName + l.lastName + l.website).toLowerCase().includes(q));
   if (req.query.status) items = items.filter((l) => l.status === req.query.status);
@@ -96,8 +132,8 @@ router.get('/leads', (req, res) => {
 });
 
 router.get('/leads/converted', (req, res) => {
-  const items = demoData.leads().filter((l) => l.status === 'converted');
-  res.json(paginate(items, req));
+  const items = scoped(req, demoData.leads()).filter((l) => l.status === 'converted');
+  res.json({ ...paginate(items, req), period: String(req.query.period || 'all') });
 });
 
 router.get('/leads/deals/board', (req, res) => {
@@ -123,7 +159,12 @@ router.get('/leads/deals/board', (req, res) => {
 // NOTE: these literal paths MUST be declared before '/leads/:id' below, or
 // Express matches the wildcard first and treats "config"/"dashboard" as a lead
 // id, returning 404.
-router.get('/leads/config', (req, res) => res.json({ config: req.demoSettings.crmConfig, demo: true }));
+router.get('/leads/config', (req, res) => res.json({
+  config: req.demoSettings.crmConfig,
+  // The screens build owner/assignee dropdowns from this list.
+  owners: demoData.users(),
+  demo: true,
+}));
 
 /** Money figures derived from the same fabricated deals, so totals reconcile. */
 function moneyRollup() {
@@ -139,6 +180,7 @@ function moneyRollup() {
 }
 
 router.get('/leads/dashboard', (req, res) => {
+  const viewer = demoUser(req);
   const m = moneyRollup();
   const staff = demoData.users();
   const agents = staff.filter((u) => u.role === 'agent');
@@ -186,9 +228,11 @@ router.get('/leads/dashboard', (req, res) => {
   const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
   const today = new Date().getDate();
 
+  const myRow = leaderboard.find((r) => r.ownerId === viewer.id) || leaderboard[0] || null;
+
   res.json({
     demo: true,
-    role: 'manager',
+    role: viewer.role,
     metrics: {
       totalLeads: leads.length,
       generatedToday: 3, assignedToday: 2, untouched: 4,
@@ -213,11 +257,11 @@ router.get('/leads/dashboard', (req, res) => {
       untouched: leads.slice(5, 9).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
     },
     me: {
-      salesUsd: top ? top.salesUsd : 0, salesTarget: 12000,
-      pct: top ? Math.min(100, Math.round((top.salesUsd / 12000) * 100)) : 0,
-      remaining: top ? Math.max(0, 12000 - top.salesUsd) : 12000,
+      salesUsd: myRow ? myRow.salesUsd : 0, salesTarget: viewer.targetUsd || 6000,
+      pct: myRow ? Math.min(100, Math.round((myRow.salesUsd / (viewer.targetUsd || 6000)) * 100)) : 0,
+      remaining: myRow ? Math.max(0, (viewer.targetUsd || 6000) - myRow.salesUsd) : (viewer.targetUsd || 6000),
       transfersToday: 3, transferDailyTarget: 5,
-      newSalesUsd: top ? top.newSalesUsd : 0, crossSalesUsd: top ? top.crossSalesUsd : 0,
+      newSalesUsd: myRow ? myRow.newSalesUsd : 0, crossSalesUsd: myRow ? myRow.crossSalesUsd : 0,
       pipelineUsd: 6200, leadsGeneratedMonth: 18, leadsGeneratedToday: 2, leadGenTarget: 30,
     },
     leaderboard,
@@ -305,25 +349,51 @@ router.get('/admin/settings', (req, res) => {
 });
 
 // Wildcard last, so it only catches genuine lead ids.
+// NOTE: the detail screen reads res.lead and res.reports — returning the lead
+// object bare leaves the page stuck on "Loading…".
 router.get('/leads/:id', (req, res) => {
   const l = demoData.leads().find((x) => x._id === req.params.id);
   if (!l) return res.status(404).json({ error: 'Not found.' });
-  res.json(l);
+  const reports = demoData.reports().filter((r) => r.leadId === l._id);
+  res.json({ lead: l, reports });
 });
 
-router.get('/admin/users', (req, res) => res.json({ items: demoData.users(), total: demoData.users().length }));
+// The real endpoint responds with a bare array (the client does setUsers(res)),
+// so wrapping it in {items} would break every screen that reads it.
+router.get('/admin/users', (req, res) => res.json(demoData.users()));
 
 // --- analytics --------------------------------------------------------------
 
 router.get('/analytics', (req, res) => res.json({ demo: true, ...moneyRollup(), leaderboard: [] }));
 
 /**
- * Writes: acknowledged, never stored. Returning the payload keeps optimistic UI
- * happy so the trainee sees buttons respond, while a refresh restores the
- * pristine sandbox.
+ * Writes: acknowledged, never stored.
+ *
+ * The real lead mutation endpoints (notes, activities, deals, installments)
+ * all respond with the FULL updated lead, and the screens feed that straight
+ * back into state. So a bare {ok:true} would blank the page the moment a
+ * trainee added a note. We therefore echo the matching demo lead — the click
+ * feels alive, the UI stays coherent, and a refresh restores the sandbox.
  */
 router.all(/.*/, (req, res) => {
   if (req.method === 'GET') return res.status(404).json({ error: 'Not available in demo.' });
+
+  const m = req.path.match(/^\/leads\/(demo_lead_\d+)/);
+  if (m) {
+    const lead = demoData.leads().find((l) => l._id === m[1]);
+    if (lead) {
+      // Surface the note/deal the trainee just typed so the action visibly
+      // registers, even though nothing is persisted.
+      const b = req.body || {};
+      if (b.text && /\/notes/.test(req.path)) {
+        lead.notes = [...(lead.notes || []), {
+          id: `n_demo_${Date.now()}`, text: String(b.text).slice(0, 2000),
+          author: 'Demo Manager', time: new Date().toISOString(),
+        }];
+      }
+      return res.json(lead);
+    }
+  }
   res.json({ ok: true, demo: true, note: 'Demo mode — changes are not saved.', ...(req.body || {}) });
 });
 
