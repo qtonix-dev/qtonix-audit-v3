@@ -323,6 +323,7 @@ function DemoModeSettings({ say }) {
               ['agent', 'Agent', 'Own leads and the agent leaderboard'],
               ['manager', 'Manager', "Their team's leads and figures"],
               ['admin', 'Admin', 'Everything, company-wide'],
+              ['leadmanager', 'Lead Manager', 'Lead intake dashboard and pre-sales team performance'],
             ].map(([role, label, hint]) => {
               const roleUrl = `${url}?role=${role}`;
               return (
