@@ -68,6 +68,10 @@ const DEMO_USERS = {
     email: 'admin@demo.example.com', team: 'Bhubaneswar', shift: 'Morning',
     active: true, targetUsd: 12000, demo: true,
   },
+  leadmanager: {
+    _id: 'demo_user_lm', id: 9020, name: 'Riya Demo', role: 'leadmanager',
+    email: 'riya@demo.example.com', active: true, demo: true,
+  },
 };
 const demoUser = (req) => DEMO_USERS[String(req.query.role || '').toLowerCase()] || DEMO_USERS.manager;
 
@@ -300,6 +304,68 @@ router.get('/leads/dashboard', (req, res) => {
 // Endpoints the shell polls or loads on navigation. Without these the demo
 // throws on boot and renders a blank page.
 router.get('/leads/reminders/count', (req, res) => res.json({ due: 3, items: [] }));
+
+// Recent-wins banner: one fabricated celebration so trainees see the feature.
+router.get('/leads/recent-wins', (req, res) => {
+  const now = Date.now();
+  const wins = [
+    { id: 'w1', ownerId: 9001, ownerName: 'Priya Demo', avatar: null, amountUsd: 2000, currency: 'USD', amount: 2000, dealName: 'Brightpath Dental — Complete Digital Marketing', at: new Date(now - 8 * 60000).toISOString() },
+    { id: 'w2', ownerId: 9002, ownerName: 'Rohan Demo', avatar: null, amountUsd: 1200, currency: 'USD', amount: 1200, dealName: 'Verde Landscaping — Website Design', at: new Date(now - 35 * 60000).toISOString() },
+  ];
+  res.json({ wins, latest: wins[0] });
+});
+
+// Lead manager dashboard, fabricated so the whole screen is populated.
+router.get('/leads/lm-dashboard', (req, res) => {
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const team = ['Amit Presales', 'Sara Presales', 'Vikram Presales', 'Neha Presales'];
+  const recentLeads = demoData.leads().slice(0, 5).map((l, i) => ({
+    _id: l._id, name: `${l.firstName} ${l.lastName}`, website: l.website,
+    ownerName: l.ownerName, source: 'Pre-Sales', createdAt: new Date(Date.now() - i * 3600000).toISOString(),
+    generatedBy: team[i % team.length],
+  }));
+  const recentDrafts = demoData.leads().slice(5, 9).map((l, i) => ({
+    _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName,
+    firstDraftAt: new Date(Date.now() - i * 5400000).toISOString(),
+    preview: 'Hi, thanks so much for getting in touch about your digital marketing needs. I wanted to introduce myself and...',
+  }));
+  res.json({
+    demo: true, role: 'leadmanager',
+    metrics: { assignedToday: 6, assignedMonth: 84, totalEntered: 312, draftsReceived: 11, teamToday: 9, teamMonth: 148 },
+    recentLeads, recentDrafts,
+    assignmentTable: demoData.users().filter((u) => u.role !== 'leadmanager').map((u, i) => ({
+      ownerId: u.id, ownerName: u.name, thisMonth: 12 - i * 2, total: 60 - i * 8,
+    })),
+    teamPerformance: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
+    teamLeaderboard: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
+    trend: Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, leads: i < now.getDate() ? 3 + ((i * 5) % 8) : 0 })),
+    teamConfigured: team.length,
+  });
+});
+
+router.get('/leads/drafts-received', (req, res) => {
+  res.json({
+    items: demoData.leads().slice(5, 12).map((l, i) => ({
+      _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website,
+      firstDraftAt: new Date(Date.now() - i * 5400000).toISOString(),
+      firstDraft: 'Hi, thanks so much for getting in touch about your digital marketing needs. I wanted to introduce myself as your point of contact and share how we could help improve your online visibility...',
+      firstReplyDoneAt: i % 2 ? new Date().toISOString() : null,
+    })),
+  });
+});
+
+router.get('/leads/awaiting-draft', (req, res) => {
+  const items = demoData.leads().slice(0, 3).map((l, i) => ({
+    leadId: l._id, leadName: `${l.firstName} ${l.lastName}`, website: l.website,
+    ownerId: l.ownerId, ownerName: l.ownerName,
+    assignedAt: new Date(Date.now() - (i + 1) * 10 * 3600000).toISOString(),
+    hoursWaiting: (i + 1) * 10, overdue: i === 2, mode: '',
+    reminderRequestedAt: i === 0 ? new Date().toISOString() : null,
+    reminderRequestedBy: i === 0 ? 'Riya Demo' : '',
+  }));
+  res.json({ total: items.length, overdue: items.filter((x) => x.overdue).length, items });
+});
 
 // Missed commitments. Fabricated so the panel is visible during training.
 router.get('/leads/missed-activities', (req, res) => {

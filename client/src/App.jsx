@@ -70,7 +70,7 @@ export const IS_DEMO = !!DEMO_TOKEN;
 export const DEMO_ROLE = (() => {
   if (typeof window === 'undefined') return 'manager';
   const r = new URLSearchParams(window.location.search).get('role');
-  return ['agent', 'manager', 'admin'].includes(r) ? r : 'manager';
+  return ['agent', 'manager', 'admin', 'leadmanager'].includes(r) ? r : 'manager';
 })();
 
 export const api = async (path, opts = {}) => {
@@ -784,12 +784,12 @@ export default function App() {
           <span>DEMO / TRAINING MODE — sample data only. Nothing you change here is saved.</span>
           <span className="flex items-center gap-1">
             <span className="opacity-80">Viewing as</span>
-            {['agent', 'manager', 'admin'].map((r) => (
+            {['agent', 'manager', 'admin', 'leadmanager'].map((r) => (
               <button key={r}
                 onClick={() => { window.location.search = `?role=${r}`; }}
-                className={`rounded px-2 py-0.5 capitalize transition-colors ${
+                className={`rounded px-2 py-0.5 transition-colors ${
                   DEMO_ROLE === r ? 'bg-white text-[#FF4500]' : 'bg-white/20 hover:bg-white/30'
-                }`}>{r}</button>
+                }`}>{r === 'leadmanager' ? 'Lead Mgr' : r.charAt(0).toUpperCase() + r.slice(1)}</button>
             ))}
           </span>
         </div>

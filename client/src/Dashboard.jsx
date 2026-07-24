@@ -265,7 +265,15 @@ function Leaderboard({ board, user, maxSales }) {
   );
 }
 
-export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, mode = 'overview', onModeChange }) {
+export default function Dashboard(props) {
+  // Lead managers coordinate leads rather than sell, so they get an entirely
+  // different home screen. Split at the top level (not inside one component)
+  // so neither dashboard's hooks run for the other role.
+  if (props.user.role === 'leadmanager') return <LeadManagerDashboard user={props.user} onViewToday={props.onViewToday} />;
+  return <SalesDashboard {...props} />;
+}
+
+function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, mode = 'overview', onModeChange }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [showAwaiting, setShowAwaiting] = useState(false);
@@ -279,6 +287,16 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
   // Leads where a Lead Manager has asked the owner for a first-reply draft.
   const [draftRequests, setDraftRequests] = useState(null);
   useEffect(() => { api('/leads/awaiting-draft').then(setDraftRequests).catch(() => {}); }, []);
+  // Recent sales, for the celebration banner. Polled so a win lights up other
+  // people's dashboards without a refresh.
+  const [wins, setWins] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api('/leads/recent-wins').then((r) => { if (alive) setWins(r); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
 
@@ -302,6 +320,10 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
 
   return (
     <div className="space-y-5">
+      {/* Sales celebration — the most recent win in the last hour, shown to
+          everyone so the whole floor sees it. Rotates as new sales land. */}
+      {wins && wins.latest && <SalesCelebration latest={wins.latest} others={wins.wins} />}
+
       {/* Greeting, with the view switcher on the right. Managers and admins can
           flip between the operational overview and the analytics view; agents
           only ever see the overview, so the switcher is hidden for them. */}
@@ -538,6 +560,271 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LEAD MANAGER DASHBOARD
+// A coordination screen: what was entered and assigned, drafts coming back,
+// and how the pre-sales team (names, not logins) is performing.
+// ---------------------------------------------------------------------------
+function LeadManagerDashboard({ user, onViewToday }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [showDrafts, setShowDrafts] = useState(false);
+  useEffect(() => { api('/leads/lm-dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
+
+  if (err) return <div className="text-red-500 text-sm">{err}</div>;
+  if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
+
+  const m = data.metrics;
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+  const fmtTime = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const maxTrend = Math.max(1, ...data.trend.map((t) => t.leads));
+  const maxMonth = Math.max(1, ...data.teamLeaderboard.map((t) => t.month));
+
+  const Stat = ({ label, value, sub, accent }) => (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-3xl font-extrabold mt-1" style={{ color: accent || '#050A1F' }}>{value}</div>
+      {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Welcome, {user.name.split(' ')[0]}</h1>
+        <div className="text-sm text-slate-400">Lead intake and pre-sales team performance.</div>
+      </div>
+
+      {/* Blocks 1, 2 + throughput */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Stat label="Leads assigned today" value={m.assignedToday} accent="#FF6A00" />
+        <Stat label="Assigned this month" value={m.assignedMonth} />
+        <Stat label="Team leads today" value={m.teamToday} sub={`${m.teamMonth} this month`} accent="#16A34A" />
+        <Stat label="Drafts received" value={m.draftsReceived} sub="from lead owners" accent="#2563EB" />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        {/* Block 3: today's / recent leads */}
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Recently added leads</div>
+          {data.recentLeads.length === 0 ? (
+            <div className="text-slate-300 text-sm py-6 text-center">No leads entered yet.</div>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {data.recentLeads.map((l) => (
+                <div key={l._id} onClick={() => onViewToday && onViewToday(l._id)}
+                  className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-[#050A1F] truncate">{l.name}</div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {l.source || '—'}{l.generatedBy ? ` · ${l.generatedBy}` : ''}{l.ownerName ? ` → ${l.ownerName}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 shrink-0">{fmtDate(l.createdAt)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Block 4: 1st drafts received */}
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-bold text-[#050A1F]">1st drafts received</div>
+            {data.recentDrafts.length > 0 && (
+              <button onClick={() => setShowDrafts(true)} className="text-[11px] font-bold text-[#FF4500] hover:underline">View all</button>
+            )}
+          </div>
+          {data.recentDrafts.length === 0 ? (
+            <div className="text-slate-300 text-sm py-6 text-center">No drafts submitted yet.</div>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {data.recentDrafts.map((l) => (
+                <div key={l._id} onClick={() => onViewToday && onViewToday(l._id)}
+                  className="py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-bold text-[#050A1F] truncate">{l.name}</div>
+                    <div className="text-[11px] text-slate-400 shrink-0">{fmtTime(l.firstDraftAt)}</div>
+                  </div>
+                  <div className="text-[11px] text-slate-500 truncate">{l.preview}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Block 7: daily lead-gen trend */}
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Lead trends · this month</div>
+        {m.teamMonth === 0 ? (
+          <div className="text-slate-300 text-sm py-8 text-center">No pre-sales leads generated yet this month.</div>
+        ) : (
+          <svg viewBox={`0 0 ${Math.max(620, data.trend.length * 20)} 180`} className="w-full" style={{ height: 180 }}>
+            <line x1="0" x2={data.trend.length * 20} y1="150" y2="150" stroke="#E2E8F0" />
+            {data.trend.map((t, i) => {
+              const x = i * 20 + 4;
+              const h = (t.leads / maxTrend) * 130;
+              return (
+                <g key={t.day}>
+                  <rect x={x} y={150 - h} width="12" height={Math.max(0, h)} rx="2" fill="#FF6A00" />
+                  {t.leads > 0 && <text x={x + 6} y={150 - h - 4} fontSize="9" textAnchor="middle" fill="#334155" fontWeight="bold">{t.leads}</text>}
+                  {t.day % 5 === 0 && <text x={x + 6} y="166" fontSize="9" textAnchor="middle" fill="#94A3B8">{t.day}</text>}
+                </g>
+              );
+            })}
+          </svg>
+        )}
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        {/* Block 5: assignment table by owner */}
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Leads assigned by owner</div>
+          {data.assignmentTable.length === 0 ? (
+            <div className="text-slate-300 text-sm py-6 text-center">Nothing assigned yet.</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                  <th className="text-left py-2">Owner</th>
+                  <th className="text-right py-2">This month</th>
+                  <th className="text-right py-2">To date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.assignmentTable.map((o) => (
+                  <tr key={o.ownerId} className="border-b border-slate-50">
+                    <td className="py-2 font-bold text-slate-600">{o.ownerName}</td>
+                    <td className="py-2 text-right text-slate-500">{o.thisMonth}</td>
+                    <td className="py-2 text-right font-bold text-[#050A1F]">{o.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Blocks 6 + 8: team performance and leaderboard */}
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Pre-sales team · this month</div>
+          {data.teamConfigured === 0 ? (
+            <div className="text-slate-300 text-sm py-6 text-center">
+              No pre-sales team members configured. An admin can add them under CRM fields.
+            </div>
+          ) : data.teamLeaderboard.length === 0 ? (
+            <div className="text-slate-300 text-sm py-6 text-center">No leads generated by the team yet this month.</div>
+          ) : (
+            <div className="space-y-2">
+              {data.teamLeaderboard.map((t, i) => (
+                <div key={t.name} className="flex items-center gap-3">
+                  <span className={`w-5 text-center text-xs font-extrabold ${i === 0 ? 'text-[#FF4500]' : 'text-slate-300'}`}>{i + 1}</span>
+                  <span className="text-sm font-bold text-slate-600 w-32 truncate">{t.name}</span>
+                  <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${(t.month / maxMonth) * 100}%`, background: i === 0 ? '#FF6A00' : '#94A3B8' }} />
+                  </div>
+                  <span className="text-xs font-bold text-[#050A1F] w-16 text-right">{t.month} <span className="text-slate-300 font-normal">/ {t.today} today</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showDrafts && <DraftsReceivedModal onClose={() => setShowDrafts(false)} onOpen={onViewToday} />}
+    </div>
+  );
+}
+
+// The full drafts-received list behind the dashboard's "view all".
+function DraftsReceivedModal({ onClose, onOpen }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { api('/leads/drafts-received').then(setData).catch(() => setData({ items: [] })); }, []);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
+          <div className="text-base font-extrabold text-[#050A1F]">All drafts received</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="px-6 py-4">
+          {!data ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
+            : data.items.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No drafts received yet.</div>
+            : (
+              <div className="space-y-3">
+                {data.items.map((l) => (
+                  <div key={l._id} className="rounded-lg border border-slate-100 p-3 cursor-pointer hover:border-orange-200"
+                    onClick={() => { onClose(); onOpen && onOpen(l._id); }}>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-bold text-[#050A1F]">{l.name}</div>
+                      <div className="text-[11px] text-slate-400">
+                        {l.firstReplyDoneAt ? '✓ replied' : 'awaiting send'} · {new Date(l.firstDraftAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mb-1">Owner: {l.ownerName}</div>
+                    <div className="text-[12px] text-slate-600 whitespace-pre-wrap line-clamp-3">{l.firstDraft}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SALES CELEBRATION
+// A congratulatory banner for the most recent sale, with a compact "recent
+// wins" strip beneath so a sale from 40 minutes ago is still visible to
+// someone who just logged in. The banner naturally rotates as newer wins
+// arrive (the parent re-polls every minute).
+// ---------------------------------------------------------------------------
+function SalesCelebration({ latest, others }) {
+  const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
+  const first = (latest.ownerName || 'Someone').split(' ')[0];
+  const ago = (iso) => {
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 min ago';
+    return `${mins} min ago`;
+  };
+  const initials = (name) => (name || '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+  const older = (others || []).filter((w) => w.id !== latest.id).slice(0, 4);
+
+  return (
+    <div className="rounded-2xl overflow-hidden shadow-sm border border-orange-200">
+      <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FFF7ED,#FFEDD5)' }}>
+        <div className="text-3xl animate-bounce" style={{ animationDuration: '1.5s' }}>🎉</div>
+        {latest.avatar ? (
+          <img src={latest.avatar} alt={latest.ownerName} className="w-12 h-12 rounded-full object-cover border-2 border-white shadow" />
+        ) : (
+          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-extrabold shadow border-2 border-white"
+            style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{initials(latest.ownerName)}</div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-extrabold text-[#050A1F]">
+            Congratulations {first} on the sale of {usd(latest.amountUsd)}! 🚀
+          </div>
+          <div className="text-[11px] text-slate-500 truncate">
+            {latest.dealName}{latest.currency !== 'USD' ? ` · ${latest.currency} ${Number(latest.amount).toLocaleString()}` : ''} · {ago(latest.at)}
+          </div>
+        </div>
+      </div>
+      {older.length > 0 && (
+        <div className="bg-white px-5 py-2 flex items-center gap-4 overflow-x-auto">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 shrink-0">Also today</span>
+          {older.map((w) => (
+            <span key={w.id} className="text-[11px] text-slate-500 shrink-0">
+              <b className="text-slate-700">{(w.ownerName || '').split(' ')[0]}</b> {usd(w.amountUsd)} · {ago(w.at)}
+            </span>
+          ))}
         </div>
       )}
     </div>
