@@ -308,6 +308,19 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
   );
 }
 
+/**
+ * First-reply state for a pre-sales lead: '' (not applicable or done),
+ * 'pending' (inside the 24-hour window) or 'overdue' (past it).
+ */
+function draftState(l) {
+  if (!/pre-?sales/i.test(String(l.leadSource || ''))) return '';
+  if (l.firstReplyDoneAt) return '';
+  const from = l.assignedAt || l.createdAt;
+  if (!from) return '';
+  const hours = (Date.now() - new Date(from).getTime()) / 3600000;
+  return hours >= 24 ? 'overdue' : 'pending';
+}
+
 export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
@@ -318,6 +331,26 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   const [ownerFilter, setOwnerFilter] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Streams the CSV from the server rather than building it here, so the row
+  // scoping (a lead manager only gets what they entered) can't be sidestepped.
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const token = localStorage.getItem('qtx_token');
+      const res = await fetch(`${API_BASE}/api/leads/export`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Export failed.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message); }
+    setExporting(false);
+  };
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(20);
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
@@ -390,9 +423,16 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
             {Array.from(new Set(items.map((l) => l.country).filter(Boolean))).sort().map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
-          {user.role === 'admin' && (
-            <button onClick={() => setImporting(true)} title="Import leads from CSV"
-              className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50"><Icon.Upload size={16} /></button>
+          {/* Getting leads in and out of the system belongs to admins and lead
+              managers. Sellers work the leads they're given. */}
+          {(user.role === 'admin' || user.role === 'leadmanager') && (
+            <>
+              <button onClick={() => setImporting(true)} title="Import leads from CSV"
+                className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50"><Icon.Upload size={16} /></button>
+              <button onClick={exportCsv} disabled={exporting}
+                title={user.role === 'leadmanager' ? 'Download the leads you entered' : 'Download leads as CSV'}
+                className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"><Icon.Download size={16} /></button>
+            </>
           )}
           <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ New lead</button>
         </div>
@@ -417,6 +457,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
                 <th className="text-left px-4 py-3">Last activity</th>
+                {user.role === 'leadmanager' && <th className="px-4 py-3 text-right">Draft</th>}
                 {user.role === 'admin' && <th className="px-4 py-3"></th>}
               </tr>
             </thead>
@@ -439,6 +480,20 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                             <span className="truncate">{fullName(l)}</span>
                             {openDeals.length > 0 && <span title={`${openDeals.length} open deal(s)`} className="text-[10px]">💰</span>}
                             {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱{stale.days}d</span>}
+                            {/* Pre-sales first-reply state, so the list shows
+                                who is waiting on what without opening a lead. */}
+                            {draftState(l) === 'overdue' && (
+                              <span title="First reply is more than 24 hours overdue"
+                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600">DRAFT OVERDUE</span>
+                            )}
+                            {draftState(l) === 'pending' && (
+                              <span title="First reply still outstanding"
+                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700">DRAFT DUE</span>
+                            )}
+                            {l.reminderRequestedAt && !l.firstReplyDoneAt && (
+                              <span title={`Draft requested by ${l.reminderRequestedBy}`}
+                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700">REMINDED</span>
+                            )}
                           </div>
                           <div className="text-[11px] text-slate-400 truncate">{l.website || '—'}</div>
                         </div>
@@ -460,6 +515,27 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
+                    {/* Lead managers chase the first-reply draft from here. */}
+                    {user.role === 'leadmanager' && (
+                      <td className="px-4 py-3 text-right">
+                        {draftState(l) && !l.reminderRequestedAt && (
+                          <button title="Ask the owner for the first-reply draft"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await api(`/leads/${l._id}/request-reminder`, { method: 'POST', body: JSON.stringify({}) });
+                                load();
+                              } catch (err) { alert(err.message); }
+                            }}
+                            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:border-orange-300 hover:text-[#FF4500] whitespace-nowrap">
+                            Request draft
+                          </button>
+                        )}
+                        {l.reminderRequestedAt && !l.firstReplyDoneAt && (
+                          <span className="text-[10px] font-bold text-purple-600">Requested</span>
+                        )}
+                      </td>
+                    )}
                     {user.role === 'admin' && (
                       <td className="px-4 py-3 text-right">
                         <button title="Delete lead" onClick={async (e) => {
@@ -797,6 +873,10 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
       </div>
       {showBrief && <AiBriefModal lead={lead} onClose={() => setShowBrief(false)} />}
 
+      {/* Pre-sales first-reply obligation, shown before anything else because
+          it is time-bound. */}
+      <FirstReplyPanel lead={lead} user={user} onChange={setLead} />
+
       {/* Header: avatar + name + status/tags, owner/last-activity, quick actions */}
       <div className="bg-white rounded-2xl border border-slate-100 p-5 mb-6 shadow-sm">
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -965,6 +1045,135 @@ function Row({ k, v }) {
 }
 
 /**
+ * First-reply workflow. A pre-sales enquiry has to be answered within 24 hours
+ * of assignment — the owner either writes back themselves or hands a draft to
+ * the lead manager. Shown only on pre-sales leads, and only until it's done.
+ */
+function FirstReplyPanel({ lead, user, onChange }) {
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
+  if (!isPresales) return null;
+
+  const isOwner = lead.ownerId === user.id;
+  const from = lead.assignedAt || lead.createdAt;
+  const hours = from ? Math.floor((Date.now() - new Date(from).getTime()) / 3600000) : 0;
+  const overdue = !lead.firstReplyDoneAt && hours >= 24;
+
+  const save = async (payload) => {
+    setBusy(true);
+    try {
+      onChange(await api(`/leads/${lead._id}/first-reply`, { method: 'PATCH', body: JSON.stringify(payload) }));
+      setDraft('');
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+
+  // Done: leave a compact record rather than a call to action.
+  if (lead.firstReplyDoneAt) {
+    return (
+      <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-2.5 mb-4 flex items-center gap-2 flex-wrap">
+        <Icon.Check size={14} />
+        <span className="text-xs font-bold text-green-800">
+          First reply handled {lead.firstReplyMode === 'self' ? 'by the owner' : 'via the lead manager'}
+        </span>
+        <span className="text-[11px] text-green-600">· {fmtDate(lead.firstReplyDoneAt)}</span>
+        {lead.firstDraft && (
+          <details className="w-full mt-1">
+            <summary className="text-[11px] font-bold text-green-700 cursor-pointer">View the draft that was submitted</summary>
+            <div className="mt-1.5 rounded-lg bg-white border border-green-100 p-2.5 text-[13px] text-slate-600 whitespace-pre-wrap">{lead.firstDraft}</div>
+          </details>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-xl border px-4 py-3 mb-4 ${overdue ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className={`text-xs font-bold ${overdue ? 'text-red-800' : 'text-amber-800'}`}>
+            {overdue ? '⚠️ First reply is overdue' : 'First reply needed'}
+          </div>
+          <div className={`text-[11px] ${overdue ? 'text-red-600' : 'text-amber-700'}`}>
+            {overdue
+              ? `Assigned ${hours} hours ago — past the 24-hour rule. Visible to the lead manager and admin.`
+              : `Assigned ${hours} hour${hours === 1 ? '' : 's'} ago. ${Math.max(0, 24 - hours)} hours left.`}
+          </div>
+        </div>
+        {lead.reminderRequestedAt && (
+          <span className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-600">
+            Draft requested by {lead.reminderRequestedBy}
+          </span>
+        )}
+      </div>
+
+      {/* Only the owner chooses; everyone else is watching the clock. */}
+      {isOwner ? (
+        <>
+          <div className="flex gap-2 mt-3">
+            <button type="button" disabled={busy} onClick={() => save({ mode: 'self' })}
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${
+                lead.firstReplyMode === 'self' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+              }`}>I'll reply myself</button>
+            <button type="button" disabled={busy} onClick={() => save({ mode: 'leadmanager' })}
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${
+                lead.firstReplyMode === 'leadmanager' ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+              }`}>Lead manager replies for me</button>
+          </div>
+
+          {lead.firstReplyMode === 'self' && (
+            <button type="button" disabled={busy} onClick={() => save({ sent: true })}
+              className="w-full mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              {busy ? 'Saving…' : "I've sent the first reply"}
+            </button>
+          )}
+
+          {lead.firstReplyMode === 'leadmanager' && (
+            <div className="mt-2">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Your draft for the lead manager</label>
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={5}
+                placeholder="Write the reply you want sent to this client…"
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                style={{ fontSize: '14px' }} />
+              <button type="button" disabled={busy || !draft.trim()} onClick={() => save({ draft })}
+                className="w-full mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-40"
+                style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                {busy ? 'Submitting…' : 'Submit draft to lead manager'}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] text-slate-500">
+            Waiting on {lead.ownerName || 'the owner'}
+            {lead.firstReplyMode ? ` · chose "${lead.firstReplyMode === 'self' ? 'reply myself' : 'lead manager replies'}"` : ' · no choice made yet'}
+          </span>
+          {['leadmanager', 'admin'].includes(user.role) && !lead.reminderRequestedAt && (
+            <button type="button" disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try { onChange(await api(`/leads/${lead._id}/request-reminder`, { method: 'POST', body: JSON.stringify({}) })); }
+                catch (e) { alert(e.message); }
+                setBusy(false);
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:border-slate-400">
+              Request draft
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Traffic-light colour for a 0-100 score, matching the audit report palette. */
+const scoreColor = (n) => (n >= 80 ? '#16A34A' : n >= 50 ? '#F59E0B' : '#DC2626');
+
+/**
  * AI business brief — what this prospect sells, how they're positioned, and
  * what to pitch. Cached server-side; a refresh is offered once it's a week old.
  */
@@ -1034,17 +1243,76 @@ function AiBriefModal({ lead, onClose }) {
               )}
 
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">What they do</div>
-                <p className="text-sm text-slate-700">{b.summary}</p>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">What they do</div>
+                <p className="text-slate-700 leading-relaxed" style={{ fontSize: '15px' }}>{b.summary}</p>
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {b.industry && <span className="rounded px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600">{b.industry}</span>}
-                  {b.targetArea && <span className="rounded px-2 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-600">📍 {b.targetArea}</span>}
+                  {b.industry && <span className="rounded px-2 py-0.5 text-[11px] font-bold bg-slate-100 text-slate-600">{b.industry}</span>}
+                  {b.targetArea && <span className="rounded px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-600">📍 {b.targetArea}</span>}
                 </div>
               </div>
 
+              {/* AI-search readiness and raw speed — the two numbers an agent is
+                  most often asked to justify on a call. */}
+              <div className="grid sm:grid-cols-3 gap-3">
+                {b.aiSeoScore != null && (
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">AI SEO score</div>
+                    <div className="flex items-baseline gap-1 mt-0.5">
+                      <span className="text-3xl font-extrabold" style={{ color: scoreColor(b.aiSeoScore * 10) }}>{b.aiSeoScore}</span>
+                      <span className="text-sm font-bold text-slate-300">/ 10</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1.5">
+                      <div className="h-full rounded-full" style={{ width: `${b.aiSeoScore * 10}%`, background: scoreColor(b.aiSeoScore * 10) }} />
+                    </div>
+                  </div>
+                )}
+                {['mobile', 'desktop'].map((k) => {
+                  const s = b.speed && b.speed[k];
+                  return (
+                    <div key={k} className="rounded-xl border border-slate-200 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{k} speed</div>
+                      {s ? (
+                        <>
+                          <div className="flex items-baseline gap-1 mt-0.5">
+                            <span className="text-3xl font-extrabold" style={{ color: scoreColor(s.performance) }}>{s.performance}</span>
+                            <span className="text-sm font-bold text-slate-300">/ 100</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1.5">
+                            <div className="h-full rounded-full" style={{ width: `${Math.max(2, s.performance)}%`, background: scoreColor(s.performance) }} />
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1">SEO {s.seo} · A11y {s.accessibility}</div>
+                        </>
+                      ) : (
+                        <div className="text-xs text-slate-300 mt-2">Not available</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {b.aiSeoReason && (
+                <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Why that AI SEO score</div>
+                  <p className="text-slate-600" style={{ fontSize: '14px' }}>{b.aiSeoReason}</p>
+                  {(b.aiSeoBreakdown || []).length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {b.aiSeoBreakdown.map((f, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold text-slate-500 w-36 shrink-0 truncate" title={f.factor}>{f.factor}</span>
+                          <div className="h-1.5 rounded-full bg-slate-200 flex-1 overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${f.score * 10}%`, background: scoreColor(f.score * 10) }} />
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-400 w-8 text-right">{f.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Code-verified checks, kept visually distinct from AI opinion. */}
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Site checks</div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Site checks</div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {[
                     ['NAP complete', b.checks.nap.complete, b.checks.nap.complete ? 'Name, address, phone all present' : 'Missing address or phone'],
@@ -1069,9 +1337,9 @@ function AiBriefModal({ lead, onClose }) {
 
               {b.offerings.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Products &amp; services</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Products &amp; services</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {b.offerings.map((o, i) => <span key={i} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{o}</span>)}
+                    {b.offerings.map((o, i) => <span key={i} className="rounded-md bg-slate-100 px-2 py-1 text-[12px] font-semibold text-slate-600">{o}</span>)}
                   </div>
                 </div>
               )}
@@ -1081,13 +1349,13 @@ function AiBriefModal({ lead, onClose }) {
                   {b.targetAudience && (
                     <div className="rounded-lg bg-slate-50 p-3">
                       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Their customers</div>
-                      <p className="text-[11px] text-slate-600">{b.targetAudience}</p>
+                      <p className="text-slate-600" style={{ fontSize: '14px' }}>{b.targetAudience}</p>
                     </div>
                   )}
                   {b.marketPosition && (
                     <div className="rounded-lg bg-slate-50 p-3">
                       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Market position</div>
-                      <p className="text-[11px] text-slate-600">{b.marketPosition}</p>
+                      <p className="text-slate-600" style={{ fontSize: '14px' }}>{b.marketPosition}</p>
                     </div>
                   )}
                 </div>
@@ -1095,22 +1363,22 @@ function AiBriefModal({ lead, onClose }) {
 
               {b.keywords.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Keywords their customers search</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Keywords their customers search</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {b.keywords.map((k, i) => <span key={i} className="rounded-md bg-orange-50 px-2 py-1 text-[11px] font-semibold text-[#FF4500]">{k}</span>)}
+                    {b.keywords.map((k, i) => <span key={i} className="rounded-md bg-orange-50 px-2 py-1 text-[12px] font-semibold text-[#FF4500]">{k}</span>)}
                   </div>
                 </div>
               )}
 
               {b.painPoints.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Pain points to raise on the call</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Pain points to raise on the call</div>
                   <div className="space-y-2">
                     {b.painPoints.map((p, i) => (
                       <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <div className="text-xs font-bold text-amber-900">{p.issue}</div>
-                        <div className="text-[11px] text-amber-800 mt-0.5">{p.why}</div>
-                        {p.mention && <div className="text-[11px] text-amber-700 mt-1 italic">“{p.mention}”</div>}
+                        <div className="font-bold text-amber-900" style={{ fontSize: '14px' }}>{p.issue}</div>
+                        <div className="text-amber-800 mt-0.5" style={{ fontSize: '13px' }}>{p.why}</div>
+                        {p.mention && <div className="text-amber-700 mt-1 italic" style={{ fontSize: '13px' }}>“{p.mention}”</div>}
                       </div>
                     ))}
                   </div>
@@ -1119,14 +1387,14 @@ function AiBriefModal({ lead, onClose }) {
 
               {b.servicesToPitch.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">What to pitch</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">What to pitch</div>
                   <div className="space-y-1.5">
                     {b.servicesToPitch.map((s, i) => (
                       <div key={i} className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5">
                         <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${PRIORITY[s.priority] || PRIORITY.low}`}>{s.priority || 'low'}</span>
                         <div className="min-w-0">
-                          <div className="text-xs font-bold text-[#050A1F]">{s.service}</div>
-                          <div className="text-[11px] text-slate-500">{s.why}</div>
+                          <div className="font-bold text-[#050A1F]" style={{ fontSize: '14px' }}>{s.service}</div>
+                          <div className="text-slate-500" style={{ fontSize: '13px' }}>{s.why}</div>
                         </div>
                       </div>
                     ))}
@@ -1136,10 +1404,10 @@ function AiBriefModal({ lead, onClose }) {
 
               {b.conversationStarters.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Opening lines</div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Opening lines</div>
                   <div className="space-y-1.5">
                     {b.conversationStarters.map((c, i) => (
-                      <div key={i} className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-[11px] text-blue-800 italic">“{c}”</div>
+                      <div key={i} className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-blue-800 italic" style={{ fontSize: '13px' }}>“{c}”</div>
                     ))}
                   </div>
                 </div>

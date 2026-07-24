@@ -274,6 +274,11 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
   // whole team's; an agent sees only their own.
   const [missed, setMissed] = useState(null);
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
+  // Pre-sales leads still waiting on their first reply. For an owner this is a
+  // to-do; for a lead manager or admin it's who to chase.
+  // Leads where a Lead Manager has asked the owner for a first-reply draft.
+  const [draftRequests, setDraftRequests] = useState(null);
+  useEffect(() => { api('/leads/awaiting-draft').then(setDraftRequests).catch(() => {}); }, []);
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
 

@@ -19,7 +19,7 @@
  */
 
 const cheerio = require('cheerio');
-const { crawlHomepage, normaliseUrl } = require('./crawler');
+const { crawlHomepage, normaliseUrl, getPageSpeed } = require('./crawler');
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
@@ -158,9 +158,25 @@ TECHNICAL FACTS ALREADY CHECKED (trust these over your own reading):
 PAGE TEXT:
 ${signals.bodyText}
 
+SCORING THE SITE FOR AI SEARCH (aiSeoScore, 0-10 whole numbers):
+Judge how likely this site is to be surfaced and quoted by AI assistants
+(ChatGPT, Perplexity, Google AI Overviews) when someone asks about what it sells.
+Weigh: does it answer real questions in plain language, or is it brochure copy?
+Is there structured data? Are entity signals (who, where, what) explicit?
+Is there depth worth citing, or one thin page? Are the local signals complete?
+Calibrate honestly — most small business sites land between 2 and 5. Reserve
+8+ for sites with genuine depth, structure and answerability. Give the score
+in aiSeoScore, a one-line justification in aiSeoReason, and 3-5 contributing
+factors each scored out of 10 in aiSeoBreakdown.
+
 Return exactly this JSON shape:
 {
   "summary": "3-4 sentences: what this business does, who it serves, how it positions itself.",
+  "aiSeoScore": 0,
+  "aiSeoReason": "1-2 sentences justifying the score, naming the biggest single factor.",
+  "aiSeoBreakdown": [
+    {"factor": "e.g. Content depth / Schema markup / Local signals / Answerability", "score": 0, "note": "one short line"}
+  ],
   "industry": "short industry label",
   "offerings": ["main products or services, up to 6"],
   "targetAudience": "who their customers appear to be",
@@ -173,15 +189,29 @@ Return exactly this JSON shape:
   "servicesToPitch": [
     {"service": "one of: SEO, Local SEO, AI SEO, Google Ads, Social Media Marketing, Website Design, Website Development, Logo Design, Website Maintenance, Complete Digital Marketing", "why": "why it fits this specific business", "priority": "high|medium|low"}
   ],
-  "conversationStarters": ["2-3 opening lines referencing something concrete on their site"]
-}`;
+  "conversationStarters": ["2-3 opening lines referencing something concrete on their site"],
+  "aiSeoScore": 0,
+  "aiSeoReason": "one sentence justifying the score",
+  "aiSeoBreakdown": [
+    {"factor": "short factor name", "score": 0, "note": "what is good or missing"}
+  ]
+}
+
+For aiSeoScore, rate 0-10 how well this site is set up to be found and cited by AI
+search (ChatGPT, Perplexity, Google AI Overviews). Judge on: clear factual content
+a model can quote, structured data, entity clarity (who they are, where, what they
+do), depth of topical coverage, and whether key facts like NAP are machine-readable.
+A brochure site with three vague pages scores 2-3. A site with detailed service
+pages, schema markup and complete contact details scores 7-8. Reserve 9-10 for
+sites with genuinely comprehensive, well-structured, citable content.
+Give 3-5 entries in aiSeoBreakdown, each scored 0-10.`;
 }
 
 /**
  * Produce a brief for one lead's website.
  * Returns the object stored on lead.aiBrief.
  */
-async function generateBrief(apiKey, { website, businessName }) {
+async function generateBrief(apiKey, { website, businessName, pageSpeedKey }) {
   if (!website) throw new Error('This lead has no website to analyse.');
   const url = normaliseUrl(website).toString();
 
@@ -197,12 +227,31 @@ async function generateBrief(apiKey, { website, businessName }) {
   if (!html) throw new Error('The website returned no readable content.');
 
   const signals = extractSignals(html, url);
-  const raw = await callClaude(apiKey, {
-    system: SYSTEM,
-    maxTokens: 2500,
-    messages: [{ role: 'user', content: buildPrompt(signals, { website: url, businessName }) }],
-  });
-  const ai = parseJson(raw);
+
+  // Claude and both PageSpeed runs go out together: PageSpeed takes 15-30s per
+  // strategy, so doing them in sequence would triple the wait. PageSpeed is
+  // allowed to fail without sinking the brief — the written analysis is the
+  // part the agent actually needs.
+  const [rawResult, mobileResult, desktopResult] = await Promise.allSettled([
+    callClaude(apiKey, {
+      system: SYSTEM,
+      maxTokens: 2500,
+      messages: [{ role: 'user', content: buildPrompt(signals, { website: url, businessName }) }],
+    }),
+    pageSpeedKey ? getPageSpeed(url, pageSpeedKey, 'mobile') : Promise.reject(new Error('no key')),
+    pageSpeedKey ? getPageSpeed(url, pageSpeedKey, 'desktop') : Promise.reject(new Error('no key')),
+  ]);
+
+  if (rawResult.status !== 'fulfilled') throw rawResult.reason;
+  const ai = parseJson(rawResult.value);
+
+  const speedOf = (r) => (r.status === 'fulfilled' && r.value ? {
+    performance: r.value.performance, seo: r.value.seo,
+    accessibility: r.value.accessibility, bestPractices: r.value.bestPractices,
+    lcp: r.value.lab && r.value.lab.lcp, cls: r.value.lab && r.value.lab.cls,
+  } : null);
+
+  const clamp10 = (n) => Math.max(0, Math.min(10, Math.round(Number(n) || 0)));
 
   return {
     generatedAt: new Date().toISOString(),
@@ -221,6 +270,18 @@ async function generateBrief(apiKey, { website, businessName }) {
       hasContactPage: signals.hasContactPage,
     },
     summary: String(ai.summary || ''),
+    // AI-search readiness, 0-10, with the reasoning kept so the agent can
+    // defend the number on a call rather than just quoting it.
+    aiSeoScore: clamp10(ai.aiSeoScore),
+    aiSeoReason: String(ai.aiSeoReason || ''),
+    aiSeoBreakdown: Array.isArray(ai.aiSeoBreakdown)
+      ? ai.aiSeoBreakdown.slice(0, 6).map((f) => ({
+        factor: String(f.factor || ''), score: clamp10(f.score), note: String(f.note || ''),
+      }))
+      : [],
+    // Google PageSpeed, both strategies. Null when the key is missing or the
+    // call failed — the panel simply omits the section in that case.
+    speed: { mobile: speedOf(mobileResult), desktop: speedOf(desktopResult) },
     industry: String(ai.industry || ''),
     offerings: Array.isArray(ai.offerings) ? ai.offerings.slice(0, 8) : [],
     targetAudience: String(ai.targetAudience || ''),

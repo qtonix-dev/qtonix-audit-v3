@@ -13,6 +13,10 @@ const { generateBrief, isStale, CACHE_DAYS } = require('../services/businessBrie
 // ---------------------------------------------------------------------------
 async function visibilityWhere(user) {
   if (user.role === 'admin') return {};
+  // A lead manager assigns work across the whole floor, so they need to see
+  // every lead — but they never own one, so this is read/coordinate access
+  // rather than a book of their own.
+  if (user.role === 'leadmanager') return {};
   if (user.role === 'manager') {
     const scopes = Array.isArray(user.managerScopes) ? user.managerScopes : [];
     const scopeOr = scopes
@@ -27,6 +31,7 @@ async function visibilityWhere(user) {
 // Can this user see/edit this specific lead?
 async function canAccessLead(user, lead) {
   if (user.role === 'admin') return true;
+  if (user.role === 'leadmanager') return true; // coordinates across all leads
   if (lead.ownerId === user.id) return true;
   if (user.role === 'manager') {
     const scopes = Array.isArray(user.managerScopes) ? user.managerScopes : [];
@@ -210,6 +215,12 @@ router.get('/config', requireAuth, async (req, res, next) => {
     and supply a valid ownerId per row. */
 router.post('/bulk', requireAuth, async (req, res, next) => {
   try {
+    // Importing a sheet creates records in bulk and is easy to get wrong, so
+    // it stays with admins and lead managers — the two roles whose job is
+    // getting leads into the system. Sellers work the leads they are given.
+    if (req.user.role !== 'admin' && req.user.role !== 'leadmanager') {
+      return res.status(403).json({ error: 'Only an admin or lead manager can import leads.' });
+    }
     const rows = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
     if (!rows.length) return res.status(400).json({ error: 'No rows to import.' });
     if (rows.length > 2000) return res.status(400).json({ error: 'Please import at most 2000 rows at a time.' });
@@ -809,6 +820,8 @@ async function buildBrief(req, res, next, { force }) {
     const brief = await generateBrief(apiKey, {
       website: lead.website,
       businessName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+      // Optional: the speed section is skipped rather than failing if absent.
+      pageSpeedKey: settings.getKey && settings.getKey('pagespeed'),
     });
     lead.aiBrief = brief;
     lead.changed('aiBrief', true);
@@ -827,6 +840,169 @@ async function buildBrief(req, res, next, { force }) {
 router.get('/:id/brief', requireAuth, (req, res, next) => buildBrief(req, res, next, { force: false }));
 router.post('/:id/brief/refresh', requireAuth, (req, res, next) => buildBrief(req, res, next, { force: true }));
 
+/**
+ * GET /api/leads/export — CSV of leads.
+ *
+ * Admins get everything they can see; a lead manager gets only the leads they
+ * keyed in, which is the scope they were granted. Sellers get nothing: taking
+ * the book off the platform isn't part of their job.
+ * Declared before '/:id' so "export" isn't read as a lead id.
+ */
+router.get('/export', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'leadmanager') {
+      return res.status(403).json({ error: 'Only an admin or lead manager can export leads.' });
+    }
+    const where = await visibilityWhere(req.user);
+    if (req.user.role === 'leadmanager') where.enteredById = req.user.id;
+
+    const rows = await Lead.findAll({ where, order: [['createdAt', 'DESC']], limit: 10000 });
+    const cols = ['id', 'firstName', 'lastName', 'email', 'mobile', 'phone', 'website',
+      'country', 'city', 'status', 'leadSource', 'generatedBy', 'ownerName',
+      'enteredByName', 'createdAt', 'assignedAt', 'convertedAt'];
+    // Escape per RFC 4180, and blunt the spreadsheet formula-injection trick
+    // where a cell starting with = or + is executed on open.
+    const esc = (v) => {
+      let s = v === null || v === undefined ? '' : String(v);
+      if (/^[=+\-@]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const csv = [cols.join(',')]
+      .concat(rows.map((r) => cols.map((c) => esc(r[c])).join(',')))
+      .join('\r\n');
+
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'lead.export',
+      target: `${rows.length} leads`, ip: req.ip,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="leads-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send('\uFEFF' + csv); // BOM so Excel reads UTF-8 correctly
+  } catch (e) { next(e); }
+});
+
+/**
+ * PATCH /api/leads/:id/first-reply — the owner's first-response decision.
+ *
+ * A pre-sales enquiry has to be answered within 24 hours of being assigned.
+ * The owner either writes back themselves or hands a draft to the lead manager
+ * to send on their behalf; this records which, and stops the clock.
+ */
+router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+
+    const b = req.body || {};
+    if (b.mode !== undefined) {
+      const mode = ['self', 'leadmanager'].includes(String(b.mode)) ? String(b.mode) : '';
+      if (mode && mode !== lead.firstReplyMode) {
+        lead.firstReplyMode = mode;
+        pushTimeline(lead, 'note',
+          mode === 'self'
+            ? 'Owner will send the first reply themselves'
+            : 'Owner asked the lead manager to send the first reply',
+          req.user.name);
+      }
+    }
+
+    // Handing over the draft is what satisfies the 24-hour rule when the lead
+    // manager is sending; marking it sent does the same when the owner replies.
+    if (b.draft !== undefined) {
+      const draft = String(b.draft || '').slice(0, 20000);
+      if (!draft.trim()) return res.status(400).json({ error: 'The draft is empty.' });
+      lead.firstDraft = draft;
+      lead.firstDraftAt = new Date();
+      lead.firstReplyDoneAt = lead.firstReplyDoneAt || new Date();
+      if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
+      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+    }
+
+    if (b.sent) {
+      lead.firstReplyDoneAt = lead.firstReplyDoneAt || new Date();
+      if (!lead.firstReplyMode) lead.firstReplyMode = 'self';
+      pushTimeline(lead, 'note', 'First reply sent to the client', req.user.name);
+    }
+
+    // Any of these counts as the owner responding, so a pending nudge is done.
+    if (b.draft !== undefined || b.sent) {
+      lead.reminderRequestedAt = null;
+      lead.reminderRequestedBy = '';
+      lead.reminderNote = '';
+    }
+
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/leads/:id/request-reminder — lead manager nudges the owner for the
+ * first-reply draft. Surfaces on the owner's dashboard and in the lead list.
+ */
+router.post('/:id/request-reminder', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'leadmanager' && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only a lead manager or admin can request a draft.' });
+    }
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+
+    lead.reminderRequestedAt = new Date();
+    lead.reminderRequestedBy = req.user.name;
+    lead.reminderNote = String((req.body || {}).note || '').slice(0, 500);
+    pushTimeline(lead, 'note',
+      `Draft requested by ${req.user.name}${lead.reminderNote ? `: ${lead.reminderNote}` : ''}`,
+      req.user.name);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/leads/awaiting-draft — pre-sales leads whose first reply is still
+ * outstanding, with the ones past 24 hours flagged.
+ *
+ * Owners see their own (it drives their dashboard nudge); lead managers and
+ * admins see everyone's, which is how they know who to chase.
+ */
+router.get('/awaiting-draft', requireAuth, async (req, res, next) => {
+  try {
+    const where = await visibilityWhere(req.user);
+    if (!['admin', 'leadmanager'].includes(req.user.role)) where.ownerId = req.user.id;
+    const leads = await Lead.findAll({ where, limit: 500, order: [['assignedAt', 'DESC']] });
+
+    const DEADLINE = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const items = [];
+    for (const l of leads) {
+      // The rule applies to pre-sales enquiries only.
+      if (!/pre-?sales/i.test(String(l.leadSource || ''))) continue;
+      if (l.firstReplyDoneAt) continue;
+      // Leads that predate this feature have no assignment stamp; fall back to
+      // when they were created so nothing silently escapes the rule.
+      const from = l.assignedAt || l.createdAt;
+      if (!from) continue;
+      const age = now - new Date(from).getTime();
+      items.push({
+        leadId: l.id, leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+        website: l.website, ownerId: l.ownerId, ownerName: l.ownerName,
+        assignedAt: from, hoursWaiting: Math.floor(age / 3600000),
+        overdue: age > DEADLINE,
+        mode: l.firstReplyMode || '',
+        reminderRequestedAt: l.reminderRequestedAt, reminderRequestedBy: l.reminderRequestedBy,
+      });
+    }
+    items.sort((a, b) => b.hoursWaiting - a.hoursWaiting);
+    res.json({
+      total: items.length,
+      overdue: items.filter((i) => i.overdue).length,
+      items,
+    });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/leads/:id — single lead (must be visible to the user). */
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
@@ -839,9 +1015,17 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 });
 
 // Resolve owner fields (validate the chosen owner is assignable by this user).
+/**
+ * Who ends up owning a new lead.
+ *
+ * Admins, managers and lead managers can hand a lead to someone else — that is
+ * the lead manager's whole job, since they key leads in for other people to
+ * work and never own anything themselves. Everyone else creates leads for
+ * themselves, so the owner is simply the creator.
+ */
 async function resolveOwner(user, ownerId) {
   let owner;
-  if (ownerId && (user.role === 'admin' || user.role === 'manager')) {
+  if (ownerId && ['admin', 'manager', 'leadmanager'].includes(user.role)) {
     owner = await User.findByPk(ownerId);
   }
   if (!owner) owner = await User.findByPk(user.id); // default to self
@@ -854,6 +1038,19 @@ router.post('/', requireAuth, async (req, res, next) => {
     const b = req.body || {};
     if (!b.firstName || !String(b.firstName).trim()) return res.status(400).json({ error: 'First name is required.' });
     const owner = await resolveOwner(req.user, b.ownerId);
+
+    /**
+     * Back-dating, for migrating historical leads out of Zoho. Restricted to
+     * the roles that do imports, capped at two years, and never in the future —
+     * a mistyped date would otherwise corrupt every trend chart and monthly
+     * count that reads createdAt.
+     */
+    let backDate = null;
+    if (b.createdAt && ['admin', 'leadmanager'].includes(req.user.role)) {
+      const d = new Date(b.createdAt);
+      const twoYearsAgo = new Date(); twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+      if (!Number.isNaN(d.getTime()) && d <= new Date() && d >= twoYearsAgo) backDate = d;
+    }
 
     const lead = await Lead.create({
       ownerId: owner.id,
@@ -877,9 +1074,21 @@ router.post('/', requireAuth, async (req, res, next) => {
       city: String(b.city || '').slice(0, 120),
       timezone: String(b.timezone || '').slice(0, 80),
       additionalInfo: String(b.additionalInfo || '').slice(0, 10000),
-      lastActivityAt: new Date(),
-      assignedAt: new Date(),
-      timeline: [{ type: 'created', text: 'Lead created', time: new Date().toISOString(), author: req.user.name }],
+      lastActivityAt: backDate || new Date(),
+      // The 24-hour first-reply clock runs from assignment. For a back-dated
+      // import that is the historical date, so migrated leads aren't all
+      // flagged overdue the moment they land.
+      assignedAt: backDate || new Date(),
+      ...(backDate ? { createdAt: backDate } : {}),
+      // Who keyed it in, as distinct from who owns it.
+      enteredById: req.user.id,
+      enteredByName: req.user.name,
+      timeline: [{
+        type: 'created',
+        text: backDate ? `Lead created (back-dated to ${backDate.toISOString().slice(0, 10)})` : 'Lead created',
+        time: (backDate || new Date()).toISOString(),
+        author: req.user.name,
+      }],
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.create', target: lead.website || lead.email, ip: req.ip });
     res.status(201).json(lead.toJSON());
