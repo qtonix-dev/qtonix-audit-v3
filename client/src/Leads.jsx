@@ -369,13 +369,21 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
           <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); }}
             className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
             <option value="">All statuses</option>
-            {(config.leadStatuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            {(config.leadStatuses || [])
+              // Agents can't open converted leads, so offering the filter would
+              // just return nothing.
+              .filter((s) => !(user.role === 'agent' && s.id === 'converted'))
+              .map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
-          <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}
-            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
-            <option value="">All owners</option>
-            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
+          {/* Agents only ever see their own leads, so an owner filter would
+              offer a single pointless choice. */}
+          {user.role !== 'agent' && (
+            <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}
+              className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+              <option value="">All owners</option>
+              {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
           <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}
             className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm max-w-[140px]">
             <option value="">All countries</option>
@@ -1546,12 +1554,51 @@ function DealsTab({ lead, config, user, onChange }) {
 
   // Mark an installment paid/unpaid straight from the list — no need to open
   // the deal. This is what feeds collected sales on the dashboard.
+  const isAdmin = user && user.role === 'admin';
+  // Which installment is awaiting gateway + reference before being confirmed.
+  const [payFor, setPayFor] = useState(null); // { deal, inst }
+  const [payGateway, setPayGateway] = useState('');
+  const [payRef, setPayRef] = useState('');
+
   const togglePaid = async (deal, inst, e) => {
     e.stopPropagation();
+    // Un-marking needs no extra detail; marking paid collects gateway + ref.
+    if (!inst.paid) {
+      setPayGateway(''); setPayRef('');
+      setPayFor({ deal, inst });
+      return;
+    }
     setBusyInst(inst.id);
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
-        method: 'PATCH', body: JSON.stringify({ paid: !inst.paid }),
+        method: 'PATCH', body: JSON.stringify({ paid: false }),
+      });
+      onChange(u);
+    } catch (err) { alert(err.message); }
+    setBusyInst(null);
+  };
+
+  const confirmPaid = async () => {
+    const { deal, inst } = payFor;
+    setBusyInst(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ paid: true, gateway: payGateway, ...(payRef ? { transactionId: payRef } : {}) }),
+      });
+      onChange(u);
+      setPayFor(null); setPayGateway(''); setPayRef('');
+    } catch (err) { alert(err.message); }
+    setBusyInst(null);
+  };
+
+  // A manager's half of the handover: the invoice has gone to the client, and
+  // an admin will confirm the money when it lands.
+  const markInvoiceSent = async (deal, inst) => {
+    setBusyInst(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH', body: JSON.stringify({ invoiceSent: true }),
       });
       onChange(u);
     } catch (err) { alert(err.message); }
@@ -1650,7 +1697,11 @@ function DealsTab({ lead, config, user, onChange }) {
 
                             {/* Due date stays editable until the money is in. */}
                             {it.paid ? (
-                              <span className="flex-1 text-green-700 font-semibold">✓ paid {it.paidDate || ''}</span>
+                              <span className="flex-1 text-green-700 font-semibold truncate">
+                                ✓ paid {it.paidDate || ''}
+                                {it.gateway && <span className="text-green-600 font-normal"> · {it.gateway}</span>}
+                                {it.transactionId && <span className="text-slate-400 font-normal"> · {it.transactionId}</span>}
+                              </span>
                             ) : (
                               <span className="flex-1 flex items-center gap-2 min-w-0">
                                 <input type="date" value={it.dueDate || ''} disabled={busyInst === it.id}
@@ -1662,13 +1713,30 @@ function DealsTab({ lead, config, user, onChange }) {
                                     {daysLeftLabel(it.dueDate)}
                                   </span>
                                 )}
+                                {it.invoiceSent && (
+                                  <span className="text-[10px] font-bold text-blue-600 shrink-0">· invoiced</span>
+                                )}
                               </span>
                             )}
 
-                            <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
-                              className={`rounded px-2 py-1 text-[10px] font-bold shrink-0 disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
-                              {busyInst === it.id ? '…' : it.paid ? 'Paid' : 'Mark paid'}
-                            </button>
+                            {/* Only an admin confirms money received. A manager
+                                records that the invoice went out instead. */}
+                            {isAdmin ? (
+                              <button onClick={(e) => togglePaid(d, it, e)} disabled={busyInst === it.id}
+                                className={`rounded px-2 py-1 text-[10px] font-bold shrink-0 disabled:opacity-50 ${it.paid ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-[#050A1F] text-white hover:opacity-90'}`}>
+                                {busyInst === it.id ? '…' : it.paid ? 'Paid' : 'Mark paid'}
+                              </button>
+                            ) : it.paid ? (
+                              <span className="rounded px-2 py-1 text-[10px] font-bold bg-green-100 text-green-700 shrink-0">Paid</span>
+                            ) : it.invoiceSent ? (
+                              <span className="rounded px-2 py-1 text-[10px] font-bold bg-blue-100 text-blue-700 shrink-0">Invoice sent</span>
+                            ) : (
+                              <button onClick={(e) => { e.stopPropagation(); markInvoiceSent(d, it); }} disabled={busyInst === it.id}
+                                title="Record that you've sent the invoice. An admin confirms the payment."
+                                className="rounded px-2 py-1 text-[10px] font-bold shrink-0 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50">
+                                {busyInst === it.id ? '…' : 'Invoice sent'}
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1686,6 +1754,46 @@ function DealsTab({ lead, config, user, onChange }) {
         </div>
       )}
       {modal && <DealModal lead={lead} config={config} deal={modal === 'new' ? null : modal} onClose={() => setModal(null)} onSaved={(u) => { onChange(u); setModal(null); }} />}
+
+      {/* Gateway + reference, captured whenever an admin confirms a payment. */}
+      {payFor && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setPayFor(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
+            <div className="text-sm text-slate-500 mt-1">
+              {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · installment {payFor.inst.seq} of {payFor.deal.name}
+            </div>
+
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mt-4 mb-2">
+              Where did the payment come in?
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {['PayPal', 'Stripe', 'Wire Transfer'].map((g) => (
+                <button key={g} type="button" onClick={() => setPayGateway(g)}
+                  className={`rounded-lg border px-2 py-2 text-[11px] font-bold transition-colors ${
+                    payGateway === g ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}>{g}</button>
+              ))}
+            </div>
+
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Transaction ID</label>
+              <input value={payRef} onChange={(e) => setPayRef(e.target.value)}
+                placeholder="Reference from PayPal / Stripe / bank"
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
+            </div>
+
+            <button type="button" disabled={!payGateway || busyInst === payFor.inst.id} onClick={confirmPaid}
+              className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
+              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              {busyInst === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
+            </button>
+            <button type="button" onClick={() => setPayFor(null)}
+              className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1962,6 +2070,15 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
+  // Cards, table, or both. Remembered per user, since it's a lasting
+  // preference rather than something to re-pick on every visit.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem('qtx_converted_view') || 'both'; } catch { return 'both'; }
+  });
+  const pickView = (v) => {
+    setViewMode(v);
+    try { localStorage.setItem('qtx_converted_view', v); } catch { /* private browsing */ }
+  };
   // Which client rows are expanded in the table to show their pending payments.
   const [expanded, setExpanded] = useState({});
   const toggleRow = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
@@ -1980,16 +2097,34 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
   // Which installment is awaiting a gateway choice before it can be collected.
   const [payFor, setPayFor] = useState(null); // { lead, deal, inst }
+  const [payGateway, setPayGateway] = useState('');
+  const [payRef, setPayRef] = useState('');
 
-  // Mark the next outstanding installment as received, straight from the card.
-  const collect = async (lead, deal, inst, gateway) => {
+  // Only an admin confirms money received; a manager records that the invoice
+  // has gone out, which is their half of the handover.
+  const isAdmin = user && user.role === 'admin';
+
+  const markInvoiced = async (lead, deal, inst) => {
     setBusy(inst.id);
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
-        method: 'PATCH', body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}) }),
+        method: 'PATCH', body: JSON.stringify({ invoiceSent: true }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-      setPayFor(null);
+    } catch (e) { alert(e.message); }
+    setBusy(null);
+  };
+
+  // Mark the next outstanding installment as received, straight from the card.
+  const collect = async (lead, deal, inst, gateway, transactionId) => {
+    setBusy(inst.id);
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}) }),
+      });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+      setPayFor(null); setPayGateway(''); setPayRef('');
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
@@ -2087,6 +2222,17 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <option value="thisYear">This year</option>
             <option value="all">All time</option>
           </select>
+
+          {/* Cards read well for a handful of clients; the table scans faster
+              once the list grows. Let people pick, and remember the choice. */}
+          <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+            {[['cards', 'Boxes'], ['table', 'Table'], ['both', 'Both']].map(([id, label]) => (
+              <button key={id} type="button" onClick={() => pickView(id)}
+                className={`px-3 py-2 text-xs font-bold transition-colors ${
+                  viewMode === id ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                }`}>{label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -2113,7 +2259,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           <div className="text-4xl mb-2">🎉</div>
           No converted clients for this period. A lead converts when one of its deals is marked Closed Won.
         </div>
-      ) : (
+      ) : viewMode === 'table' ? null : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((l) => {
             const s = summarize(l);
@@ -2215,8 +2361,8 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       )}
 
       {/* Full client table — easier to scan than cards once the list grows. */}
-      {filtered.length > 0 && (
-        <div className="mt-6">
+      {filtered.length > 0 && viewMode !== 'cards' && (
+        <div className={viewMode === 'table' ? '' : 'mt-6'}>
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients</div>
           <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
             <table className="w-full text-sm">
@@ -2321,13 +2467,27 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                         overdue ? 'border-red-200 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600'
                                       }`} />
                                   </label>
-                                  <button
-                                    onClick={() => setPayFor({ lead: l, deal: d, inst: it })}
-                                    disabled={busy === it.id}
-                                    className="rounded-md px-3 py-1.5 text-[11px] font-bold text-white inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
-                                    style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                                    <Icon.Money size={12} /> {busy === it.id ? 'Saving…' : 'Mark paid'}
-                                  </button>
+                                  {isAdmin ? (
+                                    <button
+                                      onClick={() => { setPayGateway(''); setPayRef(''); setPayFor({ lead: l, deal: d, inst: it }); }}
+                                      disabled={busy === it.id}
+                                      className="rounded-md px-3 py-1.5 text-[11px] font-bold text-white inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
+                                      style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                                      <Icon.Money size={12} /> {busy === it.id ? 'Saving…' : 'Mark paid'}
+                                    </button>
+                                  ) : it.invoiceSent ? (
+                                    <span className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-[11px] font-bold text-green-700 inline-flex items-center gap-1 shrink-0">
+                                      <Icon.Check size={12} /> Invoice sent
+                                    </span>
+                                  ) : (
+                                    <button
+                                      onClick={() => markInvoiced(l, d, it)}
+                                      disabled={busy === it.id}
+                                      title="Record that you've sent the invoice. An admin confirms the payment itself."
+                                      className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold text-blue-700 inline-flex items-center gap-1 disabled:opacity-50 shrink-0 hover:bg-blue-100">
+                                      {busy === it.id ? 'Saving…' : 'Invoice sent'}
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
@@ -2357,21 +2517,39 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <div className="text-sm text-slate-500 mt-1">
               {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · {payFor.deal.name}
             </div>
+
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mt-4 mb-2">
               Where did the payment come in?
             </div>
-            <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
               {['PayPal', 'Stripe', 'Wire Transfer'].map((g) => (
                 <button key={g}
-                  disabled={busy === payFor.inst.id}
-                  onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, g)}
-                  className="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:border-orange-300 hover:bg-orange-50 hover:text-[#FF4500] transition-colors disabled:opacity-50">
+                  onClick={() => setPayGateway(g)}
+                  className={`rounded-lg border px-2 py-2 text-[11px] font-bold transition-colors ${
+                    payGateway === g ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}>
                   {g}
                 </button>
               ))}
             </div>
+
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Transaction ID</label>
+              <input value={payRef} onChange={(e) => setPayRef(e.target.value)}
+                placeholder="Reference from PayPal / Stripe / bank"
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
+            </div>
+
+            <button
+              disabled={!payGateway || busy === payFor.inst.id}
+              onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, payGateway, payRef)}
+              className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
+              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              {busy === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
+            </button>
             <button onClick={() => setPayFor(null)}
-              className="w-full mt-3 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">
+              className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">
               Cancel
             </button>
           </div>

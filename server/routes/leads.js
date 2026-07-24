@@ -132,8 +132,16 @@ router.get('/', requireAuth, async (req, res, next) => {
   try {
     const where = await visibilityWhere(req.user);
     const { q, status, source, ownerId, country, untouched } = req.query;
-    if (status) where.status = status;
-    else where.status = { [Op.ne]: 'converted' }; // converted leads live on their own page
+    // Converted leads live on their own page, which only managers and admins
+    // can open. An agent must never see them here either — otherwise picking
+    // "converted" in the status filter would be a way around that.
+    if (req.user.role === 'agent') {
+      where.status = (status && status !== 'converted') ? status : { [Op.ne]: 'converted' };
+    } else if (status) {
+      where.status = status;
+    } else {
+      where.status = { [Op.ne]: 'converted' };
+    }
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
     if (country) where.country = country;
@@ -1211,21 +1219,54 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     const inst = (deal.installments || []).find((it) => it.id === req.params.instId);
     if (!inst) return res.status(404).json({ error: 'Installment not found.' });
     const b = req.body || {};
+    // Only an admin confirms money in the door. A manager runs the deal and
+    // chases the client — they can move a due date and record that they sent
+    // the invoice — but the payment itself is an admin action, so the two
+    // responsibilities stay separate.
+    if (b.paid !== undefined && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an admin can mark a payment as received.' });
+    }
     // Which gateway the money arrived through. Recorded per payment because a
     // client may pay one installment by card and the next by bank transfer.
     const GATEWAYS = ['PayPal', 'Stripe', 'Wire Transfer'];
     if (b.gateway !== undefined) {
       inst.gateway = GATEWAYS.includes(String(b.gateway)) ? String(b.gateway) : '';
     }
+    // Reference from the payment provider, so finance can reconcile later.
+    if (b.transactionId !== undefined) {
+      inst.transactionId = String(b.transactionId || '').slice(0, 120);
+    }
+    // Managers mark an installment as invoiced; that is their half of the
+    // handover, and it tells the admin the money is now expected.
+    if (b.invoiceSent !== undefined) {
+      inst.invoiceSent = !!b.invoiceSent;
+      inst.invoiceSentAt = b.invoiceSent ? new Date().toISOString() : null;
+      inst.invoiceSentBy = b.invoiceSent ? req.user.name : null;
+      if (b.invoiceSent) {
+        pushTimeline(lead, 'deal', `Invoice sent for installment ${inst.seq} of "${deal.name}" (${deal.currency} ${inst.amount})`, req.user.name);
+      }
+    }
     if (b.paid !== undefined) {
       inst.paid = !!b.paid;
       inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
       if (!b.paid) inst.gateway = '';
       if (b.paid) {
-        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''})`, req.user.name);
+        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''})`, req.user.name);
       }
     }
-    if (b.dueDate !== undefined) inst.dueDate = b.dueDate;
+    if (b.dueDate !== undefined) {
+      // Rescheduling a payment is a commercial decision worth recording — it
+      // is often the trace of a client asking for more time.
+      const was = inst.dueDate;
+      inst.dueDate = b.dueDate;
+      if (was !== b.dueDate) {
+        pushTimeline(
+          lead, 'deal',
+          `Installment ${inst.seq} of "${deal.name}" rescheduled${was ? ` from ${was}` : ''} to ${b.dueDate || 'no date'}`,
+          req.user.name,
+        );
+      }
+    }
     if (b.amount !== undefined) inst.amount = Number(b.amount) || 0;
 
     // A recurring contract has no end date, so top the schedule back up to
