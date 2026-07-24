@@ -139,6 +139,9 @@ async function crawlHomepage(website) {
     statusCode: res.status,
     https: res.url.startsWith('https://'),
     responseMs,
+    // Raw markup, used by the AI business brief to extract NAP and social
+    // links. Not part of the audit scoring.
+    html,
     htmlBytes: Buffer.byteLength(html),
     title,
     titleLength: title.length,

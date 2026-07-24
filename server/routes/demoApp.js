@@ -300,6 +300,64 @@ router.get('/leads/dashboard', (req, res) => {
 // Endpoints the shell polls or loads on navigation. Without these the demo
 // throws on boot and renders a blank page.
 router.get('/leads/reminders/count', (req, res) => res.json({ due: 3, items: [] }));
+
+// Missed commitments. Fabricated so the panel is visible during training.
+router.get('/leads/missed-activities', (req, res) => {
+  const leads = scoped(req, demoData.leads()).slice(0, 2);
+  const items = leads.map((l, i) => ({
+    leadId: l._id, leadName: `${l.firstName} ${l.lastName}`,
+    ownerId: l.ownerId, ownerName: l.ownerName,
+    activityId: `demo_missed_${i}`, kind: i % 2 ? 'task' : 'call',
+    title: i % 2 ? 'Send revised proposal' : 'Follow-up call',
+    dueAt: new Date(Date.now() - (i + 2) * 3600000).toISOString(),
+    hoursLate: (i + 2), status: 'open', resolved: false,
+  }));
+  const byOwner = {};
+  for (const it of items) {
+    byOwner[it.ownerId] = byOwner[it.ownerId] || { ownerId: it.ownerId, ownerName: it.ownerName, missed: 0, stillOpen: 0 };
+    byOwner[it.ownerId].missed++; byOwner[it.ownerId].stillOpen++;
+  }
+  res.json({ total: items.length, stillOpen: items.length, items, byOwner: Object.values(byOwner) });
+});
+
+// The AI brief calls a paid API and crawls a live site, so the demo serves a
+// worked example instead — the layout is identical, nothing is spent.
+router.get('/leads/:id/brief', (req, res) => {
+  const l = demoData.leads().find((x) => x._id === req.params.id);
+  if (!l) return res.status(404).json({ error: 'Not found.' });
+  res.json({
+    cached: true, stale: false, cacheDays: 7,
+    brief: {
+      generatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+      website: l.website,
+      checks: {
+        nap: { complete: false, name: true, address: '', phone: '+1 555 0100', email: l.email },
+        social: { count: 2, links: { facebook: '#', instagram: '#' } },
+        hasBlog: false, hasSsl: true, hasContactPage: true,
+      },
+      summary: 'A local service business with a clean but dated homepage. Positioning is generic — they list services without explaining who they serve best or why to pick them. No pricing, and no proof beyond a couple of testimonials.',
+      industry: 'Local services',
+      offerings: ['Consultations', 'Installation', 'Maintenance plans', 'Emergency callouts'],
+      targetAudience: 'Homeowners and small commercial property managers in the surrounding metro area.',
+      targetArea: 'Metro area, roughly 30-mile radius',
+      marketPosition: 'A crowded local market where the top three competitors all rank for the money keywords. This business is largely invisible in search despite a solid service offering.',
+      keywords: ['emergency repair near me', 'local installation service', 'same day callout', 'maintenance plan cost', 'best rated technician', 'commercial service contract'],
+      painPoints: [
+        { issue: 'No address anywhere on the site', why: 'Google needs a consistent address to rank them locally — without it they are invisible in map results.', mention: 'I noticed your address is not on the site — is that deliberate, or just never got added?' },
+        { issue: 'No blog or fresh content', why: 'Nothing for search engines to index beyond the service pages, so they cannot compete for informational searches.', mention: 'How are you currently getting found by people who do not already know your name?' },
+      ],
+      servicesToPitch: [
+        { service: 'Local SEO', why: 'Missing NAP and no map presence — quickest win available.', priority: 'high' },
+        { service: 'Website Design', why: 'Dated layout undermines trust against better-presented competitors.', priority: 'medium' },
+        { service: 'Complete Digital Marketing', why: 'Natural upsell once local visibility is fixed.', priority: 'low' },
+      ],
+      conversationStarters: [
+        'I was looking at your site and noticed you offer emergency callouts — is that where most of your work comes from?',
+        'You are not showing up in the map results for your area at the moment. Were you aware of that?',
+      ],
+    },
+  });
+});
 router.get('/reviews/history/:agentId', (req, res) => res.json({ items: [], demo: true }));
 
 // Reviews. Must mirror the real shape ({ period, groups, agents, canReviewAll })

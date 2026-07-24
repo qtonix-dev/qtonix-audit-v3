@@ -25,10 +25,19 @@ function periodKey(d = new Date()) {
  * Score every agent in the given groups for the requested month.
  * Returns rows with collected sales, target, attainment and a band.
  */
-async function scoreAgents(groups, period) {
+/**
+ * Convert a deal amount to USD using the admin-maintained FX table. Shared by
+ * the scoring pass and the drill-down endpoints so every figure in the review
+ * screen is computed the same way.
+ */
+async function fxConverter() {
   const settings = await Settings.findOne({ where: { singleton: 'settings' } });
   const fx = (settings && settings.crmConfig && settings.crmConfig.fxRates) || { USD: 1 };
-  const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
+  return (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
+}
+
+async function scoreAgents(groups, period) {
+  const toUsd = await fxConverter();
 
   const [y, mo] = period.split('-').map(Number);
   const start = new Date(y, mo - 1, 1);
@@ -107,20 +116,54 @@ async function scoreAgents(groups, period) {
     // Daily transfers: compare against the pro-rata expectation.
     const transferExpected = s.transferDaily > 0 ? s.transferDaily * daysElapsed : 0;
     const transferPct = transferExpected > 0 ? Math.round((s.callsDone / transferExpected) * 100) : null;
+    // Daily lead generation, judged pro-rata like transfers. This is the signal
+    // that explains a sales miss: someone who isn't feeding the top of the
+    // funnel today will miss target next month too.
+    const leadDailyTarget = s.leadGenTarget > 0 ? s.leadGenTarget / daysInMonth : 0;
+    const leadDailyExpected = leadDailyTarget * daysElapsed;
+    const leadDailyPct = leadDailyExpected > 0 ? Math.round((s.leadsGenerated / leadDailyExpected) * 100) : null;
 
-    // Band: judge on whichever targets the agent actually has.
+    /**
+     * Bands, in priority order:
+     *
+     *   danger    — nothing collected all month. Sitting at zero is a different
+     *               problem from underperforming, so it gets its own bucket
+     *               rather than being buried among "needs attention".
+     *   attention — missed the monthly sales target OR the daily lead-gen pace.
+     *   top       — hit every target they have (the single highest seller is
+     *               promoted below).
+     *   on-track  — everything else: at or near target.
+     */
     const signals = [pct, leadPct, transferPct].filter((v) => v !== null);
     const worst = signals.length ? Math.min(...signals) : null;
-    let band = 'ok';
+
+    // Pro-rata expectation: at month end this is the full target, mid-month it
+    // is the share of it that should be done by now.
+    const salesBar = Math.max(50, expectedPct * 0.85);
+    const missedSales = pct !== null && pct < salesBar;
+    const missedLeadPace = leadDailyPct !== null && leadDailyPct < 85;
+
+    let band;
     if (worst === null) band = 'unrated';
+    else if (s.salesUsd <= 0 && s.salesTarget > 0) band = 'danger';
+    else if (missedSales || missedLeadPace) band = 'attention';
     else if (worst >= Math.max(100, expectedPct)) band = 'top';
-    else if (worst < Math.max(50, expectedPct * 0.6)) band = 'attention';
+    else band = 'ok';
+
+    // Why this agent was flagged — shown to the manager so the 1-to-1 starts
+    // from a fact rather than a colour.
+    const reasons = [];
+    if (s.salesUsd <= 0 && s.salesTarget > 0) reasons.push('No sales collected this month');
+    else if (missedSales) reasons.push(`Sales at ${pct}% of target (${expectedPct}% of the month gone)`);
+    if (missedLeadPace) reasons.push(`Lead generation behind pace (${s.leadsGenerated} of ~${Math.round(leadDailyExpected)} expected by now)`);
+    if (transferPct !== null && transferPct < 85) reasons.push(`Transfers behind pace (${transferPct}%)`);
 
     return {
       ...s,
       salesUsd: Math.round(s.salesUsd),
       pipelineUsd: Math.round(s.pipelineUsd),
       pct, leadPct, transferPct, expectedPct, band,
+      leadDailyPct, leadDailyExpected: Math.round(leadDailyExpected), reasons,
     };
   });
 
@@ -218,6 +261,153 @@ router.get('/history/:agentId', requireAuth, async (req, res, next) => {
       limit: 24,
     });
     res.json({ items: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/reviews/sales-history/:agentId — the last 6 months of collected
+ * sales for one agent, so a manager can see whether a weak month is a blip or
+ * a trend before starting the 1-to-1.
+ */
+router.get('/sales-history/:agentId', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Not permitted.' });
+    }
+    const agentId = Number(req.params.agentId);
+    const months = Math.min(12, Math.max(3, Number(req.query.months) || 6));
+    const agent = await User.findByPk(agentId);
+    if (!agent) return res.status(404).json({ error: 'Not found.' });
+
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
+    const leads = await Lead.findAll({ where: { ownerId: agentId } });
+    const toUsd = await fxConverter();
+
+    // Bucket every collected installment into the month it was paid.
+    const buckets = {};
+    for (let i = 0; i < months; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
+      buckets[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = {
+        period: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        label: d.toLocaleString('en-GB', { month: 'short' }),
+        year: d.getFullYear(), salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0,
+        deals: 0, conversions: 0,
+      };
+    }
+
+    for (const l of leads) {
+      if (l.convertedAt) {
+        const c = new Date(l.convertedAt);
+        const k = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
+        if (buckets[k]) buckets[k].conversions++;
+      }
+      const won = (l.deals || []).filter((d) => d.stage === 'closed_won')
+        .sort((a, b) => new Date(a.wonAt || 0) - new Date(b.wonAt || 0));
+      let counted = false;
+      won.forEach((d, di) => {
+        const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        for (const it of insts) {
+          if (!it.paid || !it.paidDate) continue;
+          const pd = new Date(it.paidDate);
+          const k = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}`;
+          if (!buckets[k]) continue;
+          const usd = toUsd(it.amount, d.currency);
+          buckets[k].salesUsd += usd;
+          // Same rule as the dashboard: first collected installment of the
+          // lead's first won deal is a new sale, everything after is cross.
+          const isNew = di === 0 && !counted;
+          if (isNew) { buckets[k].newSalesUsd += usd; counted = true; }
+          else buckets[k].crossSalesUsd += usd;
+          buckets[k].deals++;
+        }
+      });
+    }
+
+    const series = Object.values(buckets).map((b) => ({
+      ...b,
+      salesUsd: Math.round(b.salesUsd),
+      newSalesUsd: Math.round(b.newSalesUsd),
+      crossSalesUsd: Math.round(b.crossSalesUsd),
+    }));
+    const total = series.reduce((s, b) => s + b.salesUsd, 0);
+    const best = series.reduce((m, b) => (b.salesUsd > (m ? m.salesUsd : -1) ? b : m), null);
+
+    const t = agent.targets || {};
+    res.json({
+      agentId, agentName: agent.name,
+      salesTarget: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
+      series,
+      total: Math.round(total),
+      average: Math.round(total / series.length),
+      best,
+    });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/reviews/lead-daily/:agentId?period=YYYY-MM — day-by-day lead
+ * generation and transfers for one month. Any month can be requested so a
+ * manager can compare against a previous one.
+ */
+router.get('/lead-daily/:agentId', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Not permitted.' });
+    }
+    const agentId = Number(req.params.agentId);
+    const agent = await User.findByPk(agentId);
+    if (!agent) return res.status(404).json({ error: 'Not found.' });
+
+    const period = /^\d{4}-\d{2}$/.test(String(req.query.period || '')) ? String(req.query.period) : periodKey();
+    const [y, mo] = period.split('-').map(Number);
+    const start = new Date(y, mo - 1, 1);
+    const end = new Date(y, mo, 1);
+    const daysInMonth = new Date(y, mo, 0).getDate();
+
+    const leads = await Lead.findAll({ where: { ownerId: agentId } });
+    const days = Array.from({ length: daysInMonth }, (_, i) => ({
+      day: i + 1, leads: 0, presales: 0, cold: 0, transfers: 0, conversions: 0,
+    }));
+
+    for (const l of leads) {
+      const c = l.createdAt ? new Date(l.createdAt) : null;
+      if (c && c >= start && c < end) {
+        const row = days[c.getDate() - 1];
+        row.leads++;
+        if (String(l.leadSource || '').toLowerCase().includes('pre')) row.presales++;
+        else row.cold++;
+      }
+      if (l.convertedAt) {
+        const cv = new Date(l.convertedAt);
+        if (cv >= start && cv < end) days[cv.getDate() - 1].conversions++;
+      }
+      for (const a of (l.activities || [])) {
+        if (a.kind !== 'call' || a.status !== 'done' || !a.date) continue;
+        const d = new Date(a.date);
+        if (d >= start && d < end) days[d.getDate() - 1].transfers++;
+      }
+    }
+
+    const t = agent.targets || {};
+    const monthlyTarget = (t.leadGen && t.leadGen.enabled) ? Number(t.leadGen.monthly || 0) : 0;
+    const totalLeads = days.reduce((s, d) => s + d.leads, 0);
+    res.json({
+      agentId, agentName: agent.name, period, daysInMonth,
+      days,
+      monthlyTarget,
+      dailyTarget: monthlyTarget > 0 ? Math.round((monthlyTarget / daysInMonth) * 10) / 10 : 0,
+      transferDailyTarget: (t.transfer && t.transfer.enabled) ? Number(t.transfer.daily || 0) : 0,
+      totals: {
+        leads: totalLeads,
+        presales: days.reduce((s, d) => s + d.presales, 0),
+        cold: days.reduce((s, d) => s + d.cold, 0),
+        transfers: days.reduce((s, d) => s + d.transfers, 0),
+        conversions: days.reduce((s, d) => s + d.conversions, 0),
+      },
+      // Days with nothing logged at all — the most actionable signal.
+      blankDays: days.filter((d) => d.leads === 0 && d.transfers === 0).length,
+    });
   } catch (e) { next(e); }
 });
 

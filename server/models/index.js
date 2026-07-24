@@ -246,6 +246,10 @@ const Lead = sequelize.define(
     notes: { type: DataTypes.JSON, defaultValue: [] },
     activities: { type: DataTypes.JSON, defaultValue: [] },
     deals: { type: DataTypes.JSON, defaultValue: [] },
+    // Cached AI business brief for this lead's website (see
+    // services/businessBrief.js). Regenerated on demand; the UI offers a
+    // refresh once it is more than a week old.
+    aiBrief: { type: DataTypes.JSON, defaultValue: null },
     timeline: { type: DataTypes.JSON, defaultValue: [] },
 
     lastActivityAt: { type: DataTypes.DATE },

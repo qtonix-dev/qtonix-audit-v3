@@ -270,6 +270,10 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
   const [err, setErr] = useState('');
   const [showAwaiting, setShowAwaiting] = useState(false);
   useEffect(() => { api('/leads/dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
+  // Commitments that blew past their agreed time. Managers and admins see the
+  // whole team's; an agent sees only their own.
+  const [missed, setMissed] = useState(null);
+  useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
 
@@ -326,6 +330,46 @@ export default function Dashboard({ user, onViewUntouched, onGoLeads, onViewConv
           sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}
           accent="#059669" onClick={onViewConverted} cta="View converted clients" />
       </div>
+
+      {/* Missed commitments — scheduled calls and tasks that went past their
+          agreed time without being completed. Surfaced prominently because a
+          missed call is a lead going cold. */}
+      {missed && missed.stillOpen > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wide text-red-700">
+                ⚠️ Missed commitments · {missed.stillOpen}
+              </div>
+              <div className="text-[11px] text-red-600">
+                Scheduled calls and tasks more than an hour past their agreed time, still not completed.
+              </div>
+            </div>
+            {(isAdmin || isManager) && missed.byOwner.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {missed.byOwner.slice(0, 5).map((o) => (
+                  <span key={o.ownerId} className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-700">
+                    {o.ownerName} · {o.missed}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {missed.items.filter((i) => !i.resolved).slice(0, 8).map((i) => (
+              <div key={i.activityId}
+                onClick={() => onViewToday && onViewToday(i.leadId)}
+                className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-red-50 transition-colors">
+                <span>{i.kind === 'call' ? '📞' : '✅'}</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[160px]">{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1">{i.title}</span>
+                {(isAdmin || isManager) && <span className="text-slate-400 shrink-0">{i.ownerName}</span>}
+                <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ROW 2 — Lead generation + sales split + collections */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

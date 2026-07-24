@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { Lead, User, Report, Settings, AuditLog, Op } = require('../models');
 const { requireAuth } = require('../middleware/auth');
+const { generateBrief, isStale, CACHE_DAYS } = require('../services/businessBrief');
 
 // ---------------------------------------------------------------------------
 // Visibility model:
@@ -45,9 +46,17 @@ function toDomain(website) {
   }
 }
 
-function pushTimeline(lead, type, text, author) {
+/**
+ * Append an entry to the lead's activity timeline.
+ *
+ * `meta` carries structured extras the UI needs — the note body, the linked
+ * activity id, its due time — so the timeline can show what actually happened
+ * ("Note: chased about the proposal") rather than a generic "Note added", and
+ * can flag a scheduled call that was never completed.
+ */
+function pushTimeline(lead, type, text, author, meta) {
   const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
-  tl.push({ type, text, time: new Date().toISOString(), author });
+  tl.push({ type, text, time: new Date().toISOString(), author, ...(meta || {}) });
   lead.timeline = tl;
   lead.changed('timeline', true);
   lead.lastActivityAt = new Date();
@@ -709,6 +718,107 @@ router.get('/reminders/count', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/leads/missed-activities — scheduled calls and tasks that blew past
+ * their agreed time by more than an hour without being completed.
+ *
+ * Managers and admins use this to see who is repeatedly missing commitments;
+ * an agent sees only their own, so it doubles as a personal catch-up list.
+ * Declared before '/:id' so "missed-activities" isn't read as a lead id.
+ */
+router.get('/missed-activities', requireAuth, async (req, res, next) => {
+  try {
+    const where = await visibilityWhere(req.user);
+    const leads = await Lead.findAll({ where });
+    const now = Date.now();
+    const GRACE = 60 * 60 * 1000; // one hour past the agreed time
+    const items = [];
+    const byOwner = {};
+
+    for (const l of leads) {
+      for (const a of (l.activities || [])) {
+        const dueAt = a.kind === 'call'
+          ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
+          : (a.dueDate ? `${a.dueDate}T17:00` : '');
+        if (!dueAt) continue;
+        const due = new Date(dueAt).getTime();
+        if (Number.isNaN(due)) continue;
+
+        // Missed = still open past the grace period, or completed late.
+        const stillOpen = a.status !== 'done' && now > due + GRACE;
+        const doneLate = a.status === 'done' && a.completedLate;
+        if (!stillOpen && !doneLate) continue;
+
+        items.push({
+          leadId: l.id, leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+          ownerId: l.ownerId, ownerName: l.ownerName,
+          activityId: a.id, kind: a.kind, title: a.title,
+          dueAt, hoursLate: Math.max(0, Math.round((now - due) / 3600000)),
+          status: a.status, resolved: a.status === 'done',
+        });
+        byOwner[l.ownerId] = byOwner[l.ownerId] || { ownerId: l.ownerId, ownerName: l.ownerName, missed: 0, stillOpen: 0 };
+        byOwner[l.ownerId].missed++;
+        if (stillOpen) byOwner[l.ownerId].stillOpen++;
+      }
+    }
+
+    items.sort((a, b) => new Date(b.dueAt) - new Date(a.dueAt));
+    res.json({
+      total: items.length,
+      stillOpen: items.filter((i) => !i.resolved).length,
+      items: items.slice(0, 100),
+      byOwner: Object.values(byOwner).sort((a, b) => b.missed - a.missed),
+    });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET  /api/leads/:id/brief          — cached AI brief (generates on first ask)
+ * POST /api/leads/:id/brief/refresh  — force a fresh crawl and analysis
+ *
+ * The brief is stored on the lead so repeat visits are instant and free; a
+ * prospect's homepage rarely changes between two calls.
+ */
+async function buildBrief(req, res, next, { force }) {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+
+    const cached = lead.aiBrief;
+    if (cached && !force) {
+      return res.json({ brief: cached, cached: true, stale: isStale(cached), cacheDays: CACHE_DAYS });
+    }
+
+    if (!lead.website) return res.status(400).json({ error: 'This lead has no website to analyse.' });
+
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = settings && settings.getKey && settings.getKey('anthropic');
+    if (!apiKey) {
+      return res.status(503).json({ error: 'No Claude API key configured. An admin can add one in Admin → API keys.' });
+    }
+
+    const brief = await generateBrief(apiKey, {
+      website: lead.website,
+      businessName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+    });
+    lead.aiBrief = brief;
+    lead.changed('aiBrief', true);
+    await lead.save();
+    res.json({ brief, cached: false, stale: false, cacheDays: CACHE_DAYS });
+  } catch (e) {
+    // Crawl and model failures are expected in normal use (dead sites, bad
+    // URLs, rate limits) — report them plainly rather than as a 500.
+    if (/Could not read|no readable content|no website|Claude API/i.test(e.message)) {
+      return res.status(422).json({ error: e.message });
+    }
+    next(e);
+  }
+}
+
+router.get('/:id/brief', requireAuth, (req, res, next) => buildBrief(req, res, next, { force: false }));
+router.post('/:id/brief/refresh', requireAuth, (req, res, next) => buildBrief(req, res, next, { force: true }));
+
 /** GET /api/leads/:id — single lead (must be visible to the user). */
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
@@ -833,7 +943,7 @@ router.post('/:id/notes', requireAuth, async (req, res, next) => {
     const note = { id: `n_${Date.now()}`, text: text.slice(0, 5000), time: new Date().toISOString(), author: req.user.name };
     notes.push(note);
     lead.notes = notes; lead.changed('notes', true);
-    pushTimeline(lead, 'note', 'Note added', req.user.name);
+    pushTimeline(lead, 'note', text.slice(0, 5000), req.user.name, { noteId: note.id, body: text.slice(0, 5000) });
     await lead.save();
     res.json(lead.toJSON());
   } catch (e) { next(e); }
@@ -878,7 +988,17 @@ router.post('/:id/activities', requireAuth, async (req, res, next) => {
     }
     list.push(act);
     lead.activities = list; lead.changed('activities', true);
-    pushTimeline(lead, kind, `${kind === 'call' ? 'Call' : 'Task'} ${act.mode === 'done' ? 'logged' : 'scheduled'}: ${act.title}`, req.user.name);
+    // Carry the activity id and its agreed time so the timeline can later show
+    // this row in red if the call/task was never completed.
+    const dueAt = kind === 'call'
+      ? (act.date ? `${act.date}T${act.time || '09:00'}` : '')
+      : (act.dueDate ? `${act.dueDate}T17:00` : '');
+    pushTimeline(
+      lead, kind,
+      `${kind === 'call' ? 'Call' : 'Task'} ${act.mode === 'done' ? 'logged' : 'scheduled'}: ${act.title}`,
+      req.user.name,
+      { activityId: act.id, dueAt, scheduled: act.mode !== 'done', body: kind === 'call' ? act.agenda : act.description },
+    );
     await lead.save();
     res.json(lead.toJSON());
   } catch (e) { next(e); }
@@ -897,7 +1017,25 @@ router.patch('/:id/activities/:actId', requireAuth, async (req, res, next) => {
     if (b.status === 'done' || b.status === 'open') {
       act.status = b.status;
       act.mode = b.status === 'done' ? 'done' : act.mode;
-      if (b.status === 'done') pushTimeline(lead, act.kind, `${act.kind === 'call' ? 'Call' : 'Task'} completed: ${act.title}`, req.user.name);
+      if (b.status === 'done') {
+        act.completedAt = new Date().toISOString();
+        // Was it finished within the hour-long grace period after the agreed
+        // time? Stored on the activity so the miss survives even if the row is
+        // later edited, and so managers can count repeat offences.
+        const dueAt = act.kind === 'call'
+          ? (act.date ? `${act.date}T${act.time || '09:00'}` : '')
+          : (act.dueDate ? `${act.dueDate}T17:00` : '');
+        if (dueAt) {
+          const grace = new Date(new Date(dueAt).getTime() + 60 * 60 * 1000);
+          act.completedLate = new Date() > grace;
+        }
+        pushTimeline(
+          lead, act.kind,
+          `${act.kind === 'call' ? 'Call' : 'Task'} completed: ${act.title}`,
+          req.user.name,
+          { activityId: act.id, resolves: act.id, late: !!act.completedLate },
+        );
+      }
     }
     lead.activities = list; lead.changed('activities', true);
     await lead.save();

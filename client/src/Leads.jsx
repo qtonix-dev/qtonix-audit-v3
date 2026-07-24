@@ -30,6 +30,7 @@ export const Icon = {
   Search: (p) => <IconBase {...p}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></IconBase>,
   Plus: (p) => <IconBase {...p}><path d="M12 5v14M5 12h14" /></IconBase>,
   Minus: (p) => <IconBase {...p}><path d="M5 12h14" /></IconBase>,
+  Sparkle: (p) => <IconBase {...p}><path d="M12 3.5 13.8 9 19.5 10.8 13.8 12.6 12 18 10.2 12.6 4.5 10.8 10.2 9z" /><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7z" /></IconBase>,
   Eye: (p) => <IconBase {...p}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></IconBase>,
   Download: (p) => <IconBase {...p}><path d="M12 4v12" /><path d="m7.5 11.5 4.5 4.5 4.5-4.5" /><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" /></IconBase>,
   Refresh: (p) => <IconBase {...p}><path d="M20 12a8 8 0 1 1-2.3-5.6" /><path d="M20 4v4h-4" /></IconBase>,
@@ -739,6 +740,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
   const [editSection, setEditSection] = useState(null); // 'all' | 'basic' | 'tags' | 'description' | 'other'
   const [draft, setDraft] = useState(null);
   const [quickModal, setQuickModal] = useState(null); // 'note' | 'task' | 'call' | 'deal'
+  const [showBrief, setShowBrief] = useState(false);
 
   const load = async () => {
     try {
@@ -775,8 +777,17 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
           the action buttons below on a single line. */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to leads</button>
-        {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
+        <div className="flex items-center gap-2">
+          {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
+          {/* Reads the prospect's site and briefs the agent before they dial. */}
+          <button onClick={() => setShowBrief(true)} disabled={!lead.website}
+            title={lead.website ? 'AI business brief — what they do, what to pitch' : 'No website on this lead'}
+            className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-xs font-bold text-[#FF4500] inline-flex items-center gap-1.5 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <Icon.Sparkle size={14} /> <span className="hidden sm:inline">Brief</span>
+          </button>
+        </div>
       </div>
+      {showBrief && <AiBriefModal lead={lead} onClose={() => setShowBrief(false)} />}
 
       {/* Header: avatar + name + status/tags, owner/last-activity, quick actions */}
       <div className="bg-white rounded-2xl border border-slate-100 p-5 mb-6 shadow-sm">
@@ -945,21 +956,255 @@ function Row({ k, v }) {
   );
 }
 
-function Timeline({ lead }) {
-  const tl = Array.isArray(lead.timeline) ? [...lead.timeline].reverse() : [];
-  if (!tl.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
-  const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄' };
+/**
+ * AI business brief — what this prospect sells, how they're positioned, and
+ * what to pitch. Cached server-side; a refresh is offered once it's a week old.
+ */
+function AiBriefModal({ lead, onClose }) {
+  const [state, setState] = useState({ loading: true });
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = async (force) => {
+    force ? setRefreshing(true) : setState({ loading: true });
+    try {
+      const r = force
+        ? await api(`/leads/${lead._id}/brief/refresh`, { method: 'POST' })
+        : await api(`/leads/${lead._id}/brief`);
+      setState({ loading: false, ...r });
+    } catch (e) {
+      setState({ loading: false, error: e.message });
+    }
+    setRefreshing(false);
+  };
+  useEffect(() => { load(false); /* eslint-disable-next-line */ }, [lead._id]);
+
+  const b = state.brief;
+  const PRIORITY = { high: 'bg-green-100 text-green-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-slate-100 text-slate-500' };
+
   return (
-    <div className="space-y-3">
-      {tl.map((e, i) => (
-        <div key={i} className="flex gap-3">
-          <div className="text-lg leading-none mt-0.5">{icons[e.type] || '•'}</div>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm text-slate-700">{e.text}</div>
-            <div className="text-[11px] text-slate-400">{e.author || '—'} · {fmtDate(e.time)}</div>
+            <div className="text-base font-extrabold text-[#050A1F] flex items-center gap-2">
+              <Icon.Sparkle size={16} /> Business brief
+            </div>
+            <div className="text-xs text-slate-400">{lead.website || 'No website on file'}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {b && (
+              <button onClick={() => load(true)} disabled={refreshing}
+                title={state.stale ? 'This brief is over a week old' : 'Re-analyse the website now'}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-50 ${
+                  state.stale ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                }`}>
+                <Icon.Refresh size={13} /> {refreshing ? 'Analysing…' : 'Refresh'}
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
           </div>
         </div>
-      ))}
+
+        <div className="px-6 py-5">
+          {state.loading && (
+            <div className="text-center py-16">
+              <div className="text-sm font-bold text-slate-500">Reading the website…</div>
+              <div className="text-xs text-slate-400 mt-1">This takes a few seconds the first time.</div>
+            </div>
+          )}
+
+          {state.error && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{state.error}</div>
+          )}
+
+          {b && (
+            <div className="space-y-5">
+              {state.stale && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-semibold text-amber-700">
+                  This brief is more than {state.cacheDays} days old. Refresh if the site may have changed.
+                </div>
+              )}
+
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">What they do</div>
+                <p className="text-sm text-slate-700">{b.summary}</p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {b.industry && <span className="rounded px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600">{b.industry}</span>}
+                  {b.targetArea && <span className="rounded px-2 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-600">📍 {b.targetArea}</span>}
+                </div>
+              </div>
+
+              {/* Code-verified checks, kept visually distinct from AI opinion. */}
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Site checks</div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    ['NAP complete', b.checks.nap.complete, b.checks.nap.complete ? 'Name, address, phone all present' : 'Missing address or phone'],
+                    ['Social links', b.checks.social.count > 0, b.checks.social.count ? Object.keys(b.checks.social.links).join(', ') : 'None found'],
+                    ['Blog', b.checks.hasBlog, b.checks.hasBlog ? 'Publishing content' : 'No blog found'],
+                    ['HTTPS', b.checks.hasSsl, b.checks.hasSsl ? 'Secure' : 'Not secure'],
+                  ].map(([label, good, hint]) => (
+                    <div key={label} className={`rounded-lg border p-2.5 ${good ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+                      <div className={`text-xs font-extrabold ${good ? 'text-green-700' : 'text-red-700'}`}>{good ? 'Yes' : 'No'}</div>
+                      <div className="text-[10px] text-slate-400 truncate" title={hint}>{hint}</div>
+                    </div>
+                  ))}
+                </div>
+                {(b.checks.nap.phone || b.checks.nap.address) && (
+                  <div className="text-[11px] text-slate-500 mt-2">
+                    {b.checks.nap.phone && <>☎ {b.checks.nap.phone} </>}
+                    {b.checks.nap.address && <>· {b.checks.nap.address}</>}
+                  </div>
+                )}
+              </div>
+
+              {b.offerings.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Products &amp; services</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {b.offerings.map((o, i) => <span key={i} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{o}</span>)}
+                  </div>
+                </div>
+              )}
+
+              {(b.targetAudience || b.marketPosition) && (
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {b.targetAudience && (
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Their customers</div>
+                      <p className="text-[11px] text-slate-600">{b.targetAudience}</p>
+                    </div>
+                  )}
+                  {b.marketPosition && (
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Market position</div>
+                      <p className="text-[11px] text-slate-600">{b.marketPosition}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {b.keywords.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Keywords their customers search</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {b.keywords.map((k, i) => <span key={i} className="rounded-md bg-orange-50 px-2 py-1 text-[11px] font-semibold text-[#FF4500]">{k}</span>)}
+                  </div>
+                </div>
+              )}
+
+              {b.painPoints.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Pain points to raise on the call</div>
+                  <div className="space-y-2">
+                    {b.painPoints.map((p, i) => (
+                      <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <div className="text-xs font-bold text-amber-900">{p.issue}</div>
+                        <div className="text-[11px] text-amber-800 mt-0.5">{p.why}</div>
+                        {p.mention && <div className="text-[11px] text-amber-700 mt-1 italic">“{p.mention}”</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {b.servicesToPitch.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">What to pitch</div>
+                  <div className="space-y-1.5">
+                    {b.servicesToPitch.map((s, i) => (
+                      <div key={i} className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5">
+                        <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${PRIORITY[s.priority] || PRIORITY.low}`}>{s.priority || 'low'}</span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-[#050A1F]">{s.service}</div>
+                          <div className="text-[11px] text-slate-500">{s.why}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {b.conversationStarters.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Opening lines</div>
+                  <div className="space-y-1.5">
+                    {b.conversationStarters.map((c, i) => (
+                      <div key={i} className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-[11px] text-blue-800 italic">“{c}”</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-[10px] text-slate-400 pt-2 border-t border-slate-100">
+                Generated {fmtDate(b.generatedAt)} · AI-assisted from the homepage. Verify anything you plan to quote.
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Timeline({ lead }) {
+  const raw = Array.isArray(lead.timeline) ? lead.timeline : [];
+  if (!raw.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
+  const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄' };
+
+  // An activity counts as missed once it is more than an hour past the agreed
+  // time and still isn't done. We check the live activity list rather than the
+  // timeline entry, so completing a call clears the flag immediately.
+  const acts = Array.isArray(lead.activities) ? lead.activities : [];
+  const GRACE = 60 * 60 * 1000;
+  const now = Date.now();
+  const missState = (e) => {
+    if (!e.activityId || !e.scheduled) return null;
+    const a = acts.find((x) => x.id === e.activityId);
+    if (!a) return null;
+    const dueAt = a.kind === 'call'
+      ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
+      : (a.dueDate ? `${a.dueDate}T17:00` : '');
+    if (!dueAt) return null;
+    const due = new Date(dueAt).getTime();
+    if (Number.isNaN(due)) return null;
+    if (a.status === 'done') return a.completedLate ? { late: true } : null;
+    if (now > due + GRACE) return { overdue: true, hours: Math.round((now - due) / 3600000) };
+    return null;
+  };
+
+  const tl = [...raw].reverse();
+  return (
+    <div className="space-y-2">
+      {tl.map((e, i) => {
+        const miss = missState(e);
+        const isNote = e.type === 'note';
+        return (
+          <div key={i}
+            className={`flex gap-3 rounded-lg px-3 py-2 ${
+              miss ? 'bg-red-50 border border-red-200' : 'border border-transparent'
+            }`}>
+            <div className="text-lg leading-none mt-0.5">{icons[e.type] || '•'}</div>
+            <div className="min-w-0 flex-1">
+              {/* Notes show what was actually written, not a generic label. */}
+              <div className={`text-sm whitespace-pre-wrap break-words ${miss ? 'text-red-800' : 'text-slate-700'}`}>
+                {isNote && <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mr-1.5">Note</span>}
+                {e.text}
+              </div>
+              {/* Call agenda or task description, when the entry carries one. */}
+              {!isNote && e.body && plainText(e.body) && (
+                <div className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-wrap">{plainText(e.body)}</div>
+              )}
+              <div className={`text-[11px] mt-0.5 ${miss ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
+                {e.author || '—'} · {fmtDate(e.time)}
+                {miss && miss.overdue && ` · MISSED — ${miss.hours}h past the agreed time, still not completed`}
+                {miss && miss.late && ' · completed late'}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
