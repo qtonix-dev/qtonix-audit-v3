@@ -283,11 +283,13 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     const byOwner = {};
     for (const l of entered) {
       if (!l.ownerId) continue;
-      byOwner[l.ownerId] = byOwner[l.ownerId] || { ownerId: l.ownerId, ownerName: l.ownerName, total: 0, thisMonth: 0 };
+      byOwner[l.ownerId] = byOwner[l.ownerId] || { ownerId: l.ownerId, ownerName: l.ownerName, total: 0, thisMonth: 0, today: 0 };
       byOwner[l.ownerId].total++;
-      if (isThisMonth(l.assignedAt || l.createdAt)) byOwner[l.ownerId].thisMonth++;
+      const when = l.assignedAt || l.createdAt;
+      if (isThisMonth(when)) byOwner[l.ownerId].thisMonth++;
+      if (isToday(when)) byOwner[l.ownerId].today++;
     }
-    const assignmentTable = Object.values(byOwner).sort((a, b) => b.total - a.total);
+    const assignmentTable = Object.values(byOwner).sort((a, b) => b.thisMonth - a.thisMonth);
 
     // Blocks 6-8: pre-sales team performance. Attribution is by the "generated
     // by" name, so this counts EVERY pre-sales lead, not only ones this manager
@@ -1094,9 +1096,25 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
       if (!draft.trim()) return res.status(400).json({ error: 'The draft is empty.' });
       lead.firstDraft = draft;
       lead.firstDraftAt = new Date();
-      lead.firstReplyDoneAt = lead.firstReplyDoneAt || new Date();
+      // Submitting a draft stops the 24-hour clock (the owner has done their
+      // part) but does NOT close the item — the lead manager still has to read
+      // it and send the actual email. draftRead marks that final step.
+      lead.firstDraftRead = false;
+      lead.firstDraftReadAt = null;
       if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
       pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+    }
+
+    // The lead manager (or admin) reads the draft and marks it actioned — this
+    // is what actually closes a delegated first reply.
+    if (b.draftRead) {
+      if (!['leadmanager', 'admin'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only a lead manager can mark a draft as read.' });
+      }
+      lead.firstDraftRead = true;
+      lead.firstDraftReadAt = new Date();
+      lead.firstReplyDoneAt = lead.firstReplyDoneAt || new Date();
+      pushTimeline(lead, 'note', 'Lead manager read the draft and sent the first reply', req.user.name);
     }
 
     if (b.sent) {
@@ -1106,7 +1124,7 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
     }
 
     // Any of these counts as the owner responding, so a pending nudge is done.
-    if (b.draft !== undefined || b.sent) {
+    if (b.draft !== undefined || b.sent || b.draftRead) {
       lead.reminderRequestedAt = null;
       lead.reminderRequestedBy = '';
       lead.reminderNote = '';

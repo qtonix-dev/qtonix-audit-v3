@@ -73,9 +73,20 @@ function makeLead(i, r, { converted = false } = {}) {
   const slug = company.toLowerCase().replace(/[^a-z]+/g, '');
   const created = daysAgo(90 - (i % 80));
 
+  // Make some open leads pre-sales enquiries in different first-reply states,
+  // so the draft workflow is visible and testable in the demo. Cycle three
+  // cases across non-converted leads: fresh (clock running), breached (>24h, no
+  // reply), and draft-submitted (awaiting the lead manager).
+  const presalesCase = !converted ? i % 3 : -1;
+  const isPresales = presalesCase >= 0;
+  const presalesTeamNames = ['Amit Presales', 'Sara Presales', 'Vikram Presales', 'Neha Presales'];
+  const assignedHoursAgo = [3, 30, 12][presalesCase] || 3;
+
   const lead = {
     _id: `demo_lead_${i}`,
     id: `demo_lead_${i}`,
+    enteredById: 9020, // the demo lead manager keyed these in
+    assignedAt: iso(new Date(Date.now() - assignedHoursAgo * 3600000)),
     ownerId: owner.id,
     ownerName: owner.name,
     ownerTeam: owner.team,
@@ -88,9 +99,21 @@ function makeLead(i, r, { converted = false } = {}) {
     secondaryEmail: '',
     mobile: '+1 555 0100',
     phone: '+1 555 0101',
-    leadSource: pick(r, SOURCES),
-    generatedBy: owner.name,
+    leadSource: isPresales ? 'Pre-Sales' : pick(r, SOURCES),
+    generatedBy: isPresales ? presalesTeamNames[i % presalesTeamNames.length] : owner.name,
     status: converted ? 'converted' : pick(r, STATUSES),
+    // Draft workflow state for the pre-sales cases:
+    //  case 2 → owner submitted a draft, awaiting the lead manager to read it
+    //  others → still awaiting the owner's first move (case 1 is breached >24h)
+    firstReplyMode: presalesCase === 2 ? 'leadmanager' : '',
+    firstDraft: presalesCase === 2
+      ? 'Hi there, thank you so much for reaching out about your digital marketing needs. I would love to set up a quick call to understand your goals and show you how we can help improve your online visibility. Are you available this week?'
+      : '',
+    firstDraftAt: presalesCase === 2 ? iso(new Date(Date.now() - 2 * 3600000)) : null,
+    firstDraftRead: false,
+    firstReplyDoneAt: null,
+    reminderRequestedAt: presalesCase === 1 ? iso(new Date(Date.now() - 3600000)) : null,
+    reminderRequestedBy: presalesCase === 1 ? 'Riya Demo' : '',
     servicesInterested: [pick(r, SERVICES)],
     tags: [],
     country,

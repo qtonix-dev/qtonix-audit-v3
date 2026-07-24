@@ -281,6 +281,10 @@ const Lead = sequelize.define(
     firstReplyMode: { type: DataTypes.STRING(20), defaultValue: '' },
     firstDraft: { type: DataTypes.TEXT },
     firstDraftAt: { type: DataTypes.DATE },
+    // Whether the lead manager has read the submitted draft and sent the real
+    // email. A draft can be submitted (clock stopped) but not yet read.
+    firstDraftRead: { type: DataTypes.BOOLEAN, defaultValue: false },
+    firstDraftReadAt: { type: DataTypes.DATE },
     firstReplyDoneAt: { type: DataTypes.DATE },
     /**
      * A lead manager can ask the owner to chase a lead. Cleared once the owner

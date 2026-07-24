@@ -711,13 +711,22 @@ export function NewLead({ user, onCreated, onCancel }) {
     if (!f.firstName.trim()) { setError('First name is required.'); return; }
     setBusy(true); setError('');
     try {
-      const lead = await api('/leads', { method: 'POST', body: JSON.stringify(f) });
+      // Lead managers back-date via entryDate; the server maps it onto
+      // createdAt (and assignedAt) after validating it's within range.
+      const payload = { ...f };
+      if (f.entryDate && user.role === 'leadmanager') {
+        payload.createdAt = new Date(`${f.entryDate}T09:00:00`).toISOString();
+      }
+      delete payload.entryDate;
+      const lead = await api('/leads', { method: 'POST', body: JSON.stringify(payload) });
       onCreated(lead);
     } catch (e) { setError(e.message); }
     setBusy(false);
   };
 
-  const canAssign = user.role === 'admin' || user.role === 'manager';
+  // Admins, managers and lead managers assign leads to other people. Lead
+  // managers in particular never own a lead, so they must pick an owner.
+  const canAssign = ['admin', 'manager', 'leadmanager'].includes(user.role);
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const lab = 'block text-[11px] font-bold text-slate-500 mb-1';
 
@@ -728,6 +737,28 @@ export function NewLead({ user, onCreated, onCancel }) {
       {error && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
+        {/* Back-dating, for lead managers migrating historical leads out of
+            Zoho. Sits at the very top because it changes what "today" means for
+            everything entered below. Capped server-side at two years, never
+            future. Other roles don't see it — they only ever add live leads. */}
+        {user.role === 'leadmanager' && (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
+            <label className="block text-[11px] font-bold text-amber-700 uppercase tracking-wide mb-1">Entry date</label>
+            <div className="flex items-center gap-3 flex-wrap">
+              <input type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={f.entryDate || ''}
+                onChange={(e) => set('entryDate', e.target.value)}
+                className="rounded-lg border border-amber-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <span className="text-[11px] text-amber-700">
+                {f.entryDate
+                  ? `This lead will be recorded as added on ${new Date(f.entryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
+                  : 'Leave blank for today. Set a past date when importing older leads from Zoho.'}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Owner + country up top: country drives phone codes and timezone, so
             it belongs before the contact fields are filled in. */}
         <div className={`grid ${canAssign ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
@@ -1093,6 +1124,29 @@ function FirstReplyPanel({ lead, user, onChange }) {
             <summary className="text-[11px] font-bold text-green-700 cursor-pointer">View the draft that was submitted</summary>
             <div className="mt-1.5 rounded-lg bg-white border border-green-100 p-2.5 text-[13px] text-slate-600 whitespace-pre-wrap">{lead.firstDraft}</div>
           </details>
+        )}
+      </div>
+    );
+  }
+
+  // Draft submitted by the owner, but the lead manager hasn't actioned it yet.
+  // This is the lead manager's queue: read the draft, send the email, mark read.
+  if (lead.firstDraft && !lead.firstReplyDoneAt) {
+    const canRead = ['leadmanager', 'admin'].includes(user.role);
+    return (
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 mb-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold text-blue-800">📥 First-reply draft submitted by {lead.ownerName || 'the owner'}</span>
+          <span className="text-[11px] text-blue-600">· {fmtDate(lead.firstDraftAt)}</span>
+          {!canRead && <span className="text-[11px] text-blue-500">· waiting on the lead manager to send it</span>}
+        </div>
+        <div className="mt-2 rounded-lg bg-white border border-blue-100 p-3 text-[14px] text-slate-700 whitespace-pre-wrap">{lead.firstDraft}</div>
+        {canRead && (
+          <button type="button" disabled={busy} onClick={() => save({ draftRead: true })}
+            className="w-full mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+            style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+            {busy ? 'Saving…' : 'Mark as read & first reply sent'}
+          </button>
         )}
       </div>
     );

@@ -684,9 +684,9 @@ function LeadManagerDashboard({ user, onViewToday }) {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-5">
-        {/* Block 5: assignment table by owner */}
+        {/* Block 5: leads assigned per owner, today and this month. */}
         <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-          <div className="text-sm font-bold text-[#050A1F] mb-3">Leads assigned by owner</div>
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Leads assigned</div>
           {data.assignmentTable.length === 0 ? (
             <div className="text-slate-300 text-sm py-6 text-center">Nothing assigned yet.</div>
           ) : (
@@ -694,16 +694,16 @@ function LeadManagerDashboard({ user, onViewToday }) {
               <thead>
                 <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
                   <th className="text-left py-2">Owner</th>
+                  <th className="text-right py-2">Today</th>
                   <th className="text-right py-2">This month</th>
-                  <th className="text-right py-2">To date</th>
                 </tr>
               </thead>
               <tbody>
                 {data.assignmentTable.map((o) => (
                   <tr key={o.ownerId} className="border-b border-slate-50">
                     <td className="py-2 font-bold text-slate-600">{o.ownerName}</td>
-                    <td className="py-2 text-right text-slate-500">{o.thisMonth}</td>
-                    <td className="py-2 text-right font-bold text-[#050A1F]">{o.total}</td>
+                    <td className="py-2 text-right text-slate-500">{o.today || 0}</td>
+                    <td className="py-2 text-right font-bold text-[#050A1F]">{o.thisMonth}</td>
                   </tr>
                 ))}
               </tbody>
@@ -736,6 +736,47 @@ function LeadManagerDashboard({ user, onViewToday }) {
           )}
         </div>
       </div>
+
+      {/* Full per-member performance: today, this month, all-time, and their
+          share of the month's team total. Gives the lead manager the detail
+          behind the leaderboard bars. */}
+      {data.teamConfigured > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Team member breakdown</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                <th className="text-left py-2">Member</th>
+                <th className="text-right py-2">Today</th>
+                <th className="text-right py-2">This month</th>
+                <th className="text-right py-2">All time</th>
+                <th className="text-right py-2">Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.teamPerformance.map((t) => {
+                const share = m.teamMonth > 0 ? Math.round((t.month / m.teamMonth) * 100) : 0;
+                return (
+                  <tr key={t.name} className="border-b border-slate-50">
+                    <td className="py-2 font-bold text-slate-600">{t.name}</td>
+                    <td className="py-2 text-right text-slate-500">{t.today}</td>
+                    <td className="py-2 text-right font-bold text-[#050A1F]">{t.month}</td>
+                    <td className="py-2 text-right text-slate-400">{t.total}</td>
+                    <td className="py-2 text-right">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-10 h-1.5 rounded-full bg-slate-100 overflow-hidden inline-block">
+                          <span className="h-full block rounded-full" style={{ width: `${share}%`, background: '#FF6A00' }} />
+                        </span>
+                        <span className="text-slate-500 w-8 text-right">{share}%</span>
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showDrafts && <DraftsReceivedModal onClose={() => setShowDrafts(false)} onOpen={onViewToday} />}
     </div>

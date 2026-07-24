@@ -105,7 +105,9 @@ router.get('/settings/public', (req, res) => {
  */
 function scoped(req, list) {
   const u = demoUser(req);
-  if (u.role === 'admin') return list;
+  // Admins and lead managers both see every lead — the admin because they own
+  // the business, the lead manager because they coordinate all intake.
+  if (u.role === 'admin' || u.role === 'leadmanager') return list;
   if (u.role === 'manager') return list.filter((l) => l.ownerTeam === u.team);
   return list.filter((l) => l.ownerId === u.id);
 }
@@ -335,7 +337,7 @@ router.get('/leads/lm-dashboard', (req, res) => {
     metrics: { assignedToday: 6, assignedMonth: 84, totalEntered: 312, draftsReceived: 11, teamToday: 9, teamMonth: 148 },
     recentLeads, recentDrafts,
     assignmentTable: demoData.users().filter((u) => u.role !== 'leadmanager').map((u, i) => ({
-      ownerId: u.id, ownerName: u.name, thisMonth: 12 - i * 2, total: 60 - i * 8,
+      ownerId: u.id, ownerName: u.name, today: (i === 0 ? 3 : i === 1 ? 1 : 0), thisMonth: 12 - i * 2, total: 60 - i * 8,
     })),
     teamPerformance: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
     teamLeaderboard: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
