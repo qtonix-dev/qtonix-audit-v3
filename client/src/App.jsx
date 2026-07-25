@@ -3,10 +3,11 @@ import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
 import { CountryCombobox, PhoneField, Pagination, Icon } from './Leads.jsx';
 import { formatPhone } from './countries.js';
-import Dashboard from './Dashboard.jsx';
+import Dashboard, { EmailDraftsPage } from './Dashboard.jsx';
 import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
 import MotivatorTV from './MotivatorTV.jsx';
+import AiBriefPage from './AiBriefPage.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -776,8 +777,13 @@ export default function App() {
     // the pipeline: call backs → leads → reports.
     { id: 'prospects', label: 'Call Backs' },
     { id: 'leads', label: 'Leads' },
+    // Standalone AI brief lookup for cold calling — enter a domain, get the
+    // pitch. Sits right after Leads, available to everyone.
+    { id: 'aibrief', label: 'AI Brief' },
     { id: 'list', label: 'Reports' },
     ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),
+    // Lead managers coordinate the pre-sales draft workflow; admins oversee it.
+    ...((user.role === 'leadmanager' || user.role === 'admin') ? [{ id: 'emaildrafts', label: 'Email Drafts' }] : []),
   ];
 
   return (
@@ -861,6 +867,8 @@ export default function App() {
             hides the deal/report machinery. A fresh key resets internal state
             when switching between the two. */}
         {view === 'prospects' && <Leads key="prospects" user={user} initialView="prospects" />}
+        {view === 'aibrief' && <AiBriefPage user={user} />}
+        {view === 'emaildrafts' && (user.role === 'leadmanager' || user.role === 'admin') && <EmailDraftsPage user={user} />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />
         )}

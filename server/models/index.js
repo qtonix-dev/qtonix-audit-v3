@@ -295,6 +295,7 @@ const Lead = sequelize.define(
      *                      running, which is what turns the timeline row red.
      */
     firstReplyMode: { type: DataTypes.STRING(20), defaultValue: '' },
+    firstDraftSubject: { type: DataTypes.STRING(300), defaultValue: '' },
     firstDraft: { type: DataTypes.TEXT },
     firstDraftAt: { type: DataTypes.DATE },
     // Whether the lead manager has read the submitted draft and sent the real
@@ -302,6 +303,16 @@ const Lead = sequelize.define(
     firstDraftRead: { type: DataTypes.BOOLEAN, defaultValue: false },
     firstDraftReadAt: { type: DataTypes.DATE },
     firstReplyDoneAt: { type: DataTypes.DATE },
+    /**
+     * Reminder draft: the agent writes a follow-up email (subject + body) and
+     * submits it to the lead manager, who sends it and marks it received. Same
+     * shape as the first-reply draft but a separate stage.
+     */
+    reminderSubject: { type: DataTypes.STRING(300), defaultValue: '' },
+    reminderDraft: { type: DataTypes.TEXT },
+    reminderDraftAt: { type: DataTypes.DATE },
+    reminderReceived: { type: DataTypes.BOOLEAN, defaultValue: false },
+    reminderReceivedAt: { type: DataTypes.DATE },
     /**
      * A lead manager can ask the owner to chase a lead. Cleared once the owner
      * responds, so it works as a simple one-shot nudge.
@@ -479,6 +490,39 @@ const Review = sequelize.define(
   }
 );
 
+/**
+ * Standalone AI briefs run from the AI Brief page (not tied to a lead). Cached
+ * by domain: the `brief` JSON is shared, but each person who looks a domain up
+ * gets their own row so it appears in their history. `sharedFrom` points at the
+ * original row a cache hit copied its content from, purely for traceability.
+ */
+const BusinessBrief = sequelize.define(
+  'BusinessBrief',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    domain: { type: DataTypes.STRING(190) },        // normalised, for cache lookup
+    website: { type: DataTypes.STRING(300) },        // full URL as entered
+    customerName: { type: DataTypes.STRING(190) },
+    phone: { type: DataTypes.STRING(60) },
+    // Who ran (or looked up) this brief — drives the visibility rules.
+    agentId: { type: DataTypes.INTEGER },
+    agentName: { type: DataTypes.STRING(120) },
+    agentTeam: { type: DataTypes.STRING(60) },
+    agentShift: { type: DataTypes.STRING(60) },
+    brief: { type: DataTypes.JSON, defaultValue: null },
+    // Whether this row reused a cached brief and, if so, from which row.
+    cached: { type: DataTypes.BOOLEAN, defaultValue: false },
+    sharedFromId: { type: DataTypes.INTEGER, allowNull: true },
+  },
+  {
+    tableName: 'business_briefs',
+    indexes: [
+      { name: 'idx_brief_domain', fields: ['domain'] },
+      { name: 'idx_brief_agent', fields: ['agentId'] },
+    ],
+  }
+);
+
 const AuditLog = sequelize.define(
   'AuditLog',
   {
@@ -495,6 +539,13 @@ const AuditLog = sequelize.define(
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
+
+// Standalone briefs expose _id like everything else the frontend consumes.
+BusinessBrief.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get());
+  o._id = o.id;
+  return o;
+};
 
 // The frontend was written against a Mongo-style `_id`. MySQL uses `id`. Rather
 // than rewrite every reference, expose both: every Report serialised to JSON
@@ -739,6 +790,6 @@ async function initDb({ sync = true } = {}) {
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

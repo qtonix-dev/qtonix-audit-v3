@@ -350,6 +350,57 @@ router.get('/leads/lm-dashboard', (req, res) => {
   });
 });
 
+router.get('/leads/email-drafts', (req, res) => {
+  const leads = demoData.leads();
+  const first = leads.slice(5, 11).map((l, i) => ({
+    _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website,
+    subject: `Following up on your enquiry`, body: 'Hi, thanks so much for reaching out about your digital marketing needs. I wanted to introduce myself and share how we could help...',
+    submittedAt: new Date(Date.now() - i * 5400000).toISOString(), read: i % 2 === 0, readAt: i % 2 === 0 ? new Date().toISOString() : null,
+  }));
+  const reminders = leads.slice(0, 4).map((l, i) => ({
+    _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website,
+    subject: `Quick follow-up`, body: 'Just wanted to circle back on my previous email in case it got buried. Happy to answer any questions...',
+    submittedAt: new Date(Date.now() - i * 7200000).toISOString(), received: i === 0, receivedAt: i === 0 ? new Date().toISOString() : null,
+  }));
+  res.json({
+    firstReplies: first, reminders,
+    summary: { firstMonth: 14, firstToday: 3, firstCompleted: 9, reminderMonth: 6, reminderToday: 1, reminderCompleted: 4 },
+  });
+});
+
+// Standalone AI briefs — a small fabricated history so the page isn't empty.
+const DEMO_BRIEFS = [
+  { _id: 'demo_brief_1', domain: 'brightpathdental.com', website: 'https://brightpathdental.com', customerName: 'Brightpath Dental', phone: '+1 555 0142', agentId: 9001, agentName: 'Priya Demo', cached: false, createdAt: new Date(Date.now() - 2 * 3600000).toISOString() },
+  { _id: 'demo_brief_2', domain: 'verdelandscaping.com', website: 'https://verdelandscaping.com', customerName: 'Verde Landscaping', phone: '+1 555 0177', agentId: 9001, agentName: 'Priya Demo', cached: true, createdAt: new Date(Date.now() - 26 * 3600000).toISOString() },
+];
+const DEMO_BRIEF_BODY = {
+  summary: 'A local dental practice with a clean but dated site. They offer general and cosmetic dentistry but the site does not explain what sets them apart, and there is no online booking.',
+  industry: 'Dental practice', targetArea: 'Metro area',
+  servicesToPitch: [
+    { service: 'Local SEO', why: 'Not showing in map results for their area — the quickest win.', priority: 'high' },
+    { service: 'Website Design', why: 'Dated layout undermines trust versus competitors.', priority: 'medium' },
+  ],
+  conversationStarters: [
+    'I was looking at your site and noticed you offer cosmetic dentistry. I wanted to ask how new patients usually find you at the moment.',
+    'I work with a few local practices on getting found online, and I noticed a couple of things on your site I thought might be useful to mention.',
+  ],
+  keywords: ['dentist near me', 'cosmetic dentist', 'teeth whitening cost', 'emergency dentist', 'family dental practice'],
+  painPoints: [
+    { issue: 'No online booking', why: 'Patients increasingly expect to book without calling; this loses after-hours enquiries.', mention: 'How are patients booking with you at the moment — is it all by phone?' },
+    { issue: 'Not visible in local map results', why: 'Competitors appear above them for the key searches.', mention: 'Were you aware you are not showing in the map results for your area?' },
+  ],
+  checks: { nap: { complete: false, phone: '+1 555 0142' }, social: { count: 2, links: { facebook: '#', instagram: '#' } }, hasBlog: false, hasSsl: true },
+  speed: { mobile: { performance: 58, seo: 92 }, desktop: { performance: 84, seo: 92 } },
+};
+router.get('/briefs', (req, res) => res.json({ items: DEMO_BRIEFS }));
+router.get('/briefs/:id', (req, res) => {
+  const b = DEMO_BRIEFS.find((x) => x._id === req.params.id) || DEMO_BRIEFS[0];
+  res.json({ brief: { ...b, brief: DEMO_BRIEF_BODY } });
+});
+router.post('/briefs', (req, res) => {
+  res.json({ brief: { _id: 'demo_brief_new', domain: 'example.com', website: (req.body || {}).website || 'example.com', customerName: (req.body || {}).customerName || 'Demo', phone: (req.body || {}).phone || '', agentName: 'Demo', cached: true, brief: DEMO_BRIEF_BODY, _demoNote: 'Simulated — not saved in demo.' }, cached: true });
+});
+
 router.get('/leads/drafts-received', (req, res) => {
   res.json({
     items: demoData.leads().slice(5, 12).map((l, i) => ({

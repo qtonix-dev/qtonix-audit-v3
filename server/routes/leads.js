@@ -419,6 +419,60 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
 });
 
 /** GET /api/leads/drafts-received — full list behind the dashboard's "view all". */
+/**
+ * GET /api/leads/email-drafts — the Lead Manager portal's Email Drafts view.
+ *
+ * Returns two lists (first-reply and reminder submissions) plus summary counts
+ * for the boxes above the tabs: received this month, received today, and
+ * completed (read/acknowledged) for each stage.
+ *
+ * Admin sees every submission; a lead manager sees the ones on leads they
+ * entered.
+ */
+router.get('/email-drafts', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'leadmanager' && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Lead managers only.' });
+    }
+    const scope = req.user.role === 'admin' ? {} : { enteredById: req.user.id };
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const isToday = (d) => d && new Date(d) >= startOfDay;
+    const isThisMonth = (d) => d && new Date(d) >= startOfMonth;
+
+    const firstRows = await Lead.findAll({ where: { ...scope, firstDraftAt: { [Op.ne]: null } }, order: [['firstDraftAt', 'DESC']], limit: 500 });
+    const remRows = await Lead.findAll({ where: { ...scope, reminderDraftAt: { [Op.ne]: null } }, order: [['reminderDraftAt', 'DESC']], limit: 500 });
+
+    const firstReplies = firstRows.map((l) => ({
+      _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+      ownerName: l.ownerName, website: l.website,
+      subject: l.firstDraftSubject || '', body: l.firstDraft || '',
+      submittedAt: l.firstDraftAt, read: !!l.firstDraftRead, readAt: l.firstDraftReadAt,
+    }));
+    const reminders = remRows.map((l) => ({
+      _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+      ownerName: l.ownerName, website: l.website,
+      subject: l.reminderSubject || '', body: l.reminderDraft || '',
+      submittedAt: l.reminderDraftAt, received: !!l.reminderReceived, receivedAt: l.reminderReceivedAt,
+    }));
+
+    res.json({
+      firstReplies, reminders,
+      summary: {
+        firstMonth: firstRows.filter((l) => isThisMonth(l.firstDraftAt)).length,
+        firstToday: firstRows.filter((l) => isToday(l.firstDraftAt)).length,
+        firstCompleted: firstRows.filter((l) => l.firstDraftRead).length,
+        reminderMonth: remRows.filter((l) => isThisMonth(l.reminderDraftAt)).length,
+        reminderToday: remRows.filter((l) => isToday(l.reminderDraftAt)).length,
+        reminderCompleted: remRows.filter((l) => l.reminderReceived).length,
+      },
+    });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/leads/drafts-received — legacy list kept for the LM dashboard's "view all". */
 router.get('/drafts-received', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role !== 'leadmanager' && req.user.role !== 'admin') {
@@ -1197,6 +1251,7 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
       const draft = String(b.draft || '').slice(0, 20000);
       if (!draft.trim()) return res.status(400).json({ error: 'The draft is empty.' });
       lead.firstDraft = draft;
+      lead.firstDraftSubject = String(b.subject || '').slice(0, 300);
       lead.firstDraftAt = new Date();
       // Submitting a draft stops the 24-hour clock (the owner has done their
       // part) but does NOT close the item — the lead manager still has to read
@@ -1204,7 +1259,7 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
       lead.firstDraftRead = false;
       lead.firstDraftReadAt = null;
       if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
-      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
     }
 
     // The lead manager (or admin) reads the draft and marks it actioned — this
@@ -1234,6 +1289,48 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
 
     await lead.save();
     res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+/**
+ * PATCH /api/leads/:id/reminder-draft — the agent submits a reminder email
+ * (subject + body) for the lead manager to send, or the lead manager marks a
+ * submitted reminder as received. Mirrors the first-reply draft flow: the agent
+ * always writes it, the lead manager only acknowledges.
+ */
+router.patch('/:id/reminder-draft', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    const b = req.body || {};
+
+    if (b.draft !== undefined) {
+      const draft = String(b.draft || '').slice(0, 20000);
+      if (!draft.trim()) return res.status(400).json({ error: 'The reminder draft is empty.' });
+      lead.reminderDraft = draft;
+      lead.reminderSubject = String(b.subject || '').slice(0, 300);
+      lead.reminderDraftAt = new Date();
+      lead.reminderReceived = false;
+      lead.reminderReceivedAt = null;
+      pushTimeline(lead, 'note', `Reminder draft submitted to the lead manager${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+      await lead.save();
+      return res.json(lead.toJSON());
+    }
+
+    if (b.received) {
+      if (!['leadmanager', 'admin'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only a lead manager can mark a reminder received.' });
+      }
+      if (!lead.reminderDraft) return res.status(400).json({ error: 'No reminder draft to receive.' });
+      lead.reminderReceived = true;
+      lead.reminderReceivedAt = new Date();
+      pushTimeline(lead, 'note', 'Lead manager received the reminder draft and sent it', req.user.name);
+      await lead.save();
+      return res.json(lead.toJSON());
+    }
+
+    res.status(400).json({ error: 'Nothing to do.' });
   } catch (e) { next(e); }
 });
 

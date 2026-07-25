@@ -14,6 +14,7 @@ const demo = require('./routes/demo');
 const demoApp = require('./routes/demoApp');
 const leads = require('./routes/leads');
 const reviews = require('./routes/reviews');
+const briefs = require('./routes/briefs');
 const tv = require('./routes/tv');
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/api/demo', demo);
 app.use('/api/demo-app/:token', demoApp);
 app.use('/api/leads', leads);
 app.use('/api/reviews', reviews);
+app.use('/api/briefs', briefs);
 app.use('/api/tv', tv);
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind

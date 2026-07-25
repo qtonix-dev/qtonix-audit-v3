@@ -1192,11 +1192,14 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
           <div className="flex border-b border-slate-100">
             {/* A call-back prospect isn't a worked lead yet, so it has no deals
                 or reports — those tabs appear only once it's a real lead. */}
-            {['timeline', 'notes', 'activity', 'deals', 'reports']
+            {['timeline', 'notes', 'activity', 'deals', 'reports', 'emaildraft']
               .filter((t) => !(lead.status === 'callback' && (t === 'deals' || t === 'reports')))
+              // Email draft is the pre-sales first-reply/reminder workflow, so
+              // it only appears on pre-sales leads.
+              .filter((t) => !(t === 'emaildraft' && !/pre-?sales/i.test(String(lead.leadSource || ''))))
               .map((t) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
+                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t}</button>
             ))}
           </div>
           <div className="p-5 min-h-[300px]">
@@ -1205,6 +1208,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
             {effTab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'deals' && !isCallback && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'reports' && !isCallback && <ReportsTab lead={lead} onChange={setLead} />}
+            {effTab === 'emaildraft' && <EmailDraftTab lead={lead} user={user} onChange={setLead} />}
           </div>
         </div>
       </div>
@@ -1260,6 +1264,128 @@ function Row({ k, v }) {
  * of assignment — the owner either writes back themselves or hands a draft to
  * the lead manager. Shown only on pre-sales leads, and only until it's done.
  */
+/**
+ * Email draft tab — the pre-sales first-reply and reminder workflow in one
+ * place. The agent (lead owner) writes drafts with a subject and body; the lead
+ * manager only acknowledges (reads the first reply, receives the reminder).
+ */
+function EmailDraftTab({ lead, user, onChange }) {
+  const isOwner = lead.ownerId === user.id;
+  const isLM = ['leadmanager', 'admin'].includes(user.role);
+  const [busy, setBusy] = useState(false);
+  const [fSub, setFSub] = useState('');
+  const [fBody, setFBody] = useState('');
+  const [rSub, setRSub] = useState('');
+  const [rBody, setRBody] = useState('');
+
+  const save = async (path, payload) => {
+    setBusy(true);
+    try { const u = await api(`/leads/${lead._id}/${path}`, { method: 'PATCH', body: JSON.stringify(payload) }); onChange(u); }
+    catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+
+  const box = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+
+  return (
+    <div className="space-y-6">
+      {/* FIRST REPLY */}
+      <div>
+        <div className="text-sm font-extrabold text-[#050A1F] mb-2">First reply</div>
+
+        {/* Owner picks a path if not chosen */}
+        {isOwner && !lead.firstReplyDoneAt && (
+          <div className="flex gap-2 mb-3">
+            <button disabled={busy} onClick={() => save('first-reply', { mode: 'self', sent: true })}
+              className={`rounded-lg border px-3 py-2 text-xs font-bold ${lead.firstReplyMode === 'self' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+              I’ll reply myself
+            </button>
+            <button disabled={busy} onClick={() => save('first-reply', { mode: 'leadmanager' })}
+              className={`rounded-lg border px-3 py-2 text-xs font-bold ${lead.firstReplyMode === 'leadmanager' ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+              Lead manager will send it
+            </button>
+          </div>
+        )}
+
+        {/* Done state */}
+        {lead.firstReplyDoneAt ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+            <div className="text-xs font-bold text-green-800">✓ First reply handled {lead.firstReplyMode === 'self' ? 'by the owner' : 'via the lead manager'} · {fmtDate(lead.firstReplyDoneAt)}</div>
+            {lead.firstDraft && (
+              <div className="mt-2 text-[13px] text-slate-700">
+                {lead.firstDraftSubject && <div className="font-bold">Subject: {lead.firstDraftSubject}</div>}
+                <div className="whitespace-pre-wrap">{lead.firstDraft}</div>
+              </div>
+            )}
+          </div>
+        ) : lead.firstDraft ? (
+          // Submitted, awaiting LM read
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3">
+            <div className="text-xs font-bold text-blue-800 mb-1">📥 Draft submitted · {fmtDate(lead.firstDraftAt)}</div>
+            {lead.firstDraftSubject && <div className="text-[13px] font-bold text-slate-700">Subject: {lead.firstDraftSubject}</div>}
+            <div className="text-[13px] text-slate-700 whitespace-pre-wrap">{lead.firstDraft}</div>
+            {isLM ? (
+              <button disabled={busy} onClick={() => save('first-reply', { draftRead: true })}
+                className="mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+                Mark as read &amp; sent
+              </button>
+            ) : <div className="text-[11px] text-blue-600 mt-1">Waiting on the lead manager to send it.</div>}
+          </div>
+        ) : lead.firstReplyMode === 'leadmanager' && isOwner ? (
+          // Owner writes the draft
+          <div className="space-y-2">
+            <input className={box} placeholder="Subject line" value={fSub} onChange={(e) => setFSub(e.target.value)} />
+            <textarea className={box} rows={6} placeholder="Write the first-reply email…" value={fBody} onChange={(e) => setFBody(e.target.value)} />
+            <button disabled={busy || !fBody.trim()} onClick={() => save('first-reply', { draft: fBody, subject: fSub })}
+              className="rounded-lg px-4 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              Submit draft to lead manager
+            </button>
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400">
+            {isOwner ? 'Choose how the first reply will be sent.' : 'Waiting on the owner to action the first reply.'}
+          </div>
+        )}
+      </div>
+
+      {/* REMINDER */}
+      <div className="pt-4 border-t border-slate-100">
+        <div className="text-sm font-extrabold text-[#050A1F] mb-2">Reminder</div>
+        {lead.reminderReceived ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+            <div className="text-xs font-bold text-green-800">✓ Reminder received &amp; sent · {fmtDate(lead.reminderReceivedAt)}</div>
+            {lead.reminderSubject && <div className="text-[13px] font-bold text-slate-700 mt-1">Subject: {lead.reminderSubject}</div>}
+            {lead.reminderDraft && <div className="text-[13px] text-slate-700 whitespace-pre-wrap">{lead.reminderDraft}</div>}
+          </div>
+        ) : lead.reminderDraft ? (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3">
+            <div className="text-xs font-bold text-blue-800 mb-1">📥 Reminder submitted · {fmtDate(lead.reminderDraftAt)}</div>
+            {lead.reminderSubject && <div className="text-[13px] font-bold text-slate-700">Subject: {lead.reminderSubject}</div>}
+            <div className="text-[13px] text-slate-700 whitespace-pre-wrap">{lead.reminderDraft}</div>
+            {isLM ? (
+              <button disabled={busy} onClick={() => save('reminder-draft', { received: true })}
+                className="mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+                Mark as received &amp; sent
+              </button>
+            ) : <div className="text-[11px] text-blue-600 mt-1">Waiting on the lead manager to send it.</div>}
+          </div>
+        ) : isOwner ? (
+          <div className="space-y-2">
+            <input className={box} placeholder="Subject line" value={rSub} onChange={(e) => setRSub(e.target.value)} />
+            <textarea className={box} rows={5} placeholder="Write a reminder email for the lead manager to send…" value={rBody} onChange={(e) => setRBody(e.target.value)} />
+            <button disabled={busy || !rBody.trim()} onClick={() => save('reminder-draft', { draft: rBody, subject: rSub })}
+              className="rounded-lg px-4 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              Submit reminder to lead manager
+            </button>
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400">No reminder submitted yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FirstReplyPanel({ lead, user, onChange }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);

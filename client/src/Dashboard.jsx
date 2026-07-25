@@ -883,3 +883,120 @@ function SalesCelebration({ latest, others }) {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// EMAIL DRAFTS (Lead Manager portal)
+// Two tabs — 1st Reply and Reminder — each a table of submissions, with
+// summary boxes above showing received-this-month, today, and completed.
+// ---------------------------------------------------------------------------
+export function EmailDraftsPage({ user }) {
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('first');
+  const [open, setOpen] = useState(null); // expanded submission
+  const [err, setErr] = useState('');
+
+  const load = () => api('/leads/email-drafts').then(setData).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  const act = async (id, path, payload) => {
+    try { await api(`/leads/${id}/${path}`, { method: 'PATCH', body: JSON.stringify(payload) }); load(); }
+    catch (e) { alert(e.message); }
+  };
+
+  if (err) return <div className="text-red-500 text-sm">{err}</div>;
+  if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+
+  const s = data.summary;
+  const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const rows = tab === 'first' ? data.firstReplies : data.reminders;
+
+  const Box = ({ label, value, accent }) => (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-4">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-2xl font-extrabold mt-1" style={{ color: accent || '#050A1F' }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Email Drafts</h1>
+        <div className="text-sm text-slate-400">First replies and reminders submitted by agents for you to send.</div>
+      </div>
+
+      {/* Summary boxes */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <Box label="1st replies · month" value={s.firstMonth} accent="#FF6A00" />
+        <Box label="1st replies · today" value={s.firstToday} />
+        <Box label="1st completed" value={s.firstCompleted} accent="#16A34A" />
+        <Box label="Reminders · month" value={s.reminderMonth} accent="#FF6A00" />
+        <Box label="Reminders · today" value={s.reminderToday} />
+        <Box label="Reminders completed" value={s.reminderCompleted} accent="#16A34A" />
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+        {[['first', `1st Reply (${data.firstReplies.length})`], ['reminder', `Reminder (${data.reminders.length})`]].map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        {rows.length === 0 ? (
+          <div className="text-slate-300 text-sm py-8 text-center">No {tab === 'first' ? 'first replies' : 'reminders'} submitted yet.</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                <th className="text-left py-2 px-2">Lead</th>
+                <th className="text-left py-2 px-2">Owner</th>
+                <th className="text-left py-2 px-2">Subject</th>
+                <th className="text-left py-2 px-2">Submitted</th>
+                <th className="text-left py-2 px-2">Status</th>
+                <th className="text-right py-2 px-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const done = tab === 'first' ? r.read : r.received;
+                return (
+                  <React.Fragment key={r._id}>
+                    <tr className="border-b border-slate-50 cursor-pointer hover:bg-orange-50/40" onClick={() => setOpen(open === r._id ? null : r._id)}>
+                      <td className="py-2 px-2 font-bold text-[#050A1F]">{r.name}</td>
+                      <td className="py-2 px-2 text-slate-500">{r.ownerName}</td>
+                      <td className="py-2 px-2 text-slate-600 max-w-[220px] truncate">{r.subject || <span className="text-slate-300">(no subject)</span>}</td>
+                      <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmt(r.submittedAt)}</td>
+                      <td className="py-2 px-2">
+                        {done
+                          ? <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-green-100 text-green-700">{tab === 'first' ? 'Read' : 'Received'}</span>
+                          : <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700">Awaiting</span>}
+                      </td>
+                      <td className="py-2 px-2 text-right">
+                        {!done && (
+                          <button onClick={(e) => { e.stopPropagation(); tab === 'first' ? act(r._id, 'first-reply', { draftRead: true }) : act(r._id, 'reminder-draft', { received: true }); }}
+                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+                            Mark {tab === 'first' ? 'read' : 'received'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {open === r._id && (
+                      <tr className="bg-slate-50/60">
+                        <td colSpan={6} className="px-4 py-3">
+                          {r.subject && <div className="text-[13px] font-bold text-slate-700 mb-1">Subject: {r.subject}</div>}
+                          <div className="text-[13px] text-slate-600 whitespace-pre-wrap">{r.body}</div>
+                          {done && <div className="text-[11px] text-green-600 font-semibold mt-2">Completed {fmt(tab === 'first' ? r.readAt : r.receivedAt)}</div>}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}

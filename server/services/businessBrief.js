@@ -189,7 +189,7 @@ Return exactly this JSON shape:
   "servicesToPitch": [
     {"service": "one of: SEO, Local SEO, AI SEO, Google Ads, Social Media Marketing, Website Design, Website Development, Logo Design, Website Maintenance, Complete Digital Marketing", "why": "why it fits this specific business", "priority": "high|medium|low"}
   ],
-  "conversationStarters": ["2-3 opening lines referencing something concrete on their site"],
+  "conversationStarters": ["2-3 opening lines the agent can say on the call. Write them in a natural, professional, conversational tone — the way a real person speaks. No buzzwords, no marketing jargon, no exclamation marks or dramatic punctuation. Each line should reference something concrete and specific about their business."],
   "aiSeoScore": 0,
   "aiSeoReason": "one sentence justifying the score",
   "aiSeoBreakdown": [
