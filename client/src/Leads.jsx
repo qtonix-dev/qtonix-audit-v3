@@ -197,6 +197,32 @@ export function CountryCombobox({ value, onChange, className }) {
 // ---------------------------------------------------------------------------
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+
+// Relative countdown for a scheduled call-back, e.g. "2 days left", "tomorrow",
+// "in 3h", "overdue". Kept human and short for the list.
+function callbackCountdown(at) {
+  if (!at) return '';
+  const ms = new Date(at).getTime() - Date.now();
+  const mins = Math.round(ms / 60000);
+  if (mins < 0) {
+    const past = Math.abs(mins);
+    if (past < 60) return 'overdue';
+    if (past < 1440) return 'overdue';
+    return `${Math.round(past / 1440)}d overdue`;
+  }
+  if (mins < 60) return `in ${mins}m`;
+  if (mins < 1440) return `in ${Math.round(mins / 60)}h`;
+  const days = Math.round(mins / 1440);
+  if (days === 1) return 'tomorrow';
+  return `${days} days left`;
+}
+function callbackTone(at) {
+  if (!at) return 'text-slate-400';
+  const ms = new Date(at).getTime() - Date.now();
+  if (ms < 0) return 'text-red-500 font-semibold';
+  if (ms < 24 * 3600000) return 'text-amber-600 font-semibold';
+  return 'text-slate-600';
+}
 const fullName = (l) => `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)';
 
 // Days since a lead was last touched, and a staleness bucket for badges.
@@ -392,10 +418,10 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
     <div>
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">{isProspect ? 'Prospects' : 'Leads'}</h1>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">{isProspect ? 'Call Backs' : 'Leads'}</h1>
           {isProspect && (
             <div className="text-sm text-slate-400 mt-0.5">
-              Call-back-generated leads, before they’re worked. Transfer one to an agent or manager to promote it to a lead.
+              Call-backs scheduled during cold calling. Transfer one to an agent or manager to promote it to a lead.
             </div>
           )}
           {untouchedFilter && (
@@ -445,7 +471,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"><Icon.Download size={16} /></button>
             </>
           )}
-          <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ New lead</button>
+          <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ {isProspect ? 'New call back' : 'New lead'}</button>
         </div>
       </div>
 
@@ -467,6 +493,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
+                {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
                 <th className="text-left px-4 py-3">Last activity</th>
                 {isProspect && <th className="px-4 py-3 text-right">Action</th>}
                 {user.role === 'leadmanager' && !isProspect && <th className="px-4 py-3 text-right">Draft</th>}
@@ -526,6 +553,15 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
+                    {isProspect && (
+                      <td className="px-4 py-3 text-xs">
+                        {l.callbackAt ? (
+                          <span className={callbackTone(l.callbackAt)}>
+                            {fmtDate(l.callbackAt)} · {callbackCountdown(l.callbackAt)}
+                          </span>
+                        ) : <span className="text-slate-300">—</span>}
+                      </td>
+                    )}
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
                     {/* Transfer promotes a prospect to a worked lead. Only the
                         owner, a manager over them, or admin can transfer. */}
@@ -766,21 +802,27 @@ function CsvImportModal({ onClose, onDone }) {
 }
 
 // ---- New lead form ---------------------------------------------------------
-export function NewLead({ user, onCreated, onCancel }) {
+export function NewLead({ user, onCreated, onCancel, isCallback }) {
   const [config, setConfig] = useState({});
   const [owners, setOwners] = useState([]);
   const [f, setF] = useState(() => {
     // Agents start a lead as a fresh call-back from cold calling in the US —
     // the overwhelmingly common case for them, so pre-filling saves clicks.
-    // Other roles get a blank slate.
+    // "United States" is the exact value stored in countries.js, so the
+    // combobox and timezone resolver both recognise it (a raw "us" would show
+    // as unmatched text and break the phone/timezone lookups).
     const agentDefaults = user.role === 'agent'
-      ? { country: 'us', leadSource: 'Cold Calling', status: 'callback' }
+      ? { country: 'United States', leadSource: 'Cold Calling', status: 'callback' }
       : { country: '', leadSource: '', status: 'new' };
     return {
       ownerId: user.id, firstName: '', lastName: '', website: '', email: '', secondaryEmail: '',
       mobile: '', phone: '', generatedBy: '', generatedFromEmail: '',
       servicesInterested: [], tags: [], city: '', timezone: '', additionalInfo: '',
+      callbackAt: '',
       ...agentDefaults,
+      // Creating from the Call Backs tab always makes a call-back, whatever the
+      // role default was.
+      ...(isCallback ? { status: 'callback' } : {}),
     };
   });
   const [busy, setBusy] = useState(false);
@@ -818,8 +860,8 @@ export function NewLead({ user, onCreated, onCancel }) {
 
   return (
     <div className="max-w-3xl">
-      <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to leads</button>
-      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">New lead</h1>
+      <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to {isCallback ? 'call backs' : 'leads'}</button>
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">{isCallback ? 'Add call back' : 'New lead'}</h1>
       {error && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
@@ -842,6 +884,24 @@ export function NewLead({ user, onCreated, onCancel }) {
                   ? `This lead will be recorded as added on ${new Date(f.entryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
                   : 'Leave blank for today. Set a past date when importing older leads from Zoho.'}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* When creating a call-back, capture the agreed call-back time. It's
+            shown in the Call Backs list with a countdown so the agent knows
+            what's due next. */}
+        {isCallback && (
+          <div className="rounded-xl bg-violet-50 border border-violet-200 p-4">
+            <label className="block text-[11px] font-bold text-violet-700 uppercase tracking-wide mb-1">Call back on</label>
+            <input type="datetime-local"
+              value={f.callbackAt || ''}
+              onChange={(e) => set('callbackAt', e.target.value)}
+              className="rounded-lg border border-violet-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-400" />
+            <div className="text-[11px] text-violet-700 mt-1">
+              {f.callbackAt
+                ? `Scheduled for ${new Date(f.callbackAt).toLocaleString('en-GB', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.`
+                : 'When did the prospect ask to be called back?'}
             </div>
           </div>
         )}
@@ -936,7 +996,7 @@ export function NewLead({ user, onCreated, onCancel }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={submit} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Create lead'}</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : isCallback ? 'Create call back' : 'Create lead'}</button>
         </div>
       </div>
     </div>
@@ -994,7 +1054,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
       {/* Top row: back on the left, the lead's local time on the right — keeps
           the action buttons below on a single line. */}
       <div className="flex items-center justify-between gap-3 mb-3">
-        <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to {isCallback ? 'prospects' : 'leads'}</button>
+        <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to {isCallback ? 'call backs' : 'leads'}</button>
         <div className="flex items-center gap-2">
           {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
           {/* On a prospect, the primary action is promoting it to a lead. */}
@@ -2507,7 +2567,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'prospects' && <LeadsList user={user} stage="prospect" onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && isManagerOrAdmin && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
-      {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
+      {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
       {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list')} />}
     </div>
   );

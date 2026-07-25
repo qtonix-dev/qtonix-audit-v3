@@ -84,6 +84,26 @@ function toDomain(website) {
  * ("Note: chased about the proposal") rather than a generic "Note added", and
  * can flag a scheduled call that was never completed.
  */
+/**
+ * True if the lead has at least one scheduled call or task that is still open
+ * and dated in the future. Such a lead is being handled as agreed (the customer
+ * asked to be contacted later), so it should be exempt from the "untouched 3+
+ * days" flag until that date arrives.
+ */
+function hasPendingFutureActivity(lead) {
+  const now = Date.now();
+  for (const a of (lead.activities || [])) {
+    if (a.status === 'done') continue;
+    const at = a.kind === 'call'
+      ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
+      : (a.dueDate ? `${a.dueDate}T17:00` : '');
+    if (!at) continue;
+    const t = new Date(at).getTime();
+    if (!Number.isNaN(t) && t > now) return true;
+  }
+  return false;
+}
+
 function pushTimeline(lead, type, text, author, meta) {
   const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
   tl.push({ type, text, time: new Date().toISOString(), author, ...(meta || {}) });
@@ -206,6 +226,23 @@ router.get('/', requireAuth, async (req, res, next) => {
     // slice plus totals so the client can render page controls.
     const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
     const page = Math.max(1, Number(req.query.page) || 1);
+
+    // The "untouched" view needs the same exemption as the dashboard: a lead
+    // with a scheduled future activity isn't really untouched. Activities are
+    // JSON so this can't be a SQL filter — fetch the stale set and remove the
+    // exempt ones in memory before paginating. The untouched set is small, so
+    // this stays cheap.
+    if (untouched) {
+      const all = await Lead.findAll({ where, order: [['lastActivityAt', 'DESC'], ['createdAt', 'DESC']] });
+      const filtered = all.filter((l) => !hasPendingFutureActivity(l));
+      const total = filtered.length;
+      const start = (page - 1) * perPage;
+      return res.json({
+        items: filtered.slice(start, start + perPage).map((l) => l.toJSON()),
+        total, page, perPage, pages: Math.max(1, Math.ceil(total / perPage)),
+      });
+    }
+
     const { count, rows } = await Lead.findAndCountAll({
       where,
       order: [['lastActivityAt', 'DESC'], ['createdAt', 'DESC']],
@@ -605,7 +642,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       if (!isConverted && !isProspect) {
         totalLeads++;
         const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
-        if (last && last < in3d) { untouched++; if (untouchedList.length < 8) untouchedList.push(leadBrief(l)); }
+        // A lead with a scheduled future call/task is being handled as agreed —
+        // e.g. the customer asked for a call in 15 days — so it must NOT show as
+        // untouched even though nothing's happened in the last 3 days. Only flag
+        // it when there's no pending future activity to wait on.
+        if (last && last < in3d && !hasPendingFutureActivity(l)) {
+          untouched++;
+          if (untouchedList.length < 8) untouchedList.push(leadBrief(l));
+        }
       }
 
       // "Generated today" = created today. "Assigned today" = handed to a
@@ -1376,7 +1420,10 @@ router.post('/', requireAuth, async (req, res, next) => {
       phone: String(b.phone || '').slice(0, 40),
       leadSource: String(b.leadSource || '').slice(0, 60),
       generatedBy: String(b.generatedBy || '').slice(0, 120),
+      generatedFromEmail: String(b.generatedFromEmail || '').slice(0, 180),
       status: String(b.status || 'new').slice(0, 40),
+      // Agreed call-back time, when creating a call-back-stage lead.
+      callbackAt: (b.status === 'callback' && b.callbackAt) ? new Date(b.callbackAt) : null,
       servicesInterested: Array.isArray(b.servicesInterested) ? b.servicesInterested.slice(0, 30) : [],
       tags: Array.isArray(b.tags) && b.tags.length ? b.tags.slice(0, 30) : ['New Lead'],
       country: String(b.country || '').slice(0, 80),

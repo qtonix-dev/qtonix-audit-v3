@@ -771,8 +771,10 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard' },
     // Prospects = call-back-generated leads, the earliest funnel stage before
     // a lead is worked. Sits right after Dashboard so it reads left-to-right as
-    // the pipeline: prospects → leads → reports.
-    { id: 'prospects', label: 'Prospects' },
+    // Call Backs = call-back-generated leads, the earliest funnel stage before
+    // a lead is worked. Sits right after Dashboard so it reads left-to-right as
+    // the pipeline: call backs → leads → reports.
+    { id: 'prospects', label: 'Call Backs' },
     { id: 'leads', label: 'Leads' },
     { id: 'list', label: 'Reports' },
     ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),

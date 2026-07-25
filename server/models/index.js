@@ -231,6 +231,9 @@ const Lead = sequelize.define(
     // Classification (values validated against Settings-configured lists)
     leadSource: { type: DataTypes.STRING(60), defaultValue: '' },
     generatedBy: { type: DataTypes.STRING(120), defaultValue: '' },
+    // Which pre-sales inbox a Pre-Sales lead arrived from. Visible only to lead
+    // managers and admins.
+    generatedFromEmail: { type: DataTypes.STRING(180), defaultValue: '' },
     status: { type: DataTypes.STRING(40), defaultValue: 'new' },
     servicesInterested: { type: DataTypes.JSON, defaultValue: [] },
     tags: { type: DataTypes.JSON, defaultValue: [] },
@@ -270,6 +273,9 @@ const Lead = sequelize.define(
     // whoever it's transferred to, but the originator keeps visibility of the
     // lead they created — so this is recorded separately from ownerId.
     generatedById: { type: DataTypes.INTEGER, allowNull: true },
+    // The agreed call-back time for a call-back-stage lead. Drives the
+    // countdown shown in the Call Backs list.
+    callbackAt: { type: DataTypes.DATE, allowNull: true },
     // When a prospect was transferred and by whom, for the audit trail and the
     // dashboard's "call transfers today" count.
     transferredAt: { type: DataTypes.DATE },
