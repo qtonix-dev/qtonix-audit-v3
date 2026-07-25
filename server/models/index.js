@@ -266,6 +266,16 @@ const Lead = sequelize.define(
      * their dashboard and CSV export are scoped to).
      */
     enteredById: { type: DataTypes.INTEGER, allowNull: true },
+    // The agent who generated a call-back prospect. Ownership can later move to
+    // whoever it's transferred to, but the originator keeps visibility of the
+    // lead they created — so this is recorded separately from ownerId.
+    generatedById: { type: DataTypes.INTEGER, allowNull: true },
+    // When a prospect was transferred and by whom, for the audit trail and the
+    // dashboard's "call transfers today" count.
+    transferredAt: { type: DataTypes.DATE },
+    transferredById: { type: DataTypes.INTEGER, allowNull: true },
+    transferredByName: { type: DataTypes.STRING(120), defaultValue: '' },
+    transferredToId: { type: DataTypes.INTEGER, allowNull: true },
     enteredByName: { type: DataTypes.STRING(120), defaultValue: '' },
     /**
      * First-reply workflow for pre-sales leads. The owner either answers the

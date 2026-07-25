@@ -510,16 +510,28 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-extrabold text-[#050A1F]">Call transfers today</h2>
-            <span className="text-xs text-slate-400">Pre-sales · daily target</span>
+            <span className="text-xs text-slate-400">Prospects promoted to leads today</span>
           </div>
           <div className="space-y-2">
             {transferBoard.map((b, i) => (
-              <div key={b.ownerId} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50">
-                <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
-                <Avatar name={b.name} src={b.avatar} size={28} />
-                <div className="w-32 shrink-0 font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
-                <div className="flex-1"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${b.pct != null ? Math.max(3, b.pct) : 3}%`, background: (b.pct || 0) >= 100 ? '#16A34A' : 'linear-gradient(90deg,#2563EB,#7C3AED)' }} /></div></div>
-                <div className="w-24 text-right"><div className="font-extrabold text-xs text-[#050A1F]">{b.transfersToday}{b.dailyTarget > 0 && <span className="text-slate-300 font-normal"> / {b.dailyTarget}</span>}</div>{b.dailyTarget > 0 && <div className={`text-[10px] font-bold ${b.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{b.pct >= 100 ? '✓ done' : `${b.remaining} to go`}</div>}</div>
+              <div key={b.ownerId} className="p-2 rounded-lg hover:bg-slate-50">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
+                  <Avatar name={b.name} src={b.avatar} size={28} />
+                  <div className="w-32 shrink-0 font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
+                  <div className="flex-1"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${b.pct != null ? Math.max(3, b.pct) : 3}%`, background: (b.pct || 0) >= 100 ? '#16A34A' : 'linear-gradient(90deg,#2563EB,#7C3AED)' }} /></div></div>
+                  <div className="w-24 text-right"><div className="font-extrabold text-xs text-[#050A1F]">{b.transfersToday}{b.dailyTarget > 0 && <span className="text-slate-300 font-normal"> / {b.dailyTarget}</span>}</div>{b.dailyTarget > 0 && <div className={`text-[10px] font-bold ${b.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{b.pct >= 100 ? '✓ done' : `${b.remaining} to go`}</div>}</div>
+                </div>
+                {/* Which prospects this person transferred today, and to whom. */}
+                {(b.transfers || []).length > 0 && (
+                  <div className="ml-9 mt-1.5 flex flex-wrap gap-1.5">
+                    {b.transfers.map((t) => (
+                      <span key={t.leadId} className="text-[10px] rounded-md bg-purple-50 text-purple-700 px-1.5 py-0.5 font-semibold">
+                        {t.leadName} → {t.toName}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -321,7 +321,8 @@ function draftState(l) {
   return hours >= 24 ? 'overdue' : 'pending';
 }
 
-export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched }) {
+export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched, stage }) {
+  const isProspect = stage === 'prospect';
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
   const [owners, setOwners] = useState([]);
@@ -332,6 +333,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   const [countryFilter, setCountryFilter] = useState('');
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [transferFor, setTransferFor] = useState(null); // lead awaiting transfer
 
   // Streams the CSV from the server rather than building it here, so the row
   // scoping (a lead manager only gets what they entered) can't be sidestepped.
@@ -364,6 +366,10 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       if (ownerFilter) params.set('ownerId', ownerFilter);
       if (countryFilter) params.set('country', countryFilter);
       if (untouchedFilter) params.set('untouched', String(untouchedFilter));
+      // Prospects list asks for the callback stage; the main list asks for
+      // everything past it. The server excludes callbacks from the plain list
+      // regardless, but being explicit keeps the two views clean.
+      params.set('stage', isProspect ? 'prospect' : 'lead');
       params.set('page', String(page));
       params.set('perPage', String(perPage));
       const [res, cfg] = await Promise.all([
@@ -386,7 +392,12 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
     <div>
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">Leads</h1>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">{isProspect ? 'Prospects' : 'Leads'}</h1>
+          {isProspect && (
+            <div className="text-sm text-slate-400 mt-0.5">
+              Call-back-generated leads, before they’re worked. Transfer one to an agent or manager to promote it to a lead.
+            </div>
+          )}
           {untouchedFilter && (
             <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-red-50 text-red-600 px-3 py-1 text-xs font-bold">
               Showing leads untouched for {untouchedFilter}+ days
@@ -457,7 +468,8 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
                 <th className="text-left px-4 py-3">Last activity</th>
-                {user.role === 'leadmanager' && <th className="px-4 py-3 text-right">Draft</th>}
+                {isProspect && <th className="px-4 py-3 text-right">Action</th>}
+                {user.role === 'leadmanager' && !isProspect && <th className="px-4 py-3 text-right">Draft</th>}
                 {user.role === 'admin' && <th className="px-4 py-3"></th>}
               </tr>
             </thead>
@@ -515,8 +527,20 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
+                    {/* Transfer promotes a prospect to a worked lead. Only the
+                        owner, a manager over them, or admin can transfer. */}
+                    {isProspect && (
+                      <td className="px-4 py-3 text-right">
+                        <button title="Transfer this prospect to an agent or manager"
+                          onClick={(e) => { e.stopPropagation(); setTransferFor(l); }}
+                          className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white whitespace-nowrap"
+                          style={{ background: 'linear-gradient(90deg,#8B5CF6,#7C3AED)' }}>
+                          → Transfer
+                        </button>
+                      </td>
+                    )}
                     {/* Lead managers chase the first-reply draft from here. */}
-                    {user.role === 'leadmanager' && (
+                    {user.role === 'leadmanager' && !isProspect && (
                       <td className="px-4 py-3 text-right">
                         {draftState(l) && !l.reminderRequestedAt && (
                           <button title="Ask the owner for the first-reply draft"
@@ -557,6 +581,59 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
           onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="leads" />
       )}
       {importing && <CsvImportModal onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
+      {transferFor && (
+        <TransferModal lead={transferFor} owners={owners} user={user}
+          onClose={() => setTransferFor(null)}
+          onDone={() => { setTransferFor(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Transfer a call-back prospect to an agent or manager, which promotes it to a
+ * worked lead. The receiver becomes the owner; the person transferring keeps
+ * visibility because they generated it.
+ */
+function TransferModal({ lead, owners, user, onClose, onDone }) {
+  const [toId, setToId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  // Only agents and managers can receive a prospect.
+  const targets = (owners || []).filter((o) => ['agent', 'manager'].includes(o.role) && o.id !== user.id);
+
+  const go = async () => {
+    if (!toId) { setErr('Choose who to transfer to.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await api(`/leads/${lead._id}/transfer`, { method: 'POST', body: JSON.stringify({ toId: Number(toId) }) });
+      onDone();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-extrabold text-[#050A1F]">Transfer prospect</div>
+        <div className="text-sm text-slate-500 mt-1">
+          {fullName(lead)} will become a worked lead owned by whoever you choose. You’ll still see it, since you generated it.
+        </div>
+        <div className="mt-4">
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Transfer to</label>
+          <select value={toId} onChange={(e) => setToId(e.target.value)}
+            className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400">
+            <option value="">— Select agent or manager —</option>
+            {targets.map((o) => <option key={o.id} value={o.id}>{o.name}{o.role === 'manager' ? ' (manager)' : ''}</option>)}
+          </select>
+        </div>
+        {err && <div className="text-xs text-red-600 mt-2">{err}</div>}
+        <button disabled={busy || !toId} onClick={go}
+          className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
+          style={{ background: 'linear-gradient(90deg,#8B5CF6,#7C3AED)' }}>
+          {busy ? 'Transferring…' : 'Transfer & make it a lead'}
+        </button>
+        <button onClick={onClose} className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+      </div>
     </div>
   );
 }
@@ -867,7 +944,7 @@ export function NewLead({ user, onCreated, onCancel }) {
 }
 
 // ---- Lead detail (shell; tabs filled in later phases) ----------------------
-export function LeadDetail({ user, leadId, onBack, initialTab }) {
+export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
   const [lead, setLead] = useState(null);
   const [config, setConfig] = useState({});
   const [tab, setTab] = useState(initialTab || 'timeline');
@@ -875,16 +952,23 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
   const [draft, setDraft] = useState(null);
   const [quickModal, setQuickModal] = useState(null); // 'note' | 'task' | 'call' | 'deal'
   const [showBrief, setShowBrief] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [owners, setOwners] = useState([]);
 
   const load = async () => {
     try {
       const [res, cfg] = await Promise.all([api(`/leads/${leadId}`), api('/leads/config')]);
-      setLead(res.lead); setConfig(cfg.config || {});
+      setLead(res.lead); setConfig(cfg.config || {}); setOwners(cfg.owners || []);
     } catch (e) { console.error(e); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [leadId]);
 
   if (!lead) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+
+  // A prospect has no deals/reports tabs; if we're pointed at one, show the
+  // timeline instead. Computed (not setState-in-render) to avoid a render loop.
+  const isCallback = lead.status === 'callback';
+  const effTab = (isCallback && (tab === 'deals' || tab === 'reports')) ? 'timeline' : tab;
 
   const sm = statusMeta(config, lead.status);
   const openEdit = (section) => { setDraft({ ...lead }); setEditSection(section); };
@@ -910,9 +994,17 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
       {/* Top row: back on the left, the lead's local time on the right — keeps
           the action buttons below on a single line. */}
       <div className="flex items-center justify-between gap-3 mb-3">
-        <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to leads</button>
+        <button onClick={onBack} className="text-xs font-bold text-slate-400 hover:text-slate-600">← Back to {isCallback ? 'prospects' : 'leads'}</button>
         <div className="flex items-center gap-2">
           {lead.timezone && <LeadLocalClock timezone={lead.timezone} />}
+          {/* On a prospect, the primary action is promoting it to a lead. */}
+          {isCallback && (
+            <button onClick={() => setShowTransfer(true)}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5"
+              style={{ background: 'linear-gradient(90deg,#8B5CF6,#7C3AED)' }}>
+              → <span className="hidden sm:inline">Transfer to lead</span>
+            </button>
+          )}
           {/* Reads the prospect's site and briefs the agent before they dial. */}
           <button onClick={() => setShowBrief(true)} disabled={!lead.website}
             title={lead.website ? 'AI business brief — what they do, what to pitch' : 'No website on this lead'}
@@ -922,6 +1014,11 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
         </div>
       </div>
       {showBrief && <AiBriefModal lead={lead} onClose={() => setShowBrief(false)} />}
+      {showTransfer && (
+        <TransferModal lead={lead} owners={owners} user={user}
+          onClose={() => setShowTransfer(false)}
+          onDone={() => { setShowTransfer(false); onBack(); }} />
+      )}
 
       {/* Pre-sales first-reply obligation, shown before anything else because
           it is time-bound. */}
@@ -1033,17 +1130,21 @@ export function LeadDetail({ user, leadId, onBack, initialTab }) {
         {/* RIGHT 70% */}
         <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
           <div className="flex border-b border-slate-100">
-            {['timeline', 'notes', 'activity', 'deals', 'reports'].map((t) => (
+            {/* A call-back prospect isn't a worked lead yet, so it has no deals
+                or reports — those tabs appear only once it's a real lead. */}
+            {['timeline', 'notes', 'activity', 'deals', 'reports']
+              .filter((t) => !(lead.status === 'callback' && (t === 'deals' || t === 'reports')))
+              .map((t) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-5 py-3 text-xs font-bold capitalize transition ${tab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
+                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
             ))}
           </div>
           <div className="p-5 min-h-[300px]">
-            {tab === 'timeline' && <Timeline lead={lead} />}
-            {tab === 'notes' && <NotesTab lead={lead} onChange={setLead} />}
-            {tab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
-            {tab === 'deals' && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
-            {tab === 'reports' && <ReportsTab lead={lead} onChange={setLead} />}
+            {effTab === 'timeline' && <Timeline lead={lead} />}
+            {effTab === 'notes' && <NotesTab lead={lead} onChange={setLead} />}
+            {effTab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
+            {effTab === 'deals' && !isCallback && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
+            {effTab === 'reports' && !isCallback && <ReportsTab lead={lead} onChange={setLead} />}
           </div>
         </div>
       </div>
@@ -2401,10 +2502,13 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {/* Lead managers coordinate intake only — the pipeline and converted views
           are outside their remit, so a stray deep link falls back to the list. */}
       {view === 'list' && <LeadsList user={user} untouchedFilter={untouched} onClearUntouched={() => setUntouched(null)} onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
+      {/* Prospects: the call-back-generated stage. Same list machinery, but
+          scoped to callbacks and with the Transfer action enabled. */}
+      {view === 'prospects' && <LeadsList user={user} stage="prospect" onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && isManagerOrAdmin && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
-      {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView('list')} />}
-      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} onBack={() => setView(initialView === 'converted' ? 'converted' : 'list')} />}
+      {view === 'new' && <NewLead user={user} onCreated={(l) => openDetail(l._id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
+      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list')} />}
     </div>
   );
 }

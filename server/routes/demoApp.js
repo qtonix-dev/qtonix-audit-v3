@@ -131,6 +131,10 @@ router.get('/reports/:id', (req, res) => {
 // --- leads ------------------------------------------------------------------
 router.get('/leads', (req, res) => {
   let items = scoped(req, demoData.leads()).filter((l) => l.status !== 'converted');
+  // Mirror the real split: prospects tab shows callbacks, leads list hides them.
+  const stage = req.query.stage;
+  if (stage === 'prospect') items = items.filter((l) => l.status === 'callback');
+  else if (!req.query.status) items = items.filter((l) => l.status !== 'callback');
   const q = (req.query.q || '').toLowerCase();
   if (q) items = items.filter((l) => (l.firstName + l.lastName + l.website).toLowerCase().includes(q));
   if (req.query.status) items = items.filter((l) => l.status === req.query.status);
@@ -477,6 +481,24 @@ router.get('/admin/settings', (req, res) => {
 // Wildcard last, so it only catches genuine lead ids.
 // NOTE: the detail screen reads res.lead and res.reports — returning the lead
 // object bare leaves the page stuck on "Loading…".
+// Demo write acknowledgements. The demo is otherwise read-only; these let the
+// transfer and draft-request buttons respond in training without persisting.
+router.post('/leads/:id/transfer', (req, res) => {
+  const l = demoData.leads().find((x) => x._id === req.params.id);
+  if (!l) return res.status(404).json({ error: 'Not found.' });
+  res.json({ ...l, status: 'new', transferredAt: new Date().toISOString(), _demoNote: 'Transfer simulated — not saved in demo.' });
+});
+router.post('/leads/:id/request-reminder', (req, res) => {
+  const l = demoData.leads().find((x) => x._id === req.params.id);
+  if (!l) return res.status(404).json({ error: 'Not found.' });
+  res.json({ ...l, reminderRequestedAt: new Date().toISOString(), reminderRequestedBy: 'Demo', _demoNote: 'Simulated — not saved in demo.' });
+});
+router.patch('/leads/:id/first-reply', (req, res) => {
+  const l = demoData.leads().find((x) => x._id === req.params.id);
+  if (!l) return res.status(404).json({ error: 'Not found.' });
+  res.json({ ...l, ...(req.body || {}), _demoNote: 'Simulated — not saved in demo.' });
+});
+
 router.get('/leads/:id', (req, res) => {
   const l = demoData.leads().find((x) => x._id === req.params.id);
   if (!l) return res.status(404).json({ error: 'Not found.' });

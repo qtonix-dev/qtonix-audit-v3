@@ -101,7 +101,11 @@ function makeLead(i, r, { converted = false } = {}) {
     phone: '+1 555 0101',
     leadSource: isPresales ? 'Pre-Sales' : pick(r, SOURCES),
     generatedBy: isPresales ? presalesTeamNames[i % presalesTeamNames.length] : owner.name,
-    status: converted ? 'converted' : pick(r, STATUSES),
+    // Every fourth non-converted, non-pre-sales lead is a call-back prospect —
+    // the early funnel stage shown on the Prospects tab, transferable to a
+    // lead. generatedById lets the originator keep visibility after transfer.
+    status: converted ? 'converted' : (!isPresales && i % 4 === 1 ? 'callback' : pick(r, STATUSES)),
+    generatedById: (!converted && !isPresales && i % 4 === 1) ? owner.id : null,
     // Draft workflow state for the pre-sales cases:
     //  case 2 → owner submitted a draft, awaiting the lead manager to read it
     //  others → still awaiting the owner's first move (case 1 is breached >24h)

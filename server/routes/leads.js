@@ -22,10 +22,26 @@ async function visibilityWhere(user) {
     const scopeOr = scopes
       .filter((s) => s && s.team && s.shift)
       .map((s) => ({ ownerTeam: s.team, ownerShift: s.shift }));
-    // own leads OR any lead within a managed team+shift group
-    return scopeOr.length ? { [Op.or]: [{ ownerId: user.id }, ...scopeOr] } : { ownerId: user.id };
+    // Agents whose team+shift this manager oversees. A prospect transferred out
+    // of the team still shows to the originating agent's manager, so we match on
+    // the generator's id as well as current ownership.
+    const scopedAgentIds = await User.findAll({
+      where: scopeOr.length ? { [Op.or]: scopeOr.map((s) => ({ team: s.ownerTeam, shift: s.ownerShift })) } : { id: -1 },
+      attributes: ['id'],
+    }).then((rows) => rows.map((r) => r.id)).catch(() => []);
+    return {
+      [Op.or]: [
+        { ownerId: user.id },
+        { generatedById: user.id },
+        ...scopeOr,
+        // leads this manager's own agents generated, wherever they now live
+        ...(scopedAgentIds.length ? [{ generatedById: { [Op.in]: scopedAgentIds } }] : []),
+      ],
+    };
   }
-  return { ownerId: user.id };
+  // An agent sees leads they own, plus any prospect they generated and then
+  // transferred to someone else (they stay in the loop on their own leads).
+  return { [Op.or]: [{ ownerId: user.id }, { generatedById: user.id }] };
 }
 
 // Can this user see/edit this specific lead?
@@ -33,9 +49,18 @@ async function canAccessLead(user, lead) {
   if (user.role === 'admin') return true;
   if (user.role === 'leadmanager') return true; // coordinates across all leads
   if (lead.ownerId === user.id) return true;
+  // The agent who generated a prospect keeps access after transferring it.
+  if (lead.generatedById && lead.generatedById === user.id) return true;
   if (user.role === 'manager') {
     const scopes = Array.isArray(user.managerScopes) ? user.managerScopes : [];
-    return scopes.some((s) => s && s.team === lead.ownerTeam && s.shift === lead.ownerShift);
+    if (scopes.some((s) => s && s.team === lead.ownerTeam && s.shift === lead.ownerShift)) return true;
+    // A lead one of this manager's agents generated stays visible after being
+    // transferred out of the team.
+    if (lead.generatedById) {
+      const gen = await User.findByPk(lead.generatedById).catch(() => null);
+      if (gen && scopes.some((s) => s && s.team === gen.team && s.shift === gen.shift)) return true;
+    }
+    return false;
   }
   return false;
 }
@@ -136,7 +161,7 @@ function buildRecurringCycles(amount, interval, startDate, count = 3, existingCo
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const where = await visibilityWhere(req.user);
-    const { q, status, source, ownerId, country, untouched } = req.query;
+    const { q, status, source, ownerId, country, untouched, stage } = req.query;
     // Converted leads live on their own page, which only managers and admins
     // can open. An agent must never see them here either — otherwise picking
     // "converted" in the status filter would be a way around that.
@@ -146,6 +171,20 @@ router.get('/', requireAuth, async (req, res, next) => {
       where.status = status;
     } else {
       where.status = { [Op.ne]: 'converted' };
+    }
+    // The funnel splits in two: "prospects" are call-back-generated leads not
+    // yet worked; "leads" is everything past that stage. The Prospects tab asks
+    // for stage=prospect; the main Leads list asks for stage=lead (or nothing,
+    // in which case callbacks are still excluded so they don't leak in). An
+    // explicit status filter overrides the split.
+    if (!status) {
+      if (stage === 'prospect') {
+        where.status = 'callback';
+      } else if (stage === 'lead') {
+        where.status = { [Op.notIn]: ['converted', 'callback'] };
+      } else {
+        where.status = { [Op.notIn]: ['converted', 'callback'] };
+      }
     }
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
@@ -559,7 +598,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
 
       const isConverted = l.status === 'converted';
-      if (!isConverted) {
+      const isProspect = l.status === 'callback';
+      // Call-back prospects aren't worked leads yet, so they don't count toward
+      // the lead total and are never flagged untouched — the 3-day rule doesn't
+      // apply until they're transferred.
+      if (!isConverted && !isProspect) {
         totalLeads++;
         const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
         if (last && last < in3d) { untouched++; if (untouchedList.length < 8) untouchedList.push(leadBrief(l)); }
@@ -654,10 +697,22 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         });
       });
 
-      for (const a of (l.activities || [])) {
-        if (a.kind === 'call' && a.status === 'done') {
-          const t = a.date ? new Date(a.date) : (a.createdAt ? new Date(a.createdAt) : null);
-          if (t && t >= startOfDay) byOwner[l.ownerId].transfersToday++;
+      // "Call transfers today" now means prospect→lead transfers this owner
+      // performed today (F1), not completed calls. Credit the person who did
+      // the transfer, which may differ from the current owner — so ensure they
+      // have a row even if they own no leads themselves.
+      if (l.transferredAt && l.transferredById) {
+        const t = new Date(l.transferredAt);
+        if (t >= startOfDay) {
+          const rec = ensure(l.transferredById, l.transferredByName || 'Unknown');
+          rec.transfersToday++;
+          rec.transferList = rec.transferList || [];
+          if (rec.transferList.length < 10) {
+            rec.transferList.push({
+              leadId: l.id, leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+              toName: l.ownerName, at: l.transferredAt,
+            });
+          }
         }
       }
     }
@@ -699,7 +754,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     const transferBoard = leaderboard
       .filter((o) => o.transferDailyTarget > 0 || o.transfersToday > 0)
-      .map((o) => ({ ownerId: o.ownerId, name: o.name, avatar: o.avatar, transfersToday: o.transfersToday, dailyTarget: o.transferDailyTarget, pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null, remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0 }))
+      .map((o) => ({ ownerId: o.ownerId, name: o.name, avatar: o.avatar, transfersToday: o.transfersToday, dailyTarget: o.transferDailyTarget, pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null, remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0, transfers: o.transferList || [] }))
       .sort((a, b) => b.transfersToday - a.transfersToday);
 
     // Company target = sum of managers' effective team targets.
@@ -937,6 +992,9 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
     const byOwner = {};
 
     for (const l of leads) {
+      // Call-back prospects are pre-rules: no missed-activity flagging until
+      // they become a lead via transfer.
+      if (l.status === 'callback') continue;
       for (const a of (l.activities || [])) {
         const dueAt = a.kind === 'call'
           ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
@@ -1175,6 +1233,9 @@ router.get('/awaiting-draft', requireAuth, async (req, res, next) => {
     const now = Date.now();
     const items = [];
     for (const l of leads) {
+      // Call-back prospects sit before the rules-apply stage, so the 24-hour
+      // clock doesn't run until they're transferred into a real lead.
+      if (l.status === 'callback') continue;
       // The rule applies to pre-sales enquiries only.
       if (!/pre-?sales/i.test(String(l.leadSource || ''))) continue;
       if (l.firstReplyDoneAt) continue;
@@ -1198,6 +1259,56 @@ router.get('/awaiting-draft', requireAuth, async (req, res, next) => {
       overdue: items.filter((i) => i.overdue).length,
       items,
     });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/leads/:id/transfer — promote a call-back prospect into a worked
+ * lead by handing it to an agent or manager.
+ *
+ * Only valid on a lead still in the 'callback' stage. The agent who generated
+ * it keeps visibility (via generatedById), the receiver becomes the owner, and
+ * the 24-hour / untouched clocks start from this moment because the lead only
+ * now enters the rules-apply part of the funnel.
+ */
+router.post('/:id/transfer', requireAuth, async (req, res, next) => {
+  try {
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    if (lead.status !== 'callback') {
+      return res.status(400).json({ error: 'Only a call-back prospect can be transferred.' });
+    }
+    const toId = Number((req.body || {}).toId);
+    const target = toId ? await User.findByPk(toId) : null;
+    if (!target || !target.active) return res.status(400).json({ error: 'Choose an agent or manager to transfer to.' });
+    if (!['agent', 'manager'].includes(target.role)) {
+      return res.status(400).json({ error: 'Prospects can only be transferred to an agent or manager.' });
+    }
+
+    // Preserve who generated it, if not already recorded (older prospects).
+    if (!lead.generatedById) lead.generatedById = lead.ownerId;
+
+    const now = new Date();
+    lead.ownerId = target.id;
+    lead.ownerName = target.name;
+    lead.ownerTeam = target.team || null;
+    lead.ownerShift = target.shift || null;
+    lead.status = 'new'; // now a real lead at the top of the worked funnel
+    lead.transferredAt = now;
+    lead.transferredById = req.user.id;
+    lead.transferredByName = req.user.name;
+    lead.transferredToId = target.id;
+    // The rules clocks start now — this is the moment it becomes a lead.
+    lead.assignedAt = now;
+    lead.lastActivityAt = now;
+
+    pushTimeline(lead, 'owner',
+      `Prospect transferred to ${target.name} by ${req.user.name} — now a lead`,
+      req.user.name, { transfer: true });
+    await lead.save();
+    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'lead.transfer', target: `lead ${lead.id} → ${target.name}`, ip: req.ip }).catch(() => {});
+    res.json(lead.toJSON());
   } catch (e) { next(e); }
 });
 
@@ -1273,6 +1384,9 @@ router.post('/', requireAuth, async (req, res, next) => {
       timezone: String(b.timezone || '').slice(0, 80),
       additionalInfo: String(b.additionalInfo || '').slice(0, 10000),
       lastActivityAt: backDate || new Date(),
+      // Track who generated a call-back prospect so they keep visibility after
+      // any later transfer. Only meaningful when the creator is the owner.
+      generatedById: (b.status === 'callback' && owner.id === req.user.id) ? req.user.id : null,
       // The 24-hour first-reply clock runs from assignment. For a back-dated
       // import that is the historical date, so migrated leads aren't all
       // flagged overdue the moment they land.

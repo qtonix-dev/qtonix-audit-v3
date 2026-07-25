@@ -769,6 +769,10 @@ export default function App() {
   const isManagerOrAdmin = user && (user.role === 'admin' || user.role === 'manager');
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
+    // Prospects = call-back-generated leads, the earliest funnel stage before
+    // a lead is worked. Sits right after Dashboard so it reads left-to-right as
+    // the pipeline: prospects → leads → reports.
+    { id: 'prospects', label: 'Prospects' },
     { id: 'leads', label: 'Leads' },
     { id: 'list', label: 'Reports' },
     ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),
@@ -851,6 +855,10 @@ export default function App() {
           onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
         {view === 'reviews' && isManagerOrAdmin && <Reviews user={user} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
+        {/* Prospects reuses Leads but opens on the call-back-generated list and
+            hides the deal/report machinery. A fresh key resets internal state
+            when switching between the two. */}
+        {view === 'prospects' && <Leads key="prospects" user={user} initialView="prospects" />}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />
         )}
