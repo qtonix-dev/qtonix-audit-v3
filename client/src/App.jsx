@@ -132,7 +132,7 @@ function Login({ onSignIn }) {
           <div className="text-3xl font-extrabold text-white tracking-tight">
             Qtonix<span className="text-[#FF6A00]">.</span>
           </div>
-          <p className="text-slate-400 text-sm mt-2">Site Analysis Portal</p>
+          <p className="text-slate-400 text-sm mt-2">Sales CRM &amp; Lead Management</p>
         </div>
 
         <div className="bg-white rounded-2xl p-7 shadow-2xl">

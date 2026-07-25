@@ -180,14 +180,15 @@ router.post('/users', async (req, res, next) => {
     const exists = await User.findOne({ where: { email: String(email).toLowerCase() } });
     if (exists) return res.status(409).json({ error: 'That email is already registered.' });
 
-    const validRole = ['agent', 'manager', 'admin'].includes(role) ? role : 'agent';
+    const validRole = ['agent', 'manager', 'admin', 'leadmanager'].includes(role) ? role : 'agent';
+    // Admins and lead managers sit outside the branch/shift structure — admins
+    // oversee everything, lead managers coordinate intake across the floor.
+    const outsideStructure = validRole === 'admin' || validRole === 'leadmanager';
     const user = await User.create({
       name, email: String(email).toLowerCase(), passwordHash: await bcrypt.hash(password, 12),
       role: validRole, phone: phone || '', designation: designation || 'Sales Executive',
-      // Admins sit outside the branch/shift structure — they oversee every
-      // group and act as direct in-charge wherever no manager is assigned.
-      team: validRole === 'admin' ? null : (['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar'),
-      shift: validRole === 'admin' ? null : (['Morning', 'Night'].includes(shift) ? shift : 'Morning'),
+      team: outsideStructure ? null : (['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar'),
+      shift: outsideStructure ? null : (['Morning', 'Night'].includes(shift) ? shift : 'Morning'),
       managerScopes: validRole === 'manager' && Array.isArray(managerScopes) ? managerScopes : [],
       jobType: validRole === 'agent' ? (['bde', 'presales'].includes(jobType) ? jobType : 'bde') : null,
       managerId: validRole === 'agent' && managerId ? Number(managerId) : null,
@@ -212,7 +213,7 @@ router.put('/users/:id', async (req, res, next) => {
     }
 
     if (name !== undefined) user.name = name;
-    if (role !== undefined) user.role = ['agent', 'manager', 'admin'].includes(role) ? role : 'agent';
+    if (role !== undefined) user.role = ['agent', 'manager', 'admin', 'leadmanager'].includes(role) ? role : 'agent';
     if (phone !== undefined) user.phone = phone;
     if (designation !== undefined) user.designation = designation;
     if (team !== undefined && ['Bhubaneswar', 'Kolkata'].includes(team)) user.team = team;

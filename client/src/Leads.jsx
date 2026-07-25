@@ -692,10 +692,19 @@ function CsvImportModal({ onClose, onDone }) {
 export function NewLead({ user, onCreated, onCancel }) {
   const [config, setConfig] = useState({});
   const [owners, setOwners] = useState([]);
-  const [f, setF] = useState({
-    ownerId: user.id, firstName: '', lastName: '', website: '', email: '', secondaryEmail: '',
-    mobile: '', phone: '', leadSource: '', generatedBy: '', status: 'new',
-    servicesInterested: [], tags: [], country: '', city: '', timezone: '', additionalInfo: '',
+  const [f, setF] = useState(() => {
+    // Agents start a lead as a fresh call-back from cold calling in the US —
+    // the overwhelmingly common case for them, so pre-filling saves clicks.
+    // Other roles get a blank slate.
+    const agentDefaults = user.role === 'agent'
+      ? { country: 'us', leadSource: 'Cold Calling', status: 'callback' }
+      : { country: '', leadSource: '', status: 'new' };
+    return {
+      ownerId: user.id, firstName: '', lastName: '', website: '', email: '', secondaryEmail: '',
+      mobile: '', phone: '', generatedBy: '', generatedFromEmail: '',
+      servicesInterested: [], tags: [], city: '', timezone: '', additionalInfo: '',
+      ...agentDefaults,
+    };
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -714,7 +723,7 @@ export function NewLead({ user, onCreated, onCancel }) {
       // Lead managers back-date via entryDate; the server maps it onto
       // createdAt (and assignedAt) after validating it's within range.
       const payload = { ...f };
-      if (f.entryDate && user.role === 'leadmanager') {
+      if (f.entryDate && ['leadmanager', 'admin'].includes(user.role)) {
         payload.createdAt = new Date(`${f.entryDate}T09:00:00`).toISOString();
       }
       delete payload.entryDate;
@@ -737,11 +746,12 @@ export function NewLead({ user, onCreated, onCancel }) {
       {error && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
-        {/* Back-dating, for lead managers migrating historical leads out of
-            Zoho. Sits at the very top because it changes what "today" means for
-            everything entered below. Capped server-side at two years, never
-            future. Other roles don't see it — they only ever add live leads. */}
-        {user.role === 'leadmanager' && (
+        {/* Back-dating, for lead managers and admins migrating historical leads
+            out of Zoho. Sits at the very top because it changes what "today"
+            means for everything entered below. Capped server-side at two years,
+            never future. Agents and managers add only live leads, so they don't
+            see it. */}
+        {['leadmanager', 'admin'].includes(user.role) && (
           <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
             <label className="block text-[11px] font-bold text-amber-700 uppercase tracking-wide mb-1">Entry date</label>
             <div className="flex items-center gap-3 flex-wrap">
@@ -1617,16 +1627,23 @@ function ActivityTab({ lead, config, user, onChange }) {
   const Card = ({ a }) => (
     <div className={`rounded-lg border px-3 py-2.5 flex items-start gap-3 ${overdue(a) ? 'border-red-200 bg-red-50' : dueToday(a) ? 'border-amber-200 bg-amber-50' : 'border-slate-100 bg-white'}`}>
       <button onClick={() => toggle(a)} title={a.status === 'done' ? 'Reopen' : 'Mark done'}
-        className={`mt-0.5 h-4 w-4 rounded border shrink-0 ${a.status === 'done' ? 'bg-green-500 border-green-500 text-white' : 'border-slate-300'}`}>
-        {a.status === 'done' ? '✓' : ''}
+        className={`mt-0.5 h-4 w-4 rounded border shrink-0 flex items-center justify-center leading-none ${a.status === 'done' ? 'bg-green-500 border-green-500 text-white' : 'border-slate-300 bg-white hover:border-green-400'}`}>
+        {a.status === 'done' && (
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        )}
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm">{a.kind === 'call' ? '📞' : '✅'}</span>
+          {/* Kind icon lives here; the checkbox is the ONLY tick, so a completed
+              task no longer shows two of them. */}
+          <span className="text-sm">{a.kind === 'call' ? '📞' : '📋'}</span>
           <span className={`text-sm font-semibold ${a.status === 'done' ? 'line-through text-slate-400' : 'text-slate-700'}`}>{a.title}</span>
           {a.kind === 'task' && a.priority && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${a.priority === 'Urgent' ? 'bg-red-100 text-red-600' : a.priority === 'High' ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>{a.priority}</span>}
-          {overdue(a) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-600">OVERDUE</span>}
-          {dueToday(a) && !overdue(a) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">TODAY</span>}
+          {a.status === 'done' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-700">DONE</span>}
+          {a.status !== 'done' && overdue(a) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-600">OVERDUE</span>}
+          {a.status !== 'done' && dueToday(a) && !overdue(a) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">TODAY</span>}
         </div>
         {a.kind === 'task' && a.description && <div className="text-xs text-slate-500 mt-1">{a.description}</div>}
         <div className="text-[10px] text-slate-400 mt-1">

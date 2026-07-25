@@ -362,6 +362,7 @@ const Settings = sequelize.define(
          */
         presalesTeam: [],
         leadStatuses: [
+          { id: 'callback', label: 'Call back generated', color: '#8B5CF6' },
           { id: 'new', label: 'New lead', color: '#64748B' },
           { id: 'hot', label: 'Hot', color: '#EA580C' },
           { id: 'cold', label: 'Cold', color: '#0891B2' },

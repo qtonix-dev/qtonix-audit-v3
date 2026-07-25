@@ -171,6 +171,28 @@ connectWithRetry()
     } catch (e) {
       console.error('[migrate] leads migration skipped:', e.message);
     }
+
+    // -- Backfill CRM config that older databases predate. Additive and
+    // idempotent: only inserts what's missing, never overwrites admin edits.
+    try {
+      const { Settings } = require('./models');
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      if (s && s.crmConfig) {
+        const cfg = { ...s.crmConfig };
+        let changed = false;
+        // "Call back generated" — the funnel's earliest stage.
+        const statuses = Array.isArray(cfg.leadStatuses) ? cfg.leadStatuses : [];
+        if (!statuses.some((x) => x.id === 'callback')) {
+          cfg.leadStatuses = [{ id: 'callback', label: 'Call back generated', color: '#8B5CF6' }, ...statuses];
+          changed = true;
+        }
+        if (!Array.isArray(cfg.presalesEmails)) { cfg.presalesEmails = []; changed = true; }
+        if (!Array.isArray(cfg.presalesTeam)) { cfg.presalesTeam = []; changed = true; }
+        if (changed) { s.crmConfig = cfg; s.changed('crmConfig', true); await s.save(); }
+      }
+    } catch (e) {
+      console.error('[migrate] crm config backfill skipped:', e.message);
+    }
     } // end if (connected)
 
     app.listen(PORT, () => {

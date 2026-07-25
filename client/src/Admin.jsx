@@ -884,11 +884,17 @@ function Users({ me, say }) {
             <Field label="Password *" hint="At least 8 characters"><input type="password" className={inputCls} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
             <Field label="Phone" hint="Appears on their report covers"><IndiaPhone value={f.phone} onChange={(v) => setF({ ...f, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} /></Field>
-            <Field label="Role"><select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="admin">Admin</option></select></Field>
-            <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
-            <Field label="Shift"><select className={inputCls} value={f.shift} onChange={(e) => setF({ ...f, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
-            <div className="col-span-2"><Field label="Alias names" hint="Pseudonyms used with clients — comma-separated (e.g. Nina, Nicky)"><input className={inputCls} value={f.aliases} onChange={(e) => setF({ ...f, aliases: e.target.value })} placeholder="Nina, Nicky" /></Field></div>
-            <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} allUsers={users} />
+            <Field label="Role"><select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
+            {/* A lead manager coordinates intake only — no team, shift, alias,
+                designation or targets apply to them. */}
+            {f.role !== 'leadmanager' && (
+              <>
+                <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
+                <Field label="Shift"><select className={inputCls} value={f.shift} onChange={(e) => setF({ ...f, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+                <div className="col-span-2"><Field label="Alias names" hint="Pseudonyms used with clients — comma-separated (e.g. Nina, Nicky)"><input className={inputCls} value={f.aliases} onChange={(e) => setF({ ...f, aliases: e.target.value })} placeholder="Nina, Nicky" /></Field></div>
+                <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} allUsers={users} />
+              </>
+            )}
           </div>
           <div className="flex justify-end mt-4"><Btn variant="dark" onClick={create}>Create user</Btn></div>
         </div>
@@ -916,9 +922,13 @@ function Users({ me, say }) {
             <Field label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="Phone"><IndiaPhone value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
-            <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="admin">Admin</option></select></Field>
-            <Field label="Team"><select className={inputCls} value={edit.team || 'Bhubaneswar'} onChange={(e) => setEdit({ ...edit, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
-            <Field label="Shift"><select className={inputCls} value={edit.shift || 'Morning'} onChange={(e) => setEdit({ ...edit, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+            <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
+            {edit.role !== 'leadmanager' && (
+              <>
+                <Field label="Team"><select className={inputCls} value={edit.team || 'Bhubaneswar'} onChange={(e) => setEdit({ ...edit, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
+                <Field label="Shift"><select className={inputCls} value={edit.shift || 'Morning'} onChange={(e) => setEdit({ ...edit, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+              </>
+            )}
             {edit.role === 'manager' && (
               <div className="col-span-2">
                 <Field label="Manages (team + shift)" hint="Leads owned by agents in these groups become visible to this manager">
@@ -938,8 +948,12 @@ function Users({ me, say }) {
                 </Field>
               </div>
             )}
-            <div className="col-span-2"><Field label="Alias names" hint="Comma-separated"><input className={inputCls} value={Array.isArray(edit.aliases) ? edit.aliases.join(', ') : (edit.aliases || '')} onChange={(e) => setEdit({ ...edit, aliases: e.target.value })} /></Field></div>
-            <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} allUsers={users} />
+            {edit.role !== 'leadmanager' && (
+              <>
+                <div className="col-span-2"><Field label="Alias names" hint="Comma-separated"><input className={inputCls} value={Array.isArray(edit.aliases) ? edit.aliases.join(', ') : (edit.aliases || '')} onChange={(e) => setEdit({ ...edit, aliases: e.target.value })} /></Field></div>
+                <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} allUsers={users} />
+              </>
+            )}
             <Field label="New password" hint="Leave blank to keep the current one"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} placeholder="New password…" /></Field>
           </div>
           <div className="flex justify-end gap-2 mt-4">
@@ -1024,6 +1038,9 @@ function CrmFields({ say }) {
       <StringListEditor title="Pre-sales team members"
         hint="Shown under 'Generated by' when the source is Pre-Sales. Names only — these people don't log in."
         items={cfg.presalesTeam || []} onChange={(l) => setList('presalesTeam', l)} />
+      <StringListEditor title="Pre-sales email addresses"
+        hint="Source inboxes a pre-sales lead can arrive from. Selectable as 'Generated from email' when adding a Pre-Sales lead. Visible only to lead managers and admins."
+        items={cfg.presalesEmails || []} onChange={(l) => setList('presalesEmails', l)} />
       <StringListEditor title="Services interested (multi-select in leads)" items={cfg.servicesInterested || []} onChange={(l) => setList('servicesInterested', l)} />
       <StringListEditor title="Lead tags" hint="First one is the default on new leads" items={cfg.tags || []} onChange={(l) => setList('tags', l)} />
       <StringListEditor title="Deal currencies" items={cfg.dealCurrencies || []} onChange={(l) => setList('dealCurrencies', l)} />
