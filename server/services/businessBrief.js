@@ -189,7 +189,10 @@ Return exactly this JSON shape:
   "servicesToPitch": [
     {"service": "one of: SEO, Local SEO, AI SEO, Google Ads, Social Media Marketing, Website Design, Website Development, Logo Design, Website Maintenance, Complete Digital Marketing", "why": "why it fits this specific business", "priority": "high|medium|low"}
   ],
-  "conversationStarters": ["2-3 opening lines the agent can say on the call. Write them in a natural, professional, conversational tone — the way a real person speaks. No buzzwords, no marketing jargon, no exclamation marks or dramatic punctuation. Each line should reference something concrete and specific about their business."],
+  "conversationStarters": ["2-3 opening lines the agent can actually open the call with. Write them the way a seasoned cold-calling sales manager would — someone who knows the first sentence decides whether the prospect keeps listening. Lead with something specific and true about THEIR business that earns attention immediately (a detail from their site, their market, their location). Confident and specific, warm not slick, and grounded in a real observation — never generic filler like 'I hope you're doing well'. No buzzwords, no exclamation marks, no hype. Each line should make the prospect think 'this person actually looked at my business'."],
+  "shareWithCustomer": [
+    {"point": "a concrete, positive or useful fact about their business/site the agent can mention to build rapport or credibility on the call", "detail": "one short line the agent can say"}
+  ],
   "aiSeoScore": 0,
   "aiSeoReason": "one sentence justifying the score",
   "aiSeoBreakdown": [
@@ -232,14 +235,24 @@ async function generateBrief(apiKey, { website, businessName, pageSpeedKey }) {
   // strategy, so doing them in sequence would triple the wait. PageSpeed is
   // allowed to fail without sinking the brief — the written analysis is the
   // part the agent actually needs.
+  // PageSpeed is the slow part (15-30s per strategy). Cap it so the brief comes
+  // back quickly: if a strategy hasn't returned within the budget we resolve
+  // without it and the UI shows the speed section as still loading / n-a. The
+  // written analysis is what the agent needs first.
+  const PS_BUDGET_MS = 12000;
+  const withTimeout = (p) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('pagespeed timed out')), PS_BUDGET_MS)),
+  ]);
+
   const [rawResult, mobileResult, desktopResult] = await Promise.allSettled([
     callClaude(apiKey, {
       system: SYSTEM,
       maxTokens: 2500,
       messages: [{ role: 'user', content: buildPrompt(signals, { website: url, businessName }) }],
     }),
-    pageSpeedKey ? getPageSpeed(url, pageSpeedKey, 'mobile') : Promise.reject(new Error('no key')),
-    pageSpeedKey ? getPageSpeed(url, pageSpeedKey, 'desktop') : Promise.reject(new Error('no key')),
+    pageSpeedKey ? withTimeout(getPageSpeed(url, pageSpeedKey, 'mobile')) : Promise.reject(new Error('no key')),
+    pageSpeedKey ? withTimeout(getPageSpeed(url, pageSpeedKey, 'desktop')) : Promise.reject(new Error('no key')),
   ]);
 
   if (rawResult.status !== 'fulfilled') throw rawResult.reason;
@@ -291,6 +304,7 @@ async function generateBrief(apiKey, { website, businessName, pageSpeedKey }) {
     painPoints: Array.isArray(ai.painPoints) ? ai.painPoints.slice(0, 8) : [],
     servicesToPitch: Array.isArray(ai.servicesToPitch) ? ai.servicesToPitch.slice(0, 6) : [],
     conversationStarters: Array.isArray(ai.conversationStarters) ? ai.conversationStarters.slice(0, 4) : [],
+    shareWithCustomer: Array.isArray(ai.shareWithCustomer) ? ai.shareWithCustomer.slice(0, 6) : [],
   };
 }
 

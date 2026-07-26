@@ -391,6 +391,12 @@ const DEMO_BRIEF_BODY = {
   ],
   checks: { nap: { complete: false, phone: '+1 555 0142' }, social: { count: 2, links: { facebook: '#', instagram: '#' } }, hasBlog: false, hasSsl: true },
   speed: { mobile: { performance: 58, seo: 92 }, desktop: { performance: 84, seo: 92 } },
+  aiSeoScore: 4,
+  aiSeoReason: 'Clear contact details and service pages, but thin content and no structured data limit how well AI search can cite them.',
+  shareWithCustomer: [
+    { point: 'Their cosmetic dentistry pages read well', detail: 'You can genuinely compliment the clarity of their service descriptions to open warmly.' },
+    { point: 'They already have an active Instagram', detail: 'Mention you noticed their social presence — a hook into social media marketing.' },
+  ],
 };
 router.get('/briefs', (req, res) => res.json({ items: DEMO_BRIEFS }));
 router.get('/briefs/:id', (req, res) => {

@@ -36,7 +36,7 @@ export default function AiBriefPage({ user }) {
 
   const view = async (id) => {
     setError('');
-    try { const r = await api(`/briefs/${id}`); setActive(r.brief); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    try { const r = await api(`/briefs/${id}`); setActive(r.brief); }
     catch (e) { setError(e.message); }
   };
 
@@ -87,8 +87,8 @@ export default function AiBriefPage({ user }) {
         </div>
       </div>
 
-      {/* Active brief — the reduced view */}
-      {active && <BriefView brief={active} />}
+      {/* Active brief shown in a popup */}
+      {active && <BriefModal brief={active} onClose={() => setActive(null)} />}
 
       {/* Listing */}
       <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
@@ -136,24 +136,56 @@ export default function AiBriefPage({ user }) {
   );
 }
 
+/** The brief shown in a popup. */
+function BriefModal({ brief, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl">
+          <div className="text-base font-extrabold text-[#050A1F]">Business brief</div>
+          <button onClick={onClose} className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 text-sm font-bold">✕</button>
+        </div>
+        <div className="p-6">
+          <BriefView brief={brief} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Reduced brief view for the standalone page. Order is fixed for speed of
- * reading on a call: what to pitch, opening lines, what they do, speed, site
- * checks, keywords, pain points.
+ * reading on a call: AI score, what to pitch, opening lines, what they do,
+ * speed, site checks, keywords, pain points, and what to share with the
+ * customer.
  */
 function BriefView({ brief }) {
   const b = brief.brief || brief; // row wraps the brief under .brief
   const PRIORITY = { high: 'bg-green-100 text-green-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-slate-100 text-slate-500' };
   const speed = b.speed || {};
+  // Speed is fetched with a timeout; when it isn't in yet we show a buffering
+  // state so the agent knows it's still loading rather than missing.
+  const speedPending = !speed.mobile && !speed.desktop;
 
   return (
-    <div className="bg-white rounded-2xl border border-orange-200 p-6 space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-base font-extrabold text-[#050A1F]">{brief.customerName || b.industry || 'Brief'}</div>
           <div className="text-xs text-slate-400">{brief.website || b.website}</div>
         </div>
+        {/* AI score */}
+        {b.aiSeoScore != null && (
+          <div className="text-center shrink-0">
+            <div className="text-3xl font-extrabold leading-none"
+              style={{ color: b.aiSeoScore >= 7 ? '#16A34A' : b.aiSeoScore >= 4 ? '#D97706' : '#DC2626' }}>
+              {b.aiSeoScore}<span className="text-sm text-slate-300">/10</span>
+            </div>
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mt-0.5">AI Score</div>
+          </div>
+        )}
       </div>
+      {b.aiSeoReason && <div className="text-[12px] text-slate-500 -mt-3">{b.aiSeoReason}</div>}
 
       {/* 1. What to pitch */}
       {(b.servicesToPitch || []).length > 0 && (
@@ -194,9 +226,21 @@ function BriefView({ brief }) {
         </Section>
       )}
 
-      {/* 4. Mobile & desktop speed */}
-      {(speed.mobile || speed.desktop) && (
-        <Section title="Site speed">
+      {/* 4. Mobile & desktop speed — buffering until PageSpeed returns */}
+      <Section title="Site speed">
+        {speedPending ? (
+          <div className="grid grid-cols-2 gap-3">
+            {['📱 Mobile', '🖥️ Desktop'].map((label) => (
+              <div key={label} className="rounded-xl border border-slate-200 p-3">
+                <div className="text-[11px] font-bold text-slate-500 mb-1">{label}</div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                  <span className="inline-block w-3 h-3 rounded-full border-2 border-slate-300 border-t-transparent animate-spin" />
+                  Loading speed…
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
           <div className="grid grid-cols-2 gap-3">
             {[['📱 Mobile', speed.mobile], ['🖥️ Desktop', speed.desktop]].map(([label, s]) => (
               <div key={label} className="rounded-xl border border-slate-200 p-3">
@@ -213,8 +257,8 @@ function BriefView({ brief }) {
               </div>
             ))}
           </div>
-        </Section>
-      )}
+        )}
+      </Section>
 
       {/* 5. Site checks */}
       {b.checks && (
@@ -253,6 +297,20 @@ function BriefView({ brief }) {
                 <div className="text-[13px] font-bold text-amber-900">{p.issue}</div>
                 <div className="text-[12px] text-amber-800 mt-0.5">{p.why}</div>
                 {p.mention && <div className="text-[12px] text-amber-700 mt-1 italic">“{p.mention}”</div>}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* 8. What to share with the customer */}
+      {(b.shareWithCustomer || []).length > 0 && (
+        <Section title="Useful to share with the customer">
+          <div className="space-y-2">
+            {b.shareWithCustomer.map((s, i) => (
+              <div key={i} className="rounded-lg border border-green-200 bg-green-50 p-3">
+                <div className="text-[13px] font-bold text-green-900">{s.point}</div>
+                {s.detail && <div className="text-[12px] text-green-800 mt-0.5">{s.detail}</div>}
               </div>
             ))}
           </div>

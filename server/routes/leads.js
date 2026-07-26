@@ -104,6 +104,12 @@ function hasPendingFutureActivity(lead) {
   return false;
 }
 
+// Drafts are rich text (HTML). For the plain-text timeline preview we strip the
+// tags so the note reads cleanly; the full HTML is kept in the meta body.
+function stripHtml(s) {
+  return String(s || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function pushTimeline(lead, type, text, author, meta) {
   const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
   tl.push({ type, text, time: new Date().toISOString(), author, ...(meta || {}) });
@@ -1259,7 +1265,7 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
       lead.firstDraftRead = false;
       lead.firstDraftReadAt = null;
       if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
-      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
     }
 
     // The lead manager (or admin) reads the draft and marks it actioned — this
@@ -1313,7 +1319,7 @@ router.patch('/:id/reminder-draft', requireAuth, async (req, res, next) => {
       lead.reminderDraftAt = new Date();
       lead.reminderReceived = false;
       lead.reminderReceivedAt = null;
-      pushTimeline(lead, 'note', `Reminder draft submitted to the lead manager${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${draft.slice(0, 400)}`, req.user.name, { body: draft });
+      pushTimeline(lead, 'note', `Reminder draft submitted to the lead manager${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
       await lead.save();
       return res.json(lead.toJSON());
     }
