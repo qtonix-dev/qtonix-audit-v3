@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { api } from './App.jsx';
+import { PhoneField, Pagination } from './Leads.jsx';
 
 /**
  * Standalone AI Brief page. An agent enters a domain, customer name and phone,
@@ -16,6 +17,13 @@ export default function AiBriefPage({ user }) {
   const [error, setError] = useState('');
   const [active, setActive] = useState(null); // the brief row currently shown
   const [list, setList] = useState(null);
+  // Listing filters + pagination.
+  const [q, setQ] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
 
   const loadList = () => api('/briefs').then((r) => setList(r.items || [])).catch(() => setList([]));
   useEffect(() => { loadList(); }, []);
@@ -50,6 +58,28 @@ export default function AiBriefPage({ user }) {
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
+  // Distinct agents present in the list, for the agent filter.
+  const agents = useMemo(() => {
+    const seen = new Map();
+    (list || []).forEach((r) => { if (r.agentName && !seen.has(r.agentName)) seen.set(r.agentName, r.agentName); });
+    return Array.from(seen.values()).sort();
+  }, [list]);
+
+  // Apply search + agent + date-range filters.
+  const filtered = useMemo(() => {
+    let rows = list || [];
+    const term = q.trim().toLowerCase();
+    if (term) rows = rows.filter((r) => `${r.domain} ${r.customerName} ${r.phone} ${r.agentName}`.toLowerCase().includes(term));
+    if (agentFilter) rows = rows.filter((r) => r.agentName === agentFilter);
+    if (fromDate) { const f = new Date(fromDate); rows = rows.filter((r) => new Date(r.createdAt) >= f); }
+    if (toDate) { const t = new Date(toDate); t.setHours(23, 59, 59, 999); rows = rows.filter((r) => new Date(r.createdAt) <= t); }
+    return rows;
+  }, [list, q, agentFilter, fromDate, toDate]);
+
+  useEffect(() => { setPage(1); }, [q, agentFilter, fromDate, toDate, perPage]);
+  const pageRows = filtered.slice((page - 1) * perPage, page * perPage);
+  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+
   return (
     <div className="space-y-5">
       <div>
@@ -72,8 +102,11 @@ export default function AiBriefPage({ user }) {
           </div>
           <div>
             <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Phone</label>
-            <input className={`${inp} mt-1`} value={form.phone} placeholder="Contact number"
-              onChange={(e) => setForm({ ...form, phone: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && run()} />
+            <div className="mt-1">
+              <PhoneField value={form.phone} country="United States"
+                onChange={(v) => setForm({ ...form, phone: v })}
+                className={inp} placeholder="number" />
+            </div>
           </div>
         </div>
         {error && <div className="text-xs text-red-600 mt-2">{error}</div>}
@@ -92,12 +125,43 @@ export default function AiBriefPage({ user }) {
 
       {/* Listing */}
       <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-        <div className="text-sm font-bold text-[#050A1F] mb-3">Brief history</div>
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div className="text-sm font-bold text-[#050A1F]">Brief history {list ? `(${filtered.length})` : ''}</div>
+        </div>
+
+        {/* Search + agent + date-range filters */}
+        <div className="flex items-end gap-2 flex-wrap mb-3">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search domain, customer, phone…"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}
+            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+            <option value="">All agents</option>
+            {agents.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <div className="flex items-center gap-1">
+            <div className="flex flex-col">
+              <label className="text-[9px] font-bold uppercase text-slate-400">From</label>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[9px] font-bold uppercase text-slate-400">To</label>
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+          {(q || agentFilter || fromDate || toDate) && (
+            <button onClick={() => { setQ(''); setAgentFilter(''); setFromDate(''); setToDate(''); }}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 hover:border-slate-300">Clear</button>
+          )}
+        </div>
+
         {!list ? (
           <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>
-        ) : list.length === 0 ? (
-          <div className="text-slate-300 text-sm py-6 text-center">No briefs yet. Run one above.</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-slate-300 text-sm py-6 text-center">{(list.length === 0) ? 'No briefs yet. Run one above.' : 'No briefs match these filters.'}</div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -111,7 +175,7 @@ export default function AiBriefPage({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {list.map((r) => (
+                {pageRows.map((r) => (
                   <tr key={r._id} onClick={() => view(r._id)}
                     className="border-b border-slate-50 cursor-pointer hover:bg-orange-50/40">
                     <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmtDate(r.createdAt)}</td>
@@ -130,6 +194,11 @@ export default function AiBriefPage({ user }) {
               </tbody>
             </table>
           </div>
+          <div className="mt-3">
+            <Pagination page={page} pages={pages} total={filtered.length} perPage={perPage}
+              onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="briefs" />
+          </div>
+          </>
         )}
       </div>
     </div>

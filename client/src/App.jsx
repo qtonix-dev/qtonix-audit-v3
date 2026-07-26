@@ -868,7 +868,10 @@ export default function App() {
             when switching between the two. */}
         {view === 'prospects' && <Leads key="prospects" user={user} initialView="prospects" />}
         {view === 'aibrief' && <AiBriefPage user={user} />}
-        {view === 'emaildrafts' && (user.role === 'leadmanager' || user.role === 'admin') && <EmailDraftsPage user={user} />}
+        {view === 'emaildrafts' && (user.role === 'leadmanager' || user.role === 'admin') && (
+          <EmailDraftsPage user={user}
+            onOpenLead={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />
+        )}
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />
         )}

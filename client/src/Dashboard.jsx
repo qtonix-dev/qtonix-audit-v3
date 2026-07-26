@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './App.jsx';
+import { Pagination } from './Leads.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
@@ -889,14 +890,23 @@ function SalesCelebration({ latest, others }) {
 // Two tabs — 1st Reply and Reminder — each a table of submissions, with
 // summary boxes above showing received-this-month, today, and completed.
 // ---------------------------------------------------------------------------
-export function EmailDraftsPage({ user }) {
+export function EmailDraftsPage({ user, onOpenLead }) {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('first');
   const [open, setOpen] = useState(null); // expanded submission
   const [err, setErr] = useState('');
+  const [leadPopup, setLeadPopup] = useState(null);
+  // Filters + pagination (shared across both tabs; reset page on change).
+  const [q, setQ] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
 
   const load = () => api('/leads/email-drafts').then(setData).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(1); }, [q, agentFilter, fromDate, toDate, perPage, tab]);
 
   const act = async (id, path, payload) => {
     try { await api(`/leads/${id}/${path}`, { method: 'PATCH', body: JSON.stringify(payload) }); load(); }
@@ -908,7 +918,22 @@ export function EmailDraftsPage({ user }) {
 
   const s = data.summary;
   const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
-  const rows = tab === 'first' ? data.firstReplies : data.reminders;
+  const fmtDay = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  const allRows = tab === 'first' ? data.firstReplies : data.reminders;
+
+  // Distinct owners (agents) for the agent filter.
+  const agents = Array.from(new Set(allRows.map((r) => r.ownerName).filter(Boolean))).sort();
+
+  // Apply filters.
+  let rows = allRows;
+  const term = q.trim().toLowerCase();
+  if (term) rows = rows.filter((r) => `${r.name} ${r.ownerName} ${r.subject} ${r.email} ${r.generatedFromEmail}`.toLowerCase().includes(term));
+  if (agentFilter) rows = rows.filter((r) => r.ownerName === agentFilter);
+  if (fromDate) { const f = new Date(fromDate); rows = rows.filter((r) => new Date(r.submittedAt) >= f); }
+  if (toDate) { const t = new Date(toDate); t.setHours(23, 59, 59, 999); rows = rows.filter((r) => new Date(r.submittedAt) <= t); }
+
+  const pages = Math.max(1, Math.ceil(rows.length / perPage));
+  const pageRows = rows.slice((page - 1) * perPage, page * perPage);
 
   const Box = ({ label, value, accent }) => (
     <div className="bg-white rounded-2xl border border-slate-200/70 p-4">
@@ -942,60 +967,137 @@ export function EmailDraftsPage({ user }) {
         ))}
       </div>
 
+      {/* Filters — present on both tabs */}
+      <div className="flex items-end gap-2 flex-wrap">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search lead, subject, email…"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+          <option value="">All agents</option>
+          {agents.map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <div className="flex items-center gap-1">
+          <div className="flex flex-col">
+            <label className="text-[9px] font-bold uppercase text-slate-400">From</label>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[9px] font-bold uppercase text-slate-400">To</label>
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        {(q || agentFilter || fromDate || toDate) && (
+          <button onClick={() => { setQ(''); setAgentFilter(''); setFromDate(''); setToDate(''); }}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 hover:border-slate-300">Clear</button>
+        )}
+        <div className="text-xs text-slate-400 ml-auto self-center">{rows.length} shown</div>
+      </div>
+
       <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
         {rows.length === 0 ? (
-          <div className="text-slate-300 text-sm py-8 text-center">No {tab === 'first' ? 'first replies' : 'reminders'} submitted yet.</div>
+          <div className="text-slate-300 text-sm py-8 text-center">{allRows.length === 0 ? `No ${tab === 'first' ? 'first replies' : 'reminders'} submitted yet.` : 'No rows match these filters.'}</div>
         ) : (
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
-                <th className="text-left py-2 px-2">Lead</th>
-                <th className="text-left py-2 px-2">Owner</th>
-                <th className="text-left py-2 px-2">Subject</th>
-                <th className="text-left py-2 px-2">Submitted</th>
-                <th className="text-left py-2 px-2">Status</th>
-                <th className="text-right py-2 px-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const done = tab === 'first' ? r.read : r.received;
-                return (
-                  <React.Fragment key={r._id}>
-                    <tr className="border-b border-slate-50 cursor-pointer hover:bg-orange-50/40" onClick={() => setOpen(open === r._id ? null : r._id)}>
-                      <td className="py-2 px-2 font-bold text-[#050A1F]">{r.name}</td>
-                      <td className="py-2 px-2 text-slate-500">{r.ownerName}</td>
-                      <td className="py-2 px-2 text-slate-600 max-w-[220px] truncate">{r.subject || <span className="text-slate-300">(no subject)</span>}</td>
-                      <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmt(r.submittedAt)}</td>
-                      <td className="py-2 px-2">
-                        {done
-                          ? <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-green-100 text-green-700">{tab === 'first' ? 'Read' : 'Received'}</span>
-                          : <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700">Awaiting</span>}
-                      </td>
-                      <td className="py-2 px-2 text-right">
-                        {!done && (
-                          <button onClick={(e) => { e.stopPropagation(); tab === 'first' ? act(r._id, 'first-reply', { draftRead: true }) : act(r._id, 'reminder-draft', { received: true }); }}
-                            className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
-                            Mark {tab === 'first' ? 'read' : 'received'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    {open === r._id && (
-                      <tr className="bg-slate-50/60">
-                        <td colSpan={6} className="px-4 py-3">
-                          {r.subject && <div className="text-[13px] font-bold text-slate-700 mb-1">Subject: {r.subject}</div>}
-                          <div className="text-[13px] text-slate-600 whitespace-pre-wrap">{r.body}</div>
-                          {done && <div className="text-[11px] text-green-600 font-semibold mt-2">Completed {fmt(tab === 'first' ? r.readAt : r.receivedAt)}</div>}
+          <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                  <th className="text-left py-2 px-2">Lead</th>
+                  <th className="text-left py-2 px-2">Owner</th>
+                  <th className="text-left py-2 px-2">Generated from</th>
+                  <th className="text-left py-2 px-2">Lead email</th>
+                  <th className="text-left py-2 px-2">Lead added</th>
+                  <th className="text-left py-2 px-2">Subject</th>
+                  <th className="text-left py-2 px-2">Submitted</th>
+                  <th className="text-left py-2 px-2">Status</th>
+                  <th className="text-right py-2 px-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => {
+                  const done = tab === 'first' ? r.read : r.received;
+                  return (
+                    <React.Fragment key={r._id}>
+                      <tr className="border-b border-slate-50 hover:bg-orange-50/40">
+                        <td className="py-2 px-2">
+                          <button onClick={() => setLeadPopup(r)} className="font-bold text-[#FF4500] hover:underline text-left">{r.name || '(no name)'}</button>
+                        </td>
+                        <td className="py-2 px-2 text-slate-500">{r.ownerName}</td>
+                        <td className="py-2 px-2 text-slate-500 max-w-[150px] truncate" title={r.generatedFromEmail}>{r.generatedFromEmail || <span className="text-slate-300">—</span>}</td>
+                        <td className="py-2 px-2 text-slate-500 max-w-[150px] truncate" title={r.email}>{r.email || <span className="text-slate-300">—</span>}</td>
+                        <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmtDay(r.leadCreatedAt)}</td>
+                        <td className="py-2 px-2 text-slate-600 max-w-[180px] truncate cursor-pointer" onClick={() => setOpen(open === r._id ? null : r._id)}>{r.subject || <span className="text-slate-300">(no subject)</span>}</td>
+                        <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmt(r.submittedAt)}</td>
+                        <td className="py-2 px-2">
+                          {done
+                            ? <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-green-100 text-green-700">{tab === 'first' ? 'Read' : 'Received'}</span>
+                            : <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-700">Awaiting</span>}
+                        </td>
+                        <td className="py-2 px-2 text-right whitespace-nowrap">
+                          <button onClick={() => setOpen(open === r._id ? null : r._id)} className="text-[11px] font-bold text-slate-500 hover:underline mr-3">{open === r._id ? 'Hide' : 'View'}</button>
+                          {!done && (
+                            <button onClick={(e) => { e.stopPropagation(); tab === 'first' ? act(r._id, 'first-reply', { draftRead: true }) : act(r._id, 'reminder-draft', { received: true }); }}
+                              className="rounded-md px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+                              Mark {tab === 'first' ? 'read' : 'received'}
+                            </button>
+                          )}
                         </td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                      {open === r._id && (
+                        <tr className="bg-slate-50/60">
+                          <td colSpan={9} className="px-4 py-3">
+                            {r.subject && <div className="text-[13px] font-bold text-slate-700 mb-1">Subject: {r.subject}</div>}
+                            <div className="text-[13px] text-slate-600" dangerouslySetInnerHTML={{ __html: r.body }} />
+                            {done && <div className="text-[11px] text-green-600 font-semibold mt-2">Completed {fmt(tab === 'first' ? r.readAt : r.receivedAt)}</div>}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3">
+            <Pagination page={page} pages={pages} total={rows.length} perPage={perPage}
+              onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="drafts" />
+          </div>
+          </>
         )}
+      </div>
+
+      {leadPopup && (
+        <LeadPeekModal row={leadPopup} onClose={() => setLeadPopup(null)}
+          onMore={() => { const id = leadPopup._id; setLeadPopup(null); onOpenLead && onOpenLead(id); }} />
+      )}
+    </div>
+  );
+}
+
+/** Small popup showing key lead details, with a button to open the full page. */
+function LeadPeekModal({ row, onClose, onMore }) {
+  const fmtDay = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  const Item = ({ k, v }) => (
+    <div className="flex justify-between gap-3 py-1 border-b border-slate-50 last:border-0">
+      <span className="text-slate-400 text-xs">{k}</span>
+      <span className="text-slate-700 text-xs font-medium text-right break-all">{v || <span className="text-slate-300">—</span>}</span>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-extrabold text-[#050A1F] mb-3">{row.name || '(no name)'}</div>
+        <div className="space-y-0.5">
+          <Item k="Owner" v={row.ownerName} />
+          <Item k="Website" v={row.website} />
+          <Item k="Lead email" v={row.email} />
+          <Item k="Generated from" v={row.generatedFromEmail} />
+          <Item k="Lead added" v={fmtDay(row.leadCreatedAt)} />
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={onMore} className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>More details</button>
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500">Close</button>
+        </div>
       </div>
     </div>
   );

@@ -454,12 +454,16 @@ router.get('/email-drafts', requireAuth, async (req, res, next) => {
     const firstReplies = firstRows.map((l) => ({
       _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
       ownerName: l.ownerName, website: l.website,
+      email: l.email || '', generatedFromEmail: l.generatedFromEmail || '',
+      leadCreatedAt: l.createdAt,
       subject: l.firstDraftSubject || '', body: l.firstDraft || '',
       submittedAt: l.firstDraftAt, read: !!l.firstDraftRead, readAt: l.firstDraftReadAt,
     }));
     const reminders = remRows.map((l) => ({
       _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
       ownerName: l.ownerName, website: l.website,
+      email: l.email || '', generatedFromEmail: l.generatedFromEmail || '',
+      leadCreatedAt: l.createdAt,
       subject: l.reminderSubject || '', body: l.reminderDraft || '',
       submittedAt: l.reminderDraftAt, received: !!l.reminderReceived, receivedAt: l.reminderReceivedAt,
     }));
@@ -1256,16 +1260,29 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
     if (b.draft !== undefined) {
       const draft = String(b.draft || '').slice(0, 20000);
       if (!draft.trim()) return res.status(400).json({ error: 'The draft is empty.' });
+      // Editing an existing draft is allowed only before the lead manager has
+      // read it and only within 2 hours of first submission. A brand-new draft
+      // (no firstDraftAt yet) always goes through.
+      if (lead.firstDraft && lead.firstDraftAt) {
+        if (lead.firstDraftRead || lead.firstReplyDoneAt) {
+          return res.status(409).json({ error: 'This draft has already been sent and can no longer be edited.' });
+        }
+        const age = Date.now() - new Date(lead.firstDraftAt).getTime();
+        if (age > 2 * 60 * 60 * 1000) {
+          return res.status(409).json({ error: 'The edit window (2 hours) has passed.' });
+        }
+      }
+      const isEdit = !!lead.firstDraft;
       lead.firstDraft = draft;
       lead.firstDraftSubject = String(b.subject || '').slice(0, 300);
-      lead.firstDraftAt = new Date();
+      if (!isEdit) lead.firstDraftAt = new Date();
       // Submitting a draft stops the 24-hour clock (the owner has done their
       // part) but does NOT close the item — the lead manager still has to read
       // it and send the actual email. draftRead marks that final step.
       lead.firstDraftRead = false;
       lead.firstDraftReadAt = null;
       if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
-      pushTimeline(lead, 'note', `First-reply draft submitted to the lead manager${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
+      pushTimeline(lead, 'note', `First-reply draft ${isEdit ? 'edited' : 'submitted'}${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
     }
 
     // The lead manager (or admin) reads the draft and marks it actioned — this
@@ -1314,12 +1331,24 @@ router.patch('/:id/reminder-draft', requireAuth, async (req, res, next) => {
     if (b.draft !== undefined) {
       const draft = String(b.draft || '').slice(0, 20000);
       if (!draft.trim()) return res.status(400).json({ error: 'The reminder draft is empty.' });
+      // Same edit rules as the first reply: editable only before the lead
+      // manager receives it and within 2 hours of first submission.
+      if (lead.reminderDraft && lead.reminderDraftAt) {
+        if (lead.reminderReceived) {
+          return res.status(409).json({ error: 'This reminder has already been sent and can no longer be edited.' });
+        }
+        const age = Date.now() - new Date(lead.reminderDraftAt).getTime();
+        if (age > 2 * 60 * 60 * 1000) {
+          return res.status(409).json({ error: 'The edit window (2 hours) has passed.' });
+        }
+      }
+      const isEdit = !!lead.reminderDraft;
       lead.reminderDraft = draft;
       lead.reminderSubject = String(b.subject || '').slice(0, 300);
-      lead.reminderDraftAt = new Date();
+      if (!isEdit) lead.reminderDraftAt = new Date();
       lead.reminderReceived = false;
       lead.reminderReceivedAt = null;
-      pushTimeline(lead, 'note', `Reminder draft submitted to the lead manager${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
+      pushTimeline(lead, 'note', `Reminder draft ${isEdit ? 'edited' : 'submitted'}${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
       await lead.save();
       return res.json(lead.toJSON());
     }

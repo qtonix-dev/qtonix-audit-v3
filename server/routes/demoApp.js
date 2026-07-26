@@ -354,12 +354,18 @@ router.get('/leads/email-drafts', (req, res) => {
   const leads = demoData.leads();
   const first = leads.slice(5, 11).map((l, i) => ({
     _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website,
-    subject: `Following up on your enquiry`, body: 'Hi, thanks so much for reaching out about your digital marketing needs. I wanted to introduce myself and share how we could help...',
+    email: l.email || `contact@${(l.website||'example.com').replace(/^https?:\/\//,'')}`,
+    generatedFromEmail: i % 2 === 0 ? 'sales@qtonix.com' : 'info@qtonix.com',
+    leadCreatedAt: l.createdAt || new Date(Date.now() - (i + 3) * 86400000).toISOString(),
+    subject: `Following up on your enquiry`, body: '<p>Hi, thanks so much for reaching out about your digital marketing needs. I wanted to introduce myself and share how we could help...</p>',
     submittedAt: new Date(Date.now() - i * 5400000).toISOString(), read: i % 2 === 0, readAt: i % 2 === 0 ? new Date().toISOString() : null,
   }));
   const reminders = leads.slice(0, 4).map((l, i) => ({
     _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website,
-    subject: `Quick follow-up`, body: 'Just wanted to circle back on my previous email in case it got buried. Happy to answer any questions...',
+    email: l.email || `contact@${(l.website||'example.com').replace(/^https?:\/\//,'')}`,
+    generatedFromEmail: i % 2 === 0 ? 'sales@qtonix.com' : 'info@qtonix.com',
+    leadCreatedAt: l.createdAt || new Date(Date.now() - (i + 5) * 86400000).toISOString(),
+    subject: `Quick follow-up`, body: '<p>Just wanted to circle back on my previous email in case it got buried. Happy to answer any questions...</p>',
     submittedAt: new Date(Date.now() - i * 7200000).toISOString(), received: i === 0, receivedAt: i === 0 ? new Date().toISOString() : null,
   }));
   res.json({
