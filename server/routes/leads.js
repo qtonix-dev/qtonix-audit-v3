@@ -860,9 +860,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       return u.id === req.user.id;
     };
     owners.forEach((u) => {
-      // Seed every in-scope active user (agents AND managers), so the whole
-      // team appears on the leaderboard even at zero sales. Admins are seeded
-      // too but filtered out for non-admin viewers further down.
+      // Seed every in-scope active AGENT and MANAGER, so the whole team appears
+      // on the leaderboard even at zero sales. Lead managers are never seeded:
+      // they don't own leads or make sales, so they have no place on a sales
+      // board. Admins are seeded but filtered out for non-admin viewers below.
+      if (u.role === 'leadmanager') return;
       if (u.active !== false && inScope(u)) ensure(u.id, u.name);
     });
 
@@ -882,7 +884,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // The ranking is an AGENT board for agents and managers: managers and
       // admins are excluded from the competitive list, though the viewer always
       // sees their own row so they can track themselves. An admin viewer sees
-      // everyone, unfiltered.
+      // everyone, unfiltered — EXCEPT lead managers, who never belong on a sales
+      // board regardless of who's viewing (they own no leads and make no sales).
+      .filter((o) => o.role !== 'leadmanager')
       .filter((o) => viewerIsAdmin || o.role === 'agent' || o.ownerId === req.user.id)
       .sort((a, b) => b.salesUsd - a.salesUsd);
 
