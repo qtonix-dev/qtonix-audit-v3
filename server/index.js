@@ -190,6 +190,12 @@ connectWithRetry()
         }
         if (!Array.isArray(cfg.presalesEmails)) { cfg.presalesEmails = []; changed = true; }
         if (!Array.isArray(cfg.presalesTeam)) { cfg.presalesTeam = []; changed = true; }
+        // Older configs stored the pre-sales team as plain name strings. Convert
+        // any string entries to { name, monthlyTarget } so targets can be set.
+        if (Array.isArray(cfg.presalesTeam) && cfg.presalesTeam.some((x) => typeof x === 'string')) {
+          cfg.presalesTeam = cfg.presalesTeam.map((x) => typeof x === 'string' ? { name: x, monthlyTarget: 0 } : x);
+          changed = true;
+        }
         if (changed) { s.crmConfig = cfg; s.changed('crmConfig', true); await s.save(); }
       }
     } catch (e) {

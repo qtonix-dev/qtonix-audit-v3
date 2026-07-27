@@ -325,11 +325,16 @@ router.get('/leads/recent-wins', (req, res) => {
 router.get('/leads/lm-dashboard', (req, res) => {
   const now = new Date();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const team = ['Amit Presales', 'Sara Presales', 'Vikram Presales', 'Neha Presales'];
+  const team = [
+    { name: 'Amit Presales', monthlyTarget: 60 },
+    { name: 'Sara Presales', monthlyTarget: 50 },
+    { name: 'Vikram Presales', monthlyTarget: 45 },
+    { name: 'Neha Presales', monthlyTarget: 40 },
+  ];
   const recentLeads = demoData.leads().slice(0, 5).map((l, i) => ({
     _id: l._id, name: `${l.firstName} ${l.lastName}`, website: l.website,
     ownerName: l.ownerName, source: 'Pre-Sales', createdAt: new Date(Date.now() - i * 3600000).toISOString(),
-    generatedBy: team[i % team.length],
+    generatedBy: team[i % team.length].name,
   }));
   const recentDrafts = demoData.leads().slice(5, 9).map((l, i) => ({
     _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName,
@@ -338,13 +343,13 @@ router.get('/leads/lm-dashboard', (req, res) => {
   }));
   res.json({
     demo: true, role: 'leadmanager',
-    metrics: { assignedToday: 6, assignedMonth: 84, totalEntered: 312, draftsReceived: 11, teamToday: 9, teamMonth: 148 },
+    metrics: { assignedToday: 6, assignedMonth: 84, totalEntered: 312, draftsReceived: 11, teamToday: 9, teamMonth: 148, teamMonthlyTarget: team.reduce((s, t) => s + t.monthlyTarget, 0) },
     recentLeads, recentDrafts,
     assignmentTable: demoData.users().filter((u) => u.role !== 'leadmanager').map((u, i) => ({
       ownerId: u.id, ownerName: u.name, today: (i === 0 ? 3 : i === 1 ? 1 : 0), thisMonth: 12 - i * 2, total: 60 - i * 8,
     })),
-    teamPerformance: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
-    teamLeaderboard: team.map((n, i) => ({ name: n, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
+    teamPerformance: team.map((t, i) => { const month = 48 - i * 9; return { name: t.name, monthlyTarget: t.monthlyTarget, today: 3 - (i % 3), month, total: 200 - i * 30, pct: Math.round((month / t.monthlyTarget) * 100) }; }),
+    teamLeaderboard: team.map((t, i) => ({ name: t.name, monthlyTarget: t.monthlyTarget, today: 3 - (i % 3), month: 48 - i * 9, total: 200 - i * 30 })),
     trend: Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, leads: i < now.getDate() ? 3 + ((i * 5) % 8) : 0 })),
     teamConfigured: team.length,
   });

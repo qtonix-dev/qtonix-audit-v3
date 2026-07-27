@@ -726,7 +726,22 @@ function LeadManagerDashboard({ user, onViewToday }) {
 
         {/* Blocks 6 + 8: team performance and leaderboard */}
         <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-          <div className="text-sm font-bold text-[#050A1F] mb-3">Pre-sales team · this month</div>
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="text-sm font-bold text-[#050A1F]">Pre-sales team · this month</div>
+            {m.teamMonthlyTarget > 0 && (
+              <div className="text-xs font-bold">
+                <span className="text-[#FF4500]">{m.teamMonth}</span>
+                <span className="text-slate-300"> / {m.teamMonthlyTarget}</span>
+                <span className="text-slate-400 font-normal"> achieved</span>
+              </div>
+            )}
+          </div>
+          {/* Team-wide progress bar toward the summed monthly target. */}
+          {m.teamMonthlyTarget > 0 && (
+            <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-4">
+              <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round((m.teamMonth / m.teamMonthlyTarget) * 100))}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+            </div>
+          )}
           {data.teamConfigured === 0 ? (
             <div className="text-slate-300 text-sm py-6 text-center">
               No pre-sales team members configured. An admin can add them under CRM fields.
@@ -762,6 +777,8 @@ function LeadManagerDashboard({ user, onViewToday }) {
                 <th className="text-left py-2">Member</th>
                 <th className="text-right py-2">Today</th>
                 <th className="text-right py-2">This month</th>
+                <th className="text-right py-2">Monthly target</th>
+                <th className="text-right py-2">% achieved</th>
                 <th className="text-right py-2">All time</th>
                 <th className="text-right py-2">Share</th>
               </tr>
@@ -769,11 +786,19 @@ function LeadManagerDashboard({ user, onViewToday }) {
             <tbody>
               {data.teamPerformance.map((t) => {
                 const share = m.teamMonth > 0 ? Math.round((t.month / m.teamMonth) * 100) : 0;
+                // % of this member's own monthly target reached.
+                const pct = t.monthlyTarget > 0 ? Math.round((t.month / t.monthlyTarget) * 100) : null;
                 return (
                   <tr key={t.name} className="border-b border-slate-50">
                     <td className="py-2 font-bold text-slate-600">{t.name}</td>
                     <td className="py-2 text-right text-slate-500">{t.today}</td>
                     <td className="py-2 text-right font-bold text-[#050A1F]">{t.month}</td>
+                    <td className="py-2 text-right text-slate-500">{t.monthlyTarget > 0 ? t.monthlyTarget : <span className="text-slate-300">—</span>}</td>
+                    <td className="py-2 text-right">
+                      {pct != null
+                        ? <span className={`font-bold ${pct >= 100 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-slate-500'}`}>{pct}%</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
                     <td className="py-2 text-right text-slate-400">{t.total}</td>
                     <td className="py-2 text-right">
                       <span className="inline-flex items-center gap-1.5">

@@ -852,7 +852,7 @@ function CsvImportModal({ onClose, onDone }) {
 }
 
 // ---- New lead form ---------------------------------------------------------
-export function NewLead({ user, onCreated, onCancel, isCallback }) {
+export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
   const [config, setConfig] = useState({});
   const [owners, setOwners] = useState([]);
   const [f, setF] = useState(() => {
@@ -880,6 +880,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [dupe, setDupe] = useState(null); // duplicate-website info from the server
 
   useEffect(() => {
     api('/leads/config').then((r) => { setConfig(r.config || {}); setOwners(r.owners || []); }).catch(() => {});
@@ -890,7 +891,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
 
   const submit = async () => {
     if (!f.firstName.trim()) { setError('First name is required.'); return; }
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setDupe(null);
     try {
       // Lead managers back-date via entryDate; the server maps it onto
       // createdAt (and assignedAt) after validating it's within range.
@@ -901,7 +902,11 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
       delete payload.entryDate;
       const lead = await api('/leads', { method: 'POST', body: JSON.stringify(payload) });
       onCreated(lead);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setError(e.message);
+      // A duplicate-website rejection carries the existing lead so we can link.
+      if (e.data && e.data.duplicate) setDupe(e.data.duplicate);
+    }
     setBusy(false);
   };
 
@@ -915,7 +920,21 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
     <div className="max-w-3xl">
       <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to {isCallback ? 'call backs' : 'leads'}</button>
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">{isCallback ? 'Add call back' : 'New lead'}</h1>
-      {error && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
+      {error && !dupe && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
+      {dupe && (
+        <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3">
+          <div className="font-bold">Duplicate website</div>
+          <div className="mt-0.5">
+            {error}{' '}
+            {dupe.visible && dupe._id ? (
+              <button type="button" onClick={() => onOpenLead && onOpenLead(dupe._id)}
+                className="font-bold text-[#FF4500] hover:underline">
+                Open {dupe.name} →
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
         {/* Back-dating, for lead managers and admins migrating historical leads
@@ -980,7 +999,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
         <div className="grid grid-cols-2 gap-4">
           <div><label className={lab}>First name *</label><input className={inp} value={f.firstName} onChange={(e) => set('firstName', e.target.value)} /></div>
           <div><label className={lab}>Last name</label><input className={inp} value={f.lastName} onChange={(e) => set('lastName', e.target.value)} /></div>
-          <div><label className={lab}>Website</label><input className={inp} value={f.website} onChange={(e) => set('website', e.target.value)} placeholder="https://…" /></div>
+          <div><label className={lab}>Website</label><input className={inp} value={f.website} onChange={(e) => { set('website', e.target.value); if (dupe) setDupe(null); }} placeholder="https://…" /></div>
           <div><label className={lab}>Email</label><input className={inp} value={f.email} onChange={(e) => set('email', e.target.value)} /></div>
           <div><label className={lab}>Secondary email</label><input className={inp} value={f.secondaryEmail} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
           <div><label className={lab}>Mobile</label><PhoneField className={inp} value={f.mobile} country={f.country} onChange={(v) => set('mobile', v)} /></div>
@@ -1005,7 +1024,11 @@ export function NewLead({ user, onCreated, onCancel, isCallback }) {
                   a real user who could own the lead. */}
               {/pre-?sales/i.test(f.leadSource) ? (
                 (config.presalesTeam || []).length
-                  ? config.presalesTeam.map((n) => <option key={n} value={n}>{n}</option>)
+                  ? config.presalesTeam.map((n) => {
+                      // Members may be plain strings (legacy) or { name, ... }.
+                      const nm = typeof n === 'string' ? n : n.name;
+                      return <option key={nm} value={nm}>{nm}</option>;
+                    })
                   : <option value="" disabled>No pre-sales team members configured</option>
               ) : (
                 owners.map((o) => <option key={o.id} value={o.name}>{o.name}</option>)
@@ -1236,9 +1259,13 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
                 </a>
               ) : null} />
               <Row k="Secondary email" v={lead.secondaryEmail} />
-              <Row k="Generated by" v={lead.generatedBy} />
-              {/* When the lead first entered the system. */}
-              <Row k="Generated on" v={lead.createdAt ? fmtDate(lead.createdAt) : null} />
+              {/* "Generated by" names the pre-sales person on non-pre-sales
+                  leads. On a Pre-Sales lead the source already says pre-sales,
+                  so the extra line is redundant — hide it. */}
+              {!/pre-?sales/i.test(String(lead.leadSource || '')) && <Row k="Generated by" v={lead.generatedBy} />}
+              {/* When the lead entered the CRM. If it was back-dated at entry,
+                  createdAt already holds that chosen date. */}
+              <Row k="Lead created" v={lead.createdAt ? fmtDate(lead.createdAt) : null} />
               <Row k="Lead status" v={sm.label} />
               {/* Services are edited far too often to be buried in the modal —
                   surface them as clickable chips with an inline add button. */}
@@ -2767,7 +2794,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'prospects' && <LeadsList user={user} stage="prospect" onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && isManagerOrAdmin && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
-      {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
+      {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onOpenLead={(id) => openDetail(id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
       {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list')} />}
     </div>
   );

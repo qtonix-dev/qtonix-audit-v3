@@ -66,6 +66,16 @@ async function canAccessLead(user, lead) {
 }
 
 // Normalise a website into a bare domain, for report<->lead matching.
+// Pre-sales team config entries may be plain name strings (older data) or
+// { name, monthlyTarget } objects. Normalise to objects everywhere.
+function normalisePresalesTeam(list) {
+  return (Array.isArray(list) ? list : []).map((it) =>
+    typeof it === 'string'
+      ? { name: it, monthlyTarget: 0 }
+      : { name: String((it && it.name) || ''), monthlyTarget: Number((it && it.monthlyTarget) || 0) }
+  ).filter((x) => x.name);
+}
+
 function toDomain(website) {
   if (!website) return '';
   try {
@@ -326,7 +336,7 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
       return res.status(403).json({ error: 'Lead managers only.' });
     }
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
-    const team = (settings && settings.crmConfig && settings.crmConfig.presalesTeam) || [];
+    const team = normalisePresalesTeam(settings && settings.crmConfig && settings.crmConfig.presalesTeam);
 
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -382,7 +392,7 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     });
     const norm = (s) => String(s || '').trim();
     const teamStats = {};
-    for (const name of team) teamStats[name] = { name, today: 0, month: 0, total: 0 };
+    for (const m of team) teamStats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0 };
     for (const l of presalesLeads) {
       const g = norm(l.generatedBy);
       if (!g || !(g in teamStats)) continue; // only attribute to configured members
@@ -390,8 +400,15 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
       if (isThisMonth(l.createdAt)) teamStats[g].month++;
       if (isToday(l.createdAt)) teamStats[g].today++;
     }
+    // Attach the % of monthly target achieved for each member.
+    for (const k of Object.keys(teamStats)) {
+      const t = teamStats[k];
+      t.pct = t.monthlyTarget > 0 ? Math.round((t.month / t.monthlyTarget) * 100) : null;
+    }
     const teamPerformance = Object.values(teamStats).sort((a, b) => b.month - a.month);
     const teamToday = teamPerformance.reduce((s, m) => s + m.today, 0);
+    const teamMonth = teamPerformance.reduce((s, m) => s + m.month, 0);
+    const teamMonthlyTarget = teamPerformance.reduce((s, m) => s + (m.monthlyTarget || 0), 0);
     const teamLeaderboard = teamPerformance.filter((m) => m.month > 0).slice(0, 10);
 
     // Block 7: daily lead-gen trend for the current month (team totals).
@@ -411,7 +428,8 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
         totalEntered: entered.length,
         draftsReceived: withDraft.length,
         teamToday,
-        teamMonth: teamPerformance.reduce((s, m) => s + m.month, 0),
+        teamMonth,
+        teamMonthlyTarget,
       },
       recentLeads,
       recentDrafts,
@@ -513,13 +531,21 @@ router.get('/config', requireAuth, async (req, res, next) => {
     let owners = [];
     if (req.user.role === 'admin' || req.user.role === 'leadmanager') {
       // A lead manager assigns every lead they key in to someone else, so they
-      // need the whole active roster just like an admin does.
-      owners = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'role', 'team', 'shift'] });
+      // need the whole active roster — but only people who actually own leads.
+      // Lead managers and admins never own leads/call-backs, so they're excluded.
+      owners = await User.findAll({
+        where: { active: true, role: { [Op.in]: ['agent', 'manager'] } },
+        attributes: ['id', 'name', 'role', 'team', 'shift'],
+      });
     } else if (req.user.role === 'manager') {
       const scopes = Array.isArray(req.user.managerScopes) ? req.user.managerScopes : [];
       const or = scopes.map((s) => ({ team: s.team, shift: s.shift }));
       owners = await User.findAll({
-        where: { active: true, [Op.or]: [{ id: req.user.id }, ...(or.length ? or : [])] },
+        where: {
+          active: true,
+          role: { [Op.in]: ['agent', 'manager'] }, // never a lead manager
+          [Op.or]: [{ id: req.user.id }, ...(or.length ? or : [])],
+        },
         attributes: ['id', 'name', 'role', 'team', 'shift'],
       });
     } else {
@@ -1522,6 +1548,29 @@ router.post('/', requireAuth, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.firstName || !String(b.firstName).trim()) return res.status(400).json({ error: 'First name is required.' });
+
+    // A website belongs to exactly one lead. If the same site (by normalised
+    // domain) is already on a lead, block the create and point the user at it.
+    // The check is global — a domain is a domain whoever owns it — but whether
+    // we hand back an openable link depends on the requester's visibility.
+    const newDomain = toDomain(b.website);
+    if (newDomain) {
+      const dupe = await Lead.findOne({ where: { domain: newDomain }, order: [['createdAt', 'ASC']] });
+      if (dupe) {
+        const visible = await canAccessLead(req.user, dupe);
+        const dupeName = `${dupe.firstName || ''} ${dupe.lastName || ''}`.trim() || '(unnamed lead)';
+        return res.status(409).json({
+          error: `This website is already associated with an existing lead${visible ? '' : ' in the system'}.`,
+          duplicate: {
+            // Only expose the id (for the link) when the user can actually open it.
+            _id: visible ? dupe.id : null,
+            name: visible ? dupeName : null,
+            visible,
+          },
+        });
+      }
+    }
+
     const owner = await resolveOwner(req.user, b.ownerId);
 
     /**
