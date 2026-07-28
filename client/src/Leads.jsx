@@ -190,6 +190,50 @@ export function CountryCombobox({ value, onChange, className }) {
 
 
 /**
+ * Website input that stores only the naked domain. A fixed "https://" prefix is
+ * shown to the left; whatever the user types or pastes (with protocol, www,
+ * path, trailing slash) is stripped to the bare domain. When the field loses
+ * focus it checks the server for an existing lead on that domain and reports a
+ * duplicate immediately, before the form is even submitted.
+ */
+function stripToDomain(input) {
+  if (!input) return '';
+  let s = String(input).trim().toLowerCase();
+  s = s.replace(/^[a-z]+:\/\//, '');      // protocol
+  s = s.split(/[/?#]/)[0];                 // path/query/hash
+  s = s.replace(/^[^@]*@/, '').replace(/:\d+$/, '').replace(/^www\./, ''); // auth/port/www
+  return s.trim();
+}
+
+export function WebsiteField({ value, onChange, onDuplicate, className }) {
+  const [checking, setChecking] = useState(false);
+  const check = async (dom) => {
+    if (!dom) { onDuplicate && onDuplicate(null); return; }
+    setChecking(true);
+    try {
+      const r = await api(`/leads/check-domain?website=${encodeURIComponent(dom)}`);
+      onDuplicate && onDuplicate(r.duplicate || null);
+    } catch { /* ignore check failures — the create call still guards */ }
+    setChecking(false);
+  };
+  return (
+    <div className="flex items-stretch rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-orange-400 overflow-hidden">
+      <span className="flex items-center px-2.5 text-xs font-bold text-slate-400 bg-slate-50 border-r border-slate-200 select-none">https://</span>
+      <input
+        className={`flex-1 px-3 py-2 text-sm focus:outline-none ${className || ''}`}
+        value={value || ''}
+        placeholder="qtonix.com"
+        onChange={(e) => { onChange(stripToDomain(e.target.value)); onDuplicate && onDuplicate(null); }}
+        onPaste={(e) => { e.preventDefault(); onChange(stripToDomain((e.clipboardData || window.clipboardData).getData('text'))); onDuplicate && onDuplicate(null); }}
+        onBlur={(e) => check(stripToDomain(e.target.value))}
+      />
+      {checking && <span className="flex items-center px-2 text-[10px] text-slate-400">checking…</span>}
+    </div>
+  );
+}
+
+
+/**
  * Generic filterable combobox over a list of string options — same behaviour as
  * CountryCombobox (type to filter, fixed-position dropdown that isn't clipped by
  * a scrolling modal) but for any list, e.g. the pre-sales email addresses.
@@ -907,7 +951,8 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
   const submit = async () => {
     if (!f.firstName.trim()) { setError('First name is required.'); return; }
     if (canAssign && !f.ownerId) { setError('Please select the lead owner.'); return; }
-    setBusy(true); setError(''); setDupe(null);
+    if (dupe) { setError(`This website already belongs to a lead owned by ${dupe.ownerName}.`); return; }
+    setBusy(true); setError('');
     try {
       // Lead managers back-date via entryDate; the server maps it onto
       // createdAt (and assignedAt) after validating it's within range.
@@ -1022,7 +1067,19 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
         <div className="grid grid-cols-2 gap-4">
           <div><label className={lab}>First name *</label><input className={inp} value={f.firstName} onChange={(e) => set('firstName', e.target.value)} /></div>
           <div><label className={lab}>Last name</label><input className={inp} value={f.lastName} onChange={(e) => set('lastName', e.target.value)} /></div>
-          <div><label className={lab}>Website</label><input className={inp} value={f.website} onChange={(e) => { set('website', e.target.value); if (dupe) setDupe(null); }} placeholder="https://…" /></div>
+          <div><label className={lab}>Website</label>
+            <WebsiteField value={f.website}
+              onChange={(v) => set('website', v)}
+              onDuplicate={(d) => setDupe(d)} />
+            {dupe && (
+              <div className="mt-1 text-xs text-amber-700">
+                Already a lead owned by <span className="font-bold">{dupe.ownerName}</span>.{' '}
+                {dupe.visible && dupe._id && (
+                  <button type="button" onClick={() => onOpenLead && onOpenLead(dupe._id)} className="font-bold text-[#FF4500] hover:underline">Open it →</button>
+                )}
+              </div>
+            )}
+          </div>
           <div><label className={lab}>Email</label><input className={inp} value={f.email} onChange={(e) => set('email', e.target.value)} /></div>
           <div><label className={lab}>Secondary email</label><input className={inp} value={f.secondaryEmail} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
           <div><label className={lab}>Mobile</label><PhoneField className={inp} value={f.mobile} country={f.country} onChange={(v) => set('mobile', v)} /></div>
@@ -2309,7 +2366,7 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
                 </select>
               </div>
             )}
-            <div><label className={lab}>Website</label><input className={inp} value={draft.website || ''} onChange={(e) => set('website', e.target.value)} /></div>
+            <div><label className={lab}>Website</label><WebsiteField value={draft.website || ''} onChange={(v) => set('website', v)} /></div>
             <div><label className={lab}>Secondary email</label><input className={inp} value={draft.secondaryEmail || ''} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
             <div>
               <label className={lab}>Generated by</label>

@@ -209,14 +209,16 @@ connectWithRetry()
     try {
       const { Lead } = require('./models');
       const { Op } = require('sequelize');
+      // Same canonical normalisation as the server's toDomain: naked domain,
+      // no protocol/www/path/port.
       const toDomain = (website) => {
         if (!website) return '';
-        try {
-          const u = new URL(String(website).startsWith('http') ? website : `https://${website}`);
-          return u.hostname.replace(/^www\./, '').toLowerCase();
-        } catch {
-          return String(website).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
-        }
+        let s = String(website).trim().toLowerCase();
+        if (!s) return '';
+        s = s.replace(/^[a-z]+:\/\//, '');
+        s = s.split(/[/?#]/)[0];
+        s = s.replace(/^[^@]*@/, '').replace(/:\d+$/, '').replace(/^www\./, '');
+        return s.trim();
       };
       const needing = await Lead.findAll({
         where: { website: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] } },
@@ -225,12 +227,13 @@ connectWithRetry()
       let fixed = 0;
       for (const l of needing) {
         const d = toDomain(l.website);
-        // Correct any lead whose stored domain is missing or doesn't match the
-        // canonical normalisation (older rows may have kept www., a path, or
-        // different casing — all of which would break duplicate detection).
-        if (d && l.domain !== d) { l.domain = d; await l.save(); fixed++; }
+        if (!d) continue;
+        // Store BOTH website and domain as the naked domain so they're always
+        // identical and consistent \u2014 this is what makes duplicate detection
+        // reliable regardless of how the URL was originally typed.
+        if (l.website !== d || l.domain !== d) { l.website = d; l.domain = d; await l.save(); fixed++; }
       }
-      if (fixed) console.log(`[migrate] normalised domain on ${fixed} lead(s)`);
+      if (fixed) console.log(`[migrate] normalised website+domain on ${fixed} lead(s)`);
     } catch (e) {
       console.error('[migrate] domain backfill skipped:', e.message);
     }

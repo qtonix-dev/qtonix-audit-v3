@@ -78,12 +78,43 @@ function normalisePresalesTeam(list) {
 
 function toDomain(website) {
   if (!website) return '';
-  try {
-    const u = new URL(website.startsWith('http') ? website : `https://${website}`);
-    return u.hostname.replace(/^www\./, '').toLowerCase();
-  } catch {
-    return String(website).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+  let s = String(website).trim().toLowerCase();
+  if (!s) return '';
+  s = s.replace(/^[a-z]+:\/\//, '');       // strip protocol
+  s = s.split(/[/?#]/)[0];                  // strip path/query/hash
+  s = s.replace(/^[^@]*@/, '').replace(/:\d+$/, '').replace(/^www\./, ''); // strip auth, port, www.
+  return s.trim();
+}
+
+// The value we store in the `website` column is the naked domain, identical to
+// `domain`, so the two can never drift out of sync and miss a duplicate.
+function nakedWebsite(website) {
+  return toDomain(website);
+}
+
+// Find an existing lead that shares a website's domain. Robust against legacy
+// rows whose `domain` column is null or was stored in an older, non-canonical
+// form: we match on the domain column first (fast path), and also scan any rows
+// whose website/domain textually contains the domain, confirming with a fresh
+// normalisation in JS. Returns the earliest match, or null.
+async function findDuplicateByDomain(Lead, website, excludeId) {
+  const dom = toDomain(website);
+  if (!dom) return null;
+  const { Op } = require('sequelize');
+  const like = `%${dom}%`;
+  const where = {
+    [Op.or]: [
+      { domain: dom },
+      { domain: { [Op.like]: like } },
+      { website: { [Op.like]: like } },
+    ],
+  };
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+  const candidates = await Lead.findAll({ where, order: [['createdAt', 'ASC']], limit: 50 });
+  for (const c of candidates) {
+    if (toDomain(c.website) === dom || toDomain(c.domain) === dom) return c;
   }
+  return null;
 }
 
 /**
@@ -522,6 +553,33 @@ router.get('/drafts-received', requireAuth, async (req, res, next) => {
 });
 
 /** GET /api/leads/config — the editable dropdown lists + assignable owners. */
+/**
+ * GET /api/leads/check-domain?website=... — live duplicate check used by the
+ * add-lead form when the user leaves the website field. Returns whether the
+ * domain already exists and, if the requester can see it, the owner and lead id
+ * so the form can show the error and a link before submit.
+ */
+router.get('/check-domain', requireAuth, async (req, res, next) => {
+  try {
+    const website = String(req.query.website || '');
+    const domain = toDomain(website);
+    if (!domain) return res.json({ domain: '', duplicate: null });
+    const dupe = await findDuplicateByDomain(Lead, website);
+    if (!dupe) return res.json({ domain, duplicate: null });
+    const visible = await canAccessLead(req.user, dupe);
+    const ownerName = dupe.ownerName || 'another agent';
+    res.json({
+      domain,
+      duplicate: {
+        _id: visible ? dupe.id : null,
+        ownerName,
+        name: visible ? (`${dupe.firstName || ''} ${dupe.lastName || ''}`.trim() || '(unnamed lead)') : null,
+        visible,
+      },
+    });
+  } catch (e) { next(e); }
+});
+
 router.get('/config', requireAuth, async (req, res, next) => {
   try {
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
@@ -586,7 +644,7 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
       const rowDomain = toDomain(b.website);
       if (rowDomain) {
         if (seenDomains.has(rowDomain)) { skipped.push({ row: i + 1, reason: `duplicate website in this file (${rowDomain})` }); continue; }
-        const existing = await Lead.findOne({ where: { domain: rowDomain }, attributes: ['id', 'ownerName'] });
+        const existing = await findDuplicateByDomain(Lead, b.website);
         if (existing) { skipped.push({ row: i + 1, reason: `duplicate website — already owned by ${existing.ownerName || 'another agent'}` }); continue; }
         seenDomains.add(rowDomain);
       }
@@ -596,7 +654,7 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
           ownerTeam: owner.team || 'Bhubaneswar', ownerShift: owner.shift || 'Morning',
           firstName: String(b.firstName).slice(0, 120),
           lastName: String(b.lastName || '').slice(0, 120),
-          website: String(b.website || '').slice(0, 255),
+          website: nakedWebsite(b.website),
           domain: toDomain(b.website),
           email: String(b.email || '').slice(0, 180),
           secondaryEmail: String(b.secondaryEmail || '').slice(0, 180),
@@ -1650,7 +1708,7 @@ router.post('/', requireAuth, async (req, res, next) => {
     // we hand back an openable link depends on the requester's visibility.
     const newDomain = toDomain(b.website);
     if (newDomain) {
-      const dupe = await Lead.findOne({ where: { domain: newDomain }, order: [['createdAt', 'ASC']] });
+      const dupe = await findDuplicateByDomain(Lead, b.website);
       if (dupe) {
         const visible = await canAccessLead(req.user, dupe);
         // Name the CURRENT LEAD OWNER (not the contact) so the person adding
@@ -1700,7 +1758,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       ownerShift: owner.shift || 'Morning',
       firstName: String(b.firstName).slice(0, 120),
       lastName: String(b.lastName || '').slice(0, 120),
-      website: String(b.website || '').slice(0, 255),
+      website: nakedWebsite(b.website),
       domain: toDomain(b.website),
       email: String(b.email || '').slice(0, 180),
       secondaryEmail: String(b.secondaryEmail || '').slice(0, 180),
@@ -1773,7 +1831,22 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     }
     const simple = ['firstName', 'lastName', 'email', 'secondaryEmail', 'mobile', 'phone', 'leadSource', 'generatedBy', 'country', 'city', 'timezone', 'additionalInfo'];
     for (const f of simple) if (b[f] !== undefined) lead[f] = String(b[f]).slice(0, 10000);
-    if (b.website !== undefined) { lead.website = String(b.website).slice(0, 255); lead.domain = toDomain(b.website); }
+    if (b.website !== undefined) {
+      const newDom = toDomain(b.website);
+      // Block changing a lead's website to a domain another lead already owns.
+      if (newDom && newDom !== toDomain(lead.website)) {
+        const clash = await findDuplicateByDomain(Lead, b.website, lead.id);
+        if (clash) {
+          const visible = await canAccessLead(req.user, clash);
+          return res.status(409).json({
+            error: `Duplicate lead — this website already belongs to a lead owned by ${clash.ownerName || 'another agent'}.`,
+            duplicate: { _id: visible ? clash.id : null, ownerName: clash.ownerName || 'another agent', visible },
+          });
+        }
+      }
+      lead.website = nakedWebsite(b.website);
+      lead.domain = newDom;
+    }
     if (b.servicesInterested !== undefined) { lead.servicesInterested = Array.isArray(b.servicesInterested) ? b.servicesInterested.slice(0, 30) : []; lead.changed('servicesInterested', true); }
     if (b.tags !== undefined) { lead.tags = Array.isArray(b.tags) ? b.tags.slice(0, 30) : []; lead.changed('tags', true); }
 
