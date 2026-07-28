@@ -673,6 +673,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // month) and by month (last 6) for the trend charts.
     const isPresales = (s) => /pre[\s-]?sales/i.test(String(s || ''));
     const isColdCall = (s) => /cold[\s-]?call/i.test(String(s || ''));
+    // Channel classification for the "generated vs assigned" split:
+    //  - ASSIGNED sources: the lead came to us (Pre-Sales, Referral, Partner,
+    //    Inbound). We were handed it.
+    //  - GENERATED sources: we produced it through outbound effort
+    //    (Cold Calling, Ads & Marketing). A transferred call-back also counts as
+    //    generated (handled separately, since it carries transferredAt).
+    const isAssignedSource = (s) => /pre[\s-]?sales|referral|partner|inbound/i.test(String(s || ''));
+    const isGeneratedSource = (s) => /cold[\s-]?call|ads?\s*&?\s*marketing|marketing/i.test(String(s || ''));
     let leadsGeneratedMonthTotal = 0, leadsPresalesMonth = 0, leadsColdMonth = 0;
     let leadsAssignedMonthTotal = 0;
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -694,20 +702,24 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     for (const l of leads) {
       const created = l.createdAt ? new Date(l.createdAt) : null;
+      // "Generated" is anchored to the real-world generated date (which equals
+      // createdAt for a normal add, and the historical date for a back-dated
+      // import). "Assigned/entry" activity is anchored to createdAt further down.
+      const genAtMonth = l.generatedAt ? new Date(l.generatedAt) : created;
       ensure(l.ownerId, l.ownerName);
       byOwner[l.ownerId].leads++;
 
-      // Lead generation: created this month / today, credited to the owner.
-      if (created && created >= startOfMonth) byOwner[l.ownerId].leadsGeneratedMonth++;
+      // Lead generation: generated this month / today, credited to the owner.
+      if (genAtMonth && genAtMonth >= startOfMonth) byOwner[l.ownerId].leadsGeneratedMonth++;
 
       const pres = isPresales(l.leadSource) || isPresales(l.generatedBy);
       const cold = isColdCall(l.leadSource) || isColdCall(l.generatedBy);
 
-      if (created && created >= startOfMonth) {
+      if (genAtMonth && genAtMonth >= startOfMonth) {
         leadsGeneratedMonthTotal++;
         if (pres) leadsPresalesMonth++;
         if (cold) leadsColdMonth++;
-        const dIdx = created.getDate() - 1;
+        const dIdx = genAtMonth.getDate() - 1;
         if (leadDaily[dIdx]) {
           leadDaily[dIdx].total++;
           if (pres) leadDaily[dIdx].presales++;
@@ -745,23 +757,31 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         }
       }
 
-      // "Generated today" = created today. "Assigned today" = handed to a
-      // different owner today (assignedAt moved after creation). Keeping them
-      // distinct so the admin view can label each with its own icon.
-      const createdToday = created && created >= startOfDay;
-      const assignedAt = l.assignedAt ? new Date(l.assignedAt) : created;
-      const reassignedToday = assignedAt && assignedAt >= startOfDay && created && (assignedAt - created > 60 * 1000);
-      if (assignedAt && assignedAt >= startOfMonth && created && (assignedAt - created > 60 * 1000)) leadsAssignedMonthTotal++;
+      // GENERATED vs ASSIGNED is decided by how the lead came in, not by timing:
+      //  - GENERATED = we produced it. Either its source is an outbound channel
+      //    (Cold Calling / Ads & Marketing), OR it was transferred up from a
+      //    call-back (carries transferredAt). The "when" is the transfer date for
+      //    a transferred call-back, otherwise the generated date.
+      //  - ASSIGNED = it was handed to us via an inbound channel (Pre-Sales,
+      //    Referral, Partner, Inbound). The "when" is when it landed with its
+      //    owner (assignedAt, falling back to entry).
+      const transferredAt = l.transferredAt ? new Date(l.transferredAt) : null;
+      const isGenerated = !!transferredAt || isGeneratedSource(l.leadSource);
+      const isAssigned = !isGenerated && isAssignedSource(l.leadSource);
 
-      if (createdToday) {
+      const genWhen = transferredAt || (l.generatedAt ? new Date(l.generatedAt) : created);
+      const assignedAt = l.assignedAt ? new Date(l.assignedAt) : created;
+
+      if (isGenerated && genWhen && genWhen >= startOfDay) {
         generatedToday++;
-        byOwner[l.ownerId].leadsGeneratedToday++;
+        if (byOwner[l.ownerId]) byOwner[l.ownerId].leadsGeneratedToday++;
         if (genTodayList.length < 12) genTodayList.push({ ...leadBrief(l), kind: 'generated' });
       }
-      if (reassignedToday) {
+      if (isAssigned && assignedAt && assignedAt >= startOfDay) {
         assignedToday++;
         if (assignedTodayList.length < 12) assignedTodayList.push({ ...leadBrief(l), kind: 'assigned' });
       }
+      if (isAssigned && assignedAt && assignedAt >= startOfMonth) leadsAssignedMonthTotal++;
 
       if (isConverted && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) { convertedThisMonth++; byOwner[l.ownerId].conversions++; }
 
