@@ -265,6 +265,16 @@ router.get('/leads/dashboard', (req, res) => {
       generatedToday: leads.slice(0, 3).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
       assignedToday: leads.slice(3, 5).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
       untouched: leads.slice(5, 9).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
+      recentlyAdded: leads.slice(0, 10).map((l, i) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website, kind: i % 2 === 0 ? 'generated' : 'assigned', at: l.createdAt })),
+    },
+    presalesTeam: {
+      members: [
+        { name: 'Amit Presales', monthlyTarget: 60, today: 2, month: 44, total: 210, pct: 73 },
+        { name: 'Sara Presales', monthlyTarget: 50, today: 1, month: 38, total: 176, pct: 76 },
+        { name: 'Vikram Presales', monthlyTarget: 45, today: 3, month: 41, total: 158, pct: 91 },
+        { name: 'Neha Presales', monthlyTarget: 40, today: 0, month: 25, total: 120, pct: 63 },
+      ],
+      teamMonth: 148, teamToday: 6, teamMonthlyTarget: 195,
     },
     me: {
       salesUsd: myRow ? myRow.salesUsd : 0, salesTarget: viewer.targetUsd || 6000,

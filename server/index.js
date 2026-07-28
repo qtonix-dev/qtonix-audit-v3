@@ -201,6 +201,39 @@ connectWithRetry()
     } catch (e) {
       console.error('[migrate] crm config backfill skipped:', e.message);
     }
+
+    // Backfill the normalised `domain` for any lead that has a website but no
+    // domain stored (older leads created before the column was populated, or via
+    // paths that didn't set it). Without this, the duplicate-website check can't
+    // match legacy leads and would wrongly accept duplicates.
+    try {
+      const { Lead } = require('./models');
+      const { Op } = require('sequelize');
+      const toDomain = (website) => {
+        if (!website) return '';
+        try {
+          const u = new URL(String(website).startsWith('http') ? website : `https://${website}`);
+          return u.hostname.replace(/^www\./, '').toLowerCase();
+        } catch {
+          return String(website).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+        }
+      };
+      const needing = await Lead.findAll({
+        where: {
+          website: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+          [Op.or]: [{ domain: null }, { domain: '' }],
+        },
+        attributes: ['id', 'website', 'domain'],
+      });
+      let fixed = 0;
+      for (const l of needing) {
+        const d = toDomain(l.website);
+        if (d) { l.domain = d; await l.save(); fixed++; }
+      }
+      if (fixed) console.log(`[migrate] backfilled domain on ${fixed} lead(s)`);
+    } catch (e) {
+      console.error('[migrate] domain backfill skipped:', e.message);
+    }
     } // end if (connected)
 
     app.listen(PORT, () => {

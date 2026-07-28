@@ -693,6 +693,22 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
 
 // ---------------------------------------------------------------------------
 
+// Nav bar icons — simple inline strokes so they inherit currentColor and match
+// the dark navbar. Keyed by the `icon` field on each nav item.
+function NavIcon({ name, className = 'w-4 h-4' }) {
+  const p = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
+  const paths = {
+    grid: <><rect x="3" y="3" width="7" height="7" rx="1" {...p} /><rect x="14" y="3" width="7" height="7" rx="1" {...p} /><rect x="3" y="14" width="7" height="7" rx="1" {...p} /><rect x="14" y="14" width="7" height="7" rx="1" {...p} /></>,
+    phone: <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" {...p} />,
+    users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" {...p} /><circle cx="9" cy="7" r="4" {...p} /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" {...p} /></>,
+    sparkles: <><path d="M12 3l1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z" {...p} /><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z" {...p} /></>,
+    chart: <><line x1="18" y1="20" x2="18" y2="10" {...p} /><line x1="12" y1="20" x2="12" y2="4" {...p} /><line x1="6" y1="20" x2="6" y2="14" {...p} /></>,
+    star: <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z" {...p} />,
+    mail: <><rect x="2" y="4" width="20" height="16" rx="2" {...p} /><path d="M22 7l-10 6L2 7" {...p} /></>,
+  };
+  return <svg viewBox="0 0 24 24" className={className} aria-hidden="true">{paths[name] || null}</svg>;
+}
+
 export default function App() {
   // The Motivator TV board runs at /tv/<token>. It's a public, unauthenticated
   // screen for an office TV, so it short-circuits the whole app shell — no
@@ -774,21 +790,19 @@ export default function App() {
 
   const isManagerOrAdmin = user && (user.role === 'admin' || user.role === 'manager');
   const nav = [
-    { id: 'dashboard', label: 'Dashboard' },
-    // Prospects = call-back-generated leads, the earliest funnel stage before
-    // a lead is worked. Sits right after Dashboard so it reads left-to-right as
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
     // Call Backs = call-back-generated leads, the earliest funnel stage before
     // a lead is worked. Sits right after Dashboard so it reads left-to-right as
     // the pipeline: call backs → leads → reports.
-    { id: 'prospects', label: 'Call Backs' },
-    { id: 'leads', label: 'Leads' },
+    { id: 'prospects', label: 'Call Backs', icon: 'phone' },
+    { id: 'leads', label: 'Leads', icon: 'users' },
     // Standalone AI brief lookup for cold calling — enter a domain, get the
     // pitch. Sits right after Leads, available to everyone.
-    { id: 'aibrief', label: 'AI Brief' },
-    { id: 'list', label: 'Reports' },
-    ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews' }] : []),
+    { id: 'aibrief', label: 'AI Brief', icon: 'sparkles' },
+    { id: 'list', label: 'Reports', icon: 'chart' },
+    ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews', icon: 'star' }] : []),
     // Lead managers coordinate the pre-sales draft workflow; admins oversee it.
-    ...((user.role === 'leadmanager' || user.role === 'admin') ? [{ id: 'emaildrafts', label: 'Email Drafts' }] : []),
+    ...((user.role === 'leadmanager' || user.role === 'admin') ? [{ id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' }] : []),
   ];
 
   return (
@@ -817,28 +831,35 @@ export default function App() {
             <div className="text-lg font-extrabold text-white tracking-tight">
               Qtonix<span className="text-[#FF6A00]">.</span>
             </div>
-            <nav className="flex gap-1">
-              {nav.map((n) => (
-                <button key={n.id}
-                  onClick={() => {
-                    // Clicking a nav item should always land on that section's
-                    // top-level view. Re-keying the Leads entry resets its
-                    // internal state, otherwise it stays stuck on a detail page.
-                    if (n.id === 'leads') setLeadsEntry({ view: 'list', nonce: Date.now() });
-                    setView(n.id);
-                    setActiveReport(null);
-                  }}
-                  className={`relative rounded-md px-3 py-1.5 text-xs font-bold transition ${
-                    view === n.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'
-                  }`}>
-                  {n.label}
-                  {n.id === 'leads' && dueCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#FF4500] text-white text-[9px] font-bold flex items-center justify-center">{dueCount}</span>
-                  )}
-                </button>
-              ))}
+            <nav className="flex gap-0.5">
+              {nav.map((n) => {
+                const active = view === n.id;
+                // Call Backs carries the due-count badge; everything else is plain.
+                const badge = n.id === 'leads' ? dueCount : 0;
+                return (
+                  <button key={n.id}
+                    onClick={() => {
+                      if (n.id === 'leads') setLeadsEntry({ view: 'list', nonce: Date.now() });
+                      setView(n.id);
+                      setActiveReport(null);
+                    }}
+                    className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                      active ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'
+                    }`}>
+                    <NavIcon name={n.icon} className="w-4 h-4" />
+                    <span>{n.label}</span>
+                    {badge > 0 && (
+                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF4500] text-white text-[10px] font-bold flex items-center justify-center">{badge}</span>
+                    )}
+                    {/* Active underline, matching the reference nav. */}
+                    {active && (
+                      <span className="absolute left-3 right-3 -bottom-[7px] h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+                    )}
+                  </button>
+                );
+              })}
               {isAdmin && (
-                <a href="/admin" className="rounded-md px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-white">
+                <a href="/admin" className="flex items-center rounded-lg px-3 py-2 text-xs font-bold text-slate-400 hover:text-white">
                   Admin
                 </a>
               )}

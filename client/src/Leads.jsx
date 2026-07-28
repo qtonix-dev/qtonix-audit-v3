@@ -887,12 +887,16 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
       const list = r.owners || [];
       setConfig(r.config || {});
       setOwners(list);
-      // The creator's own id is the default, but lead managers and admins aren't
-      // in the assignable-owners list (they don't own leads). If the current
-      // ownerId isn't a valid option, snap it to the first real owner so the
-      // saved lead matches what the dropdown shows — otherwise it would silently
-      // submit the creator's id.
-      setF((s) => (list.some((o) => o.id === s.ownerId) ? s : { ...s, ownerId: list.length ? list[0].id : s.ownerId }));
+      // An agent owns their own leads, so default to self. Admins and lead
+      // managers must actively pick an owner — we leave ownerId null so the
+      // "Select the lead owner…" placeholder shows and forces a choice.
+      setF((s) => {
+        if (user.role === 'agent') {
+          const me = list.find((o) => o.id === user.id);
+          return me ? { ...s, ownerId: me.id } : s;
+        }
+        return { ...s, ownerId: null };
+      });
     }).catch(() => {});
   }, []);
 
@@ -901,6 +905,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
 
   const submit = async () => {
     if (!f.firstName.trim()) { setError('First name is required.'); return; }
+    if (canAssign && !f.ownerId) { setError('Please select the lead owner.'); return; }
     setBusy(true); setError(''); setDupe(null);
     try {
       // Lead managers back-date via entryDate; the server maps it onto
@@ -933,13 +938,13 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
       {error && !dupe && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
       {dupe && (
         <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3">
-          <div className="font-bold">Duplicate website</div>
+          <div className="font-bold">Duplicate lead</div>
           <div className="mt-0.5">
             {error}{' '}
             {dupe.visible && dupe._id ? (
               <button type="button" onClick={() => onOpenLead && onOpenLead(dupe._id)}
                 className="font-bold text-[#FF4500] hover:underline">
-                Open {dupe.name} →
+                Open the existing lead →
               </button>
             ) : null}
           </div>
@@ -993,7 +998,8 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
           {canAssign && (
             <div>
               <label className={lab}>Lead owner</label>
-              <select className={inp} value={f.ownerId} onChange={(e) => set('ownerId', Number(e.target.value))}>
+              <select className={inp} value={f.ownerId || ''} onChange={(e) => set('ownerId', e.target.value ? Number(e.target.value) : null)}>
+                <option value="" disabled>Select the lead owner…</option>
                 {owners.map((o) => <option key={o.id} value={o.id}>{o.name}{o.role !== 'agent' ? ` (${o.role})` : ''}</option>)}
               </select>
             </div>
@@ -2193,6 +2199,16 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
   const show = (s) => section === 'all' || section === s;
   const titles = { all: 'Edit lead', basic: 'Edit basic info', tags: 'Edit tags', description: 'Edit description', other: 'Edit other info', status: 'Change lead status', services: 'Services interested in' };
 
+  // Admins and lead managers can reassign the owner. Load the assignable list
+  // (agents and managers only — the config endpoint already excludes lead
+  // managers and admins).
+  const canReassign = ['admin', 'leadmanager', 'manager'].includes(user.role);
+  const [owners, setOwners] = useState([]);
+  useEffect(() => {
+    if (!canReassign) return;
+    api('/leads/config').then((r) => setOwners(r.owners || [])).catch(() => {});
+  }, [canReassign]);
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
@@ -2261,6 +2277,19 @@ function EditLeadModal({ user, config, draft, setDraft, section = 'all', onSave,
 
         {show('other') && (
           <div className="grid grid-cols-2 gap-4 mb-4">
+            {canReassign && (
+              <div className="col-span-2">
+                <label className={lab}>Lead owner</label>
+                <select className={inp} value={draft.ownerId || ''} onChange={(e) => set('ownerId', e.target.value ? Number(e.target.value) : draft.ownerId)}>
+                  {/* Current owner shown even if not in the assignable list (e.g.
+                      an inactive user), so the value always resolves. */}
+                  {!owners.some((o) => o.id === draft.ownerId) && draft.ownerId && (
+                    <option value={draft.ownerId}>{draft.ownerName || 'Current owner'}</option>
+                  )}
+                  {owners.map((o) => <option key={o.id} value={o.id}>{o.name}{o.role !== 'agent' ? ` (${o.role})` : ''}</option>)}
+                </select>
+              </div>
+            )}
             <div><label className={lab}>Website</label><input className={inp} value={draft.website || ''} onChange={(e) => set('website', e.target.value)} /></div>
             <div><label className={lab}>Secondary email</label><input className={inp} value={draft.secondaryEmail || ''} onChange={(e) => set('secondaryEmail', e.target.value)} /></div>
             <div>
