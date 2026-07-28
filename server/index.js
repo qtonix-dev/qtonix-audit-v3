@@ -219,18 +219,18 @@ connectWithRetry()
         }
       };
       const needing = await Lead.findAll({
-        where: {
-          website: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
-          [Op.or]: [{ domain: null }, { domain: '' }],
-        },
+        where: { website: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] } },
         attributes: ['id', 'website', 'domain'],
       });
       let fixed = 0;
       for (const l of needing) {
         const d = toDomain(l.website);
-        if (d) { l.domain = d; await l.save(); fixed++; }
+        // Correct any lead whose stored domain is missing or doesn't match the
+        // canonical normalisation (older rows may have kept www., a path, or
+        // different casing — all of which would break duplicate detection).
+        if (d && l.domain !== d) { l.domain = d; await l.save(); fixed++; }
       }
-      if (fixed) console.log(`[migrate] backfilled domain on ${fixed} lead(s)`);
+      if (fixed) console.log(`[migrate] normalised domain on ${fixed} lead(s)`);
     } catch (e) {
       console.error('[migrate] domain backfill skipped:', e.message);
     }

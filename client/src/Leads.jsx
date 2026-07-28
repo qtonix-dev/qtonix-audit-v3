@@ -881,6 +881,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dupe, setDupe] = useState(null); // duplicate-website info from the server
+  const errorRef = React.useRef(null);
 
   useEffect(() => {
     api('/leads/config').then((r) => {
@@ -921,6 +922,11 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
       setError(e.message);
       // A duplicate-website rejection carries the existing lead so we can link.
       if (e.data && e.data.duplicate) setDupe(e.data.duplicate);
+      // The banner sits at the top of a long form, so bring it into view —
+      // otherwise the user clicks Save at the bottom and never sees the error.
+      setTimeout(() => {
+        if (errorRef.current) errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
     }
     setBusy(false);
   };
@@ -935,6 +941,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
     <div className="max-w-3xl">
       <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to {isCallback ? 'call backs' : 'leads'}</button>
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">{isCallback ? 'Add call back' : 'New lead'}</h1>
+      <div ref={errorRef}>
       {error && !dupe && <div className="mb-4 rounded-lg bg-red-50 text-red-600 text-sm px-4 py-2">{error}</div>}
       {dupe && (
         <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3">
@@ -950,6 +957,7 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
           </div>
         </div>
       )}
+      </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5">
         {/* The generated date — when the lead was created in the real world.
@@ -1097,9 +1105,20 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
           <RichText value={f.additionalInfo} onChange={(v) => set('additionalInfo', v)} placeholder="Anything useful about this lead…" minHeight={110} />
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={submit} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : isCallback ? 'Create call back' : 'Create lead'}</button>
+        <div className="flex flex-col items-end gap-2 pt-2">
+          {(error || dupe) && (
+            <div className={`w-full rounded-lg px-4 py-2.5 text-sm ${dupe ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 text-red-600'}`}>
+              <span className="font-bold">{dupe ? 'Duplicate lead: ' : ''}</span>{error}{' '}
+              {dupe && dupe.visible && dupe._id ? (
+                <button type="button" onClick={() => onOpenLead && onOpenLead(dupe._id)}
+                  className="font-bold text-[#FF4500] hover:underline">Open the existing lead →</button>
+              ) : null}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={submit} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : isCallback ? 'Create call back' : 'Create lead'}</button>
+          </div>
         </div>
       </div>
     </div>

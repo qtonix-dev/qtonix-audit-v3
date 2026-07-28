@@ -575,11 +575,21 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
 
     let created = 0;
     const skipped = [];
+    const seenDomains = new Set(); // catch duplicates within this same batch too
     for (let i = 0; i < rows.length; i++) {
       const b = rows[i] || {};
       if (!b.firstName || !String(b.firstName).trim()) { skipped.push({ row: i + 1, reason: 'missing first name' }); continue; }
       const owner = await resolveOwner(req.user, b.ownerId);
       if (!owner) { skipped.push({ row: i + 1, reason: 'no valid lead owner (agent/manager) specified' }); continue; }
+      // A website belongs to exactly one lead. Skip rows whose domain already
+      // exists (in the DB or earlier in this same file) and report why.
+      const rowDomain = toDomain(b.website);
+      if (rowDomain) {
+        if (seenDomains.has(rowDomain)) { skipped.push({ row: i + 1, reason: `duplicate website in this file (${rowDomain})` }); continue; }
+        const existing = await Lead.findOne({ where: { domain: rowDomain }, attributes: ['id', 'ownerName'] });
+        if (existing) { skipped.push({ row: i + 1, reason: `duplicate website — already owned by ${existing.ownerName || 'another agent'}` }); continue; }
+        seenDomains.add(rowDomain);
+      }
       try {
         await Lead.create({
           ownerId: owner.id, ownerName: owner.name,
