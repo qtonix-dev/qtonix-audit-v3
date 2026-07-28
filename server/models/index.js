@@ -269,6 +269,15 @@ const Lead = sequelize.define(
      * their dashboard and CSV export are scoped to).
      */
     enteredById: { type: DataTypes.INTEGER, allowNull: true },
+    // Marks a lead whose generated date differs from its created (entry) date —
+    // i.e. a historical import. Used to scope the 24-hour first-reply rule,
+    // which only applies when the two dates are the same.
+    backDated: { type: DataTypes.BOOLEAN, defaultValue: false },
+    // When the lead was actually generated in the real world. For a normal add
+    // this equals createdAt; for a back-dated import it's the chosen historical
+    // date. Shown in the UI as "Lead generated"; createdAt (entry moment) is the
+    // anchor for the untouched clock and stays hidden.
+    generatedAt: { type: DataTypes.DATE, allowNull: true },
     // The agent who generated a call-back prospect. Ownership can later move to
     // whoever it's transferred to, but the originator keeps visibility of the
     // lead they created — so this is recorded separately from ownerId.

@@ -579,6 +579,7 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
       const b = rows[i] || {};
       if (!b.firstName || !String(b.firstName).trim()) { skipped.push({ row: i + 1, reason: 'missing first name' }); continue; }
       const owner = await resolveOwner(req.user, b.ownerId);
+      if (!owner) { skipped.push({ row: i + 1, reason: 'no valid lead owner (agent/manager) specified' }); continue; }
       try {
         await Lead.create({
           ownerId: owner.id, ownerName: owner.name,
@@ -735,7 +736,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         // A lead with a scheduled future call/task is being handled as agreed —
         // e.g. the customer asked for a call in 15 days — so it must NOT show as
         // untouched even though nothing's happened in the last 3 days. Only flag
-        // it when there's no pending future activity to wait on.
+        // it when there's no pending future activity to wait on. Back-dated
+        // leads DO count — their untouched clock runs from the entry date
+        // (createdAt/lastActivityAt), not the historical generated date.
         if (last && last < in3d && !hasPendingFutureActivity(l)) {
           untouched++;
           if (untouchedList.length < 8) untouchedList.push(leadBrief(l));
@@ -1131,7 +1134,8 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
 
     for (const l of leads) {
       // Call-back prospects are pre-rules: no missed-activity flagging until
-      // they become a lead via transfer.
+      // they become a lead via transfer. Back-dated leads are NOT exempt —
+      // a missed scheduled activity is a miss whenever it happens.
       if (l.status === 'callback') continue;
       for (const a of (l.activities || [])) {
         const dueAt = a.kind === 'call'
@@ -1440,8 +1444,11 @@ router.get('/awaiting-draft', requireAuth, async (req, res, next) => {
     const items = [];
     for (const l of leads) {
       // Call-back prospects sit before the rules-apply stage, so the 24-hour
-      // clock doesn't run until they're transferred into a real lead.
-      if (l.status === 'callback') continue;
+      // clock doesn't run until they're transferred into a real lead. The
+      // 24-hour first-reply rule applies ONLY when the lead's generated date and
+      // created (entry) date are the same — a back-dated lead (generated ≠
+      // created) is historical and never subject to the clock.
+      if (l.status === 'callback' || l.backDated) continue;
       // The rule applies to pre-sales enquiries only.
       if (!/pre-?sales/i.test(String(l.leadSource || ''))) continue;
       if (l.firstReplyDoneAt) continue;
@@ -1543,7 +1550,12 @@ async function resolveOwner(user, ownerId) {
   if (ownerId && ['admin', 'manager', 'leadmanager'].includes(user.role)) {
     owner = await User.findByPk(ownerId);
   }
-  if (!owner) owner = await User.findByPk(user.id); // default to self
+  // Agents own the leads they create.
+  if (!owner && user.role === 'agent') owner = await User.findByPk(user.id);
+  // A lead manager or admin never owns leads. If somehow one was chosen (or a
+  // creator defaulted to themselves), that's not a valid owner — reject it so
+  // the caller can surface a clear error rather than silently mis-assigning.
+  if (owner && ['admin', 'leadmanager'].includes(owner.role)) owner = null;
   return owner;
 }
 
@@ -1576,19 +1588,26 @@ router.post('/', requireAuth, async (req, res, next) => {
     }
 
     const owner = await resolveOwner(req.user, b.ownerId);
+    if (!owner) {
+      return res.status(400).json({ error: 'Choose a lead owner (an agent or manager). Lead managers and admins can’t own leads.' });
+    }
 
     /**
-     * Back-dating, for migrating historical leads out of Zoho. Restricted to
-     * the roles that do imports, capped at two years, and never in the future —
-     * a mistyped date would otherwise corrupt every trend chart and monthly
-     * count that reads createdAt.
+     * Back-dating captures when the lead was GENERATED in the real world (e.g.
+     * migrating historical leads out of Zoho). It sets generatedAt, not
+     * createdAt: the lead still "enters the system" now, so createdAt stays as
+     * the real entry moment and drives the untouched clock. Capped at two years,
+     * never in the future.
      */
-    let backDate = null;
+    let genDate = null;
     if (b.createdAt && ['admin', 'leadmanager'].includes(req.user.role)) {
       const d = new Date(b.createdAt);
       const twoYearsAgo = new Date(); twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-      if (!Number.isNaN(d.getTime()) && d <= new Date() && d >= twoYearsAgo) backDate = d;
+      if (!Number.isNaN(d.getTime()) && d <= new Date() && d >= twoYearsAgo) genDate = d;
     }
+    const now = new Date();
+    // Back-dated = the generated date differs from the entry (created) date.
+    const isBackDated = !!genDate && genDate.toISOString().slice(0, 10) !== now.toISOString().slice(0, 10);
 
     const lead = await Lead.create({
       ownerId: owner.id,
@@ -1615,22 +1634,29 @@ router.post('/', requireAuth, async (req, res, next) => {
       city: String(b.city || '').slice(0, 120),
       timezone: String(b.timezone || '').slice(0, 80),
       additionalInfo: String(b.additionalInfo || '').slice(0, 10000),
-      lastActivityAt: backDate || new Date(),
+      // The untouched clock measures from the entry moment, so lastActivityAt
+      // starts now even for a back-dated lead — it becomes untouched only if
+      // nobody works it for 3 days after it enters the system.
+      lastActivityAt: now,
       // Track who generated a call-back prospect so they keep visibility after
       // any later transfer. Only meaningful when the creator is the owner.
       generatedById: (b.status === 'callback' && owner.id === req.user.id) ? req.user.id : null,
-      // The 24-hour first-reply clock runs from assignment. For a back-dated
-      // import that is the historical date, so migrated leads aren't all
-      // flagged overdue the moment they land.
-      assignedAt: backDate || new Date(),
-      ...(backDate ? { createdAt: backDate } : {}),
+      // assignedAt drives the 24-hour first-reply rule, which only applies to
+      // same-day (non-back-dated) leads — so it also starts at entry.
+      assignedAt: now,
+      // The real-world origin date (shown as "Lead generated"), and the flag
+      // marking whether it differs from the entry date.
+      generatedAt: genDate || now,
+      backDated: isBackDated,
+      // createdAt is always the true entry moment (default) — never the
+      // back-date — so the untouched clock and trend charts read entry time.
       // Who keyed it in, as distinct from who owns it.
       enteredById: req.user.id,
       enteredByName: req.user.name,
       timeline: [{
         type: 'created',
-        text: backDate ? `Lead created (back-dated to ${backDate.toISOString().slice(0, 10)})` : 'Lead created',
-        time: (backDate || new Date()).toISOString(),
+        text: isBackDated ? `Lead created (generated ${genDate.toISOString().slice(0, 10)})` : 'Lead created',
+        time: now.toISOString(),
         author: req.user.name,
       }],
     });
@@ -1651,6 +1677,7 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     // Owner reassignment (admin/manager only)
     if (b.ownerId && b.ownerId !== lead.ownerId && (req.user.role === 'admin' || req.user.role === 'manager')) {
       const owner = await resolveOwner(req.user, b.ownerId);
+      if (!owner) return res.status(400).json({ error: 'That owner isn’t valid — pick an agent or manager.' });
       lead.ownerId = owner.id; lead.ownerName = owner.name;
       lead.ownerTeam = owner.team || lead.ownerTeam; lead.ownerShift = owner.shift || lead.ownerShift;
       pushTimeline(lead, 'owner', `Owner changed to ${owner.name}`, author);
