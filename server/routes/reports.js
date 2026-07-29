@@ -140,6 +140,11 @@ router.post('/', requireAuth, async (req, res, next) => {
 
       if (input.leadId) {
         lead = await Lead.findByPk(input.leadId);
+        if (lead && lead.status === 'callback') {
+          // A call-back isn't a worked lead yet and never appears in the Leads
+          // list, so a report linked to one would be unreachable. Refuse.
+          return res.status(400).json({ error: 'Reports can’t be generated for a call back. Transfer it to a lead first.' });
+        }
         if (lead && (req.user.role === 'admin' || lead.ownerId === req.user.id ||
           (req.user.role === 'manager'))) {
           // attach (visibility already implies access for manager/admin)
@@ -189,7 +194,22 @@ router.post('/', requireAuth, async (req, res, next) => {
       if (lead) {
         report.leadId = lead.id;
         await report.save();
+
+        // One report per lead: remove any earlier reports for this lead so only
+        // the latest survives. The report data is deleted, but a timeline entry
+        // preserves the fact that a report existed and when.
+        const priorReports = await Report.findAll({ where: { leadId: lead.id, id: { [Op.ne]: report.id } } });
         const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+        for (const old of priorReports) {
+          try { if (old.pdfPath && fs.existsSync(old.pdfPath)) fs.unlinkSync(old.pdfPath); } catch { /* best effort */ }
+          tl.push({
+            type: 'report',
+            text: `Previous report (${old.businessName || old.domain || 'analysis'}, ${new Date(old.createdAt).toLocaleDateString('en-GB')}) replaced by a new run`,
+            time: new Date().toISOString(), author: req.user.name,
+          });
+          await old.destroy();
+        }
+
         tl.push({ type: 'report', text: `Report generated for ${input.businessName || domain}`, time: new Date().toISOString(), author: req.user.name });
         lead.timeline = tl; lead.changed('timeline', true);
         lead.lastActivityAt = new Date();
@@ -447,9 +467,41 @@ router.post('/:id/retry', requireAuth, async (req, res, next) => {
     report.status = 'queued';
     report.progress = 0;
     report.error = null;
+    report.refreshMode = false; // a full retry re-crawls everything
     await report.save();
     await enqueueReport(report.id);
     res.json({ ok: true, status: 'queued' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST /api/reports/:id/refresh — re-run the analysis WITHOUT spending SE
+ * Ranking credits. The job reuses the SE Ranking figures already stored on the
+ * report and re-runs only the site crawl (Google/PageSpeed) and the Claude AI
+ * analysis. If the stored data is missing, the job falls back to a full re-run.
+ */
+router.post('/:id/refresh', requireAuth, async (req, res, next) => {
+  try {
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
+      return res.status(403).json({ error: 'This report belongs to another agent.' });
+    }
+    if (report.status === 'running') return res.status(400).json({ error: 'This report is already running.' });
+
+    report.status = 'queued';
+    report.progress = 0;
+    report.error = null;
+    report.refreshMode = true;
+    await report.save();
+    await enqueueReport(report.id);
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'report.refresh',
+      target: report.domain, ip: req.ip,
+    });
+    res.json({ ok: true, status: 'queued', refresh: true });
   } catch (e) {
     next(e);
   }
@@ -511,6 +563,7 @@ router.patch('/:id/link', requireAuth, async (req, res, next) => {
 
     const lead = await Lead.findByPk(leadId);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (lead.status === 'callback') return res.status(400).json({ error: 'Reports can’t be linked to a call back. Transfer it to a lead first.' });
     const { canAccessLead } = require('./leads').helpers;
     if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'You do not have access to that lead.' });
 

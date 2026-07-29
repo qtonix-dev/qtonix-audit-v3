@@ -36,6 +36,7 @@ export const Icon = {
   Refresh: (p) => <IconBase {...p}><path d="M20 12a8 8 0 1 1-2.3-5.6" /><path d="M20 4v4h-4" /></IconBase>,
   Clock: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></IconBase>,
   Mail: (p) => <IconBase {...p}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m3.5 7 8.5 6 8.5-6" /></IconBase>,
+  Globe: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.5 2.4 2.5 14.6 0 17M12 3.5c-2.5 2.4-2.5 14.6 0 17" /></IconBase>,
   Pin: (p) => <IconBase {...p}><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z" /><circle cx="12" cy="10" r="2.5" /></IconBase>,
   Calendar: (p) => <IconBase {...p}><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></IconBase>,
 };
@@ -311,7 +312,17 @@ function callbackTone(at) {
   if (ms < 24 * 3600000) return 'text-amber-600 font-semibold';
   return 'text-slate-600';
 }
-const fullName = (l) => `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)';
+// Display names in Title Case ("aa"/"AA" -> "Aa") without mutating stored data.
+// Splits on spaces and hyphens so "mary-jane o'neil" -> "Mary-Jane O'neil".
+export function titleCase(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/([^\s-]+)/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+}
+const fullName = (l) => {
+  const n = `${titleCase(l.firstName)} ${titleCase(l.lastName)}`.trim();
+  return n || '(no name)';
+};
 
 // Days since a lead was last touched, and a staleness bucket for badges.
 function staleness(l) {
@@ -626,9 +637,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
                 <th className="text-left px-4 py-3">Lead</th>
                 <th className="text-left px-4 py-3">Contact</th>
-                <th className="text-left px-4 py-3">Source</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-left px-4 py-3">Deals</th>
+                {!isProspect && <th className="text-left px-4 py-3">Source</th>}
+                {!isProspect && <th className="text-left px-4 py-3">Status</th>}
+                {!isProspect && <th className="text-left px-4 py-3">Deals</th>}
                 <th className="text-left px-4 py-3">Owner</th>
                 {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
                 {isProspect && <th className="text-left px-4 py-3">Added</th>}
@@ -680,8 +691,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                       <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
                       <div className="text-[11px] text-slate-400">{l.mobile || l.phone || ''}</div>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">{l.leadSource || '—'}</td>
-                    <td className="px-4 py-3"><span className="rounded-full px-2.5 py-1 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>
+                    {!isProspect && <td className="px-4 py-3 text-slate-500 text-xs">{l.leadSource || '—'}</td>}
+                    {!isProspect && <td className="px-4 py-3"><span className="rounded-full px-2.5 py-1 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>}
+                    {!isProspect && (
                     <td className="px-4 py-3">
                       {deals.length === 0 ? <span className="text-slate-300 text-xs">—</span> : (
                         <div className="flex items-center gap-1.5">
@@ -690,6 +702,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                         </div>
                       )}
                     </td>
+                    )}
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     {isProspect && (
                       <td className="px-4 py-3 text-xs">
@@ -1389,6 +1402,16 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Mail size={14} /></span>{lead.email || <span className="text-slate-300">—</span>}</div>
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.mobile || <span className="text-slate-300">—</span>}</div>
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.phone || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400"><Icon.Globe size={14} /></span>
+                {lead.website ? (
+                  <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
+                    target="_blank" rel="noreferrer" title={lead.website}
+                    className="text-blue-500 hover:underline truncate inline-block max-w-[190px] align-bottom">
+                    {lead.website.replace(/^https?:\/\//, '')}
+                  </a>
+                ) : <span className="text-slate-300">—</span>}
+              </div>
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Pin size={14} /></span>{[lead.city, lead.country].filter(Boolean).join(', ') || <span className="text-slate-300">—</span>}</div>
             </div>
           </div>
@@ -1410,14 +1433,6 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
             <SectionHead title="Other info" section="other" />
             <div className="space-y-2 text-sm">
-              <Row k="Website" v={lead.website ? (
-                <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
-                  target="_blank" rel="noreferrer"
-                  title={lead.website}
-                  className="text-blue-500 hover:underline truncate inline-block max-w-[190px] align-bottom">
-                  {lead.website.replace(/^https?:\/\//, '')}
-                </a>
-              ) : null} />
               <Row k="Secondary email" v={lead.secondaryEmail} />
               {/* "Generated by" names the pre-sales person on non-pre-sales
                   leads. On a Pre-Sales lead the source already says pre-sales,
@@ -2922,7 +2937,7 @@ const REPORT_MARKETS = [
 ];
 
 function RunReportModal({ lead, onClose, onQueued }) {
-  const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+  const fullName = `${titleCase(lead.firstName)} ${titleCase(lead.lastName)}`.trim();
   const [f, setF] = useState({
     businessName: lead.company || lead.businessName || '',
     services: (Array.isArray(lead.servicesInterested) && lead.servicesInterested.filter((s) => REPORT_SERVICES.includes(s)).length)
@@ -3023,12 +3038,30 @@ function ReportsTab({ lead, onChange }) {
   }, [lead._id]);
   const openReport = (r) => window.open(`${API_BASE}/api/reports/${r._id}/view?token=${localStorage.getItem('qtx_token')}`, '_blank');
   const download = (r) => window.open(`${API_BASE}/api/reports/${r._id}/download?token=${localStorage.getItem('qtx_token')}`, '_blank');
+  const [refreshing, setRefreshing] = useState(false);
   if (reports === null) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+  // A lead keeps only its latest report, so if one exists we offer Refresh
+  // (re-run using fresh Claude/Google data, reusing SE Ranking) rather than a
+  // brand-new run.
+  const existing = reports[0] || null;
+  const refresh = async () => {
+    if (!existing) return;
+    if (!confirm('Refresh this report with fresh AI and Google data? SE Ranking data is reused, so no SE Ranking credits are spent.')) return;
+    setRefreshing(true);
+    try {
+      await api(`/reports/${existing._id}/refresh`, { method: 'POST' });
+      window.location.href = `/?reportId=${existing._id}`;
+    } catch (e) { alert(e.message); setRefreshing(false); }
+  };
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <div className="text-sm text-slate-500">{reports.length} report{reports.length === 1 ? '' : 's'} linked</div>
-        <button onClick={() => setShowRun(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run report</button>
+        <div className="text-sm text-slate-500">{reports.length ? '1 report' : 'No report yet'}</div>
+        {existing ? (
+          <button onClick={refresh} disabled={refreshing} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{refreshing ? 'Refreshing…' : '↻ Refresh report'}</button>
+        ) : (
+          <button onClick={() => setShowRun(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run report</button>
+        )}
       </div>
       {showRun && <RunReportModal lead={lead} onClose={() => setShowRun(false)} onQueued={(id) => { setShowRun(false); window.location.href = `/?reportId=${id}`; }} />}
       {reports.length === 0 ? (

@@ -59,15 +59,40 @@ async function runReport(reportId) {
   const claudeKey = settings.getKey('anthropic');
   const psKey = settings.getKey('pagespeed');
 
-  if (!serKey) throw new Error('SE Ranking API key not configured. Add it in Admin → Settings.');
   if (!claudeKey) throw new Error('Claude API key not configured. Add it in Admin → Settings.');
 
-  const se = new SERanking(serKey);
+  // Refresh mode reuses the SE Ranking responses captured on the previous run
+  // (stored in data._seRaw) and only re-runs the crawl + Claude analysis, so it
+  // spends no SE Ranking credits. We can only do that if there IS a prior
+  // capture; otherwise we fall back to a full run. A full run needs the key.
+  const priorRaw = (report.data && report.data._seRaw) || null;
+  const refreshing = !!report.refreshMode && !!priorRaw;
+  if (!serKey && !refreshing) throw new Error('SE Ranking API key not configured. Add it in Admin → Settings.');
+
+  // Labels that hit the SE Ranking API. In refresh mode these are served from
+  // the prior capture instead of the network.
+  const SE_LABELS = new Set(['overview', 'history', 'keywords', 'striking', 'pages',
+    'backlinks', 'refdomains', 'anchors', 'competitors', 'gap', 'aiGaps', 'aiWins']);
+  const rawCapture = {}; // label -> raw response, persisted for future refreshes
+
+  const se = serKey ? new SERanking(serKey) : null;
   const domain = toDomain(report.website);
   const source = report.country || settings.defaultCountry || 'us';
   const wantsLocal = report.services.includes('Local SEO');
   const wantsSmo = report.services.includes('SMO');
   const wantsAi = report.services.some((s) => ['AI SEO', 'GEO', 'AEO'].includes(s));
+
+  // Refresh-aware wrapper: for SE Ranking labels while refreshing, return the
+  // cached value; otherwise call through and capture the result for next time.
+  const isSeLabel = (label) => SE_LABELS.has(label) || String(label).startsWith('comp:');
+  const safeSE = async (label, fn, fallback = null) => {
+    if (refreshing && isSeLabel(label)) {
+      return (priorRaw && label in priorRaw) ? priorRaw[label] : fallback;
+    }
+    const val = await safe(label, fn, fallback);
+    if (isSeLabel(label)) rawCapture[label] = val;
+    return val;
+  };
 
   try {
     // -- 1. Our own crawl. Free, fast, and the source of AI-readiness signals.
@@ -75,15 +100,18 @@ async function runReport(reportId) {
     const crawl = await safe('crawl', () => runTechnicalAudit(report.website, psKey), {});
 
     // -- 2. Search visibility. Parallel: independent endpoints, rate limiter serialises.
+    // In refresh mode, `safe()` short-circuits SE Ranking calls to the values
+    // stored on the previous run (see the safe() wrapper), so no credits are
+    // spent; the crawl and Claude AI steps still run fresh.
     await setProgress(reportId, 22, STEPS[1]);
     const [overview, history, keywords, striking, pages] = await Promise.all([
-      safe('overview', () => se.getDomainOverview(domain, source)),
-      safe('history', () => se.getDomainHistory(domain, source)),
-      safe('keywords', () => se.getDomainKeywords(domain, source, { limit: 200 }), []),
-      safe('striking', () => se.getStrikingDistance(domain, source, 30), []),
-      safe('pages', () => se.getDomainPages(domain, source, 20), []),
+      safeSE('overview', () => se.getDomainOverview(domain, source)),
+      safeSE('history', () => se.getDomainHistory(domain, source)),
+      safeSE('keywords', () => se.getDomainKeywords(domain, source, { limit: 200 }), []),
+      safeSE('striking', () => se.getStrikingDistance(domain, source, 30), []),
+      safeSE('pages', () => se.getDomainPages(domain, source, 20), []),
     ]);
-    credits += 500;
+    if (!refreshing) credits += 500;
 
     const organic = (overview && overview.organic) || {};
     const kwList = Array.isArray(keywords) ? keywords : [];
@@ -110,11 +138,11 @@ async function runReport(reportId) {
     // -- 3. Backlinks + toxic split.
     await setProgress(reportId, 38, STEPS[2]);
     const [blSummary, refdomains, anchors] = await Promise.all([
-      safe('backlinks', () => se.getBacklinkSummary(domain, 'domain')),
-      safe('refdomains', () => se.getReferringDomains(domain, 'domain', 200), null),
-      safe('anchors', () => se.getAnchors(domain, 'domain', 20), null),
+      safeSE('backlinks', () => se.getBacklinkSummary(domain, 'domain')),
+      safeSE('refdomains', () => se.getReferringDomains(domain, 'domain', 200), null),
+      safeSE('anchors', () => se.getAnchors(domain, 'domain', 20), null),
     ]);
-    credits += 300;
+    if (!refreshing) credits += 300;
 
     const sum = (blSummary && blSummary.summary && blSummary.summary[0]) || {};
     const refs = (refdomains && refdomains.refdomains) || [];
@@ -144,8 +172,8 @@ async function runReport(reportId) {
 
     // -- 4. Competitors. The highest-converting page in the report.
     await setProgress(reportId, 52, STEPS[3]);
-    const compRaw = await safe('competitors', () => se.getCompetitors(domain, source), []);
-    credits += 100;
+    const compRaw = await safeSE('competitors', () => se.getCompetitors(domain, source), []);
+    if (!refreshing) credits += 100;
 
     const topComps = (Array.isArray(compRaw) ? compRaw : [])
       .filter((c) => c.domain && c.domain !== domain)
@@ -154,9 +182,9 @@ async function runReport(reportId) {
     // Cheap metrics endpoint (10 credits) rather than full summary (100) per rival.
     const competitors = [];
     for (const c of topComps) {
-      const m = await safe(`comp:${c.domain}`, () => se.getBacklinkMetrics(c.domain, 'domain'));
+      const m = await safeSE(`comp:${c.domain}`, () => se.getBacklinkMetrics(c.domain, 'domain'));
       const cm = (m && m.metrics && m.metrics[0]) || {};
-      credits += 10;
+      if (!refreshing) credits += 10;
       competitors.push({
         domain: c.domain,
         commonKeywords: c.common_keywords,
@@ -174,9 +202,9 @@ async function runReport(reportId) {
     // Keyword gap vs the single strongest rival.
     let keywordGap = [];
     if (competitors.length) {
-      const gap = await safe('gap', () => se.getKeywordGap(domain, competitors[0].domain, source, 30), []);
+      const gap = await safeSE('gap', () => se.getKeywordGap(domain, competitors[0].domain, source, 30), []);
       keywordGap = Array.isArray(gap) ? gap : [];
-      credits += 100;
+      if (!refreshing) credits += 100;
     }
 
     // -- 5. AI visibility. Runs when any AI service is selected — this is the hook.
@@ -185,10 +213,10 @@ async function runReport(reportId) {
     if (wantsAi || true) {
       // Always run it: it's the strongest differentiator even on a plain SEO pitch.
       const [aiGaps, aiWins] = await Promise.all([
-        safe('aiGaps', () => se.getAiOverviewGaps(domain, source, 30), []),
-        safe('aiWins', () => se.getAiOverviewWins(domain, source, 30), []),
+        safeSE('aiGaps', () => se.getAiOverviewGaps(domain, source, 30), []),
+        safeSE('aiWins', () => se.getAiOverviewWins(domain, source, 30), []),
       ]);
-      credits += 200;
+      if (!refreshing) credits += 200;
 
       const aiOverview = {
         gapCount: Array.isArray(aiGaps) ? aiGaps.length : 0,
@@ -429,6 +457,10 @@ async function runReport(reportId) {
       },
       crawl,
       keywordData,
+      // Raw SE Ranking responses captured this run (or replayed from a prior
+      // run in refresh mode), so a future refresh can reuse them without
+      // spending credits.
+      _seRaw: refreshing ? priorRaw : rawCapture,
       backlinks,
       competitors,
       keywordGap,

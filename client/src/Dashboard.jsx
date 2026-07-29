@@ -356,7 +356,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} />
         <PlainStat label="Converted this month" value={m.convertedThisMonth}
           sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}
-          accent="#059669" onClick={onViewConverted} cta="View converted clients" />
+          accent="#059669" onClick={isAdmin || isManager ? onViewConverted : undefined} cta={isAdmin || isManager ? 'View converted clients' : undefined} />
       </div>
 
       {/* Missed commitments — scheduled calls and tasks that went past their

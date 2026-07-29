@@ -237,6 +237,48 @@ connectWithRetry()
     } catch (e) {
       console.error('[migrate] domain backfill skipped:', e.message);
     }
+
+    // One-time cleanup: keep only the latest report per lead. Older reports for
+    // the same lead are deleted (with their PDFs); a timeline note on the lead
+    // records that a prior report existed. Runs every boot but is a no-op once
+    // each lead has a single report.
+    try {
+      const { Report, Lead } = require('./models');
+      const fs = require('fs');
+      const all = await Report.findAll({
+        where: { leadId: { [Op.ne]: null } },
+        attributes: ['id', 'leadId', 'businessName', 'domain', 'pdfPath', 'createdAt'],
+        order: [['leadId', 'ASC'], ['createdAt', 'DESC']],
+      });
+      const seen = new Set();
+      const toDelete = [];
+      for (const r of all) {
+        if (seen.has(r.leadId)) toDelete.push(r); // not the newest for this lead
+        else seen.add(r.leadId);
+      }
+      let removed = 0;
+      for (const old of toDelete) {
+        try { if (old.pdfPath && fs.existsSync(old.pdfPath)) fs.unlinkSync(old.pdfPath); } catch { /* best effort */ }
+        try {
+          const lead = await Lead.findByPk(old.leadId, { attributes: ['id', 'timeline'] });
+          if (lead) {
+            const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+            tl.push({
+              type: 'report',
+              text: `Older report (${old.businessName || old.domain || 'analysis'}, ${new Date(old.createdAt).toLocaleDateString('en-GB')}) removed — keeping only the latest`,
+              time: new Date().toISOString(), author: 'system',
+            });
+            lead.timeline = tl; lead.changed('timeline', true);
+            await lead.save();
+          }
+        } catch { /* best effort timeline note */ }
+        await Report.destroy({ where: { id: old.id } });
+        removed++;
+      }
+      if (removed) console.log(`[migrate] removed ${removed} older report(s), keeping latest per lead`);
+    } catch (e) {
+      console.error('[migrate] report dedup skipped:', e.message);
+    }
     } // end if (connected)
 
     app.listen(PORT, () => {

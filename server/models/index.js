@@ -153,6 +153,10 @@ const Report = sequelize.define(
     // (~100-300KB) so it is never selected in list queries.
     data: { type: DataTypes.JSON, defaultValue: {} },
     opportunityValue: { type: DataTypes.JSON, defaultValue: {} },
+    // Set when the report is being "refreshed": the job reuses the previously
+    // fetched SE Ranking data (stored in `data`) and only re-runs the crawl and
+    // the Claude AI analysis, so a refresh doesn't spend SE Ranking credits.
+    refreshMode: { type: DataTypes.BOOLEAN, defaultValue: false },
 
     // ---- CRM: how the sales team tracks the prospect after the report ----
     stage: {

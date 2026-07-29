@@ -869,7 +869,9 @@ export default function App() {
     // Standalone AI brief lookup for cold calling — enter a domain, get the
     // pitch. Sits right after Leads, available to everyone.
     { id: 'aibrief', label: 'AI Brief', icon: 'sparkles' },
-    { id: 'list', label: 'Reports', icon: 'chart' },
+    // Agents run reports only from inside a lead's detail page, so they don't
+    // get the top-level Reports menu (which also lists reports across leads).
+    ...(user.role !== 'agent' ? [{ id: 'list', label: 'Reports', icon: 'chart' }] : []),
     ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews', icon: 'star' }] : []),
     // Lead managers coordinate the pre-sales draft workflow; admins oversee it.
     ...((user.role === 'leadmanager' || user.role === 'admin') ? [{ id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' }] : []),
