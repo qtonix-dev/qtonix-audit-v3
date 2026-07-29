@@ -486,4 +486,42 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * PATCH /api/reports/:id/link — attach an existing (unlinked) report to a lead.
+ * Body: { leadId }. The caller must be able to access both the report and the
+ * lead. Passing leadId null unlinks.
+ */
+router.patch('/:id/link', requireAuth, async (req, res, next) => {
+  try {
+    const { Lead } = require('../models');
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+
+    // Non-admins can only touch reports they ran.
+    if (req.user.role !== 'admin' && String(report.agentId) !== String(req.user.id)) {
+      return res.status(403).json({ error: 'You can only link reports you generated.' });
+    }
+
+    const leadId = req.body ? req.body.leadId : null;
+    if (leadId === null || leadId === '' || leadId === undefined) {
+      report.leadId = null;
+      await report.save();
+      return res.json({ ok: true, leadId: null });
+    }
+
+    const lead = await Lead.findByPk(leadId);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    const { canAccessLead } = require('./leads').helpers;
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'You do not have access to that lead.' });
+
+    report.leadId = lead.id;
+    await report.save();
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'report.link',
+      target: `${report.businessName || report.domain} → ${lead.firstName || ''} ${lead.lastName || ''}`.trim(), ip: req.ip,
+    });
+    res.json({ ok: true, leadId: lead.id });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

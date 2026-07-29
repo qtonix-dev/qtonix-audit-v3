@@ -11,7 +11,7 @@
  */
 const express = require('express');
 const { Op } = require('sequelize');
-const { User, Lead, Review, Settings, AuditLog } = require('../models');
+const { User, Lead, Review, Settings, AuditLog, MonthlyTarget } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 const { buildGroups, groupsForUser, canReviewGroup } = require('../services/orgStructure');
 
@@ -93,6 +93,8 @@ async function scoreAgents(groups, period) {
       if (d.stage !== 'closed_won' && d.stage !== 'closed_lost') s.pipelineUsd += toUsd(d.amount, d.currency);
       if (d.stage !== 'closed_won') continue;
       for (const it of (d.installments || [])) {
+        // Recurring cycles beyond the first don't count toward the agent's sale.
+        if (it.recurring && Number(it.seq || 0) > 1) continue;
         if (it.paid && it.paidDate) {
           const pd = new Date(it.paidDate);
           if (pd >= start && pd < end) s.salesUsd += toUsd(it.amount, d.currency);
@@ -104,6 +106,20 @@ async function scoreAgents(groups, period) {
         const t = a.date ? new Date(a.date) : null;
         if (t && t >= start && t < end) s.callsDone++;
       }
+    }
+  }
+
+  // Historical fallback: for months the live data can't speak to (e.g. a newly
+  // joined agent's past months, before any leads existed here), use the admin-
+  // entered target + achieved. Live-computed sales win when present.
+  const storedRows = await MonthlyTarget.findAll({ where: { period, userId: Object.keys(stats).map(Number).concat(-1) } });
+  const storedByUser = {};
+  storedRows.forEach((r) => { storedByUser[r.userId] = r.toJSON(); });
+  for (const s of Object.values(stats)) {
+    const rec = storedByUser[s.agentId];
+    if (rec) {
+      if (rec.targetUsd > 0) s.salesTarget = rec.targetUsd;         // stored target overrides config
+      if (s.salesUsd <= 0 && rec.achievedUsd > 0) { s.salesUsd = rec.achievedUsd; s.achievedFromHistory = true; }
     }
   }
 
@@ -195,13 +211,17 @@ async function scoreManagers(groups, period) {
     if (!g.manager) continue;
     const m = byManager[g.manager.id] || (byManager[g.manager.id] = {
       managerId: g.manager.id, name: g.manager.name, avatar: g.manager.avatar || null,
-      teams: [], agentIds: [], salesTarget: 0,
+      teams: [], agentIds: [], agentsTarget: 0, managerTarget: 0,
     });
     m.teams.push(`${g.team}·${g.shift}`);
+    // The manager's own target is the increment added on top of their agents'
+    // combined target to form the team target.
+    const mt = g.manager.targets || {};
+    if (mt.sales && mt.sales.enabled) m.managerTarget = Number(mt.sales.monthly || 0);
     for (const a of g.agents) {
       m.agentIds.push(a.id);
       const t = a.targets || {};
-      if (t.sales && t.sales.enabled) m.salesTarget += Number(t.sales.monthly || 0);
+      if (t.sales && t.sales.enabled) m.agentsTarget += Number(t.sales.monthly || 0);
     }
   }
 
@@ -222,8 +242,46 @@ async function scoreManagers(groups, period) {
       if (d.stage !== 'closed_won' && d.stage !== 'closed_lost') m.pipelineUsd += toUsd(d.amount, d.currency);
       if (d.stage !== 'closed_won') continue;
       for (const it of (d.installments || [])) {
+        if (it.recurring && Number(it.seq || 0) > 1) continue;
         if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= start && pd < end) m.salesUsd += toUsd(it.amount, d.currency); }
       }
+    }
+  }
+
+  // Historical fallback. Load every stored target row for the managers and all
+  // their agents this period. The team target is the agents' combined target
+  // plus the manager's own increment; a stored value overrides the configured
+  // one. Team achieved falls back to the summed stored achieved only when the
+  // live figure is zero (a past month with no data here).
+  const mgrIds = Object.values(byManager).map((m) => m.managerId);
+  const everyoneIds = mgrIds.concat(Object.values(byManager).flatMap((m) => m.agentIds)).concat(-1);
+  const storedRows = await MonthlyTarget.findAll({ where: { period, userId: everyoneIds } });
+  const storedByUser = {};
+  storedRows.forEach((r) => { storedByUser[r.userId] = r.toJSON(); });
+
+  for (const m of Object.values(byManager)) {
+    // Agents' combined target: stored value per agent when present, else the
+    // config-derived amount already summed into agentsTarget is used as a base.
+    let agentsTarget = 0; let storedAgentsAchieved = 0; let anyStored = false;
+    for (const aid of m.agentIds) {
+      const rec = storedByUser[aid];
+      if (rec) {
+        anyStored = true;
+        agentsTarget += rec.targetUsd > 0 ? rec.targetUsd : 0;
+        storedAgentsAchieved += rec.achievedUsd || 0;
+      }
+    }
+    // If no agent had a stored row, keep the configured agents' target.
+    const agentsTargetFinal = anyStored ? agentsTarget : m.agentsTarget;
+    // Manager increment: stored overrides config.
+    const mgrRec = storedByUser[m.managerId];
+    const managerTargetFinal = (mgrRec && mgrRec.targetUsd > 0) ? mgrRec.targetUsd : m.managerTarget;
+    m.salesTarget = agentsTargetFinal + managerTargetFinal;
+    // Achieved fallback: only when there's no live sales for the team.
+    if (m.salesUsd <= 0) {
+      const mgrAchieved = mgrRec ? (mgrRec.achievedUsd || 0) : 0;
+      const histAchieved = storedAgentsAchieved + mgrAchieved;
+      if (histAchieved > 0) { m.salesUsd = histAchieved; m.achievedFromHistory = true; }
     }
   }
 

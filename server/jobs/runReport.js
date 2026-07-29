@@ -393,8 +393,13 @@ async function runReport(reportId) {
         businessIndustry: (detected && detected.industry) || '',
         country: source,
         location: report.location,
-        agentName: (liveAgent && liveAgent.name) || report.agentName,
-        agentPhone: (liveAgent && liveAgent.phone) || report.agentPhone,
+        // The customer-facing report shows the agent's ALIAS, not their real
+        // name. Fall back to the real name if no alias is set.
+        agentName: (liveAgent && Array.isArray(liveAgent.aliases) && liveAgent.aliases[0])
+          || (liveAgent && liveAgent.name) || report.agentName,
+        // The end-page contact number is the company's branding phone (admin
+        // settings), not the agent's personal number.
+        agentPhone: settings.phone || (liveAgent && liveAgent.phone) || report.agentPhone,
         agentEmail: (liveAgent && liveAgent.email) || report.agentEmail,
         agentDesignation: (liveAgent && liveAgent.designation) || report.agentDesignation,
         date: new Date(),

@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { User, Report, Settings, AuditLog, sequelize, Op, defaultPricing } = require('../models');
+const { User, Report, Settings, AuditLog, MonthlyTarget, Lead, sequelize, Op, defaultPricing } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { SERanking } = require('../services/seranking');
 
@@ -169,6 +169,87 @@ router.post('/settings/test-key', async (req, res) => {
 router.get('/users', async (req, res) => {
   const users = await User.findAll({ attributes: { exclude: ['passwordHash'] }, order: [['createdAt', 'DESC']] });
   res.json(users);
+});
+
+/**
+ * GET /api/admin/monthly-targets?period=YYYY-MM[&managerId=]
+ * Returns agents/managers with their stored target+achieved for the month.
+ * With managerId, scopes to that manager plus the agents in their team/shift.
+ */
+router.get('/monthly-targets', async (req, res, next) => {
+  try {
+    const period = String(req.query.period || '');
+    if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'A valid period (YYYY-MM) is required.' });
+    const managerId = req.query.managerId ? Number(req.query.managerId) : null;
+
+    const users = (await User.findAll({
+      where: { role: { [Op.in]: ['agent', 'manager'] } },
+      attributes: ['id', 'name', 'role', 'team', 'shift', 'targets', 'managerId'],
+      order: [['role', 'DESC'], ['name', 'ASC']],
+    })).map((u) => u.toJSON());
+
+    let scoped = users;
+    if (managerId) {
+      const mgr = users.find((u) => u.id === managerId && u.role === 'manager');
+      if (mgr) {
+        // The manager plus every agent sharing their team+shift.
+        scoped = users.filter((u) => u.id === managerId || (u.role === 'agent' && u.team === mgr.team && u.shift === mgr.shift));
+      } else {
+        scoped = [];
+      }
+    }
+
+    const stored = await MonthlyTarget.findAll({ where: { period, userId: { [Op.in]: scoped.map((u) => u.id).concat(-1) } } });
+    const byUser = {};
+    stored.forEach((s) => { byUser[s.userId] = s.toJSON(); });
+
+    const rows = scoped.map((u) => {
+      const t = u.targets || {};
+      const currentTarget = (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0;
+      const rec = byUser[u.id];
+      return {
+        userId: u.id, name: u.name, role: u.role, team: u.team, shift: u.shift,
+        // If a value is already stored for this month use it; otherwise seed the
+        // target input with the user's current configured target as a starting
+        // point (achieved starts blank).
+        targetUsd: rec ? rec.targetUsd : currentTarget,
+        achievedUsd: rec ? rec.achievedUsd : 0,
+        hasRecord: !!rec,
+      };
+    });
+
+    res.json({ period, managerId, rows });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/admin/monthly-targets — upsert one user's target+achieved for a month. */
+router.post('/monthly-targets', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const userId = Number(b.userId);
+    const period = String(b.period || '');
+    if (!userId || !/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'userId and a valid period are required.' });
+    const user = await User.findByPk(userId);
+    if (!user || !['agent', 'manager'].includes(user.role)) return res.status(404).json({ error: 'User not found.' });
+
+    const [row] = await MonthlyTarget.findOrCreate({
+      where: { userId, period },
+      defaults: { userId, period, userName: user.name, role: user.role },
+    });
+    row.userName = user.name;
+    row.role = user.role;
+    if (b.targetUsd !== undefined) row.targetUsd = Math.max(0, Number(b.targetUsd) || 0);
+    if (b.achievedUsd !== undefined) row.achievedUsd = Math.max(0, Number(b.achievedUsd) || 0);
+    row.enteredById = req.user.id;
+    row.enteredByName = req.user.name;
+    await row.save();
+
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'monthly-target.save',
+      target: `${user.name} (${period})`, ip: req.ip,
+    });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
 });
 
 router.post('/users', async (req, res, next) => {

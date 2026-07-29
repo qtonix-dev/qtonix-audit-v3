@@ -912,7 +912,13 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           // deal is a new sale; all others are cross sales.
           const isNew = di === 0 && it.seq === 1 && !leadHasCountedNew;
           if (isNew) leadHasCountedNew = true;
-          if (pd >= startOfMonth) {
+          // Recurring deals: only the FIRST billing cycle (seq 1) credits the
+          // agent/manager as their sale. Later recurring cycles are ongoing
+          // revenue the admin manages, not new selling work — so they don't
+          // count toward any agent/manager/team/company figure. (Non-recurring
+          // installments keep crediting the owner as cross-sales as before.)
+          const recurringRepeat = !!it.recurring && Number(it.seq || 0) > 1;
+          if (pd >= startOfMonth && !recurringRepeat) {
             // Per-owner tally always happens (drives the admin-only leaderboard
             // row); company-wide figures skip admin-owned deals.
             byOwner[l.ownerId].salesUsd += usd;
@@ -1068,7 +1074,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // admin the raw figures they need when reconciling numbers manually.
     let adminOwnLeads = null;
     if (viewerIsAdmin) {
-      const mine = leads.filter((l) => l.ownerId === req.user.id && l.status !== 'callback');
+      const myId = Number(req.user.id);
+      const mine = leads.filter((l) => Number(l.ownerId) === myId && l.status !== 'callback');
       adminOwnLeads = {
         total: mine.length,
         assignedToday: mine.filter((l) => { const a = l.assignedAt || l.createdAt; return a && new Date(a) >= startOfDay; }).length,

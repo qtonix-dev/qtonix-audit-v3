@@ -502,6 +502,35 @@ const Review = sequelize.define(
   }
 );
 
+// Per-user, per-month sales target and achieved amount. Lets an admin key in
+// historical figures for months the system has no live data for (e.g. a newly
+// joined agent's past six months), so reviews aren't blank. Reviews prefer the
+// live-computed number and fall back to `achievedUsd` only when there's no live
+// data for that user+month.
+const MonthlyTarget = sequelize.define(
+  'MonthlyTarget',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false },
+    userName: DataTypes.STRING(120),
+    role: DataTypes.STRING(20),         // snapshot of the user's role at entry time
+    // 'YYYY-MM'.
+    period: { type: DataTypes.STRING(7), allowNull: false },
+    // Manually entered sales target and achieved amount, in USD.
+    targetUsd: { type: DataTypes.FLOAT, defaultValue: 0 },
+    achievedUsd: { type: DataTypes.FLOAT, defaultValue: 0 },
+    enteredById: DataTypes.INTEGER,
+    enteredByName: DataTypes.STRING(120),
+  },
+  {
+    tableName: 'monthly_targets',
+    indexes: [
+      { name: 'idx_mt_user_period', unique: true, fields: ['userId', 'period'] },
+      { name: 'idx_mt_period', fields: ['period'] },
+    ],
+  }
+);
+
 /**
  * Standalone AI briefs run from the AI Brief page (not tied to a lead). Cached
  * by domain: the `brief` JSON is shared, but each person who looks a domain up
@@ -802,6 +831,6 @@ async function initDb({ sync = true } = {}) {
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

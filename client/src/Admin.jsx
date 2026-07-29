@@ -373,6 +373,150 @@ function DemoModeSettings({ say }) {
 
 // Motivator TV settings
 // ---------------------------------------------------------------------------
+// Historical monthly targets + achieved. The admin picks a month, then a
+// manager (which loads that manager and their agents) or an individual agent,
+// and edits each person's target and achieved for that month. Reviews use these
+// stored figures for months the live data can't cover.
+function monthChoices(count = 12) {
+  const out = [];
+  const d = new Date();
+  for (let i = 0; i < count; i++) {
+    const dt = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ key, label: dt.toLocaleString('en-US', { month: 'long', year: 'numeric' }) });
+  }
+  return out;
+}
+
+function MonthlyTargets({ say }) {
+  const months = monthChoices(12);
+  const [period, setPeriod] = useState(months[1] ? months[1].key : months[0].key); // default last month
+  const [managers, setManagers] = useState([]);
+  const [managerId, setManagerId] = useState('');
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [savingId, setSavingId] = useState(null);
+
+  // Load the manager list once.
+  useEffect(() => {
+    api('/admin/users').then((us) => setManagers(us.filter((u) => u.role === 'manager'))).catch(() => {});
+  }, []);
+
+  const load = () => {
+    setLoading(true);
+    const qs = `period=${period}${managerId ? `&managerId=${managerId}` : ''}`;
+    api(`/admin/monthly-targets?${qs}`)
+      .then((r) => setRows(r.rows || []))
+      .catch((e) => say(e.message, true))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [period, managerId]);
+
+  const setRow = (userId, patch) => setRows((rs) => rs.map((r) => (r.userId === userId ? { ...r, ...patch } : r)));
+
+  const saveRow = async (row) => {
+    setSavingId(row.userId);
+    try {
+      await api('/admin/monthly-targets', {
+        method: 'POST',
+        body: JSON.stringify({ userId: row.userId, period, targetUsd: Number(row.targetUsd) || 0, achievedUsd: Number(row.achievedUsd) || 0 }),
+      });
+      setRow(row.userId, { hasRecord: true });
+      say(`Saved ${row.name} for ${period}.`);
+    } catch (e) { say(e.message, true); }
+    setSavingId(null);
+  };
+
+  const saveAll = async () => {
+    for (const row of rows) { /* sequential to keep the audit log tidy */ await saveRow(row); }
+    say('All rows saved.');
+    load();
+  };
+
+  const inp = 'w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+
+  return (
+    <div>
+      <h2 className="text-lg font-extrabold mb-1" style={{ color: C.navy }}>Monthly targets & achieved</h2>
+      <p className="text-sm text-slate-500 mb-4">
+        Enter historical targets and the amount actually achieved for past months, so reviews aren't blank for people who
+        joined before this system went live. Reviews use live sales when available and fall back to these figures otherwise.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Month</label>
+          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            {months.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Manager (loads their team)</label>
+          <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">All agents & managers</option>
+            {managers.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.team}/{m.shift}</option>)}
+          </select>
+        </div>
+        {rows.length > 0 && <Btn onClick={saveAll} size="sm">Save all</Btn>}
+      </div>
+
+      {loading ? (
+        <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-slate-400 text-sm py-8 text-center bg-slate-50 rounded-xl">No agents or managers found for this selection.</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-200">
+                <th className="text-left px-4 py-2.5">Name</th>
+                <th className="text-left px-4 py-2.5">Role</th>
+                <th className="text-left px-4 py-2.5">Team</th>
+                <th className="text-right px-4 py-2.5">Target (USD)</th>
+                <th className="text-right px-4 py-2.5">Achieved (USD)</th>
+                <th className="text-right px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.userId} className="border-b border-slate-100">
+                  <td className="px-4 py-2.5 font-bold text-[#050A1F]">{r.name}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 ${r.role === 'manager' ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {r.role === 'manager' ? 'Manager' : 'Agent'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-500 text-xs">{r.team} / {r.shift}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <input type="number" className={inp} value={r.targetUsd}
+                      onChange={(e) => setRow(r.userId, { targetUsd: e.target.value })} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <input type="number" className={inp} value={r.achievedUsd}
+                      onChange={(e) => setRow(r.userId, { achievedUsd: e.target.value })} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-xs">
+                    {r.hasRecord ? <span className="text-green-600 font-bold">saved</span> : <span className="text-slate-300">not set</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <Btn onClick={() => saveRow(r)} size="sm" disabled={savingId === r.userId}>{savingId === r.userId ? '…' : 'Save'}</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {managerId && (
+        <p className="text-[11px] text-slate-400 mt-2">
+          Team target for this manager in reviews = sum of the agents' targets above + the manager's own target row.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function MotivatorTvSettings({ say }) {
   const [cfg, setCfg] = useState(null);
   const [items, setItems] = useState([]);
@@ -1253,7 +1397,7 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Monthly Targets'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv';
 
@@ -1285,6 +1429,7 @@ export default function Admin() {
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
+        {tab === 'targets' && <MonthlyTargets say={say} />}
         {tab === 'tv' && <MotivatorTvSettings say={say} />}
         {tab === 'demo' && <DemoModeSettings say={say} />}
         {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}

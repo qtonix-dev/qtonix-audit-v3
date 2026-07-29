@@ -1240,15 +1240,37 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
   const [showBrief, setShowBrief] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [owners, setOwners] = useState([]);
+  const [loadError, setLoadError] = useState('');
 
   const load = async () => {
+    setLoadError('');
+    // Load the lead and the config independently. The lead is what the page
+    // needs to render; a config hiccup shouldn't leave the whole page stuck on
+    // "Loading…" forever (the previous Promise.all did exactly that — if either
+    // call failed, `lead` stayed null with no error shown).
     try {
-      const [res, cfg] = await Promise.all([api(`/leads/${leadId}`), api('/leads/config')]);
-      setLead(res.lead); setConfig(cfg.config || {}); setOwners(cfg.owners || []);
-    } catch (e) { console.error(e); }
+      const res = await api(`/leads/${leadId}`);
+      setLead(res.lead || res);
+    } catch (e) {
+      console.error(e);
+      setLoadError(e.message || 'Could not load this lead.');
+    }
+    try {
+      const cfg = await api('/leads/config');
+      setConfig(cfg.config || {}); setOwners(cfg.owners || []);
+    } catch (e) { console.error(e); /* config is non-critical */ }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [leadId]);
 
+  if (loadError) return (
+    <div className="text-center py-12">
+      <div className="text-sm text-red-500 mb-3">{loadError}</div>
+      <div className="flex gap-2 justify-center">
+        <button onClick={load} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Retry</button>
+        <button onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Back to list</button>
+      </div>
+    </div>
+  );
   if (!lead) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
 
   // A prospect has no deals/reports tabs; if we're pointed at one, show the
@@ -2781,32 +2803,22 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={lab}>Plan type</label>
-              <select className={inp} value={f.planType} onChange={(e) => set('planType', e.target.value)}>
-                <option value="one-time">One-time (project)</option>
-                <option value="3-month">3-month plan</option>
-                <option value="6-month">6-month plan</option>
-                <option value="12-month">12-month plan</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
-            <div>
               <label className={lab}>Stage</label>
               <select className={inp} value={f.stage} onChange={(e) => set('stage', e.target.value)}>
                 {(config.dealStages || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={lab}>Currency</label>
               <select className={inp} value={f.currency} onChange={(e) => set('currency', e.target.value)}>
                 {(config.dealCurrencies || ['USD']).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div><label className={lab}>Total amount</label><input type="number" className={inp} value={f.amount} onChange={(e) => set('amount', e.target.value)} /></div>
           </div>
-          <div><label className={lab}>Expected / actual closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={lab}>Total amount</label><input type="number" className={inp} value={f.amount} onChange={(e) => set('amount', e.target.value)} /></div>
+            <div><label className={lab}>Expected / actual closing date</label><input type="date" className={inp} value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+          </div>
 
           {/* Plan type drives everything below it. */}
           <div>
@@ -2897,10 +2909,117 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
 }
 
 // ---- Reports tab -----------------------------------------------------------
+// Pre-run popup for generating a report from a lead. Collects the details the
+// report needs that aren't already firm on the lead — business name, services,
+// target market and (optional) location — pre-filled from the lead where known.
+const REPORT_SERVICES = ['SEO', 'SMO', 'AI SEO', 'GEO', 'AEO', 'Local SEO'];
+const REPORT_MARKETS = [
+  { code: 'us', name: 'United States' }, { code: 'gb', name: 'United Kingdom' },
+  { code: 'ca', name: 'Canada' }, { code: 'au', name: 'Australia' }, { code: 'in', name: 'India' },
+  { code: 'ae', name: 'United Arab Emirates' }, { code: 'sg', name: 'Singapore' },
+  { code: 'my', name: 'Malaysia' }, { code: 'de', name: 'Germany' }, { code: 'fr', name: 'France' },
+  { code: 'nz', name: 'New Zealand' }, { code: 'za', name: 'South Africa' },
+];
+
+function RunReportModal({ lead, onClose, onQueued }) {
+  const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+  const [f, setF] = useState({
+    businessName: lead.company || lead.businessName || '',
+    services: (Array.isArray(lead.servicesInterested) && lead.servicesInterested.filter((s) => REPORT_SERVICES.includes(s)).length)
+      ? lead.servicesInterested.filter((s) => REPORT_SERVICES.includes(s)) : ['SEO'],
+    country: 'us',
+    location: lead.city || '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const lab = 'block text-xs font-semibold text-slate-600 mb-1.5';
+  const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+
+  const toggleService = (s) => setF((p) => ({
+    ...p, services: p.services.includes(s) ? p.services.filter((x) => x !== s) : [...p.services, s],
+  }));
+
+  const submit = async () => {
+    if (!lead.website) { setError('This lead has no website, so a report can’t be generated.'); return; }
+    if (!f.businessName.trim()) { setError('Enter the business name.'); return; }
+    if (f.services.length === 0) { setError('Select at least one service.'); return; }
+    setBusy(true); setError('');
+    try {
+      const r = await api('/reports', {
+        method: 'POST',
+        body: JSON.stringify({
+          website: lead.website,
+          businessName: f.businessName.trim(),
+          customerName: fullName || f.businessName.trim(),
+          services: f.services,
+          country: f.country,
+          location: f.location || undefined,
+          leadId: lead._id,
+        }),
+      });
+      onQueued(r.reportId);
+    } catch (e) {
+      setError(e.message || 'Could not start the report.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-extrabold text-[#050A1F] mb-1">Run report</h3>
+        <p className="text-xs text-slate-400 mb-4">For <span className="font-bold text-slate-500">{lead.website || '—'}</span>{fullName ? ` · ${fullName}` : ''}</p>
+
+        {error && <div className="mb-3 rounded-lg bg-red-50 text-red-600 text-sm px-3 py-2">{error}</div>}
+
+        <div className="space-y-4">
+          <div>
+            <label className={lab}>Business name</label>
+            <input className={inp} value={f.businessName} onChange={(e) => setF({ ...f, businessName: e.target.value })} placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label className={lab}>Services</label>
+            <div className="flex flex-wrap gap-2">
+              {REPORT_SERVICES.map((s) => (
+                <button key={s} type="button" onClick={() => toggleService(s)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${f.services.includes(s) ? 'bg-orange-50 border-orange-300 text-[#FF4500]' : 'border-slate-200 text-slate-500'}`}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={lab}>Target market</label>
+              <select className={inp} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}>
+                {REPORT_MARKETS.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lab}>Location <span className="font-normal text-slate-400">(optional)</span></label>
+              <input className={inp} value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Kuala Lumpur" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-5">
+          <button onClick={submit} disabled={busy} className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Starting…' : 'Generate report'}</button>
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReportsTab({ lead, onChange }) {
   const [reports, setReports] = useState(null);
+  const [showRun, setShowRun] = useState(false);
   useEffect(() => {
-    api(`/leads/${lead._id}`).then((r) => setReports(r.reports || [])).catch(() => setReports([]));
+    let alive = true;
+    api(`/leads/${lead._id}`)
+      .then((r) => { if (alive) setReports(r.reports || []); })
+      .catch(() => { if (alive) setReports([]); });
+    return () => { alive = false; };
   }, [lead._id]);
   const openReport = (r) => window.open(`${API_BASE}/api/reports/${r._id}/view?token=${localStorage.getItem('qtx_token')}`, '_blank');
   const download = (r) => window.open(`${API_BASE}/api/reports/${r._id}/download?token=${localStorage.getItem('qtx_token')}`, '_blank');
@@ -2909,8 +3028,9 @@ function ReportsTab({ lead, onChange }) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <div className="text-sm text-slate-500">{reports.length} report{reports.length === 1 ? '' : 's'} linked</div>
-        <a href={`/?leadRun=${lead._id}`} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run report</a>
+        <button onClick={() => setShowRun(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run report</button>
       </div>
+      {showRun && <RunReportModal lead={lead} onClose={() => setShowRun(false)} onQueued={(id) => { setShowRun(false); window.location.href = `/?reportId=${id}`; }} />}
       {reports.length === 0 ? (
         <div className="text-slate-300 text-sm py-12 text-center">No reports linked to this lead yet.<br />Use “Run report” to generate one for this lead.</div>
       ) : (

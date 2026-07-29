@@ -2,6 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { api } from './App.jsx';
 import { PhoneField, Pagination } from './Leads.jsx';
 
+// A phone stored as only a dial code (e.g. "+1") with no digits shows as a dash.
+function phoneOrDash(phone) {
+  const s = String(phone || '').trim();
+  if (!s) return '—';
+  const rest = s.replace(/^\+\d{1,3}/, '').replace(/\D/g, '');
+  return rest ? s : '—';
+}
+
 /**
  * Standalone AI Brief page. An agent enters a domain, customer name and phone,
  * and gets a quick pre-call brief. Runs are stored and cached by domain, so a
@@ -31,10 +39,12 @@ export default function AiBriefPage({ user }) {
   const run = async () => {
     if (!form.website.trim()) { setError('Enter a website or domain.'); return; }
     if (!form.customerName.trim()) { setError('Enter the customer name.'); return; }
-    if (!form.phone.trim()) { setError('Enter the phone number.'); return; }
+    // A phone that's only a dial code (e.g. "+1") with no digits counts as empty.
+    const hasNumber = /\d/.test(String(form.phone || '').replace(/^\+\d{1,3}/, ''));
+    const cleanPhone = hasNumber ? form.phone : '';
     setRunning(true); setError('');
     try {
-      const r = await api('/briefs', { method: 'POST', body: JSON.stringify(form) });
+      const r = await api('/briefs', { method: 'POST', body: JSON.stringify({ ...form, phone: cleanPhone }) });
       setActive(r.brief);
       setForm({ website: '', customerName: '', phone: '' });
       loadList();
@@ -181,7 +191,7 @@ export default function AiBriefPage({ user }) {
                     <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmtDate(r.createdAt)}</td>
                     <td className="py-2 px-2 font-bold text-[#050A1F]">{r.domain}{r.cached && <span className="ml-1 text-[9px] font-bold text-slate-400">cached</span>}</td>
                     <td className="py-2 px-2 text-slate-600">{r.customerName}</td>
-                    <td className="py-2 px-2 text-slate-500">{r.phone}</td>
+                    <td className="py-2 px-2 text-slate-500">{phoneOrDash(r.phone)}</td>
                     <td className="py-2 px-2 text-slate-500">{r.agentName}</td>
                     <td className="py-2 px-2 text-right whitespace-nowrap">
                       <button onClick={(e) => { e.stopPropagation(); view(r._id); }} className="text-[11px] font-bold text-[#FF4500] hover:underline">View</button>

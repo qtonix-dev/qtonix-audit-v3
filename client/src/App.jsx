@@ -560,6 +560,70 @@ const StatusPill = ({ status }) => {
   );
 };
 
+// Attach an existing, unlinked report to a lead. Searches leads by name/website
+// and links the chosen one via PATCH /reports/:id/link.
+function LinkToLeadModal({ report, onClose, onLinked }) {
+  const [q, setQ] = useState(report.businessName || report.domain || '');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const search = async () => {
+    setSearching(true); setError('');
+    try {
+      const r = await api(`/leads?q=${encodeURIComponent(q)}`);
+      setResults(r.items || []);
+    } catch (e) { setError(e.message); }
+    setSearching(false);
+  };
+  useEffect(() => { search(); /* eslint-disable-next-line */ }, []);
+
+  const link = async (lead) => {
+    setBusyId(lead._id); setError('');
+    try {
+      await api(`/reports/${report._id}/link`, { method: 'PATCH', body: JSON.stringify({ leadId: lead._id }) });
+      onLinked(lead);
+    } catch (e) { setError(e.message); setBusyId(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-extrabold text-[#050A1F] mb-1">Link report to a lead</h3>
+        <p className="text-xs text-slate-400 mb-4">{report.businessName || report.domain}</p>
+        {error && <div className="mb-3 rounded-lg bg-red-50 text-red-600 text-sm px-3 py-2">{error}</div>}
+        <div className="flex gap-2 mb-4">
+          <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()}
+            placeholder="Search lead by name or website…"
+            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+          <button onClick={search} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Search</button>
+        </div>
+        {searching ? (
+          <div className="text-slate-400 text-sm py-6 text-center">Searching…</div>
+        ) : results.length === 0 ? (
+          <div className="text-slate-400 text-sm py-6 text-center">No matching leads.</div>
+        ) : (
+          <div className="space-y-2">
+            {results.map((l) => (
+              <div key={l._id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#050A1F] truncate">{l.firstName} {l.lastName}</div>
+                  <div className="text-[11px] text-slate-400 truncate">{l.website || '—'} · {l.ownerName || 'unassigned'}</div>
+                </div>
+                <button onClick={() => link(l)} disabled={busyId === l._id}
+                  className="rounded-md px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40 shrink-0" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                  {busyId === l._id ? 'Linking…' : 'Link'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReportList({ isAdmin, onOpen, onNewReport }) {
   const [data, setData] = useState({ items: [], total: 0, pages: 1 });
   const [q, setQ] = useState(() => {
@@ -722,6 +786,7 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       if (p.get('leadRun')) return 'new';
+      if (p.get('reportId')) return 'progress';
       if (p.get('q')) return 'list';
       return 'dashboard';
     } catch { return 'dashboard'; }
@@ -730,6 +795,11 @@ export default function App() {
     try { return new URLSearchParams(window.location.search).get('leadRun') || null; }
     catch { return null; }
   });
+  const [queuedReportId, setQueuedReportId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('reportId') || null; }
+    catch { return null; }
+  });
+  const [linkReport, setLinkReport] = useState(null); // report being linked to a lead
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
   const [dueCount, setDueCount] = useState(0);
@@ -901,11 +971,11 @@ export default function App() {
         {view === 'new' && !activeReport && (
           <NewReport user={user} initialLeadId={leadRunId} onQueued={(id) => { setActiveReport({ _id: id }); setView('progress'); }} onBack={() => setView('list')} />
         )}
-        {view === 'progress' && activeReport && (
+        {view === 'progress' && (activeReport || queuedReportId) && (
           <Progress
-            reportId={activeReport._id}
-            onDone={() => { setViewNonce(Date.now()); setView('list'); }}
-            onBack={() => { setActiveReport(null); setView('new'); }}
+            reportId={activeReport ? activeReport._id : queuedReportId}
+            onDone={() => { setViewNonce(Date.now()); setQueuedReportId(null); setView('list'); }}
+            onBack={() => { setActiveReport(null); setQueuedReportId(null); setView('new'); }}
           />
         )}
         {view === 'list' && (
@@ -925,6 +995,9 @@ export default function App() {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => { setActiveReport(null); setView('list'); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">Back to reports</button>
+                {!activeReport.leadId && !IS_DEMO && (
+                  <button onClick={() => setLinkReport(activeReport)} className="rounded-lg border border-orange-300 px-4 py-2 text-sm font-bold text-[#FF4500] hover:bg-orange-50">🔗 Link to lead</button>
+                )}
                 <button onClick={async () => {
                   if (!confirm('Re-run this analysis with fresh data? This uses API credits and replaces the current results.')) return;
                   try {
@@ -971,6 +1044,14 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+
+        {linkReport && (
+          <LinkToLeadModal
+            report={linkReport}
+            onClose={() => setLinkReport(null)}
+            onLinked={(lead) => { setActiveReport({ ...linkReport, leadId: lead._id }); setLinkReport(null); }}
+          />
         )}
       </main>
     </div>
