@@ -296,12 +296,26 @@ router.get('/', requireAuth, async (req, res, next) => {
       limit: perPage,
       offset: (page - 1) * perPage,
     });
+
+    // The full set of countries that have leads the viewer can see — computed
+    // from a visibility-scoped query, not just the current page, so the country
+    // filter dropdown lists every country with leads (not only those on screen).
+    const countryWhere = await visibilityWhere(req.user);
+    countryWhere.country = { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] };
+    const countryRows = await Lead.findAll({
+      where: countryWhere,
+      attributes: [[Lead.sequelize.fn('DISTINCT', Lead.sequelize.col('country')), 'country']],
+      raw: true,
+    });
+    const countries = countryRows.map((r) => r.country).filter(Boolean).sort();
+
     res.json({
       items: rows.map((l) => l.toJSON()),
       total: count,
       page,
       perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
+      countries,
     });
   } catch (e) { next(e); }
 });
@@ -588,11 +602,12 @@ router.get('/config', requireAuth, async (req, res, next) => {
     // visible agents; agents can only own their own leads.
     let owners = [];
     if (req.user.role === 'admin' || req.user.role === 'leadmanager') {
-      // A lead manager assigns every lead they key in to someone else, so they
-      // need the whole active roster — but only people who actually own leads.
-      // Lead managers and admins never own leads/call-backs, so they're excluded.
+      // A lead manager assigns every lead they key in to someone else. The
+      // assignable list is agents, managers and admins — everyone who can own a
+      // lead. Lead managers are the only role that never owns leads, so they're
+      // the only exclusion.
       owners = await User.findAll({
-        where: { active: true, role: { [Op.in]: ['agent', 'manager'] } },
+        where: { active: true, role: { [Op.in]: ['agent', 'manager', 'admin'] } },
         attributes: ['id', 'name', 'role', 'team', 'shift'],
       });
     } else if (req.user.role === 'manager') {
@@ -1048,6 +1063,19 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     const meRow = leaderboard.find((o) => o.ownerId === req.user.id) || null;
 
+    // Admin's own leads. Admins can own leads but those are kept out of the
+    // competitive leaderboard and company-target math, so this box gives the
+    // admin the raw figures they need when reconciling numbers manually.
+    let adminOwnLeads = null;
+    if (viewerIsAdmin) {
+      const mine = leads.filter((l) => l.ownerId === req.user.id && l.status !== 'callback');
+      adminOwnLeads = {
+        total: mine.length,
+        assignedToday: mine.filter((l) => { const a = l.assignedAt || l.createdAt; return a && new Date(a) >= startOfDay; }).length,
+        assignedMonth: mine.filter((l) => { const a = l.assignedAt || l.createdAt; return a && new Date(a) >= startOfMonth; }).length,
+      };
+    }
+
     // "Today's leads" shows the most recently added leads across everyone the
     // viewer can see (admin → all; manager → their agents; agent → own), newest
     // first by entry timestamp — not just leads that qualify as generated or
@@ -1134,6 +1162,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList, recentlyAdded },
       presalesTeam,
+      adminOwnLeads,
       me: meRow ? {
         salesUsd: meRow.salesUsd, salesTarget: meRow.salesTarget, pct: meRow.pct, remaining: meRow.remaining,
         transfersToday: meRow.transfersToday, transferDailyTarget: meRow.transferDailyTarget,
@@ -1689,10 +1718,9 @@ async function resolveOwner(user, ownerId) {
   }
   // Agents own the leads they create.
   if (!owner && user.role === 'agent') owner = await User.findByPk(user.id);
-  // A lead manager or admin never owns leads. If somehow one was chosen (or a
-  // creator defaulted to themselves), that's not a valid owner — reject it so
-  // the caller can surface a clear error rather than silently mis-assigning.
-  if (owner && ['admin', 'leadmanager'].includes(owner.role)) owner = null;
+  // Lead managers never own leads (they only coordinate intake). Admins CAN own
+  // leads now, so only a lead-manager owner is rejected.
+  if (owner && owner.role === 'leadmanager') owner = null;
   return owner;
 }
 

@@ -82,6 +82,7 @@ const paginate = (items, req) => {
   return {
     items: items.slice((page - 1) * perPage, page * perPage),
     total, page, perPage, pages: Math.max(1, Math.ceil(total / perPage)),
+    countries: Array.from(new Set(items.map((l) => l.country).filter(Boolean))).sort(),
   };
 };
 
@@ -267,6 +268,7 @@ router.get('/leads/dashboard', (req, res) => {
       untouched: leads.slice(5, 9).map((l) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website })),
       recentlyAdded: leads.slice(0, 10).map((l, i) => ({ _id: l._id, name: `${l.firstName} ${l.lastName}`, ownerName: l.ownerName, website: l.website, kind: i % 2 === 0 ? 'generated' : 'assigned', at: l.createdAt })),
     },
+    adminOwnLeads: { total: 14, assignedToday: 1, assignedMonth: 6 },
     presalesTeam: {
       members: [
         { name: 'Amit Presales', monthlyTarget: 60, today: 2, month: 44, total: 210, pct: 73 },

@@ -429,6 +429,9 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
 function draftState(l) {
   if (!/pre-?sales/i.test(String(l.leadSource || ''))) return '';
   if (l.firstReplyDoneAt) return '';
+  // Back-dated leads are historical imports and are exempt from the 24-hour
+  // first-reply rule, so they never show a "Draft due"/overdue badge.
+  if (l.backDated) return '';
   const from = l.assignedAt || l.createdAt;
   if (!from) return '';
   const hours = (Date.now() - new Date(from).getTime()) / 3600000;
@@ -438,6 +441,10 @@ function draftState(l) {
 export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouched, stage }) {
   const isProspect = stage === 'prospect';
   const [items, setItems] = useState([]);
+  const [countryList, setCountryList] = useState([]);
+  // Sort mode for the Call Backs list: by the scheduled callback time (default)
+  // or by the date the callback was added.
+  const [callbackSort, setCallbackSort] = useState('callbackTime');
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
   const [owners, setOwners] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -492,6 +499,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       ]);
       setItems(res.items || []);
       setPageInfo({ total: res.total || 0, pages: res.pages || 1 });
+      if (Array.isArray(res.countries)) setCountryList(res.countries);
       setConfig(cfg.config || {});
       setOwners(cfg.owners || []);
     } catch (e) { console.error(e); }
@@ -501,6 +509,25 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage]);
   // Any filter change should send the user back to the first page.
   useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [statusFilter, ownerFilter, countryFilter, untouchedFilter]);
+
+  // Call Backs are ordered by the scheduled callback time by default, or by the
+  // date the callback was added when the user flips the toggle. Other lists keep
+  // the server order.
+  const displayItems = React.useMemo(() => {
+    if (!isProspect) return items;
+    const arr = [...items];
+    if (callbackSort === 'addedDate') {
+      arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    } else {
+      // By callback time: soonest upcoming first; nulls (no time set) last.
+      arr.sort((a, b) => {
+        const ta = a.callbackAt ? new Date(a.callbackAt).getTime() : Infinity;
+        const tb = b.callbackAt ? new Date(b.callbackAt).getTime() : Infinity;
+        return ta - tb;
+      });
+    }
+    return arr;
+  }, [items, isProspect, callbackSort]);
 
   return (
     <div>
@@ -524,6 +551,15 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
           <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()}
             placeholder="Search name, email, website…"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-60 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+          {/* Call-back sort toggle: scheduled time vs added date. */}
+          {isProspect && (
+            <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 text-xs font-bold">
+              <button onClick={() => setCallbackSort('callbackTime')}
+                className={`px-2.5 py-1.5 rounded-md ${callbackSort === 'callbackTime' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>By callback time</button>
+              <button onClick={() => setCallbackSort('addedDate')}
+                className={`px-2.5 py-1.5 rounded-md ${callbackSort === 'addedDate' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>By added date</button>
+            </div>
+          )}
           {/* Call-backs are all one status, so a status filter is pointless. */}
           {!isProspect && (
             <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); }}
@@ -547,11 +583,18 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           )}
-          <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}
-            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm max-w-[140px]">
-            <option value="">All countries</option>
-            {Array.from(new Set(items.map((l) => l.country).filter(Boolean))).sort().map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <div className="w-[170px] flex items-center gap-1">
+            <FilterCombobox
+              value={countryFilter}
+              onChange={(v) => setCountryFilter(v)}
+              options={countryList}
+              placeholder="All countries"
+              className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+            {countryFilter && (
+              <button onClick={() => setCountryFilter('')} title="Clear country"
+                className="text-slate-400 hover:text-red-500 px-1 text-sm">✕</button>
+            )}
+          </div>
           <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
           {/* Getting leads in and out of the system belongs to admins and lead
               managers. Sellers work the leads they're given. On the Call Backs
@@ -588,6 +631,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Deals</th>
                 <th className="text-left px-4 py-3">Owner</th>
                 {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
+                {isProspect && <th className="text-left px-4 py-3">Added</th>}
                 <th className="text-left px-4 py-3">Last activity</th>
                 {isProspect && <th className="px-4 py-3 text-right">Action</th>}
                 {user.role === 'leadmanager' && !isProspect && <th className="px-4 py-3 text-right">Draft</th>}
@@ -595,7 +639,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               </tr>
             </thead>
             <tbody>
-              {items.map((l) => {
+              {displayItems.map((l) => {
                 const sm = statusMeta(config, l.status);
                 const stale = staleness(l);
                 const deals = l.deals || [];
@@ -655,6 +699,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                           </span>
                         ) : <span className="text-slate-300">—</span>}
                       </td>
+                    )}
+                    {isProspect && (
+                      <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(l.createdAt)}</td>
                     )}
                     <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
                     {/* Transfer promotes a prospect to a worked lead. Only the

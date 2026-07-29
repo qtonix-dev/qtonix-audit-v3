@@ -480,6 +480,9 @@ const Review = sequelize.define(
     reviewerName: DataTypes.STRING(120),
     // Which month this review covers, as 'YYYY-MM'.
     period: { type: DataTypes.STRING(7), allowNull: false },
+    // 'agent' (manager reviews an agent) or 'manager' (admin reviews a manager
+    // on team performance). Lets both live in one table without colliding.
+    kind: { type: DataTypes.STRING(12), defaultValue: 'agent' },
     // System-computed bucket at the time of review: 'top' | 'ok' | 'attention'.
     band: { type: DataTypes.STRING(20) },
     // Snapshot of the numbers the conversation was based on, so later readers

@@ -377,16 +377,176 @@ function ReviewModal({ agent, period, onClose, onSaved }) {
   );
 }
 
+// Admin-facing view: managers scored on their team's aggregate performance.
+const MGR_BANDS = {
+  exceeding: { label: 'Exceeding', icon: '🚀', color: '#16A34A', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' },
+  steady: { label: 'On track', icon: '✅', color: '#0891B2', bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200' },
+  behind: { label: 'Behind pace', icon: '⚠️', color: '#D97706', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  danger: { label: 'No sales yet', icon: '🔴', color: '#DC2626', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+};
+
+function ManagerReviews({ period, data, onSaved, active, setActive, user }) {
+  if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading managers…</div>;
+  const managers = data.managers || [];
+  if (managers.length === 0) {
+    return (
+      <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-100">
+        <div className="text-4xl mb-2">🧑‍💼</div>
+        No managers to review for this period.
+      </div>
+    );
+  }
+  const fmtUsd = (n) => '$' + Math.round(n).toLocaleString();
+  return (
+    <div>
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {managers.map((m) => {
+          const meta = MGR_BANDS[m.band] || MGR_BANDS.steady;
+          const done = m.review && m.review.feedback;
+          return (
+            <div key={m.managerId} onClick={() => setActive(m)}
+              className={`rounded-xl border ${meta.border} bg-white p-4 cursor-pointer hover:shadow-md transition`}>
+              <div className="flex items-center gap-3">
+                <Avatar name={m.name} src={m.avatar} size={40} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-sm text-[#050A1F] truncate">{m.name}</div>
+                  <div className="text-[11px] text-slate-400 truncate">{m.teams.join(', ')} · {m.agentCount} agent{m.agentCount === 1 ? '' : 's'}</div>
+                </div>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${meta.bg} ${meta.text}`}>{meta.icon} {meta.label}</span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between">
+                <span className="text-xs text-slate-400">Team sales</span>
+                <span className="text-sm font-extrabold text-[#050A1F]">{fmtUsd(m.salesUsd)}{m.salesTarget > 0 && <span className="text-slate-300 font-normal"> / {fmtUsd(m.salesTarget)}</span>}</span>
+              </div>
+              {m.salesTarget > 0 && (
+                <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
+                  <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.min(100, m.pct || 0))}%`, background: meta.color }} />
+                </div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-1.5">
+                {m.leadsGenerated} leads · {m.conversions} converted · {m.pct != null ? `${m.pct}% of target` : 'no target set'}
+                {done && <span className="ml-1 font-bold text-green-600">· reviewed</span>}
+                {m.review && m.review.needsHr && <span className="ml-1 font-bold text-red-500">· HR flagged</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {active && <ManagerReviewModal manager={active} period={period} onClose={() => setActive(null)} onSaved={() => { setActive(null); onSaved(); }} />}
+    </div>
+  );
+}
+
+function ManagerReviewModal({ manager, period, onClose, onSaved }) {
+  const r = manager.review || {};
+  const [f, setF] = useState({
+    feedback: r.feedback || '',
+    actionPlan: r.actionPlan || '',
+    metOn: r.metOn || new Date().toISOString().slice(0, 10),
+    needsHr: !!r.needsHr,
+  });
+  const [busy, setBusy] = useState(false);
+  const meta = MGR_BANDS[manager.band] || MGR_BANDS.steady;
+  const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
+  const fmtUsd = (n) => '$' + Math.round(n).toLocaleString();
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api('/reviews/managers', {
+        method: 'POST',
+        body: JSON.stringify({
+          managerId: manager.managerId, period, band: manager.band,
+          snapshot: { salesUsd: manager.salesUsd, salesTarget: manager.salesTarget, pct: manager.pct, leadsGenerated: manager.leadsGenerated, conversions: manager.conversions, agentCount: manager.agentCount },
+          ...f,
+        }),
+      });
+      onSaved();
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[88vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-3 mb-4">
+          <Avatar name={manager.name} src={manager.avatar} size={48} />
+          <div className="flex-1">
+            <h3 className="text-lg font-extrabold text-[#050A1F]">{manager.name}</h3>
+            <div className="text-xs text-slate-400">{manager.teams.join(', ')} · {manager.agentCount} agent{manager.agentCount === 1 ? '' : 's'}</div>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${meta.bg} ${meta.text}`}>{meta.icon} {meta.label}</span>
+        </div>
+
+        {/* Team performance snapshot */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Team sales</div>
+            <div className="text-base font-extrabold text-[#050A1F] mt-0.5">{fmtUsd(manager.salesUsd)}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Target</div>
+            <div className="text-base font-extrabold text-[#050A1F] mt-0.5">{manager.salesTarget > 0 ? fmtUsd(manager.salesTarget) : '—'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-[10px] font-bold uppercase text-slate-400">% of target</div>
+            <div className="text-base font-extrabold mt-0.5" style={{ color: meta.color }}>{manager.pct != null ? `${manager.pct}%` : '—'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Leads · conv.</div>
+            <div className="text-base font-extrabold text-[#050A1F] mt-0.5">{manager.leadsGenerated} · {manager.conversions}</div>
+          </div>
+        </div>
+        {manager.pct != null && manager.expectedPct != null && (
+          <div className="text-[11px] text-slate-400 mb-4">Pace: {manager.pct}% collected vs ~{manager.expectedPct}% expected at this point in the month.</div>
+        )}
+
+        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Review notes</label>
+        <textarea className={`${inp} mt-1 mb-3`} rows={4} value={f.feedback}
+          onChange={(e) => setF({ ...f, feedback: e.target.value })}
+          placeholder="How is this manager leading their team? What's driving the numbers?" />
+        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Action plan</label>
+        <textarea className={`${inp} mt-1 mb-3`} rows={3} value={f.actionPlan}
+          onChange={(e) => setF({ ...f, actionPlan: e.target.value })}
+          placeholder="What should change before next month?" />
+        <div className="flex items-center gap-4 mb-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Met on</label>
+            <input type="date" className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value={f.metOn || ''} onChange={(e) => setF({ ...f, metOn: e.target.value })} />
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+            <input type="checkbox" checked={f.needsHr} onChange={(e) => setF({ ...f, needsHr: e.target.checked })} />
+            Flag for HR
+          </label>
+        </div>
+        <div className="flex gap-2">
+          <button disabled={busy} onClick={save} className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save review'}</button>
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Reviews({ user }) {
   const [period, setPeriod] = useState(monthOptions()[0].key);
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [active, setActive] = useState(null);
+  // Admins can switch between reviewing agents and reviewing managers.
+  const [tab, setTab] = useState('agents');
+  const [mgrData, setMgrData] = useState(null);
+  const [activeMgr, setActiveMgr] = useState(null);
+  const isAdmin = user.role === 'admin';
 
   const load = () => {
     api(`/reviews?period=${period}`).then(setData).catch((e) => setErr(e.message));
   };
+  const loadManagers = () => {
+    api(`/reviews/managers?period=${period}`).then(setMgrData).catch((e) => setErr(e.message));
+  };
   useEffect(() => { setData(null); load(); /* eslint-disable-next-line */ }, [period]);
+  useEffect(() => { if (isAdmin && tab === 'managers') { setMgrData(null); loadManagers(); } /* eslint-disable-next-line */ }, [period, tab]);
 
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading reviews…</div>;
@@ -463,6 +623,20 @@ export default function Reviews({ user }) {
         </select>
       </div>
 
+      {/* Admins can review agents (1-to-1s) or managers (on team performance). */}
+      {isAdmin && (
+        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
+          <button onClick={() => setTab('agents')}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'agents' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Agent reviews</button>
+          <button onClick={() => setTab('managers')}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'managers' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Manager reviews</button>
+        </div>
+      )}
+
+      {isAdmin && tab === 'managers' ? (
+        <ManagerReviews period={period} data={mgrData} onSaved={loadManagers} active={activeMgr} setActive={setActiveMgr} user={user} />
+      ) : (
+      <>
       {/* Groups the viewer is responsible for */}
       {(data.groups || []).length > 0 && (
         <div className="flex flex-wrap gap-2 mb-5">
@@ -492,6 +666,8 @@ export default function Reviews({ user }) {
       )}
 
       {active && <ReviewModal agent={active} period={period} onClose={() => setActive(null)} onSaved={() => { setActive(null); load(); }} />}
+      </>
+      )}
     </div>
   );
 }

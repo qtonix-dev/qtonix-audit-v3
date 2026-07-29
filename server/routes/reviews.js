@@ -10,6 +10,7 @@
  * numbers — the conversation is about what to do next.
  */
 const express = require('express');
+const { Op } = require('sequelize');
 const { User, Lead, Review, Settings, AuditLog } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 const { buildGroups, groupsForUser, canReviewGroup } = require('../services/orgStructure');
@@ -174,6 +175,78 @@ async function scoreAgents(groups, period) {
 }
 
 /**
+ * Score each manager on the aggregate performance of the team they lead — the
+ * sum of their agents' sales, lead generation, conversions and targets — so an
+ * admin can review managers the same way managers review agents. Groups without
+ * a manager (admin-led) are skipped: there's no manager to review.
+ */
+async function scoreManagers(groups, period) {
+  const toUsd = await fxConverter();
+  const [y, mo] = period.split('-').map(Number);
+  const start = new Date(y, mo - 1, 1);
+  const end = new Date(y, mo, 1);
+  const daysInMonth = Math.round((end - start) / 86400000);
+  const now = new Date();
+  const daysElapsed = now < start ? 0 : (now >= end ? daysInMonth : Math.max(1, Math.round((now - start) / 86400000)));
+
+  // Roll groups up by manager (a manager may lead more than one team/shift).
+  const byManager = {};
+  for (const g of groups) {
+    if (!g.manager) continue;
+    const m = byManager[g.manager.id] || (byManager[g.manager.id] = {
+      managerId: g.manager.id, name: g.manager.name, avatar: g.manager.avatar || null,
+      teams: [], agentIds: [], salesTarget: 0,
+    });
+    m.teams.push(`${g.team}·${g.shift}`);
+    for (const a of g.agents) {
+      m.agentIds.push(a.id);
+      const t = a.targets || {};
+      if (t.sales && t.sales.enabled) m.salesTarget += Number(t.sales.monthly || 0);
+    }
+  }
+
+  const allAgentIds = Object.values(byManager).flatMap((m) => m.agentIds);
+  const leads = allAgentIds.length ? await Lead.findAll({ where: { ownerId: allAgentIds } }) : [];
+  const ownerToManager = {};
+  for (const m of Object.values(byManager)) for (const id of m.agentIds) ownerToManager[id] = m.managerId;
+
+  for (const m of Object.values(byManager)) { m.salesUsd = 0; m.leadsGenerated = 0; m.conversions = 0; m.pipelineUsd = 0; }
+  for (const l of leads) {
+    const mid = ownerToManager[l.ownerId];
+    const m = mid && byManager[mid];
+    if (!m) continue;
+    const created = l.createdAt ? new Date(l.createdAt) : null;
+    if (created && created >= start && created < end) m.leadsGenerated++;
+    if (l.status === 'converted' && l.convertedAt) { const c = new Date(l.convertedAt); if (c >= start && c < end) m.conversions++; }
+    for (const d of (l.deals || [])) {
+      if (d.stage !== 'closed_won' && d.stage !== 'closed_lost') m.pipelineUsd += toUsd(d.amount, d.currency);
+      if (d.stage !== 'closed_won') continue;
+      for (const it of (d.installments || [])) {
+        if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= start && pd < end) m.salesUsd += toUsd(it.amount, d.currency); }
+      }
+    }
+  }
+
+  const rows = Object.values(byManager).map((m) => {
+    const pct = m.salesTarget > 0 ? Math.round((m.salesUsd / m.salesTarget) * 100) : null;
+    const expectedPct = daysInMonth > 0 ? Math.round((daysElapsed / daysInMonth) * 100) : 0;
+    let band = 'steady';
+    if (m.salesUsd <= 0) band = 'danger';
+    else if (pct != null && pct >= 100) band = 'exceeding';
+    else if (pct != null && expectedPct > 0 && pct < expectedPct - 20) band = 'behind';
+    return {
+      managerId: m.managerId, name: m.name, avatar: m.avatar,
+      teams: m.teams, agentCount: m.agentIds.length,
+      salesUsd: Math.round(m.salesUsd), salesTarget: Math.round(m.salesTarget),
+      pct, expectedPct, leadsGenerated: m.leadsGenerated, conversions: m.conversions,
+      pipelineUsd: Math.round(m.pipelineUsd), band,
+    };
+  });
+  rows.sort((a, b) => (b.salesUsd - a.salesUsd) || (b.pipelineUsd - a.pipelineUsd));
+  return rows;
+}
+
+/**
  * GET /api/reviews?period=YYYY-MM
  * Returns the reviewable agents grouped by band, plus any reviews already
  * recorded for the period.
@@ -188,7 +261,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     const groups = groupsForUser(req.user, users);
 
     const rows = await scoreAgents(groups, period);
-    const existing = await Review.findAll({ where: { period } });
+    const existing = await Review.findAll({ where: { period, kind: { [Op.or]: ['agent', null] } } });
     const byAgent = {};
     existing.forEach((r) => { byAgent[r.agentId] = r.toJSON(); });
 
@@ -244,6 +317,70 @@ router.post('/', requireAuth, async (req, res, next) => {
     await AuditLog.create({
       userId: req.user.id, userName: req.user.name, action: 'review.save',
       target: `${agent.name} (${period})`, ip: req.ip,
+    });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/reviews/managers?period=YYYY-MM — managers scored on their team's
+ * aggregate performance, with any review already recorded. Admin only.
+ */
+router.get('/managers', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an admin can review managers.' });
+    }
+    const period = String(req.query.period || periodKey());
+    const users = (await User.findAll({ attributes: { exclude: ['passwordHash'] } })).map((u) => u.toJSON());
+    const groups = buildGroups(users);
+    const rows = await scoreManagers(groups, period);
+
+    // Manager reviews reuse the Review table, keyed by the manager's user id in
+    // agentId, tagged kind='manager' so they don't collide with agent reviews.
+    const existing = await Review.findAll({ where: { period, kind: 'manager' } });
+    const byManager = {};
+    existing.forEach((r) => { byManager[r.agentId] = r.toJSON(); });
+
+    res.json({
+      period,
+      managers: rows.map((r) => ({ ...r, review: byManager[r.managerId] || null })),
+    });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/reviews/managers — record/update a manager's team-performance review. */
+router.post('/managers', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an admin can review managers.' });
+    }
+    const b = req.body || {};
+    const managerId = Number(b.managerId);
+    if (!managerId) return res.status(400).json({ error: 'managerId is required.' });
+    const period = String(b.period || periodKey());
+    const manager = await User.findByPk(managerId);
+    if (!manager || manager.role !== 'manager') return res.status(404).json({ error: 'Manager not found.' });
+
+    const [row] = await Review.findOrCreate({
+      where: { agentId: managerId, period, kind: 'manager' },
+      defaults: { agentId: managerId, agentName: manager.name, reviewerId: req.user.id, reviewerName: req.user.name, period, kind: 'manager' },
+    });
+    row.agentName = manager.name;
+    row.reviewerId = req.user.id;
+    row.reviewerName = req.user.name;
+    row.kind = 'manager';
+    if (b.band !== undefined) row.band = String(b.band).slice(0, 20);
+    if (b.snapshot !== undefined && b.snapshot && typeof b.snapshot === 'object') { row.snapshot = b.snapshot; row.changed('snapshot', true); }
+    if (b.feedback !== undefined) row.feedback = String(b.feedback).slice(0, 8000);
+    if (b.actionPlan !== undefined) row.actionPlan = String(b.actionPlan).slice(0, 8000);
+    if (b.metOn !== undefined) row.metOn = b.metOn || null;
+    if (b.needsHr !== undefined) row.needsHr = !!b.needsHr;
+    await row.save();
+
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'review.manager.save',
+      target: `${manager.name} (${period})`, ip: req.ip,
     });
     res.json(row.toJSON());
   } catch (e) { next(e); }

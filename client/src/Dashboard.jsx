@@ -435,6 +435,29 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* Pre-sales lead generation (admin only) — mirrors the lead-manager view:
           the team's achieved/target this month, plus a per-member breakdown. */}
+      {/* Admin's own leads — kept out of the leaderboard/company math, shown
+          here so the admin has the raw figures for manual reconciliation. */}
+      {isAdmin && data.adminOwnLeads && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">My leads (admin-owned)</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Total owned</div>
+              <div className="text-2xl font-extrabold mt-1 text-[#050A1F]">{data.adminOwnLeads.total}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Assigned today</div>
+              <div className="text-2xl font-extrabold mt-1 text-[#FF6A00]">{data.adminOwnLeads.assignedToday}</div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Assigned this month</div>
+              <div className="text-2xl font-extrabold mt-1 text-[#050A1F]">{data.adminOwnLeads.assignedMonth}</div>
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-400 mt-2">These leads are excluded from the sales leaderboard and company targets.</div>
+        </div>
+      )}
+
       {isAdmin && data.presalesTeam && data.presalesTeam.members.length > 0 && (
         <PresalesTeamBlocks pt={data.presalesTeam} />
       )}
