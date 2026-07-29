@@ -1704,7 +1704,16 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     const lead = await Lead.findByPk(req.params.id);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
     if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'You do not have access to this lead.' });
-    const reports = await Report.findAll({ where: { leadId: lead.id }, order: [['createdAt', 'DESC']] });
+    // Only the columns the lead-detail reports list actually renders. Selecting
+    // the full row here (which includes the large `data`/`summary` JSON blobs)
+    // makes MySQL copy those blobs into the sort buffer for the ORDER BY, which
+    // overflows it ("Out of sort memory"). A slim column list keeps the sort
+    // cheap and the page loading.
+    const reports = await Report.findAll({
+      where: { leadId: lead.id },
+      attributes: ['id', 'businessName', 'domain', 'website', 'status', 'scores', 'services', 'createdAt', 'leadId'],
+      order: [['createdAt', 'DESC']],
+    });
     res.json({ lead: lead.toJSON(), reports: reports.map((r) => r.toJSON()) });
   } catch (e) { next(e); }
 });
