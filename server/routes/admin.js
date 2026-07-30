@@ -184,7 +184,7 @@ router.get('/monthly-targets', async (req, res, next) => {
 
     const users = (await User.findAll({
       where: { role: { [Op.in]: ['agent', 'manager'] } },
-      attributes: ['id', 'name', 'role', 'team', 'shift', 'targets', 'managerId'],
+      attributes: ['id', 'name', 'role', 'team', 'shift', 'targets', 'managerId', 'archived'],
       order: [['role', 'DESC'], ['name', 'ASC']],
     })).map((u) => u.toJSON());
 
@@ -192,8 +192,11 @@ router.get('/monthly-targets', async (req, res, next) => {
     if (managerId) {
       const mgr = users.find((u) => u.id === managerId && u.role === 'manager');
       if (mgr) {
-        // The manager plus every agent sharing their team+shift.
-        scoped = users.filter((u) => u.id === managerId || (u.role === 'agent' && u.team === mgr.team && u.shift === mgr.shift));
+        // The manager plus every agent under them — matched by managerId first
+        // (survives team/shift changes and covers archived agents whose team was
+        // recorded), falling back to team+shift for older records.
+        scoped = users.filter((u) => u.id === managerId
+          || (u.role === 'agent' && (u.managerId === managerId || (u.team === mgr.team && u.shift === mgr.shift))));
       } else {
         scoped = [];
       }
@@ -209,9 +212,7 @@ router.get('/monthly-targets', async (req, res, next) => {
       const rec = byUser[u.id];
       return {
         userId: u.id, name: u.name, role: u.role, team: u.team, shift: u.shift,
-        // If a value is already stored for this month use it; otherwise seed the
-        // target input with the user's current configured target as a starting
-        // point (achieved starts blank).
+        managerId: u.managerId, archived: !!u.archived,
         targetUsd: rec ? rec.targetUsd : currentTarget,
         achievedUsd: rec ? rec.achievedUsd : 0,
         hasRecord: !!rec,
@@ -219,6 +220,38 @@ router.get('/monthly-targets', async (req, res, next) => {
     });
 
     res.json({ period, managerId, rows });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/admin/archived-agents — create a record for a departed agent who
+ * was never in the system, so their historical monthly targets can be entered.
+ * Stored as an inactive+archived user (excluded from every live surface),
+ * optionally linked to the manager/team they worked under.
+ */
+router.post('/archived-agents', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Enter the agent’s name.' });
+    const managerId = b.managerId ? Number(b.managerId) : null;
+    let team = b.team || null, shift = b.shift || null;
+    if (managerId) {
+      const mgr = await User.findByPk(managerId);
+      if (mgr && mgr.role === 'manager') { team = team || mgr.team; shift = shift || mgr.shift; }
+    }
+    const email = `departed+${Date.now()}@archived.local`;
+    const bcrypt = require('bcryptjs');
+    const passwordHash = await bcrypt.hash(`archived-${Date.now()}-${Math.random()}`, 10);
+    const user = await User.create({
+      name, email, passwordHash, role: 'agent',
+      team, shift, managerId, active: false, archived: true,
+    });
+    await AuditLog.create({
+      userId: req.user.id, userName: req.user.name, action: 'archived-agent.create',
+      target: name, ip: req.ip,
+    });
+    res.status(201).json({ id: user.id, name: user.name, role: 'agent', team, shift, managerId, archived: true });
   } catch (e) { next(e); }
 });
 

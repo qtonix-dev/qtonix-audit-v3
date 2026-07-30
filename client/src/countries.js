@@ -20,7 +20,18 @@ export const COUNTRY_NAMES = [
   'Thailand','Timor-Leste','Togo','Tonga','Trinidad and Tobago','Tunisia','Turkey','Turkmenistan','Tuvalu','Uganda',
   'Ukraine','United Arab Emirates','United Kingdom','United States','Uruguay','Uzbekistan','Vanuatu','Vatican City',
   'Venezuela','Vietnam','Yemen','Zambia','Zimbabwe',
-];
+  // Dependent territories, special administrative regions and island nations
+  // that clients are often based in — added so they can be selected on a lead.
+  'Democratic Republic of the Congo','Curaçao','Aruba','Sint Maarten','Bonaire',
+  'Puerto Rico','U.S. Virgin Islands','British Virgin Islands','Cayman Islands',
+  'Turks and Caicos Islands','Anguilla','Montserrat','Bermuda','Bahamas',
+  'Hong Kong','Macau','Taiwan','Gibraltar','Greenland','Faroe Islands',
+  'Isle of Man','Jersey','Guernsey','Åland Islands','Kosovo','Monaco',
+  'Liechtenstein','San Marino','Guam','American Samoa','Cook Islands',
+  'New Caledonia','French Polynesia','Réunion','Mayotte','Martinique',
+  'Guadeloupe','French Guiana','Saint Martin','Saint Barthélemy','Cabo Verde',
+].filter((c, i, a) => a.indexOf(c) === i) // de-dupe in case any name repeats
+ .sort((a, b) => a.localeCompare(b));     // keep the dropdown alphabetical
 
 // Country -> list of common IANA/offset time zones. Countries with one zone
 // auto-fill; multi-zone countries present a picker.
@@ -94,6 +105,49 @@ export const COUNTRY_DIAL = {
   'Bangladesh': '880', 'Sri Lanka': '94', 'Nepal': '977', 'Israel': '972', 'Turkey': '90',
   'Egypt': '20', 'Nigeria': '234', 'Kenya': '254', 'Ghana': '233', 'Brazil': '55',
   'Mexico': '52', 'Argentina': '54', 'Chile': '56', 'Colombia': '57', 'Peru': '51',
+  // Territories, SARs and island nations added to the country list.
+  'Democratic Republic of the Congo': '243', 'Congo': '242', 'Curaçao': '599',
+  'Aruba': '297', 'Sint Maarten': '1', 'Bonaire': '599', 'Puerto Rico': '1',
+  'U.S. Virgin Islands': '1', 'British Virgin Islands': '1', 'Cayman Islands': '1',
+  'Turks and Caicos Islands': '1', 'Anguilla': '1', 'Montserrat': '1', 'Bermuda': '1',
+  'Bahamas': '1', 'Macau': '853', 'Gibraltar': '350', 'Greenland': '299',
+  'Faroe Islands': '298', 'Isle of Man': '44', 'Jersey': '44', 'Guernsey': '44',
+  'Åland Islands': '358', 'Kosovo': '383', 'Monaco': '377', 'Liechtenstein': '423',
+  'San Marino': '378', 'Guam': '1', 'American Samoa': '1', 'Cook Islands': '682',
+  'New Caledonia': '687', 'French Polynesia': '689', 'Réunion': '262', 'Mayotte': '262',
+  'Martinique': '596', 'Guadeloupe': '590', 'French Guiana': '594',
+  'Saint Martin': '590', 'Saint Barthélemy': '590', 'Cabo Verde': '238',
+  // Remaining sovereign states, so no country silently falls back to +91.
+  'Afghanistan': '93', 'Albania': '355', 'Algeria': '213', 'Andorra': '376', 'Angola': '244',
+  'Antigua and Barbuda': '1', 'Armenia': '374', 'Azerbaijan': '994', 'Barbados': '1',
+  'Belarus': '375', 'Belize': '501', 'Benin': '229', 'Bhutan': '975', 'Bolivia': '591',
+  'Bosnia and Herzegovina': '387', 'Botswana': '267', 'Brunei': '673', 'Bulgaria': '359',
+  'Burkina Faso': '226', 'Burundi': '257', 'Cambodia': '855', 'Cameroon': '237',
+  'Central African Republic': '236', 'Chad': '235', 'Comoros': '269', 'Costa Rica': '506',
+  'Croatia': '385', 'Cuba': '53', 'Cyprus': '357', 'Djibouti': '253', 'Dominica': '1',
+  'Dominican Republic': '1', 'Ecuador': '593', 'El Salvador': '503', 'Equatorial Guinea': '240',
+  'Eritrea': '291', 'Estonia': '372', 'Eswatini': '268', 'Ethiopia': '251', 'Fiji': '679',
+  'Gabon': '241', 'Gambia': '220', 'Georgia': '995', 'Grenada': '1', 'Guatemala': '502',
+  'Guinea': '224', 'Guinea-Bissau': '245', 'Guyana': '592', 'Haiti': '509', 'Honduras': '504',
+  'Iceland': '354', 'Iran': '98', 'Iraq': '964', 'Ivory Coast': '225', 'Jamaica': '1',
+  'Jordan': '962', 'Kazakhstan': '7', 'Kiribati': '686', 'Kyrgyzstan': '996', 'Laos': '856',
+  'Latvia': '371', 'Lebanon': '961', 'Lesotho': '266', 'Liberia': '231', 'Libya': '218',
+  'Lithuania': '370', 'Luxembourg': '352', 'Madagascar': '261', 'Malawi': '265',
+  'Maldives': '960', 'Mali': '223', 'Malta': '356', 'Marshall Islands': '692',
+  'Mauritania': '222', 'Mauritius': '230', 'Micronesia': '691', 'Moldova': '373',
+  'Mongolia': '976', 'Montenegro': '382', 'Morocco': '212', 'Mozambique': '258',
+  'Myanmar': '95', 'Namibia': '264', 'Nauru': '674', 'Nicaragua': '505', 'Niger': '227',
+  'North Korea': '850', 'North Macedonia': '389', 'Palau': '680', 'Palestine': '970',
+  'Panama': '507', 'Papua New Guinea': '675', 'Paraguay': '595', 'Rwanda': '250',
+  'Saint Kitts and Nevis': '1', 'Saint Lucia': '1', 'Saint Vincent and the Grenadines': '1',
+  'Samoa': '685', 'Sao Tome and Principe': '239', 'Senegal': '221', 'Serbia': '381',
+  'Seychelles': '248', 'Sierra Leone': '232', 'Slovakia': '421', 'Slovenia': '386',
+  'Solomon Islands': '677', 'Somalia': '252', 'South Sudan': '211', 'Sudan': '249',
+  'Suriname': '597', 'Syria': '963', 'Tajikistan': '992', 'Tanzania': '255',
+  'Timor-Leste': '670', 'Togo': '228', 'Tonga': '676', 'Trinidad and Tobago': '1',
+  'Tunisia': '216', 'Turkmenistan': '993', 'Tuvalu': '688', 'Uganda': '256', 'Ukraine': '380',
+  'Uruguay': '598', 'Uzbekistan': '998', 'Vanuatu': '678', 'Vatican City': '39',
+  'Venezuela': '58', 'Yemen': '967', 'Zambia': '260', 'Zimbabwe': '263',
 };
 
 // Digit-grouping templates per dial code (how the local number is chunked).

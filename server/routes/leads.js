@@ -724,7 +724,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // Admin-owned sales are deliberately kept out of company totals and out of
     // the leaderboard that agents/managers see (admins run demo/test data);
     // they're only surfaced back to admins themselves.
-    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId', 'avatar'] });
+    const owners = await User.findAll({ attributes: ['id', 'name', 'role', 'jobType', 'targets', 'managerId', 'avatar', 'active', 'archived'] });
     const roleById = {};
     owners.forEach((u) => { roleById[u.id] = u.role; });
     const viewerIsAdmin = req.user.role === 'admin';
@@ -977,6 +977,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // they don't own leads or make sales, so they have no place on a sales
       // board. Admins are seeded but filtered out for non-admin viewers below.
       if (u.role === 'leadmanager') return;
+      if (u.archived) return; // departed agents never appear on live boards
       if (u.active !== false && inScope(u)) ensure(u.id, u.name);
     });
 

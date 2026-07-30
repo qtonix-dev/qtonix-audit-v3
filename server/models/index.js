@@ -113,6 +113,11 @@ const User = sequelize.define(
     // entry here, plus their own leads. Admin assigns these explicitly.
     managerScopes: { type: DataTypes.JSON, defaultValue: [] },
     active: { type: DataTypes.BOOLEAN, defaultValue: true },
+    // Archived = a departed agent kept only for historical records (past
+    // monthly targets/achieved). Archived users are excluded from every live
+    // surface — login, dashboards, leaderboards, assignment, reviews — but stay
+    // selectable in Admin → Monthly Targets so their history can be recorded.
+    archived: { type: DataTypes.BOOLEAN, defaultValue: false },
     reportsRun: { type: DataTypes.INTEGER, defaultValue: 0 },
     lastLogin: { type: DataTypes.DATE },
     // Small profile photo as a data URL (base64). Kept in the DB so it survives

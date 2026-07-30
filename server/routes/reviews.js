@@ -225,6 +225,19 @@ async function scoreManagers(groups, period) {
     }
   }
 
+  // Departed (archived) agents are excluded from the live org structure, but
+  // for a historical month they were on the team, so their stored figures must
+  // roll into the manager's team total. Pull archived agents linked to any of
+  // these managers and attach them.
+  const archivedAgents = await User.findAll({
+    where: { role: 'agent', archived: true, managerId: Object.keys(byManager).map(Number).concat(-1) },
+    attributes: ['id', 'managerId'],
+  });
+  for (const a of archivedAgents) {
+    const m = byManager[a.managerId];
+    if (m && !m.agentIds.includes(a.id)) m.agentIds.push(a.id);
+  }
+
   const allAgentIds = Object.values(byManager).flatMap((m) => m.agentIds);
   const leads = allAgentIds.length ? await Lead.findAll({ where: { ownerId: allAgentIds } }) : [];
   const ownerToManager = {};

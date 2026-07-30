@@ -388,49 +388,97 @@ function monthChoices(count = 12) {
   return out;
 }
 
+// Status band from % of target achieved. Distinct treatments so on-target and
+// over-target read differently, and zero stands out as needing attention.
+function targetStatus(target, achieved) {
+  const t = Number(target) || 0;
+  const a = Number(achieved) || 0;
+  if (a <= 0) return { label: 'Needs attention', cls: 'bg-slate-200 text-slate-600', pct: 0 };
+  if (t <= 0) return { label: 'No target set', cls: 'bg-slate-100 text-slate-400', pct: null };
+  const pct = Math.round((a / t) * 100);
+  if (pct >= 100) return { label: `Exceeded · ${pct}%`, cls: 'bg-emerald-100 text-emerald-700', pct };
+  if (pct >= 70) return { label: `On track · ${pct}%`, cls: 'bg-green-100 text-green-700', pct };
+  if (pct >= 50) return { label: `Behind · ${pct}%`, cls: 'bg-amber-100 text-amber-700', pct };
+  return { label: `At risk · ${pct}%`, cls: 'bg-red-100 text-red-700', pct };
+}
+
 function MonthlyTargets({ say }) {
   const months = monthChoices(12);
-  const [period, setPeriod] = useState(months[1] ? months[1].key : months[0].key); // default last month
-  const [managers, setManagers] = useState([]);
+  const [period, setPeriod] = useState(months[1] ? months[1].key : months[0].key);
   const [managerId, setManagerId] = useState('');
-  const [rows, setRows] = useState([]);
+  const [managers, setManagers] = useState([]);
+  const [available, setAvailable] = useState([]);   // agents/managers for the current scope
+  const [selectedIds, setSelectedIds] = useState([]); // chosen agent ids
+  const [rowData, setRowData] = useState({});         // userId -> {targetUsd, achievedUsd, hasRecord}
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newAgent, setNewAgent] = useState({ name: '', managerId: '' });
 
-  // Load the manager list once.
   useEffect(() => {
     api('/admin/users').then((us) => setManagers(us.filter((u) => u.role === 'manager'))).catch(() => {});
   }, []);
 
-  const load = () => {
+  // Load the roster for the chosen month/manager. This gives us the selectable
+  // agents (and their stored target/achieved for the month).
+  const loadRoster = () => {
     setLoading(true);
     const qs = `period=${period}${managerId ? `&managerId=${managerId}` : ''}`;
     api(`/admin/monthly-targets?${qs}`)
-      .then((r) => setRows(r.rows || []))
+      .then((r) => {
+        const list = r.rows || [];
+        setAvailable(list);
+        const data = {};
+        list.forEach((x) => { data[x.userId] = { targetUsd: x.targetUsd, achievedUsd: x.achievedUsd, hasRecord: x.hasRecord }; });
+        setRowData((prev) => ({ ...data, ...prev })); // keep any unsaved edits
+        // Pre-select anyone who already has a stored record for the month, plus
+        // the manager row when a manager is selected (for the team increment).
+        setSelectedIds((prev) => {
+          const auto = list.filter((x) => x.hasRecord || (managerId && String(x.userId) === String(managerId))).map((x) => x.userId);
+          return Array.from(new Set([...prev.filter((id) => list.some((x) => x.userId === id)), ...auto]));
+        });
+      })
       .catch((e) => say(e.message, true))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [period, managerId]);
+  useEffect(() => { setSelectedIds([]); setRowData({}); loadRoster(); /* eslint-disable-next-line */ }, [period, managerId]);
 
-  const setRow = (userId, patch) => setRows((rs) => rs.map((r) => (r.userId === userId ? { ...r, ...patch } : r)));
+  const setField = (userId, patch) => setRowData((d) => ({ ...d, [userId]: { ...(d[userId] || {}), ...patch } }));
+  const toggle = (id) => setSelectedIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const selectedRows = available.filter((a) => selectedIds.includes(a.userId));
 
   const saveRow = async (row) => {
+    const d = rowData[row.userId] || {};
     setSavingId(row.userId);
     try {
       await api('/admin/monthly-targets', {
         method: 'POST',
-        body: JSON.stringify({ userId: row.userId, period, targetUsd: Number(row.targetUsd) || 0, achievedUsd: Number(row.achievedUsd) || 0 }),
+        body: JSON.stringify({ userId: row.userId, period, targetUsd: Number(d.targetUsd) || 0, achievedUsd: Number(d.achievedUsd) || 0 }),
       });
-      setRow(row.userId, { hasRecord: true });
+      setField(row.userId, { hasRecord: true });
       say(`Saved ${row.name} for ${period}.`);
     } catch (e) { say(e.message, true); }
     setSavingId(null);
   };
 
   const saveAll = async () => {
-    for (const row of rows) { /* sequential to keep the audit log tidy */ await saveRow(row); }
-    say('All rows saved.');
-    load();
+    for (const row of selectedRows) await saveRow(row);
+    say('All selected rows saved.');
+  };
+
+  const addPastAgent = async () => {
+    if (!newAgent.name.trim()) { say('Enter the agent’s name.', true); return; }
+    try {
+      const created = await api('/admin/archived-agents', {
+        method: 'POST',
+        body: JSON.stringify({ name: newAgent.name.trim(), managerId: newAgent.managerId || managerId || undefined }),
+      });
+      setShowAdd(false); setNewAgent({ name: '', managerId: '' });
+      say(`Added past agent ${created.name}.`);
+      loadRoster();
+      setSelectedIds((s) => [...s, created.id]);
+    } catch (e) { say(e.message, true); }
   };
 
   const inp = 'w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -439,8 +487,8 @@ function MonthlyTargets({ say }) {
     <div>
       <h2 className="text-lg font-extrabold mb-1" style={{ color: C.navy }}>Monthly targets & achieved</h2>
       <p className="text-sm text-slate-500 mb-4">
-        Enter historical targets and the amount actually achieved for past months, so reviews aren't blank for people who
-        joined before this system went live. Reviews use live sales when available and fall back to these figures otherwise.
+        Record historical targets and the amount achieved for past months, so reviews aren't blank for people who joined
+        (or left) before this system went live. Reviews use live sales when available and fall back to these figures otherwise.
       </p>
 
       <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -451,67 +499,121 @@ function MonthlyTargets({ say }) {
           </select>
         </div>
         <div>
-          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Manager (loads their team)</label>
+          <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Manager</label>
           <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
-            <option value="">All agents & managers</option>
+            <option value="">All agents</option>
             {managers.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.team}/{m.shift}</option>)}
           </select>
         </div>
-        {rows.length > 0 && <Btn onClick={saveAll} size="sm">Save all</Btn>}
+        <Btn onClick={() => setShowAdd(true)} size="sm" variant="ghost">+ Add past agent</Btn>
       </div>
 
-      {loading ? (
-        <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
-      ) : rows.length === 0 ? (
-        <div className="text-slate-400 text-sm py-8 text-center bg-slate-50 rounded-xl">No agents or managers found for this selection.</div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-200">
-                <th className="text-left px-4 py-2.5">Name</th>
-                <th className="text-left px-4 py-2.5">Role</th>
-                <th className="text-left px-4 py-2.5">Team</th>
-                <th className="text-right px-4 py-2.5">Target (USD)</th>
-                <th className="text-right px-4 py-2.5">Achieved (USD)</th>
-                <th className="text-right px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.userId} className="border-b border-slate-100">
-                  <td className="px-4 py-2.5 font-bold text-[#050A1F]">{r.name}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 ${r.role === 'manager' ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {r.role === 'manager' ? 'Manager' : 'Agent'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-500 text-xs">{r.team} / {r.shift}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <input type="number" className={inp} value={r.targetUsd}
-                      onChange={(e) => setRow(r.userId, { targetUsd: e.target.value })} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <input type="number" className={inp} value={r.achievedUsd}
-                      onChange={(e) => setRow(r.userId, { achievedUsd: e.target.value })} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-xs">
-                    {r.hasRecord ? <span className="text-green-600 font-bold">saved</span> : <span className="text-slate-300">not set</span>}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Btn onClick={() => saveRow(r)} size="sm" disabled={savingId === r.userId}>{savingId === r.userId ? '…' : 'Save'}</Btn>
-                  </td>
+      {/* Agent multi-select */}
+      <div className="mb-4">
+        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+          Select agents {managerId ? 'under this manager' : ''} to enter data for
+        </label>
+        {loading ? (
+          <div className="text-slate-400 text-sm py-3">Loading…</div>
+        ) : available.length === 0 ? (
+          <div className="text-slate-400 text-sm py-3">No agents found for this selection.</div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {available.map((a) => (
+              <button key={a.userId} type="button" onClick={() => toggle(a.userId)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                  selectedIds.includes(a.userId) ? 'bg-orange-50 border-orange-300 text-[#FF4500]' : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                }`}>
+                {a.name}
+                {a.role === 'manager' && <span className="ml-1 text-[9px] text-purple-500">(mgr)</span>}
+                {a.archived && <span className="ml-1 text-[9px] text-slate-400">(departed)</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedRows.length > 0 && (
+        <>
+          <div className="flex justify-end mb-2"><Btn onClick={saveAll} size="sm">Save all</Btn></div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-200">
+                  <th className="text-left px-4 py-2.5">Name</th>
+                  <th className="text-left px-4 py-2.5">Role</th>
+                  <th className="text-left px-4 py-2.5">Team</th>
+                  <th className="text-right px-4 py-2.5">Target (USD)</th>
+                  <th className="text-right px-4 py-2.5">Achieved (USD)</th>
+                  <th className="text-center px-4 py-2.5">Status</th>
+                  <th className="px-4 py-2.5"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {selectedRows.map((r) => {
+                  const d = rowData[r.userId] || {};
+                  const st = targetStatus(d.targetUsd, d.achievedUsd);
+                  return (
+                    <tr key={r.userId} className="border-b border-slate-100">
+                      <td className="px-4 py-2.5 font-bold text-[#050A1F]">
+                        {r.name}{r.archived && <span className="ml-1.5 text-[9px] font-bold text-slate-400">DEPARTED</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 ${r.role === 'manager' ? 'bg-purple-50 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {r.role === 'manager' ? 'Manager' : 'Agent'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500 text-xs">{r.team || '—'} / {r.shift || '—'}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <input type="number" className={inp} value={d.targetUsd ?? ''}
+                          onChange={(e) => setField(r.userId, { targetUsd: e.target.value })} />
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <input type="number" className={inp} value={d.achievedUsd ?? ''}
+                          onChange={(e) => setField(r.userId, { achievedUsd: e.target.value })} />
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-block rounded-full px-2.5 py-1 text-[10px] font-bold ${st.cls}`}>{st.label}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Btn onClick={() => saveRow(r)} size="sm" disabled={savingId === r.userId}>{savingId === r.userId ? '…' : (d.hasRecord ? 'Update' : 'Save')}</Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {managerId && (
+            <p className="text-[11px] text-slate-400 mt-2">
+              In reviews, this manager's team target for {period} = the agents' targets above + the manager's own target row;
+              team achieved = the agents' achieved (departed agents included).
+            </p>
+          )}
+        </>
       )}
-      {managerId && (
-        <p className="text-[11px] text-slate-400 mt-2">
-          Team target for this manager in reviews = sum of the agents' targets above + the manager's own target row.
-        </p>
+
+      {/* Add past agent modal */}
+      {showAdd && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowAdd(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-extrabold text-[#050A1F] mb-1">Add a past (departed) agent</h3>
+            <p className="text-xs text-slate-400 mb-4">Creates a records-only entry for someone who has left. They can't log in and won't appear on any live screen — only here, so you can record their history.</p>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Agent name</label>
+            <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3" value={newAgent.name}
+              onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} placeholder="e.g. Ramesh Kumar" />
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Manager they worked under (optional)</label>
+            <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4"
+              value={newAgent.managerId || managerId} onChange={(e) => setNewAgent({ ...newAgent, managerId: e.target.value })}>
+              <option value="">— none —</option>
+              {managers.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.team}/{m.shift}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <Btn onClick={addPastAgent} size="sm">Add agent</Btn>
+              <button onClick={() => setShowAdd(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-500">Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
