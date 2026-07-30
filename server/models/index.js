@@ -388,7 +388,7 @@ const Settings = sequelize.define(
 
     apiKeys: {
       type: DataTypes.JSON,
-      defaultValue: { seranking: '', anthropic: '', pagespeed: '', googlePlaces: '' },
+      defaultValue: { seranking: '', anthropic: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '' },
     },
 
     pricing: { type: DataTypes.JSON },
@@ -851,20 +851,26 @@ async function initDb({ sync = true } = {}) {
 const HrUser = sequelize.define('HrUser', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(120), allowNull: false },
+  employeeId: { type: DataTypes.STRING(40), allowNull: true },
   email: { type: DataTypes.STRING(160), allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING(200), allowNull: false },
   phone: { type: DataTypes.STRING(40), defaultValue: '+91 ' },
   designation: { type: DataTypes.STRING(80), defaultValue: '' },
-  // Access class within HR: 'hr', 'recruiter', or 'employee'.
-  type: { type: DataTypes.ENUM('hr', 'recruiter', 'employee'), defaultValue: 'employee' },
+  // Access class within HR: hr, recruiter, manager, tl, employee.
+  type: { type: DataTypes.ENUM('hr', 'recruiter', 'manager', 'tl', 'employee'), defaultValue: 'employee' },
   branch: { type: DataTypes.STRING(80), defaultValue: 'Bhubaneswar' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  joiningDate: { type: DataTypes.DATEONLY, allowNull: true },
   branchIncharge: { type: DataTypes.BOOLEAN, defaultValue: false },
-  // Who they report to — another HrUser id, or an admin (see reportsToAdminId).
   reportsToId: { type: DataTypes.INTEGER, allowNull: true },
-  reportsToAdminId: { type: DataTypes.INTEGER, allowNull: true }, // a CRM admin User.id
-  // Recruiter targets: daily interview schedule + monthly closings/onboarding.
+  reportsToAdminId: { type: DataTypes.INTEGER, allowNull: true },
   targets: { type: DataTypes.JSON, defaultValue: { dailyInterviews: 0, monthlyOnboarding: 0 } },
-  avatar: { type: DataTypes.TEXT, allowNull: true },
+  avatar: { type: DataTypes.TEXT, allowNull: true }, // ImageKit URL of the profile photo
+  // The rich self-service profile the employee completes: payroll, bank,
+  // personal info, documents (numbers + ImageKit URLs), education, employment
+  // history and performance. Kept as a JSON blob so sub-fields can evolve
+  // without a migration for each one.
+  profile: { type: DataTypes.JSON, defaultValue: {} },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, {
   tableName: 'hr_users',
@@ -884,6 +890,14 @@ const HrBranch = sequelize.define('HrBranch', {
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'hr_branches' });
 HrBranch.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Departments the admin manages (feeds the Department dropdown).
+const HrDepartment = sequelize.define('HrDepartment', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(80), allowNull: false, unique: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'hr_departments' });
+HrDepartment.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 // Recruitment scaffolding — job posts. Structure only for now; functionality
 // arrives in a later version.
@@ -915,6 +929,6 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget,
-  HrUser, HrBranch, HrJobPost, HrCandidate,
+  HrUser, HrBranch, HrDepartment, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

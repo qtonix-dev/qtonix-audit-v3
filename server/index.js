@@ -283,12 +283,15 @@ connectWithRetry()
     }
     // Seed the two default HR branches once, so the branch dropdown isn't empty.
     try {
-      const { HrBranch } = require('./models');
+      const { HrBranch, HrDepartment } = require('./models');
       for (const name of ['Bhubaneswar', 'Kolkata']) {
         await HrBranch.findOrCreate({ where: { name }, defaults: { name } });
       }
+      for (const name of ['Human Resources', 'Sales', 'Operations', 'Technology', 'Finance']) {
+        await HrDepartment.findOrCreate({ where: { name }, defaults: { name } });
+      }
     } catch (e) {
-      console.error('[migrate] HR branch seed skipped:', e.message);
+      console.error('[migrate] HR branch/department seed skipped:', e.message);
     }
     } // end if (connected)
 

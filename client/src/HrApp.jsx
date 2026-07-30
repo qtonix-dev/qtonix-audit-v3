@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
+import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS } from './HrParts.jsx';
 
 // HR portal — deliberately self-contained and separate from the Site Analysis
 // app. It talks only to /api/hr/* and stores its own token, so nothing here can
@@ -129,27 +130,29 @@ function HrRecruitment() {
 // --- Admin: HR users + branches ---------------------------------------------
 
 function HrAdmin({ user }) {
-  const blank = { name: '', email: '', password: '', phone: '+91 ', designation: '', type: 'employee', branch: 'Bhubaneswar', branchIncharge: false, reportsTo: '', targets: { dailyInterviews: 0, monthlyOnboarding: 0 } };
   const [uview, setUview] = useState('list');
   const [users, setUsers] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [reporting, setReporting] = useState({ hr: [], admins: [] });
-  const [f, setF] = useState(blank);
-  const [show, setShow] = useState(false);
+  const [imagekitReady, setImagekitReady] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [newBranch, setNewBranch] = useState('');
+  const [newDept, setNewDept] = useState('');
+  const [profileId, setProfileId] = useState(null);
 
   const load = () => {
     hrApi('/users').then(setUsers).catch(() => {});
     hrApi('/branches').then(setBranches).catch(() => {});
+    hrApi('/departments').then(setDepartments).catch(() => {});
     hrApi('/reporting-options').then(setReporting).catch(() => {});
+    hrApi('/imagekit').then((c) => setImagekitReady(c.configured)).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
-  // "Reports to" combines HR staff and admins into one dropdown; the value is
-  // prefixed so we know which id space it belongs to.
   const reportingOptions = [
     ...reporting.hr.map((h) => ({ value: `hr:${h.id}`, label: `${h.name}${h.designation ? ` · ${h.designation}` : ''} (HR)` })),
     ...reporting.admins.map((a) => ({ value: `admin:${a.id}`, label: `${a.name} (Admin)` })),
@@ -160,15 +163,10 @@ function HrAdmin({ user }) {
     return kind === 'admin' ? { reportsToId: null, reportsToAdminId: Number(id) } : { reportsToId: Number(id), reportsToAdminId: null };
   };
   const joinReports = (row) => row.reportsToAdminId ? `admin:${row.reportsToAdminId}` : (row.reportsToId ? `hr:${row.reportsToId}` : '');
-
-  const create = async () => {
-    setErr('');
-    if (!f.name.trim() || !f.email.trim() || !f.password) return setErr('Name, email and password are all required.');
-    if (f.password.length < 8) return setErr('Password must be at least 8 characters.');
-    try {
-      await hrApi('/users', { method: 'POST', body: JSON.stringify({ ...f, ...splitReports(f.reportsTo) }) });
-      setF(blank); setShow(false); load(); setMsg(`User created: ${f.name}`);
-    } catch (e) { setErr(e.message); }
+  const nameById = (row) => {
+    if (row.reportsToAdminId) { const a = reporting.admins.find((x) => x.id === row.reportsToAdminId); return a ? `${a.name} (Admin)` : 'Admin'; }
+    if (row.reportsToId) { const h = reporting.hr.find((x) => x.id === row.reportsToId); return h ? h.name : '—'; }
+    return '—';
   };
 
   const save = async () => {
@@ -177,69 +175,24 @@ function HrAdmin({ user }) {
     try {
       const body = {
         name: edit.name, phone: edit.phone, designation: edit.designation, type: edit.type,
-        branch: edit.branch, branchIncharge: edit.branchIncharge, targets: edit.targets,
-        ...splitReports(edit.reportsTo),
+        employeeId: edit.employeeId, branch: edit.branch, department: edit.department, joiningDate: edit.joiningDate,
+        branchIncharge: edit.branchIncharge, targets: edit.targets, ...splitReports(edit.reportsTo),
       };
       if (edit.newPassword) body.password = edit.newPassword;
       await hrApi(`/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); setMsg(`Updated ${edit.name}`);
     } catch (e) { setErr(e.message); }
   };
+  const toggle = async (u) => { try { await hrApi(`/users/${u._id}`, { method: 'PUT', body: JSON.stringify({ active: !u.active }) }); load(); } catch (e) { setErr(e.message); } };
 
-  const toggle = async (u) => {
-    try { await hrApi(`/users/${u._id}`, { method: 'PUT', body: JSON.stringify({ active: !u.active }) }); load(); }
-    catch (e) { setErr(e.message); }
-  };
+  const addBranch = async () => { if (!newBranch.trim()) return; try { await hrApi('/branches', { method: 'POST', body: JSON.stringify({ name: newBranch.trim() }) }); setNewBranch(''); load(); } catch (e) { setErr(e.message); } };
+  const editBranch = async (b) => { const name = prompt('Rename branch', b.name); if (name && name.trim() && name !== b.name) { try { await hrApi(`/branches/${b._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
+  const delBranch = async (b) => { if (!confirm(`Delete branch "${b.name}"?`)) return; try { await hrApi(`/branches/${b._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
+  const addDept = async () => { if (!newDept.trim()) return; try { await hrApi('/departments', { method: 'POST', body: JSON.stringify({ name: newDept.trim() }) }); setNewDept(''); load(); } catch (e) { setErr(e.message); } };
+  const editDept = async (d) => { const name = prompt('Rename department', d.name); if (name && name.trim() && name !== d.name) { try { await hrApi(`/departments/${d._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
+  const delDept = async (d) => { if (!confirm(`Delete department "${d.name}"?`)) return; try { await hrApi(`/departments/${d._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
 
-  const addBranch = async () => {
-    if (!newBranch.trim()) return;
-    try { await hrApi('/branches', { method: 'POST', body: JSON.stringify({ name: newBranch.trim() }) }); setNewBranch(''); load(); }
-    catch (e) { setErr(e.message); }
-  };
-
-  const typeLabel = (t) => ({ hr: 'HR', recruiter: 'HR Recruiter', employee: 'Employee' }[t] || t);
-  const nameById = (row) => {
-    if (row.reportsToAdminId) { const a = reporting.admins.find((x) => x.id === row.reportsToAdminId); return a ? `${a.name} (Admin)` : 'Admin'; }
-    if (row.reportsToId) { const h = reporting.hr.find((x) => x.id === row.reportsToId); return h ? h.name : '—'; }
-    return '—';
-  };
-
-  const Fields = ({ state, set }) => (
-    <div className="grid grid-cols-2 gap-4">
-      <Field label="Name *"><input className={inputCls} value={state.name || ''} onChange={(e) => set({ name: e.target.value })} /></Field>
-      {state._id ? <Field label="Email"><input className={inputCls + ' bg-slate-50'} value={state.email || ''} disabled /></Field>
-        : <Field label="Email *"><input className={inputCls} value={state.email || ''} onChange={(e) => set({ email: e.target.value })} placeholder="name@qtonix.com" /></Field>}
-      <Field label={state._id ? 'New password' : 'Password *'} hint={state._id ? 'Leave blank to keep current' : 'At least 8 characters'}>
-        <input type={state._id ? 'text' : 'password'} className={inputCls} value={state._id ? (state.newPassword || '') : (state.password || '')}
-          onChange={(e) => set(state._id ? { newPassword: e.target.value } : { password: e.target.value })} placeholder={state._id ? 'New password…' : ''} />
-      </Field>
-      <Field label="Phone"><input className={inputCls} value={state.phone || ''} onChange={(e) => set({ phone: e.target.value })} placeholder="+91 " /></Field>
-      <Field label="Designation"><input className={inputCls} value={state.designation || ''} onChange={(e) => set({ designation: e.target.value })} placeholder="e.g. HR Manager" /></Field>
-      <Field label="Role"><select className={inputCls} value={state.type} onChange={(e) => set({ type: e.target.value })}>
-        <option value="hr">HR</option><option value="recruiter">HR Recruiter</option><option value="employee">Employee</option>
-      </select></Field>
-      <Field label="Branch"><select className={inputCls} value={state.branch} onChange={(e) => set({ branch: e.target.value })}>
-        {branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}
-      </select></Field>
-      <Field label="Reports to"><select className={inputCls} value={state.reportsTo || ''} onChange={(e) => set({ reportsTo: e.target.value })}>
-        <option value="">— none —</option>
-        {reportingOptions.filter((o) => o.value !== `hr:${state._id}`).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select></Field>
-      <div className="col-span-2 flex items-center gap-2">
-        <input type="checkbox" checked={!!state.branchIncharge} onChange={(e) => set({ branchIncharge: e.target.checked })} id={`inc-${state._id || 'new'}`} />
-        <label htmlFor={`inc-${state._id || 'new'}`} className="text-sm font-semibold text-slate-600">Make branch in-charge</label>
-      </div>
-      {state.type === 'recruiter' && (
-        <div className="col-span-2 rounded-xl bg-slate-50 p-4">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Recruiter targets</div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Daily interview schedule"><input type="number" className={inputCls} value={state.targets?.dailyInterviews ?? 0} onChange={(e) => set({ targets: { ...state.targets, dailyInterviews: e.target.value } })} /></Field>
-            <Field label="Monthly closing / onboarding"><input type="number" className={inputCls} value={state.targets?.monthlyOnboarding ?? 0} onChange={(e) => set({ targets: { ...state.targets, monthlyOnboarding: e.target.value } })} /></Field>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
   return (
     <div className="max-w-5xl">
@@ -247,19 +200,35 @@ function HrAdmin({ user }) {
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>}
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
-      {/* Branches */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
-        <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
-        <div className="flex flex-wrap gap-2 mb-3">
-          {branches.map((b) => <span key={b._id} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{b.name}</span>)}
+      <ImageKitSection />
+
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
+          <div className="space-y-1.5 mb-3">
+            {branches.map((b) => (
+              <div key={b._id} className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-600">{b.name}</span>
+                <span className="whitespace-nowrap"><button onClick={() => editBranch(b)} className="text-xs font-bold text-blue-500 mr-2">Edit</button><button onClick={() => delBranch(b)} className="text-xs font-bold text-red-400">Delete</button></span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} /><button onClick={addBranch} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
         </div>
-        <div className="flex gap-2">
-          <input className="rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch name" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} />
-          <button onClick={addBranch} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Add branch</button>
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Departments</div>
+          <div className="space-y-1.5 mb-3">
+            {departments.map((d) => (
+              <div key={d._id} className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-600">{d.name}</span>
+                <span className="whitespace-nowrap"><button onClick={() => editDept(d)} className="text-xs font-bold text-blue-500 mr-2">Edit</button><button onClick={() => delDept(d)} className="text-xs font-bold text-red-400">Delete</button></span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New department" value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} /><button onClick={addDept} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
         </div>
       </div>
 
-      {/* Users */}
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-slate-500">{users.filter((u) => u.active).length} active · {users.length} total</p>
         <div className="flex items-center gap-2">
@@ -267,54 +236,62 @@ function HrAdmin({ user }) {
             <button onClick={() => setUview('list')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>List</button>
             <button onClick={() => setUview('org')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'org' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Org chart</button>
           </div>
-          <button onClick={() => { setShow(!show); setErr(''); }} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>{show ? 'Cancel' : '+ Add user'}</button>
+          <button onClick={() => setShowAdd(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add user</button>
         </div>
       </div>
 
-      {show && (
-        <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: '#FF6A00' }}>
-          <h3 className="font-bold text-sm mb-4 text-[#050A1F]">New user</h3>
-          <Fields state={f} set={(p) => setF({ ...f, ...p })} />
-          <div className="flex justify-end mt-4"><button onClick={create} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Create user</button></div>
-        </div>
-      )}
+      {showAdd && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} imagekitReady={imagekitReady} onClose={() => setShowAdd(false)} onCreated={(n) => { setMsg(`User created: ${n}`); load(); }} />}
 
       {edit && (
         <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: '#2563EB' }}>
           <h3 className="font-bold text-sm mb-4 text-[#050A1F]">Edit {edit.name}</h3>
-          <Fields state={edit} set={(p) => setEdit({ ...edit, ...p })} />
-          <div className="flex justify-end gap-2 mt-4">
-            <button onClick={() => setEdit(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-            <button onClick={save} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save changes</button>
+          <div className="grid grid-cols-2 gap-4">
+            <SharedField label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></SharedField>
+            <SharedField label="Employee ID"><input className={inputCls} value={edit.employeeId || ''} onChange={(e) => setEdit({ ...edit, employeeId: e.target.value })} /></SharedField>
+            <SharedField label="Phone"><input className={inputCls} value={edit.phone || ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></SharedField>
+            <SharedField label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></SharedField>
+            <SharedField label="Role"><select className={inputCls} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })}>{ROLE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></SharedField>
+            <SharedField label="Branch"><select className={inputCls} value={edit.branch || ''} onChange={(e) => setEdit({ ...edit, branch: e.target.value })}>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></SharedField>
+            <SharedField label="Department"><select className={inputCls} value={edit.department || ''} onChange={(e) => setEdit({ ...edit, department: e.target.value })}><option value="">— select —</option>{departments.map((d) => <option key={d._id} value={d.name}>{d.name}</option>)}</select></SharedField>
+            <SharedField label="Joining date"><input type="date" className={inputCls} value={edit.joiningDate || ''} onChange={(e) => setEdit({ ...edit, joiningDate: e.target.value })} /></SharedField>
+            <SharedField label="Reports to"><select className={inputCls} value={edit.reportsTo || ''} onChange={(e) => setEdit({ ...edit, reportsTo: e.target.value })}><option value="">— none —</option>{reportingOptions.filter((o) => o.value !== `hr:${edit._id}`).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></SharedField>
+            <div className="flex items-center gap-2 pt-6"><input type="checkbox" id="inc-edit" checked={!!edit.branchIncharge} onChange={(e) => setEdit({ ...edit, branchIncharge: e.target.checked })} /><label htmlFor="inc-edit" className="text-sm font-semibold text-slate-600">Branch in-charge</label></div>
+            <SharedField label="New password" hint="Leave blank to keep current"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} /></SharedField>
           </div>
+          {edit.type === 'recruiter' && (
+            <div className="mt-4 rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Recruiter targets</div><div className="grid grid-cols-2 gap-4">
+              <SharedField label="Daily interview schedule"><input type="number" className={inputCls} value={edit.targets?.dailyInterviews ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, dailyInterviews: e.target.value } })} /></SharedField>
+              <SharedField label="Monthly closing / onboarding"><input type="number" className={inputCls} value={edit.targets?.monthlyOnboarding ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, monthlyOnboarding: e.target.value } })} /></SharedField>
+            </div></div>
+          )}
+          <div className="flex justify-end gap-2 mt-4"><button onClick={() => setEdit(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save changes</button></div>
         </div>
       )}
 
-      {uview === 'org' ? (
-        <HrOrgChart users={users} reporting={reporting} />
-      ) : (
+      {uview === 'org' ? <HrOrgChart users={users} reporting={reporting} /> : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
-              <th className="px-4 py-3">Designation</th><th className="px-4 py-3">Branch</th><th className="px-4 py-3">Reports to</th><th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Name</th><th className="px-4 py-3">Emp ID</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Dept</th><th className="px-4 py-3">Branch</th><th className="px-4 py-3">Reports to</th><th className="px-4 py-3">Profile</th><th className="px-4 py-3"></th>
             </tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u._id} className={`border-t border-slate-100 ${u.active ? '' : 'opacity-50'}`}>
-                  <td className="px-4 py-3 font-bold text-[#050A1F]">{u.name}{u.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</td>
-                  <td className="px-4 py-3 text-slate-500">{u.email}</td>
-                  <td className="px-4 py-3"><span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">{typeLabel(u.type)}</span></td>
-                  <td className="px-4 py-3 text-slate-500">{u.designation || '—'}</td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2"><Avatar name={u.name} src={u.avatar} size={28} /><span className="font-bold text-[#050A1F]">{u.name}{u.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</span></div></td>
+                  <td className="px-4 py-3 text-slate-500">{u.employeeId || '—'}</td>
+                  <td className="px-4 py-3"><span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">{ROLE_LABELS[u.type] || u.type}</span></td>
+                  <td className="px-4 py-3 text-slate-500">{u.department || '—'}</td>
                   <td className="px-4 py-3 text-slate-500">{u.branch}</td>
                   <td className="px-4 py-3 text-slate-500">{nameById(u)}</td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-1.5"><div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full" style={{ width: `${u.completion || 0}%`, background: (u.completion||0) >= 100 ? '#059669' : (u.completion||0) >= 50 ? '#FF6A00' : '#EF4444' }} /></div><span className="text-[11px] font-bold text-slate-500">{u.completion || 0}%</span></div></td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <button onClick={() => setProfileId(u._id)} className="text-xs font-bold text-slate-500 mr-3">Profile</button>
                     <button onClick={() => setEdit({ ...u, reportsTo: joinReports(u), newPassword: '' })} className="text-xs font-bold text-blue-500 mr-3">Edit</button>
-                    <button onClick={() => toggle(u)} className="text-xs font-bold text-slate-400">{u.active ? 'Deactivate' : 'Reactivate'}</button>
+                    <button onClick={() => toggle(u)} className="text-xs font-bold text-slate-400">{u.active ? 'Off' : 'On'}</button>
                   </td>
                 </tr>
               ))}
-              {users.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">No HR users yet. Click “Add user”.</td></tr>}
+              {users.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400 text-sm">No HR users yet. Click “Add user”.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -352,16 +329,13 @@ function HrOrgChart({ users, reporting }) {
   );
 }
 
-function Field({ label, hint, children }) {
-  return <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">{label}</label>{children}{hint && <p className="text-[11px] text-slate-400 mt-1">{hint}</p>}</div>;
-}
-
 // --- Shell ------------------------------------------------------------------
 
 export default function HrApp() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [view, setView] = useState('dashboard');
+  const [profileTarget, setProfileTarget] = useState(null);
 
   // Restore session.
   useEffect(() => {
@@ -379,6 +353,8 @@ export default function HrApp() {
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'recruitment', label: 'Recruitment' },
+    { id: 'employees', label: 'Employee' },
+    ...(!isAdmin ? [{ id: 'profile', label: 'My Profile' }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
 
@@ -390,7 +366,7 @@ export default function HrApp() {
             <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span> <span className="text-slate-400 font-bold text-sm">HR</span></div>
             <nav className="flex gap-0.5">
               {nav.map((n) => (
-                <button key={n.id} onClick={() => setView(n.id)}
+                <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${view === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                   {n.label}
                 </button>
@@ -406,6 +382,12 @@ export default function HrApp() {
       <main className="max-w-6xl mx-auto px-4 py-8">
         {view === 'dashboard' && <HrDashboard user={user} />}
         {view === 'recruitment' && <HrRecruitment />}
+        {view === 'employees' && (
+          profileTarget
+            ? <div><button onClick={() => setProfileTarget(null)} className="text-xs font-bold text-slate-400 mb-3">← Back to employees</button><ProfilePage me={user} targetId={profileTarget} /></div>
+            : <EmployeeDirectory isAdmin={isAdmin} onOpenProfile={(id) => setProfileTarget(id)} />
+        )}
+        {view === 'profile' && !isAdmin && <ProfilePage me={user} />}
         {view === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
     </div>

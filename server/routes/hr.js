@@ -4,12 +4,32 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrJobPost, HrCandidate, User, AuditLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrJobPost, HrCandidate, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
+const imagekit = require('../services/imagekit');
 
 const router = express.Router();
 
-const USER_TYPES = ['hr', 'recruiter', 'employee'];
+const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'employee'];
+
+// Profile completion: the sections we score a profile against. Each present +
+// non-empty section counts toward the percentage shown in the admin list.
+function profileCompletion(hrUser) {
+  const p = hrUser.profile || {};
+  const filled = (obj, keys) => obj && keys.some((k) => obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== '');
+  const checks = [
+    !!hrUser.avatar,                                             // photo
+    filled(p.payroll, ['basic', 'hra', 'ta', 'da', 'other', 'pf', 'esi']),
+    filled(p.bank, ['bankName', 'accountNumber', 'ifsc', 'accountType']),
+    filled(p.personal, ['homeAddress', 'personalEmail', 'dob', 'maritalStatus']),
+    Array.isArray(p.documents) && p.documents.length > 0,
+    p.education && (filled(p.education.tenth, ['institution', 'year', 'percent']) || filled(p.education.twelfth, ['institution', 'year', 'percent']) || filled(p.education.graduation, ['institution', 'year', 'percent'])),
+    p.employment && (p.employment.fresher === true || (Array.isArray(p.employment.records) && p.employment.records.length > 0)),
+  ];
+  const done = checks.filter(Boolean).length;
+  return Math.round((done / checks.length) * 100);
+}
+
 
 // --- Auth -------------------------------------------------------------------
 
@@ -56,7 +76,7 @@ router.get('/me', requireHrAccess, (req, res) => {
   if (req.hrActor.kind === 'admin') {
     return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true });
   }
-  res.json({ ...req.hrUser.toJSON(), isAdmin: false });
+  res.json({ ...req.hrUser.toJSON(), isAdmin: false, completion: profileCompletion(req.hrUser) });
 });
 
 // --- Dashboard --------------------------------------------------------------
@@ -74,6 +94,84 @@ router.get('/dashboard', requireHrAccess, async (req, res, next) => {
       greetingName: req.hrActor.name,
       metrics: { staff, openJobs, candidates, onboarded },
     });
+  } catch (e) { next(e); }
+});
+
+// --- ImageKit (admin only) --------------------------------------------------
+
+/** GET /api/hr/imagekit — connection status + public config (no private key). */
+router.get('/imagekit', requireHrAccess, async (req, res, next) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = imagekit.getConfig(settings);
+    res.json({
+      configured: imagekit.isConfigured(settings),
+      publicKey: cfg.publicKey || '',
+      urlEndpoint: cfg.urlEndpoint || '',
+      hasPrivateKey: !!cfg.privateKey,
+    });
+  } catch (e) { next(e); }
+});
+
+/** PUT /api/hr/imagekit — save keys (admin), then report connection status. */
+router.put('/imagekit', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const keys = { ...(settings.apiKeys || {}) };
+    if (b.publicKey !== undefined) keys.imagekitPublic = String(b.publicKey).trim();
+    if (b.urlEndpoint !== undefined) keys.imagekitEndpoint = String(b.urlEndpoint).trim();
+    // Only overwrite the private key if a new (non-masked) value is supplied.
+    if (b.privateKey !== undefined && b.privateKey && !String(b.privateKey).includes('•')) keys.imagekitPrivate = String(b.privateKey).trim();
+    settings.apiKeys = keys; settings.changed('apiKeys', true);
+    await settings.save();
+    const fresh = await Settings.findOne({ where: { singleton: 'settings' } });
+    const test = await imagekit.testConnection(fresh);
+    res.json(test);
+  } catch (e) { next(e); }
+});
+
+/** GET /api/hr/imagekit/auth — short-lived auth params for a browser upload. */
+router.get('/imagekit/auth', requireHrAccess, async (req, res, next) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!imagekit.isConfigured(settings)) return res.status(400).json({ error: 'ImageKit is not connected. Ask an admin to set it up.' });
+    res.json(imagekit.getAuthParams(settings));
+  } catch (e) { next(e); }
+});
+
+// --- Departments (admin only for writes) ------------------------------------
+
+router.get('/departments', requireHrAccess, async (req, res, next) => {
+  try { res.json((await HrDepartment.findAll({ order: [['name', 'ASC']] })).map((d) => d.toJSON())); }
+  catch (e) { next(e); }
+});
+
+router.post('/departments', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const name = String((req.body && req.body.name) || '').trim();
+    if (!name) return res.status(400).json({ error: 'Department name is required.' });
+    const [row] = await HrDepartment.findOrCreate({ where: { name }, defaults: { name } });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.put('/departments/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrDepartment.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Department not found.' });
+    if (req.body && req.body.name !== undefined) row.name = String(req.body.name).trim();
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/departments/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrDepartment.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Department not found.' });
+    await row.destroy();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -95,6 +193,25 @@ router.post('/branches', requireHrAccess, requireHrAdmin, async (req, res, next)
   } catch (e) { next(e); }
 });
 
+router.put('/branches/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrBranch.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Branch not found.' });
+    if (req.body && req.body.name !== undefined) row.name = String(req.body.name).trim();
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/branches/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrBranch.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Branch not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // --- HR users (admin only) --------------------------------------------------
 
 /** Reporting-authority options: existing HR staff + CRM admins. */
@@ -112,7 +229,64 @@ router.get('/reporting-options', requireHrAccess, async (req, res, next) => {
 router.get('/users', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
     const rows = await HrUser.findAll({ order: [['createdAt', 'DESC']] });
-    res.json(rows.map((u) => u.toJSON()));
+    res.json(rows.map((u) => ({ ...u.toJSON(), completion: profileCompletion(u) })));
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/hr/employees — directory of all HR staff with completion %. Powers
+ * the top-level "Employee" menu. Available to any HR user (read-only list).
+ */
+router.get('/employees', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrUser.findAll({ order: [['name', 'ASC']] });
+    res.json(rows.map((u) => ({
+      _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
+      type: u.type, designation: u.designation, branch: u.branch, department: u.department,
+      avatar: u.avatar, active: u.active, completion: profileCompletion(u),
+    })));
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/hr/profile/:id — full profile. HR staff may read their own; an admin
+ * may read anyone's.
+ */
+router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!req.isHrAdmin && !(req.hrUser && req.hrUser.id === id)) {
+      return res.status(403).json({ error: 'You can only view your own profile.' });
+    }
+    const row = await HrUser.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Profile not found.' });
+    res.json({ ...row.toJSON(), completion: profileCompletion(row) });
+  } catch (e) { next(e); }
+});
+
+/**
+ * PUT /api/hr/profile/:id — update the rich profile blob (and avatar). An HR
+ * staffer updates their own; an admin may update anyone's. This is the
+ * self-service form target.
+ */
+router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!req.isHrAdmin && !(req.hrUser && req.hrUser.id === id)) {
+      return res.status(403).json({ error: 'You can only edit your own profile.' });
+    }
+    const row = await HrUser.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Profile not found.' });
+    const b = req.body || {};
+    if (b.avatar !== undefined) row.avatar = b.avatar;
+    if (b.profile !== undefined && b.profile && typeof b.profile === 'object') {
+      row.profile = { ...(row.profile || {}), ...b.profile };
+      row.changed('profile', true);
+    }
+    // The employee may also keep their phone current.
+    if (b.phone !== undefined) row.phone = b.phone;
+    await row.save();
+    res.json({ ...row.toJSON(), completion: profileCompletion(row) });
   } catch (e) { next(e); }
 });
 
@@ -132,10 +306,14 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
     const passwordHash = await bcrypt.hash(password, 10);
     const row = await HrUser.create({
       name, email, passwordHash, type,
+      employeeId: b.employeeId || null,
       phone: b.phone || '+91 ',
       designation: b.designation || '',
       branch: b.branch || 'Bhubaneswar',
+      department: b.department || '',
+      joiningDate: b.joiningDate || null,
       branchIncharge: !!b.branchIncharge,
+      avatar: b.avatar || null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
       reportsToAdminId: b.reportsToAdminId ? Number(b.reportsToAdminId) : null,
       targets: type === 'recruiter'
@@ -153,10 +331,13 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
     if (!row) return res.status(404).json({ error: 'HR user not found.' });
     const b = req.body || {};
     if (b.name !== undefined) row.name = String(b.name).trim();
+    if (b.employeeId !== undefined) row.employeeId = b.employeeId || null;
     if (b.phone !== undefined) row.phone = b.phone;
     if (b.designation !== undefined) row.designation = b.designation;
     if (b.type !== undefined && USER_TYPES.includes(b.type)) row.type = b.type;
     if (b.branch !== undefined) row.branch = b.branch;
+    if (b.department !== undefined) row.department = b.department;
+    if (b.joiningDate !== undefined) row.joiningDate = b.joiningDate || null;
     if (b.branchIncharge !== undefined) row.branchIncharge = !!b.branchIncharge;
     if (b.reportsToId !== undefined) row.reportsToId = b.reportsToId ? Number(b.reportsToId) : null;
     if (b.reportsToAdminId !== undefined) row.reportsToAdminId = b.reportsToAdminId ? Number(b.reportsToAdminId) : null;
