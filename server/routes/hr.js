@@ -4,13 +4,16 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrJobPost, HrCandidate, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
 const router = express.Router();
 
-const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'employee'];
+const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'trainee', 'intern', 'employee'];
+// Roles that count as "HR staff" for edit permissions on locked profile
+// sections (payroll, performance, identity). Everyone else is view-only there.
+const HR_STAFF_TYPES = ['hr', 'recruiter'];
 
 // Profile completion: the sections we score a profile against. Each present +
 // non-empty section counts toward the percentage shown in the admin list.
@@ -175,6 +178,86 @@ router.delete('/departments/:id', requireHrAccess, requireHrAdmin, async (req, r
   } catch (e) { next(e); }
 });
 
+// --- Shifts (admin only for writes) -----------------------------------------
+
+router.get('/shifts', requireHrAccess, async (req, res, next) => {
+  try { res.json((await HrShift.findAll({ order: [['name', 'ASC']] })).map((s) => s.toJSON())); }
+  catch (e) { next(e); }
+});
+
+router.post('/shifts', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Shift name is required.' });
+    const row = await HrShift.create({
+      name: String(b.name).trim(),
+      startTime: b.startTime || '', endTime: b.endTime || '',
+      breakStart: b.breakStart || '', breakEnd: b.breakEnd || '',
+    });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.put('/shifts/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrShift.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Shift not found.' });
+    const b = req.body || {};
+    ['name', 'startTime', 'endTime', 'breakStart', 'breakEnd'].forEach((k) => { if (b[k] !== undefined) row[k] = b[k]; });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/shifts/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrShift.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Shift not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- Holidays (admin only for writes; per-branch) ---------------------------
+
+router.get('/holidays', requireHrAccess, async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.branch) where.branch = { [Op.in]: [req.query.branch, ''] };
+    const rows = await HrHoliday.findAll({ where, order: [['date', 'ASC']] });
+    res.json(rows.map((h) => h.toJSON()));
+  } catch (e) { next(e); }
+});
+
+router.post('/holidays', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.name || '').trim() || !b.date) return res.status(400).json({ error: 'Holiday name and date are required.' });
+    const row = await HrHoliday.create({ name: String(b.name).trim(), date: b.date, branch: b.branch || '' });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.put('/holidays/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrHoliday.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Holiday not found.' });
+    const b = req.body || {};
+    ['name', 'date', 'branch'].forEach((k) => { if (b[k] !== undefined) row[k] = b[k]; });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/holidays/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrHoliday.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Holiday not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // --- Branches (admin only) --------------------------------------------------
 
 router.get('/branches', requireHrAccess, async (req, res, next) => {
@@ -255,38 +338,76 @@ router.get('/employees', requireHrAccess, async (req, res, next) => {
 router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    if (!req.isHrAdmin && !(req.hrUser && req.hrUser.id === id)) {
+    const isSelf = req.hrUser && req.hrUser.id === id;
+    const canEditLocked = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    if (!canEditLocked && !isSelf) {
       return res.status(403).json({ error: 'You can only view your own profile.' });
     }
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
-    res.json({ ...row.toJSON(), completion: profileCompletion(row) });
+    const shift = row.shiftId ? await HrShift.findByPk(row.shiftId) : null;
+    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, shift: shift ? shift.toJSON() : null });
   } catch (e) { next(e); }
 });
 
 /**
- * PUT /api/hr/profile/:id — update the rich profile blob (and avatar). An HR
- * staffer updates their own; an admin may update anyone's. This is the
- * self-service form target.
+ * PUT /api/hr/profile/:id — update the profile. Permission model:
+ *   - Employee (self): may edit personal, documents, education, employment,
+ *     bank, and their avatar/phone. Payroll & performance are view-only.
+ *   - HR staff / Admin: may edit everything, including payroll, performance,
+ *     and the core identity fields (via /users for identity).
  */
 router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    if (!req.isHrAdmin && !(req.hrUser && req.hrUser.id === id)) {
+    const isSelf = req.hrUser && req.hrUser.id === id;
+    const canEditLocked = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    if (!canEditLocked && !isSelf) {
       return res.status(403).json({ error: 'You can only edit your own profile.' });
     }
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
     const b = req.body || {};
+
     if (b.avatar !== undefined) row.avatar = b.avatar;
-    if (b.profile !== undefined && b.profile && typeof b.profile === 'object') {
-      row.profile = { ...(row.profile || {}), ...b.profile };
-      row.changed('profile', true);
-    }
-    // The employee may also keep their phone current.
     if (b.phone !== undefined) row.phone = b.phone;
+
+    if (b.profile !== undefined && b.profile && typeof b.profile === 'object') {
+      const current = row.profile || {};
+      const incoming = b.profile;
+      // Sections anyone (incl. the employee) may edit about themselves.
+      const openSections = ['personal', 'documents', 'bank', 'education', 'employment'];
+      // Sections only HR/Admin may edit.
+      const lockedSections = ['payroll', 'performance'];
+      const merged = { ...current };
+      openSections.forEach((s) => { if (incoming[s] !== undefined) merged[s] = incoming[s]; });
+      lockedSections.forEach((s) => {
+        if (incoming[s] !== undefined) {
+          if (canEditLocked) merged[s] = incoming[s];
+          // else silently ignore — employee can't change payroll/performance.
+        }
+      });
+      row.profile = merged; row.changed('profile', true);
+    }
     await row.save();
-    res.json({ ...row.toJSON(), completion: profileCompletion(row) });
+    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/hr/profile/:id/timeline — HR/Admin adds a note to the record. */
+router.post('/profile/:id/timeline', requireHrAccess, async (req, res, next) => {
+  try {
+    const canEdit = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    if (!canEdit) return res.status(403).json({ error: 'Only HR or admin can add timeline notes.' });
+    const row = await HrUser.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Profile not found.' });
+    const text = String((req.body && req.body.text) || '').trim();
+    if (!text) return res.status(400).json({ error: 'Note text is required.' });
+    const tl = Array.isArray(row.timeline) ? row.timeline : [];
+    tl.unshift({ at: new Date().toISOString(), kind: 'note', text, by: req.hrActor.name });
+    row.timeline = tl; row.changed('timeline', true);
+    await row.save();
+    res.json({ ok: true, timeline: row.timeline });
   } catch (e) { next(e); }
 });
 
@@ -312,6 +433,7 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
       branch: b.branch || 'Bhubaneswar',
       department: b.department || '',
       joiningDate: b.joiningDate || null,
+      shiftId: b.shiftId ? Number(b.shiftId) : null,
       branchIncharge: !!b.branchIncharge,
       avatar: b.avatar || null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
@@ -319,6 +441,7 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
       targets: type === 'recruiter'
         ? { dailyInterviews: Number((b.targets && b.targets.dailyInterviews) || 0), monthlyOnboarding: Number((b.targets && b.targets.monthlyOnboarding) || 0) }
         : { dailyInterviews: 0, monthlyOnboarding: 0 },
+      timeline: [{ at: new Date().toISOString(), kind: 'created', text: `Employee record created by ${req.hrActor.name}`, by: req.hrActor.name }],
     });
     await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'hr.user.create', target: name, ip: req.ip }).catch(() => {});
     res.status(201).json(row.toJSON());
@@ -338,6 +461,7 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
     if (b.branch !== undefined) row.branch = b.branch;
     if (b.department !== undefined) row.department = b.department;
     if (b.joiningDate !== undefined) row.joiningDate = b.joiningDate || null;
+    if (b.shiftId !== undefined) row.shiftId = b.shiftId ? Number(b.shiftId) : null;
     if (b.branchIncharge !== undefined) row.branchIncharge = !!b.branchIncharge;
     if (b.reportsToId !== undefined) row.reportsToId = b.reportsToId ? Number(b.reportsToId) : null;
     if (b.reportsToAdminId !== undefined) row.reportsToAdminId = b.reportsToAdminId ? Number(b.reportsToAdminId) : null;

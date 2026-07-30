@@ -290,6 +290,8 @@ connectWithRetry()
       for (const name of ['Human Resources', 'Sales', 'Operations', 'Technology', 'Finance']) {
         await HrDepartment.findOrCreate({ where: { name }, defaults: { name } });
       }
+      const { HrShift } = require('./models');
+      await HrShift.findOrCreate({ where: { name: 'General (9-6)' }, defaults: { name: 'General (9-6)', startTime: '09:00', endTime: '18:00', breakStart: '13:00', breakEnd: '13:45' } });
     } catch (e) {
       console.error('[migrate] HR branch/department seed skipped:', e.message);
     }

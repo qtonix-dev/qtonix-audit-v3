@@ -857,7 +857,7 @@ const HrUser = sequelize.define('HrUser', {
   phone: { type: DataTypes.STRING(40), defaultValue: '+91 ' },
   designation: { type: DataTypes.STRING(80), defaultValue: '' },
   // Access class within HR: hr, recruiter, manager, tl, employee.
-  type: { type: DataTypes.ENUM('hr', 'recruiter', 'manager', 'tl', 'employee'), defaultValue: 'employee' },
+  type: { type: DataTypes.ENUM('hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'trainee', 'intern', 'employee'), defaultValue: 'employee' },
   branch: { type: DataTypes.STRING(80), defaultValue: 'Bhubaneswar' },
   department: { type: DataTypes.STRING(80), defaultValue: '' },
   joiningDate: { type: DataTypes.DATEONLY, allowNull: true },
@@ -871,6 +871,9 @@ const HrUser = sequelize.define('HrUser', {
   // history and performance. Kept as a JSON blob so sub-fields can evolve
   // without a migration for each one.
   profile: { type: DataTypes.JSON, defaultValue: {} },
+  shiftId: { type: DataTypes.INTEGER, allowNull: true }, // assigned HrShift
+  // Employee-record timeline: joined, profile updates, promotions, notes, etc.
+  timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, {
   tableName: 'hr_users',
@@ -898,6 +901,27 @@ const HrDepartment = sequelize.define('HrDepartment', {
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'hr_departments' });
 HrDepartment.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Work shifts the admin defines (with break window). Assigned per employee.
+const HrShift = sequelize.define('HrShift', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(80), allowNull: false },
+  startTime: { type: DataTypes.STRING(10), defaultValue: '' },  // "09:00"
+  endTime: { type: DataTypes.STRING(10), defaultValue: '' },    // "18:00"
+  breakStart: { type: DataTypes.STRING(10), defaultValue: '' },
+  breakEnd: { type: DataTypes.STRING(10), defaultValue: '' },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'hr_shifts' });
+HrShift.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Holiday list — per branch (branch '' means all branches / company-wide).
+const HrHoliday = sequelize.define('HrHoliday', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(120), allowNull: false },
+  date: { type: DataTypes.DATEONLY, allowNull: false },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+}, { tableName: 'hr_holidays' });
+HrHoliday.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 // Recruitment scaffolding — job posts. Structure only for now; functionality
 // arrives in a later version.
@@ -929,6 +953,6 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget,
-  HrUser, HrBranch, HrDepartment, HrJobPost, HrCandidate,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
