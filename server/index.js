@@ -16,6 +16,7 @@ const leads = require('./routes/leads');
 const reviews = require('./routes/reviews');
 const briefs = require('./routes/briefs');
 const tv = require('./routes/tv');
+const hr = require('./routes/hr');
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use('/api/leads', leads);
 app.use('/api/reviews', reviews);
 app.use('/api/briefs', briefs);
 app.use('/api/tv', tv);
+app.use('/api/hr', hr);
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.
@@ -278,6 +280,15 @@ connectWithRetry()
       if (removed) console.log(`[migrate] removed ${removed} older report(s), keeping latest per lead`);
     } catch (e) {
       console.error('[migrate] report dedup skipped:', e.message);
+    }
+    // Seed the two default HR branches once, so the branch dropdown isn't empty.
+    try {
+      const { HrBranch } = require('./models');
+      for (const name of ['Bhubaneswar', 'Kolkata']) {
+        await HrBranch.findOrCreate({ where: { name }, defaults: { name } });
+      }
+    } catch (e) {
+      console.error('[migrate] HR branch seed skipped:', e.message);
     }
     } // end if (connected)
 

@@ -838,8 +838,83 @@ async function initDb({ sync = true } = {}) {
   return s;
 }
 
+// ===========================================================================
+// HR MODULE MODELS
+// These are entirely separate from the Site Analysis / CRM models above. The HR
+// portal is admin-plus-HR-staff only and never touches CRM data. HR staff are
+// their own user population (HrUser), distinct from CRM users (User).
+// ===========================================================================
+
+// HR portal staff. Their own login population, separate from CRM `User`. Type
+// is the access/user class (hr, recruiter, employee); designation is their
+// human-readable title (HR Manager, Sr HR Executive, etc.) that the admin sets.
+const HrUser = sequelize.define('HrUser', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(120), allowNull: false },
+  email: { type: DataTypes.STRING(160), allowNull: false, unique: true },
+  passwordHash: { type: DataTypes.STRING(200), allowNull: false },
+  phone: { type: DataTypes.STRING(40), defaultValue: '+91 ' },
+  designation: { type: DataTypes.STRING(80), defaultValue: '' },
+  // Access class within HR: 'hr', 'recruiter', or 'employee'.
+  type: { type: DataTypes.ENUM('hr', 'recruiter', 'employee'), defaultValue: 'employee' },
+  branch: { type: DataTypes.STRING(80), defaultValue: 'Bhubaneswar' },
+  branchIncharge: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Who they report to — another HrUser id, or an admin (see reportsToAdminId).
+  reportsToId: { type: DataTypes.INTEGER, allowNull: true },
+  reportsToAdminId: { type: DataTypes.INTEGER, allowNull: true }, // a CRM admin User.id
+  // Recruiter targets: daily interview schedule + monthly closings/onboarding.
+  targets: { type: DataTypes.JSON, defaultValue: { dailyInterviews: 0, monthlyOnboarding: 0 } },
+  avatar: { type: DataTypes.TEXT, allowNull: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, {
+  tableName: 'hr_users',
+  indexes: [{ name: 'idx_hr_users_email', unique: true, fields: ['email'] }],
+});
+HrUser.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get());
+  o._id = o.id;
+  delete o.passwordHash;
+  return o;
+};
+
+// Branches the admin manages (feeds the Branch dropdown).
+const HrBranch = sequelize.define('HrBranch', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(80), allowNull: false, unique: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'hr_branches' });
+HrBranch.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Recruitment scaffolding — job posts. Structure only for now; functionality
+// arrives in a later version.
+const HrJobPost = sequelize.define('HrJobPost', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  title: { type: DataTypes.STRING(160), allowNull: false },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  description: { type: DataTypes.TEXT, defaultValue: '' },
+  status: { type: DataTypes.STRING(30), defaultValue: 'open' },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), defaultValue: '' },
+}, { tableName: 'hr_job_posts' });
+HrJobPost.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Recruitment scaffolding — candidates.
+const HrCandidate = sequelize.define('HrCandidate', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(120), allowNull: false },
+  email: { type: DataTypes.STRING(160), defaultValue: '' },
+  phone: { type: DataTypes.STRING(40), defaultValue: '' },
+  jobPostId: { type: DataTypes.INTEGER, allowNull: true },
+  // Recruitment stage: applied → pipeline → onboarded (details later).
+  stage: { type: DataTypes.STRING(30), defaultValue: 'applied' },
+  recruiterId: { type: DataTypes.INTEGER, allowNull: true },
+  notes: { type: DataTypes.TEXT, defaultValue: '' },
+}, { tableName: 'hr_candidates' });
+HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget,
+  HrUser, HrBranch, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

@@ -24,6 +24,12 @@ async function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Sign in to continue.' });
   try {
     const payload = jwt.verify(token, SECRET());
+    // HR-portal tokens must never work against the CRM API, even though both
+    // token types are signed with the same secret. The `portal:'hr'` claim marks
+    // an HR-staff token; reject it here so HR ids can't collide with CRM ids.
+    if (payload.portal === 'hr') {
+      return res.status(403).json({ error: 'This session is for the HR portal.' });
+    }
     const user = await User.findByPk(payload.id, { attributes: { exclude: ['passwordHash'] } });
     if (!user || !user.active) return res.status(401).json({ error: 'This account is no longer active.' });
     req.user = user;

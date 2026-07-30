@@ -175,6 +175,11 @@ function Login({ onSignIn }) {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </div>
+
+        {/* Separate entrance to the HR portal (HR staff + admins). */}
+        <div className="text-center mt-5">
+          <a href="/hr/login" className="text-xs font-bold text-slate-400 hover:text-[#FF6A00] transition">HR Portal →</a>
+        </div>
       </div>
     </div>
   );

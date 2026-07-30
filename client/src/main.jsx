@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import App from './App.jsx';
 import Admin from './Admin.jsx';
+import HrApp from './HrApp.jsx';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -10,6 +11,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <Routes>
         <Route path="/admin" element={<Admin />} />
+        <Route path="/hr/*" element={<HrApp />} />
         <Route path="/*" element={<App />} />
       </Routes>
     </BrowserRouter>
