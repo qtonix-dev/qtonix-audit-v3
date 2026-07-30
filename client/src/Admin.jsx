@@ -11,6 +11,32 @@ import { formatPhone } from './countries.js';
 // ---- brand palette (mirrors the sandbox C object) ----
 const C = { navy: '#050A1F', orange: '#FF6A00', orangeDeep: '#FF4500', blue: '#2563EB' };
 
+// Upload an avatar to ImageKit (via server-issued auth) and return its URL.
+// Falls back to a downscaled base64 data URL if ImageKit isn't connected, so
+// avatars keep working before the keys are entered.
+async function uploadAvatar(file, userName) {
+  let ik = null;
+  try { ik = await api('/admin/imagekit'); } catch { ik = null; }
+  if (ik && ik.configured) {
+    const auth = await api('/admin/imagekit/auth');
+    const safe = (userName || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const form = new FormData();
+    form.append('file', file);
+    form.append('fileName', `${safe}.jpg`);
+    form.append('folder', '/qtonix-crm/avatars');
+    form.append('publicKey', auth.publicKey);
+    form.append('signature', auth.signature);
+    form.append('expire', auth.expire);
+    form.append('token', auth.token);
+    form.append('useUniqueFileName', 'true');
+    const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Upload failed.');
+    return data.url;
+  }
+  return fileToAvatar(file); // No ImageKit yet — keep the old base64 path.
+}
+
 const api = async (path, opts = {}) => {
   const token = localStorage.getItem('qtx_token');
   const res = await fetch(API_BASE + '/api' + path, {
@@ -1157,7 +1183,7 @@ function Users({ me, say }) {
                 <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
                   const file = e.target.files && e.target.files[0];
                   if (!file) return;
-                  try { const dataUrl = await fileToAvatar(file); setEdit({ ...edit, avatar: dataUrl }); } catch { setErr('Could not read that image.'); }
+                  try { const url = await uploadAvatar(file, edit.name); setEdit({ ...edit, avatar: url }); } catch (err) { setErr(err.message || 'Could not upload that image.'); }
                 }} />
               </label>
               {edit.avatar && <button onClick={() => setEdit({ ...edit, avatar: null })} className="ml-2 text-xs font-bold text-red-500">Remove</button>}
@@ -1433,6 +1459,93 @@ function LabelListEditor({ title, items, onChange }) {
   );
 }
 
+// ImageKit connection panel — same keys the HR portal uses. Agent avatars in
+// Site Analysis upload here instead of being stored as base64 in MySQL.
+function ImageKitPanel({ say }) {
+  const [cfg, setCfg] = useState({ publicKey: '', urlEndpoint: '', hasPrivateKey: false, configured: false });
+  const [privateKey, setPrivateKey] = useState('');
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api('/admin/imagekit').then(setCfg).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    setBusy(true); setStatus(null);
+    try {
+      const body = { publicKey: cfg.publicKey, urlEndpoint: cfg.urlEndpoint };
+      if (privateKey.trim()) body.privateKey = privateKey.trim();
+      const res = await api('/admin/imagekit', { method: 'PUT', body: JSON.stringify(body) });
+      setStatus(res); setPrivateKey(''); load();
+    } catch (e) { setStatus({ ok: false, message: e.message }); } finally { setBusy(false); }
+  };
+  return (
+    <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-bold text-sm" style={{ color: C.navy }}>ImageKit — image storage</h3>
+        <span className={`text-[11px] font-bold rounded-full px-2.5 py-1 ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{cfg.configured ? 'Connected' : 'Not connected'}</span>
+      </div>
+      <p className="text-xs text-slate-500 mb-5">Agent profile photos upload here (folder <code>/qtonix-crm/avatars</code>) instead of being stored in the database. Shared with the HR portal.</p>
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Public key"><input className={inputCls} value={cfg.publicKey} onChange={(e) => setCfg({ ...cfg, publicKey: e.target.value })} placeholder="public_xxxxxxxx" /></Field>
+        <Field label="URL endpoint"><input className={inputCls} value={cfg.urlEndpoint} onChange={(e) => setCfg({ ...cfg, urlEndpoint: e.target.value })} placeholder="https://ik.imagekit.io/your_id" /></Field>
+        <Field label="Private key"><input type="password" className={inputCls} value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} placeholder={cfg.hasPrivateKey ? '••••••••' : 'private_xxxxxxxx'} /></Field>
+      </div>
+      {status && <div className={`mt-3 rounded-lg px-3 py-2.5 text-sm ${status.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{status.message}</div>}
+      <div className="flex justify-end mt-4"><Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save & test connection'}</Btn></div>
+    </div>
+  );
+}
+
+// Gmail (email) integration panel. Admin enters the OAuth app credentials once;
+// each user then connects their own mailbox from the Users portal.
+function EmailPanel({ say }) {
+  const [cfg, setCfg] = useState({ configured: false, clientId: '', hasSecret: false, redirectUri: '' });
+  const [secret, setSecret] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api('/gmail/config').then((c) => { setCfg(c); setClientId(c.clientId || ''); }).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    setBusy(true); setStatus(null);
+    try {
+      const body = { clientId };
+      if (secret.trim()) body.clientSecret = secret.trim();
+      const res = await api('/gmail/config', { method: 'PUT', body: JSON.stringify(body) });
+      setStatus(res); setSecret(''); load();
+    } catch (e) { setStatus({ ok: false, message: e.message }); } finally { setBusy(false); }
+  };
+  return (
+    <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-bold text-sm" style={{ color: C.navy }}>Email — Gmail / Google Workspace</h3>
+        <span className={`text-[11px] font-bold rounded-full px-2.5 py-1 ${cfg.configured ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{cfg.configured ? 'Configured' : 'Not configured'}</span>
+      </div>
+      <p className="text-xs text-slate-500 mb-4">Connect your Google Workspace so agents can read and reply to lead emails from the lead page. Set this up once; each person then connects their own mailbox.</p>
+
+      <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 mb-4 text-xs text-slate-600 leading-relaxed">
+        <div className="font-bold text-slate-700 mb-1">One-time setup (Workspace admin):</div>
+        <ol className="list-decimal ml-4 space-y-0.5">
+          <li>In Google Cloud Console, create a project and enable the <b>Gmail API</b>.</li>
+          <li>Create an <b>OAuth 2.0 Client ID</b> (type: Web application).</li>
+          <li>Add this <b>Authorized redirect URI</b>:</li>
+        </ol>
+        <div className="mt-2 flex items-center gap-2">
+          <code className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-[11px] break-all">{cfg.redirectUri || '—'}</code>
+          <button onClick={() => { navigator.clipboard?.writeText(cfg.redirectUri); say && say('Redirect URI copied.'); }} className="text-[11px] font-bold text-blue-500 whitespace-nowrap">Copy</button>
+        </div>
+        <div className="mt-2">Then paste the Client ID and Secret below.</div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        <Field label="OAuth Client ID"><input className={inputCls} value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" /></Field>
+        <Field label="OAuth Client Secret"><input type="password" className={inputCls} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={cfg.hasSecret ? '••••••••' : 'GOCSPX-…'} /></Field>
+      </div>
+      {status && <div className={`mt-3 rounded-lg px-3 py-2.5 text-sm ${status.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{status.message}</div>}
+      <div className="flex justify-end mt-4"><Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save credentials'}</Btn></div>
+    </div>
+  );
+}
+
 function Limits({ settings, setSettings }) {
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
@@ -1499,9 +1612,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Monthly Targets'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Monthly Targets'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'imagekit' && tab !== 'email';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -1529,6 +1642,8 @@ export default function Admin() {
         {tab === 'pricing' && <PricingEditor settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'branding' && <Branding settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
+        {tab === 'imagekit' && <ImageKitPanel say={say} />}
+        {tab === 'email' && <EmailPanel say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'targets' && <MonthlyTargets say={say} />}

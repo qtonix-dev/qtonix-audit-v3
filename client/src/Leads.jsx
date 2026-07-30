@@ -1472,14 +1472,14 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
           <div className="flex border-b border-slate-100">
             {/* A call-back prospect isn't a worked lead yet, so it has no deals
                 or reports — those tabs appear only once it's a real lead. */}
-            {['timeline', 'notes', 'activity', 'deals', 'reports', 'emaildraft']
+            {['timeline', 'notes', 'activity', 'deals', 'reports', 'emaildraft', 'inbox']
               .filter((t) => !(lead.status === 'callback' && (t === 'deals' || t === 'reports')))
               // Email draft is the pre-sales first-reply/reminder workflow, so
               // it only appears on pre-sales leads.
               .filter((t) => !(t === 'emaildraft' && !/pre-?sales/i.test(String(lead.leadSource || ''))))
               .map((t) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t}</button>
+                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t === 'inbox' ? 'Email' : t}</button>
             ))}
           </div>
           <div className="p-5 min-h-[300px]">
@@ -1489,6 +1489,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
             {effTab === 'deals' && !isCallback && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'reports' && !isCallback && <ReportsTab lead={lead} onChange={setLead} />}
             {effTab === 'emaildraft' && <EmailDraftTab lead={lead} user={user} onChange={setLead} />}
+            {effTab === 'inbox' && <EmailInboxTab lead={lead} user={user} />}
           </div>
         </div>
       </div>
@@ -1549,6 +1550,109 @@ function Row({ k, v }) {
  * place. The agent (lead owner) writes drafts with a subject and body; the lead
  * manager only acknowledges (reads the first reply, receives the reminder).
  */
+// The live Gmail thread for a lead: messages synced from the current user's
+// connected mailbox (matched by the lead's email/domain), with read + reply +
+// compose. Distinct from the pre-sales "Email draft" workflow.
+function EmailInboxTab({ lead, user }) {
+  const [data, setData] = useState(null); // { connected, email, emails }
+  const [err, setErr] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const [composing, setComposing] = useState(false);
+  const [reply, setReply] = useState(null); // the message being replied to
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, [lead._id, lead.id]);
+
+  const openMsg = async (m) => {
+    setOpenId(openId === m._id ? null : m._id);
+    if (!m.isRead && openId !== m._id) { try { await api(`/gmail/email/${m._id}/read`, { method: 'POST' }); m.isRead = true; } catch { /* noop */ } }
+  };
+
+  const startReply = (m) => {
+    setReply(m); setComposing(true);
+    setSubject(m.subject && /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject || ''}`);
+    setBody('');
+  };
+  const startCompose = () => { setReply(null); setComposing(true); setSubject(''); setBody(''); };
+
+  const send = async () => {
+    setSending(true); setErr('');
+    try {
+      await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
+        to: lead.email, subject, body,
+        threadId: reply ? reply.threadId : undefined,
+        inReplyTo: reply ? reply.gmailMessageId : undefined,
+      }) });
+      setComposing(false); setBody(''); setSubject(''); setReply(null); load();
+    } catch (e) { setErr(e.message); } finally { setSending(false); }
+  };
+
+  if (!data) return <div className="text-slate-400 text-sm py-8 text-center">{err || 'Loading…'}</div>;
+
+  if (!data.connected) {
+    return (
+      <div className="text-center py-10">
+        <div className="text-sm font-bold text-[#050A1F] mb-1">Connect your email to see this thread</div>
+        <p className="text-xs text-slate-500 mb-4">Link your Google Workspace mailbox from “Connect email” in the top bar. Then emails to and from this lead show up here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs text-slate-400">Synced from <span className="font-semibold text-slate-600">{data.email}</span>{lead.email ? ` · matching ${lead.email}` : ''}</div>
+        <div className="flex gap-2">
+          <button onClick={load} className="text-xs font-bold text-slate-400 hover:text-slate-600">Refresh</button>
+          <button onClick={startCompose} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Compose</button>
+        </div>
+      </div>
+
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+
+      {composing && (
+        <div className="mb-4 rounded-xl border-2 p-4" style={{ borderColor: '#2563EB' }}>
+          <div className="text-xs font-bold text-[#050A1F] mb-2">{reply ? `Reply to ${reply.fromName || reply.fromEmail}` : `New email to ${lead.email || 'lead'}`}</div>
+          <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+          <RichText value={body} onChange={setBody} placeholder="Write your message…" minHeight={140} />
+          <div className="flex justify-end gap-2 mt-2">
+            <button onClick={() => { setComposing(false); setReply(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button>
+            <button onClick={send} disabled={sending} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{sending ? 'Sending…' : 'Send'}</button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {data.emails.length === 0 && <div className="text-slate-400 text-sm text-center py-8">No emails found for this lead yet. New messages sync every few minutes.</div>}
+        {data.emails.map((m) => (
+          <div key={m._id} className={`rounded-xl border ${m.isRead ? 'border-slate-100' : 'border-[#FF6A00]/40 bg-orange-50/30'}`}>
+            <button onClick={() => openMsg(m)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.direction === 'outbound' ? 'bg-blue-400' : m.isRead ? 'bg-slate-200' : 'bg-[#FF4500]'}`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs ${m.isRead ? 'font-semibold text-slate-600' : 'font-bold text-[#050A1F]'}`}>{m.direction === 'outbound' ? `To ${m.toEmail}` : (m.fromName || m.fromEmail)}</span>
+                  <span className="text-[10px] text-slate-400">{new Date(m.sentAt).toLocaleString()}</span>
+                </div>
+                <div className="text-xs text-slate-500 truncate">{m.subject || '(no subject)'} — {m.snippet}</div>
+              </div>
+            </button>
+            {openId === m._id && (
+              <div className="px-4 pb-4 border-t border-slate-100 pt-3">
+                <div className="text-[11px] text-slate-400 mb-2">From {m.fromEmail} · To {m.toEmail}</div>
+                <div className="text-sm text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<pre style="white-space:pre-wrap;font-family:inherit">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</pre>` }} />
+                <div className="mt-3"><button onClick={() => startReply(m)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>Reply</button></div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EmailDraftTab({ lead, user, onChange }) {
   const isOwner = lead.ownerId === user.id;
   const isLM = ['leadmanager', 'admin'].includes(user.role);

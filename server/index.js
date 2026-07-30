@@ -17,6 +17,7 @@ const reviews = require('./routes/reviews');
 const briefs = require('./routes/briefs');
 const tv = require('./routes/tv');
 const hr = require('./routes/hr');
+const gmailRoutes = require('./routes/gmail');
 
 const app = express();
 
@@ -46,6 +47,7 @@ app.use('/api/reviews', reviews);
 app.use('/api/briefs', briefs);
 app.use('/api/tv', tv);
 app.use('/api/hr', hr);
+app.use('/api/gmail', gmailRoutes);
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.
@@ -300,6 +302,9 @@ connectWithRetry()
     app.listen(PORT, () => {
       console.log(`API listening on :${PORT}`);
       if (process.env.DEMO_MODE === 'true') console.log(`Demo page: http://localhost:${PORT}/demo`);
+      // Background Gmail sync (per-user OAuth mailboxes → lead_emails).
+      try { require('./jobs/gmailSync').start(require('./models')); }
+      catch (e) { console.error('[gmail-sync] not started:', e.message); }
     });
   })
   .catch((e) => {

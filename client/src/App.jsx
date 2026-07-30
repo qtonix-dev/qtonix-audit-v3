@@ -778,6 +778,64 @@ function NavIcon({ name, className = 'w-4 h-4' }) {
   return <svg viewBox="0 0 24 24" className={className} aria-hidden="true">{paths[name] || null}</svg>;
 }
 
+// A compact Gmail connect control shown in the header. Lets each user link
+// their own Google Workspace mailbox (per-user OAuth) so lead emails show up on
+// the lead page. Opens Google consent in a popup and listens for completion.
+function GmailConnect() {
+  const [status, setStatus] = useState(null); // { connected, email }
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () => api('/gmail/status').then(setStatus).catch(() => setStatus({ connected: false }));
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const onMsg = (e) => { if (e.data && e.data.gmail) { load(); if (e.data.gmail === 'connected') setOpen(false); } };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const connect = async () => {
+    setBusy(true); setErr('');
+    try {
+      const { url } = await api('/gmail/connect');
+      window.open(url, 'gmail_oauth', 'width=520,height=640');
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const disconnect = async () => {
+    if (!confirm('Disconnect your Gmail? Lead emails will stop syncing.')) return;
+    try { await api('/gmail/disconnect', { method: 'POST' }); load(); } catch (e) { setErr(e.message); }
+  };
+
+  if (!status) return null;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} title="Email connection"
+        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${status.connected ? 'text-green-400 hover:text-green-300' : 'text-slate-400 hover:text-white'}`}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+        {status.connected ? 'Email on' : 'Connect email'}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl border border-slate-200 shadow-lg p-4 z-50 text-left">
+          <div className="text-sm font-bold text-[#050A1F] mb-1">Gmail connection</div>
+          {status.connected ? (
+            <>
+              <p className="text-xs text-slate-500 mb-3">Connected as <span className="font-semibold text-slate-700">{status.email}</span>. Lead emails sync automatically.</p>
+              <button onClick={disconnect} className="w-full rounded-lg border border-red-200 text-red-600 px-3 py-2 text-xs font-bold hover:bg-red-50">Disconnect</button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500 mb-3">Link your Google Workspace mailbox to read and reply to lead emails from the lead page.</p>
+              <button onClick={connect} disabled={busy} className="w-full rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Opening…' : 'Connect Gmail'}</button>
+            </>
+          )}
+          {err && <div className="mt-2 text-[11px] text-red-500">{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   // The Motivator TV board runs at /tv/<token>. It's a public, unauthenticated
   // screen for an office TV, so it short-circuits the whole app shell — no
@@ -943,6 +1001,7 @@ export default function App() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <GmailConnect />
             <div className="text-right">
               <div className="text-xs font-semibold text-white">{user.name}</div>
               <div className="text-[10px] text-slate-400">{user.designation}</div>

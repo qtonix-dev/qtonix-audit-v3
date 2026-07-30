@@ -6,6 +6,7 @@ const fs = require('fs');
 const { User, Report, Settings, AuditLog, MonthlyTarget, Lead, sequelize, Op, defaultPricing } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { SERanking } = require('../services/seranking');
+const imagekit = require('../services/imagekit');
 
 router.use(requireAuth, requireAdmin);
 
@@ -38,6 +39,39 @@ router.get('/settings', async (req, res) => {
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   res.json(s.toSafeJSON());
+});
+
+// ImageKit — CRM reuses the same keys the HR portal stores. Status + auth
+// params so the browser can upload agent avatars straight to ImageKit.
+router.get('/imagekit', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = imagekit.getConfig(s);
+    res.json({ configured: imagekit.isConfigured(s), publicKey: cfg.publicKey || '', urlEndpoint: cfg.urlEndpoint || '', hasPrivateKey: !!cfg.privateKey });
+  } catch (e) { next(e); }
+});
+
+router.put('/imagekit', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const keys = { ...(s.apiKeys || {}) };
+    if (b.publicKey !== undefined) keys.imagekitPublic = String(b.publicKey).trim();
+    if (b.urlEndpoint !== undefined) keys.imagekitEndpoint = String(b.urlEndpoint).trim();
+    if (b.privateKey !== undefined && b.privateKey && !String(b.privateKey).includes('•')) keys.imagekitPrivate = String(b.privateKey).trim();
+    s.apiKeys = keys; s.changed('apiKeys', true);
+    await s.save();
+    const fresh = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json(await imagekit.testConnection(fresh));
+  } catch (e) { next(e); }
+});
+
+router.get('/imagekit/auth', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!imagekit.isConfigured(s)) return res.status(400).json({ error: 'ImageKit is not connected. Add the keys in Admin → ImageKit.' });
+    res.json(imagekit.getAuthParams(s));
+  } catch (e) { next(e); }
 });
 
 router.put('/settings', async (req, res, next) => {

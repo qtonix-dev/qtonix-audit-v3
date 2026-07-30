@@ -123,6 +123,12 @@ const User = sequelize.define(
     // Small profile photo as a data URL (base64). Kept in the DB so it survives
     // Railway's ephemeral filesystem. Shown on the leaderboard.
     avatar: { type: DataTypes.TEXT, allowNull: true },
+    // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
+    // model hook below. connectedEmail is the Workspace address they linked.
+    gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
+    gmailConnectedEmail: { type: DataTypes.STRING, allowNull: true },
+    gmailConnectedAt: { type: DataTypes.DATE, allowNull: true },
+    gmailHistoryId: { type: DataTypes.STRING, allowNull: true }, // last synced marker
   },
   { tableName: 'users', indexes: [{ name: 'idx_users_role', fields: ['role'] }] }
 );
@@ -388,7 +394,7 @@ const Settings = sequelize.define(
 
     apiKeys: {
       type: DataTypes.JSON,
-      defaultValue: { seranking: '', anthropic: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '' },
+      defaultValue: { seranking: '', anthropic: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '' },
     },
 
     pricing: { type: DataTypes.JSON },
@@ -587,6 +593,37 @@ const AuditLog = sequelize.define(
   { tableName: 'audit_logs', indexes: [{ name: 'idx_audit_user', fields: ['userId'] }] }
 );
 
+// Synced Gmail messages, linked to a lead + the user whose mailbox they came
+// from. Populated by the background Gmail sync; read by the lead detail page.
+const LeadEmail = sequelize.define(
+  'LeadEmail',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    leadId: { type: DataTypes.INTEGER, allowNull: false },
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // whose mailbox
+    gmailMessageId: { type: DataTypes.STRING(120), allowNull: false },
+    threadId: { type: DataTypes.STRING(120), defaultValue: '' },
+    direction: { type: DataTypes.ENUM('inbound', 'outbound'), defaultValue: 'inbound' },
+    fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
+    fromName: { type: DataTypes.STRING(255), defaultValue: '' },
+    toEmail: { type: DataTypes.TEXT, defaultValue: '' },
+    subject: { type: DataTypes.TEXT, defaultValue: '' },
+    snippet: { type: DataTypes.TEXT, defaultValue: '' },
+    bodyHtml: { type: DataTypes.TEXT('long'), defaultValue: '' },
+    bodyText: { type: DataTypes.TEXT('long'), defaultValue: '' },
+    sentAt: { type: DataTypes.DATE },
+    isRead: { type: DataTypes.BOOLEAN, defaultValue: false },
+  },
+  {
+    tableName: 'lead_emails',
+    indexes: [
+      { name: 'idx_leademail_lead', fields: ['leadId'] },
+      { name: 'idx_leademail_msg', unique: true, fields: ['userId', 'gmailMessageId'] },
+    ],
+  }
+);
+LeadEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
 
@@ -611,8 +648,25 @@ User.prototype.toJSON = function () {
   const o = Object.assign({}, this.get());
   o._id = o.id;
   delete o.passwordHash;
+  o.gmailConnected = !!o.gmailRefreshToken;
+  delete o.gmailRefreshToken;
   return o;
 };
+
+User.prototype.getGmailRefreshToken = function () {
+  const v = this.gmailRefreshToken;
+  if (!v) return '';
+  return /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(v) ? decrypt(v) : v;
+};
+
+function encryptGmailToken(instance) {
+  const v = instance.gmailRefreshToken;
+  if (v && !/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(String(v))) {
+    instance.gmailRefreshToken = encrypt(String(v));
+  }
+}
+User.beforeCreate(encryptGmailToken);
+User.beforeUpdate(encryptGmailToken);
 
 // ---------------------------------------------------------------------------
 // Encryption hooks — transparent at the model layer.
@@ -952,7 +1006,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
