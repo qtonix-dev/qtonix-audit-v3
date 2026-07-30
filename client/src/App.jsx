@@ -781,59 +781,204 @@ function NavIcon({ name, className = 'w-4 h-4' }) {
 // A compact Gmail connect control shown in the header. Lets each user link
 // their own Google Workspace mailbox (per-user OAuth) so lead emails show up on
 // the lead page. Opens Google consent in a popup and listens for completion.
-function GmailConnect() {
+// Shared Gmail connection state + actions, used by the profile modal and the
+// dashboard notice. Listens for the OAuth popup's completion message.
+function useGmail() {
   const [status, setStatus] = useState(null); // { connected, email }
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
   const [err, setErr] = useState('');
-
   const load = () => api('/gmail/status').then(setStatus).catch(() => setStatus({ connected: false }));
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    const onMsg = (e) => { if (e.data && e.data.gmail) { load(); if (e.data.gmail === 'connected') setOpen(false); } };
+    const onMsg = (e) => { if (e.data && e.data.gmail) load(); };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
   }, []);
-
   const connect = async () => {
     setBusy(true); setErr('');
-    try {
-      const { url } = await api('/gmail/connect');
-      window.open(url, 'gmail_oauth', 'width=520,height=640');
-    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+    try { const { url } = await api('/gmail/connect'); window.open(url, 'gmail_oauth', 'width=520,height=640'); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const disconnect = async () => {
     if (!confirm('Disconnect your Gmail? Lead emails will stop syncing.')) return;
     try { await api('/gmail/disconnect', { method: 'POST' }); load(); } catch (e) { setErr(e.message); }
   };
+  return { status, busy, err, connect, disconnect, reload: load };
+}
 
-  if (!status) return null;
+// The circular avatar + name/designation + dropdown in the header.
+function UserMenu({ user, onEditProfile, onSignOut }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+  const initial = (user.name || '?').trim()[0]?.toUpperCase() || '?';
   return (
-    <div className="relative">
-      <button onClick={() => setOpen((o) => !o)} title="Email connection"
-        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${status.connected ? 'text-green-400 hover:text-green-300' : 'text-slate-400 hover:text-white'}`}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
-        {status.connected ? 'Email on' : 'Connect email'}
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 hover:bg-white/5 transition">
+        {user.avatar
+          ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full object-cover" />
+          : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
+        <span className="text-right leading-tight">
+          <span className="block text-xs font-semibold text-white">{user.name}</span>
+          <span className="block text-[10px] text-slate-400">{user.designation}</span>
+        </span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M6 9l6 6 6-6" /></svg>
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl border border-slate-200 shadow-lg p-4 z-50 text-left">
-          <div className="text-sm font-bold text-[#050A1F] mb-1">Gmail connection</div>
-          {status.connected ? (
-            <>
-              <p className="text-xs text-slate-500 mb-3">Connected as <span className="font-semibold text-slate-700">{status.email}</span>. Lead emails sync automatically.</p>
-              <button onClick={disconnect} className="w-full rounded-lg border border-red-200 text-red-600 px-3 py-2 text-xs font-bold hover:bg-red-50">Disconnect</button>
-            </>
-          ) : (
-            <>
-              <p className="text-xs text-slate-500 mb-3">Link your Google Workspace mailbox to read and reply to lead emails from the lead page.</p>
-              <button onClick={connect} disabled={busy} className="w-full rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Opening…' : 'Connect Gmail'}</button>
-            </>
-          )}
-          {err && <div className="mt-2 text-[11px] text-red-500">{err}</div>}
+        <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+          <button onClick={() => { setOpen(false); onEditProfile(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg>
+            Edit Profile
+          </button>
+          <button onClick={() => { setOpen(false); onSignOut(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 text-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></svg>
+            Sign out
+          </button>
         </div>
       )}
     </div>
   );
+}
+
+// The self-service Edit Profile modal: picture, password, birthday, and Gmail.
+function EditProfileModal({ user, onClose, onSaved }) {
+  const gmail = useGmail();
+  const [avatar, setAvatar] = useState(user.avatar || '');
+  const [birthday, setBirthday] = useState(user.birthday || '');
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const pickPhoto = async (e) => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    setUploading(true); setErr('');
+    try { const url = await uploadCrmAvatar(file, user.name); setAvatar(url); }
+    catch (e2) { setErr(e2.message || 'Could not upload that image.'); } finally { setUploading(false); }
+  };
+  const save = async () => {
+    setErr(''); setMsg('');
+    if (pw && pw.length < 8) return setErr('New password must be at least 8 characters.');
+    if (pw && pw !== pw2) return setErr('The two passwords don’t match.');
+    setBusy(true);
+    try {
+      const body = { avatar, birthday: birthday || null };
+      if (pw) body.password = pw;
+      const res = await api('/auth/me/profile', { method: 'PUT', body: JSON.stringify(body) });
+      onSaved && onSaved(res);
+      setMsg('Profile saved.'); setPw(''); setPw2('');
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const initial = (user.name || '?').trim()[0]?.toUpperCase() || '?';
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg my-8" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <h3 className="text-lg font-extrabold text-[#050A1F] mb-4">Edit Profile</h3>
+        {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>}
+        {msg && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
+
+        <div className="flex items-center gap-4 mb-5">
+          {avatar ? <img src={avatar} alt="" className="w-16 h-16 rounded-full object-cover" /> : <span className="w-16 h-16 rounded-full bg-orange-50 text-[#FF4500] flex items-center justify-center text-xl font-bold">{initial}</span>}
+          <label className={`inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50 ${uploading ? 'opacity-50' : ''}`}>
+            {uploading ? 'Uploading…' : 'Upload picture'}
+            <input type="file" accept="image/*" className="hidden" onChange={pickPhoto} disabled={uploading} />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Birthday</label>
+            <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">New password</label>
+              <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Leave blank to keep" className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Confirm password</label>
+              <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+            </div>
+          </div>
+        </div>
+
+        {/* Email connection */}
+        <div className="mt-5 rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-bold text-[#050A1F]">Email connection</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                {gmail.status?.connected ? <>Connected as <span className="font-semibold text-slate-700">{gmail.status.email}</span></> : 'Connect your Google Workspace mailbox to read & reply to lead emails.'}
+              </div>
+            </div>
+            {gmail.status?.connected
+              ? <button onClick={gmail.disconnect} className="rounded-lg border border-red-200 text-red-600 px-3 py-2 text-xs font-bold hover:bg-red-50 whitespace-nowrap">Disconnect</button>
+              : <button onClick={gmail.connect} disabled={gmail.busy} className="rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50 whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{gmail.busy ? 'Opening…' : 'Connect Gmail'}</button>}
+          </div>
+          {gmail.err && <div className="mt-2 text-[11px] text-red-500">{gmail.err}</div>}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{busy ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A dismissible-until-done banner shown on the dashboard while the user hasn't
+// connected their email. Disappears automatically once connected.
+export function DashboardGmailNotice({ onOpenProfile }) {
+  const { status, connect, busy } = useGmail();
+  if (!status || status.connected) return null;
+  return (
+    <div className="mb-5 rounded-xl border border-[#FF6A00]/30 bg-orange-50/60 px-4 py-3 flex items-center justify-between gap-4">
+      <div className="flex items-center gap-3">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF4500" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+        <div>
+          <div className="text-sm font-bold text-[#050A1F]">Connect your email</div>
+          <div className="text-xs text-slate-500">Link your Google Workspace mailbox to read and reply to lead emails right from the lead page.</div>
+        </div>
+      </div>
+      <button onClick={connect} disabled={busy} className="rounded-lg px-4 py-2 text-xs font-bold text-white disabled:opacity-50 whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Opening…' : 'Connect email'}</button>
+    </div>
+  );
+}
+
+// Upload a CRM avatar to ImageKit (falls back to base64 if not configured).
+async function uploadCrmAvatar(file, userName) {
+  let ik = null;
+  try { ik = await api('/admin/imagekit'); } catch { ik = null; }
+  if (ik && ik.configured) {
+    const auth = await api('/admin/imagekit/auth');
+    const safe = (userName || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const form = new FormData();
+    form.append('file', file); form.append('fileName', `${safe}.jpg`); form.append('folder', '/qtonix-crm/avatars');
+    form.append('publicKey', auth.publicKey); form.append('signature', auth.signature);
+    form.append('expire', auth.expire); form.append('token', auth.token); form.append('useUniqueFileName', 'true');
+    const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Upload failed.');
+    return data.url;
+  }
+  // base64 fallback (downscaled)
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => { const img = new Image(); img.onload = () => {
+      const c = document.createElement('canvas'); c.width = 128; c.height = 128; const ctx = c.getContext('2d');
+      const min = Math.min(img.width, img.height); const sx = (img.width - min) / 2, sy = (img.height - min) / 2;
+      ctx.drawImage(img, sx, sy, min, min, 0, 0, 128, 128); resolve(c.toDataURL('image/jpeg', 0.82));
+    }; img.onerror = reject; img.src = reader.result; };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
 }
 
 export default function App() {
@@ -845,6 +990,7 @@ export default function App() {
   }
 
   const [user, setUser] = useState(null);
+  const [showProfile, setShowProfile] = useState(false);
   const [view, setView] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -1001,17 +1147,12 @@ export default function App() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <GmailConnect />
-            <div className="text-right">
-              <div className="text-xs font-semibold text-white">{user.name}</div>
-              <div className="text-[10px] text-slate-400">{user.designation}</div>
-            </div>
-            <button onClick={signOut} className="text-xs font-bold text-slate-400 hover:text-white">
-              Sign out
-            </button>
+            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onSignOut={signOut} />
           </div>
         </div>
       </header>
+
+      {showProfile && <EditProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => setUser((prev) => ({ ...prev, ...u }))} />}
 
       <main className="max-w-6xl mx-auto px-6 py-8">
         {view === 'dashboard' && dashMode === 'analytics' && isManagerOrAdmin && (

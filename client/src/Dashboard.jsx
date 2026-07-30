@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from './App.jsx';
+import { api, DashboardGmailNotice } from './App.jsx';
 import { Pagination } from './Leads.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
@@ -321,6 +321,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
   return (
     <div className="space-y-5">
+      {/* Prompt to connect email until the user has done so. */}
+      <DashboardGmailNotice />
+
       {/* Sales celebration — the most recent win in the last hour, shown to
           everyone so the whole floor sees it. Rotates as new sales land. */}
       {wins && wins.latest && <SalesCelebration latest={wins.latest} others={wins.wins} />}
@@ -638,6 +641,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
 
   return (
     <div className="space-y-5">
+      <DashboardGmailNotice />
       <div>
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Welcome, {user.name.split(' ')[0]}</h1>
         <div className="text-sm text-slate-400">Lead intake and pre-sales team performance.</div>

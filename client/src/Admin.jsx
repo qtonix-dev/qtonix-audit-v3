@@ -1071,7 +1071,7 @@ function OrgChart({ users, onReassign, onMoveManager }) {
 }
 
 function Users({ me, say }) {
-  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } } };
+  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', birthday: '', workAnniversary: '', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } } };
   const [users, setUsers] = useState([]);
   const [f, setF] = useState(blank);
   const [show, setShow] = useState(false);
@@ -1118,7 +1118,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, workAnniversary: edit.workAnniversary || null, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -1157,6 +1157,8 @@ function Users({ me, say }) {
             <Field label="Phone" hint="Appears on their report covers"><IndiaPhone value={f.phone} onChange={(v) => setF({ ...f, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
+            <Field label="Birthday"><input type="date" className={inputCls} value={f.birthday || ''} onChange={(e) => setF({ ...f, birthday: e.target.value })} /></Field>
+            <Field label="Work anniversary"><input type="date" className={inputCls} value={f.workAnniversary || ''} onChange={(e) => setF({ ...f, workAnniversary: e.target.value })} /></Field>
             {/* A lead manager coordinates intake only — no team, shift, alias,
                 designation or targets apply to them. */}
             {f.role !== 'leadmanager' && (
@@ -1195,6 +1197,8 @@ function Users({ me, say }) {
             <Field label="Phone"><IndiaPhone value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
+            <Field label="Birthday"><input type="date" className={inputCls} value={(edit.birthday || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, birthday: e.target.value })} /></Field>
+            <Field label="Work anniversary"><input type="date" className={inputCls} value={(edit.workAnniversary || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, workAnniversary: e.target.value })} /></Field>
             {edit.role !== 'leadmanager' && (
               <>
                 <Field label="Team"><select className={inputCls} value={edit.team || 'Bhubaneswar'} onChange={(e) => setEdit({ ...edit, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
@@ -1239,7 +1243,7 @@ function Users({ me, say }) {
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
-            <th className="px-4 py-3">Team / Shift</th><th className="px-4 py-3">Reports</th><th className="px-4 py-3"></th>
+            <th className="px-4 py-3">Team / Shift</th><th className="px-4 py-3">Reports</th><th className="px-4 py-3">Email</th><th className="px-4 py-3"></th>
           </tr></thead>
           <tbody>
             {users.map((u) => (
@@ -1257,6 +1261,11 @@ function Users({ me, say }) {
                 <td className="px-4 py-3"><span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={u.role === 'admin' ? { background: '#FFF4EC', color: C.orangeDeep } : { background: '#F1F5F9', color: '#64748B' }}>{u.role}</span></td>
                 <td className="px-4 py-3 text-[11px] text-slate-500">{u.team || '—'}<br /><span className="text-slate-400">{u.shift || ''}</span></td>
                 <td className="px-4 py-3 text-xs font-semibold">{u.reportsRun}</td>
+                <td className="px-4 py-3">
+                  {u.gmailConnected
+                    ? <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase bg-green-100 text-green-700" title={u.gmailConnectedEmail || ''}>● Connected</span>
+                    : <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase bg-slate-100 text-slate-400">○ Not connected</span>}
+                </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex gap-1.5 justify-end">
                     <Btn size="sm" variant="ghost" onClick={() => { setEdit({ ...u, newPassword: '' }); setErr(''); }}>Edit</Btn>

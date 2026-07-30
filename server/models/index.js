@@ -123,6 +123,8 @@ const User = sequelize.define(
     // Small profile photo as a data URL (base64). Kept in the DB so it survives
     // Railway's ephemeral filesystem. Shown on the leaderboard.
     avatar: { type: DataTypes.TEXT, allowNull: true },
+    birthday: { type: DataTypes.DATEONLY, allowNull: true },
+    workAnniversary: { type: DataTypes.DATEONLY, allowNull: true },
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
