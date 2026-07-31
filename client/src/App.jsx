@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import Leads from './Leads.jsx';
-import { CountryCombobox, PhoneField, Pagination, Icon } from './Leads.jsx';
+import { CountryCombobox, PhoneField, Pagination, Icon, MailEditor } from './Leads.jsx';
 import { formatPhone } from './countries.js';
 import Dashboard, { EmailDraftsPage } from './Dashboard.jsx';
 import Analytics from './Analytics.jsx';
@@ -1090,10 +1090,15 @@ function TemplatesModal({ user, onClose }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [msg, setMsg] = useState('');
+  const [vars, setVars] = useState([]);
+  const [showVars, setShowVars] = useState(false);
   const isAdmin = user.role === 'admin';
 
   const load = () => api('/gmail/templates').then(setList).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api('/gmail/template-variables').then(setVars).catch(() => {}); }, []);
+
+  // Insert a {{var}} token at the end of the body (the editor appends it).
+  const insertVar = (key) => { setEditing((e) => ({ ...e, bodyHtml: `${e.bodyHtml || ''} {{${key}}}` })); setShowVars(false); };
 
   const blank = () => ({ name: '', subject: '', bodyHtml: '', isGlobal: false });
   const save = async () => {
@@ -1147,8 +1152,29 @@ function TemplatesModal({ user, onClose }) {
               <input value={editing.subject || ''} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Subject (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
             </div>
             {isAdmin && <label className="flex items-center gap-2 text-xs text-slate-600 mb-2"><input type="checkbox" checked={!!editing.isGlobal} onChange={(e) => setEditing({ ...editing, isGlobal: e.target.checked })} /> Make this a global template (visible to everyone)</label>}
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Body</label>
-            <PasteHtmlEditor value={editing.bodyHtml} onChange={(html) => setEditing({ ...editing, bodyHtml: html })} minHeight={200} />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-600">Body</label>
+              <div className="relative">
+                <button onClick={() => setShowVars((v) => !v)} className="text-[11px] font-bold text-blue-500 flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                  Insert variable
+                </button>
+                {showVars && (
+                  <div className="absolute right-0 mt-1 w-56 max-h-64 overflow-auto bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+                    <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase">Lead</div>
+                    {vars.filter((v) => v.key.startsWith('lead.')).map((v) => (
+                      <button key={v.key} onClick={() => insertVar(v.key)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50">{v.label} <span className="text-slate-300">{`{{${v.key}}}`}</span></button>
+                    ))}
+                    <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase border-t border-slate-100 mt-1">Brief (if available)</div>
+                    {vars.filter((v) => v.key.startsWith('brief.')).map((v) => (
+                      <button key={v.key} onClick={() => insertVar(v.key)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50">{v.label} <span className="text-slate-300">{`{{${v.key}}}`}</span></button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <MailEditor value={editing.bodyHtml} onChange={(html) => setEditing({ ...editing, bodyHtml: html })} minHeight={200} placeholder="Write your template… use Insert variable for dynamic fields" />
+            <div className="text-[10px] text-slate-400 mt-1.5">Variables like <code>{'{{lead.firstName}}'}</code> are replaced with the lead’s real data when the template is used.</div>
             <div className="flex justify-end gap-2 mt-3">
               <button onClick={() => setEditing(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
               <button onClick={save} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save template</button>

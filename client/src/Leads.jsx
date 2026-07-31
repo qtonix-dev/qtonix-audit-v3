@@ -568,6 +568,8 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   const [statusFilter, setStatusFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [countryFilter, setCountryFilter] = useState('');
+  const [dateRange, setDateRange] = useState('all');
+  const [dateField, setDateField] = useState('created');
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [transferFor, setTransferFor] = useState(null); // lead awaiting transfer
@@ -602,6 +604,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       if (statusFilter) params.set('status', statusFilter);
       if (ownerFilter) params.set('ownerId', ownerFilter);
       if (countryFilter) params.set('country', countryFilter);
+      if (dateRange && dateRange !== 'all') { params.set('dateRange', dateRange); params.set('dateField', dateField); }
       if (untouchedFilter) params.set('untouched', String(untouchedFilter));
       // Prospects list asks for the callback stage; the main list asks for
       // everything past it. The server excludes callbacks from the plain list
@@ -622,9 +625,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
     setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage, dateRange, dateField]);
   // Any filter change should send the user back to the first page.
-  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [statusFilter, ownerFilter, countryFilter, untouchedFilter]);
+  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [statusFilter, ownerFilter, countryFilter, untouchedFilter, dateRange, dateField]);
 
   // Call Backs are ordered by the scheduled callback time by default, or by the
   // date the callback was added when the user flips the toggle. Other lists keep
@@ -663,7 +666,25 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
           )}
           <div className="text-sm text-slate-400">{items.length} total{user.role !== 'admin' ? ' · your visibility' : ''}</div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Compact date filter: range dropdown + a small Created/Activity
+              toggle. flex-wrap keeps the bar from breaking on narrow screens. */}
+          <div className="inline-flex items-center rounded-lg border border-slate-300 overflow-hidden">
+            <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="px-2.5 py-2 text-sm border-0 focus:outline-none bg-white">
+              <option value="all">Any date</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d">Last 7 days</option>
+              <option value="month">This month</option>
+              <option value="lastmonth">Last month</option>
+            </select>
+            {dateRange !== 'all' && (
+              <div className="inline-flex items-center bg-slate-100 text-[10px] font-bold border-l border-slate-200">
+                <button onClick={() => setDateField('created')} className={`px-2 py-2 ${dateField === 'created' ? 'bg-white text-[#050A1F]' : 'text-slate-400'}`} title="Filter by created date">Created</button>
+                <button onClick={() => setDateField('activity')} className={`px-2 py-2 ${dateField === 'activity' ? 'bg-white text-[#050A1F]' : 'text-slate-400'}`} title="Filter by last activity">Activity</button>
+              </div>
+            )}
+          </div>
           <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()}
             placeholder="Search name, email, website…"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-60 focus:outline-none focus:ring-2 focus:ring-orange-400" />
@@ -1097,14 +1118,12 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
       const list = r.owners || [];
       setConfig(r.config || {});
       setOwners(list);
-      // An agent owns their own leads, so default to self. Admins and lead
-      // managers must actively pick an owner — we leave ownerId null so the
-      // "Select the lead owner…" placeholder shows and forces a choice.
+      // The creator owns the lead by default (agents always; admins and managers
+      // can own too, so pre-select them). They can change it if the dropdown is
+      // available. Lead managers can't own, so they must actively pick someone.
       setF((s) => {
-        if (user.role === 'agent') {
-          const me = list.find((o) => o.id === user.id);
-          return me ? { ...s, ownerId: me.id } : s;
-        }
+        const me = list.find((o) => o.id === user.id);
+        if (me && ['agent', 'admin', 'manager'].includes(user.role)) return { ...s, ownerId: me.id };
         return { ...s, ownerId: null };
       });
     }).catch(() => {});
@@ -1939,6 +1958,8 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const [attachments, setAttachments] = useState([]);
   const [reports, setReports] = useState([]);
   const [showReports, setShowReports] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [schedDate, setSchedDate] = useState('');
   const [schedTime, setSchedTime] = useState('');
@@ -1954,6 +1975,15 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const sigFor = () => (currentFrom && currentFrom.signature) || defaultSignature || '';
 
   useEffect(() => { api(`/gmail/lead/${lead._id || lead.id}/reports`).then(setReports).catch(() => {}); }, []);
+  useEffect(() => { api('/gmail/templates').then(setTemplates).catch(() => {}); }, []);
+  const applyTemplate = async (tpl) => {
+    setShowTemplates(false);
+    try {
+      const res = await api(`/gmail/templates/${tpl._id}/apply`, { method: 'POST', body: JSON.stringify({ leadId: lead._id || lead.id }) });
+      if (res.subject) setSubject(res.subject);
+      if (res.body) setBody((b) => (b ? `${b}<br>${res.body}` : res.body));
+    } catch (e) { setErr(e.message); }
+  };
 
   const fileInput = useRef(null);
   const onFile = (e) => {
@@ -2069,6 +2099,24 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
                   <button key={r._id || r.id} onClick={() => attachReport(r)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50">
                     <div className="font-semibold text-[#050A1F] truncate">{r.businessName || 'Report'}</div>
                     <div className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString()}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button onClick={() => setShowTemplates((v) => !v)} title="Use a template" className="p-2 rounded-full hover:bg-slate-100 text-slate-500 flex items-center gap-1">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+              <span className="text-[10px] font-bold">Tpl</span>
+            </button>
+            {showTemplates && (
+              <div className="absolute bottom-11 left-0 w-64 max-h-64 overflow-auto bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+                <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">Insert a template</div>
+                {templates.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No templates yet. Create them in your profile menu → Templates.</div>}
+                {templates.map((t) => (
+                  <button key={t._id} onClick={() => applyTemplate(t)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50">
+                    <div className="font-semibold text-[#050A1F] truncate flex items-center gap-1.5">{t.name}{t.isGlobal && <span className="text-[8px] bg-blue-100 text-blue-700 rounded px-1 py-0.5">GLOBAL</span>}</div>
+                    {t.subject && <div className="text-[10px] text-slate-400 truncate">{t.subject}</div>}
                   </button>
                 ))}
               </div>

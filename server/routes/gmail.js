@@ -259,7 +259,8 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
       'You are a senior sales manager at Qtonix, a digital marketing and website design company.',
       'You write emails to prospects and clients. Tone: professional, warm and friendly, confident but never pushy.',
       'Keep emails well-structured and concise. Sign off as the Qtonix team (do not invent a personal name unless given one).',
-      'Return your answer as strict JSON: {"subject": "...", "body": "<p>...</p>"}. The body must be simple HTML (paragraphs, lists, links). No markdown, no <html> wrapper, no commentary outside the JSON.',
+      'FORMATTING: the body must be clean HTML with proper spacing — wrap every paragraph in its own <p> tag, use <br> for line breaks, and <ul><li> for any lists. Separate the greeting, each paragraph, and the sign-off into distinct <p> tags. Do NOT return a single run-on block or plain text with no tags.',
+      'Return your answer as strict JSON: {"subject": "...", "body": "<p>...</p><p>...</p>"}. No markdown, no <html> wrapper, no commentary outside the JSON.',
     ].join(' ');
 
     const userMsg = [
@@ -284,7 +285,13 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
     const raw = data.choices?.[0]?.message?.content || '{}';
     let parsed = {};
     try { parsed = JSON.parse(raw); } catch { parsed = { subject: '', body: raw }; }
-    res.json({ subject: parsed.subject || '', body: parsed.body || '' });
+    let body = parsed.body || '';
+    // If the model returned plain text (or newline-separated) without HTML tags,
+    // convert paragraphs/line-breaks to HTML so the email reads with spacing.
+    if (body && !/<(p|br|div|ul|ol|table)\b/i.test(body)) {
+      body = body.split(/\n{2,}/).map((para) => `<p>${para.replace(/\n/g, '<br>')}</p>`).join('');
+    }
+    res.json({ subject: parsed.subject || '', body });
   } catch (e) { next(e); }
 });
 
@@ -372,9 +379,27 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
     const emails = rows.map((r) => r.toJSON());
     const unread = emails.filter((e) => e.direction === 'inbound' && !e.isRead).length;
 
-    // Mailboxes the viewer can send AS (their own, plus — for admins/managers —
-    // any connected mailbox in their scope, so they can send on behalf).
-    const scopeUsers = await User.findAll({ where: { id: { [Op.in]: allowed }, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
+    // From-address options depend on the viewer's role AND this lead's owner:
+    //   admin   → all admins + the lead owner + the owner's manager
+    //   manager → self + the lead owner / owning agent
+    //   agent   → self only
+    let fromUserIds = new Set();
+    const owner = lead.ownerId ? await User.findByPk(lead.ownerId) : null;
+    if (viewer.role === 'admin') {
+      const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id'] });
+      admins.forEach((a) => fromUserIds.add(a.id));
+      if (owner) {
+        fromUserIds.add(owner.id);
+        if (owner.managerId) fromUserIds.add(owner.managerId);
+      }
+    } else if (viewer.role === 'manager') {
+      fromUserIds.add(viewer.id);
+      if (owner) fromUserIds.add(owner.id);
+    } else {
+      fromUserIds.add(viewer.id);
+    }
+    // Keep only those actually in the viewer's visibility scope and connected.
+    const scopeUsers = await User.findAll({ where: { id: { [Op.in]: [...fromUserIds] }, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
     const fromOptions = scopeUsers.filter((u) => u.gmailConnectedEmail).map((u) => ({ value: `user:${u.id}`, userId: u.id, email: u.gmailConnectedEmail, name: u.name, self: u.id === viewer.id, signature: u.emailSignature || '' }));
     // The viewer's own extra mailboxes (admins).
     if (viewer.role === 'admin') {
@@ -657,18 +682,25 @@ router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
 
     // Attach lead info; drop any whose lead is gone.
     const leadIds = [...new Set(pending.map((p) => p.leadId))];
-    const leads = await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName', 'website', 'email', 'ownerId'] });
+    const leads = await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName', 'website', 'email', 'ownerId', 'ownerName'] });
     const leadById = new Map(leads.map((l) => [l.id, l]));
+    // Owner names for the dashboard rows (who is responsible for replying).
+    const ownerIds = [...new Set(leads.map((l) => l.ownerId).filter(Boolean))];
+    const owners = await User.findAll({ where: { id: { [Op.in]: ownerIds } }, attributes: ['id', 'name', 'role'] });
+    const ownerById = new Map(owners.map((u) => [u.id, u]));
 
     const now = Date.now();
     const shape = (p) => {
       const lead = leadById.get(p.leadId);
       if (!lead) return null;
       const ageMs = now - new Date(p.sentAt).getTime();
+      const owner = ownerById.get(lead.ownerId);
       return {
         emailId: p.id, leadId: p.leadId,
         leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || lead.email || 'Lead',
         ownerId: lead.ownerId,
+        ownerName: owner ? owner.name : (lead.ownerName || ''),
+        ownerRole: owner ? owner.role : '',
         fromName: p.fromName, fromEmail: p.fromEmail,
         subject: p.subject, snippet: p.snippet, threadId: p.threadId,
         receivedAt: p.sentAt, ageMs,
@@ -750,6 +782,80 @@ router.delete('/templates/:id', requireAuth, async (req, res, next) => {
     if (row.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed.' });
     await row.destroy();
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/template-variables — the list of variables templates can use. */
+router.get('/template-variables', requireAuth, (req, res) => {
+  res.json([
+    { key: 'lead.firstName', label: 'Lead First Name' },
+    { key: 'lead.lastName', label: 'Lead Last Name' },
+    { key: 'lead.fullName', label: 'Lead Full Name' },
+    { key: 'lead.domain', label: 'Domain Name' },
+    { key: 'lead.website', label: 'Website' },
+    { key: 'lead.country', label: 'Country' },
+    { key: 'lead.email', label: 'Email' },
+    { key: 'lead.phone', label: 'Phone' },
+    { key: 'brief.mobileSpeed', label: 'PageSpeed (Mobile)' },
+    { key: 'brief.desktopSpeed', label: 'PageSpeed (Desktop)' },
+    { key: 'brief.aiScore', label: 'AI Score' },
+    { key: 'brief.keywords', label: 'Keyword List' },
+    { key: 'brief.competitors', label: 'Competitor List' },
+    { key: 'brief.painPoints', label: 'Pain Points' },
+  ]);
+});
+
+// Build the variable → value map for a lead (pulls brief values when present).
+async function templateVars(lead) {
+  const v = {
+    'lead.firstName': lead.firstName || '',
+    'lead.lastName': lead.lastName || '',
+    'lead.fullName': `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+    'lead.domain': lead.domain || '',
+    'lead.website': lead.website || '',
+    'lead.country': lead.country || '',
+    'lead.email': lead.email || '',
+    'lead.phone': lead.phone || '',
+    'brief.mobileSpeed': '', 'brief.desktopSpeed': '', 'brief.aiScore': '',
+    'brief.keywords': '', 'brief.competitors': '', 'brief.painPoints': '',
+  };
+  if (lead.domain) {
+    const row = await BusinessBrief.findOne({ where: { domain: lead.domain }, order: [['createdAt', 'DESC']] });
+    const b = row && row.brief ? (typeof row.brief === 'string' ? safeJson(row.brief) : row.brief) : null;
+    if (b) {
+      // Brief shape varies; probe common locations defensively.
+      const pick = (...paths) => { for (const p of paths) { const val = p; if (val !== undefined && val !== null && val !== '') return val; } return ''; };
+      v['brief.mobileSpeed'] = String(pick(b.pageSpeedMobile, b.mobileSpeed, b.speed?.mobile, b.scores?.mobileSpeed) || '');
+      v['brief.desktopSpeed'] = String(pick(b.pageSpeedDesktop, b.desktopSpeed, b.speed?.desktop, b.scores?.desktopSpeed) || '');
+      v['brief.aiScore'] = String(pick(b.aiScore, b.scores?.ai, b.aiVisibilityScore) || '');
+      const kw = pick(b.keywords, b.keywordList, b.topKeywords);
+      v['brief.keywords'] = Array.isArray(kw) ? kw.map((k) => (k.keyword || k.term || k)).slice(0, 15).join(', ') : String(kw || '');
+      const comp = pick(b.competitors, b.competitorList);
+      v['brief.competitors'] = Array.isArray(comp) ? comp.map((c) => (c.name || c.domain || c)).slice(0, 15).join(', ') : String(comp || '');
+      const pp = pick(b.painPoints, b.pain_points, b.issues);
+      v['brief.painPoints'] = Array.isArray(pp) ? pp.map((p) => (p.text || p.title || p)).slice(0, 15).join('; ') : String(pp || '');
+    }
+  }
+  return v;
+}
+function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
+
+// Replace {{var}} tokens in an HTML/text string using a value map.
+function applyVars(str, vars) {
+  return String(str || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+}
+
+/** POST /api/gmail/templates/:id/apply — return the template with variables
+ *  resolved against a given lead. Body: { leadId }. */
+router.post('/templates/:id/apply', requireAuth, async (req, res, next) => {
+  try {
+    const tpl = await EmailTemplate.findByPk(req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template not found.' });
+    if (tpl.userId !== req.user.id && !tpl.isGlobal && req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed.' });
+    const lead = await Lead.findByPk((req.body || {}).leadId);
+    if (!lead) return res.status(400).json({ error: 'Lead not found.' });
+    const vars = await templateVars(lead);
+    res.json({ subject: applyVars(tpl.subject, vars), body: applyVars(tpl.bodyHtml, vars) });
   } catch (e) { next(e); }
 });
 

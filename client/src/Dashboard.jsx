@@ -422,6 +422,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>✉️</span>
                 <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
                 <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.subject || i.snippet}</span>
+                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
                 <span className="font-bold text-red-600 shrink-0">{fmtAge(i.ageMs)}</span>
                 {user.role === 'admin' && (
                   <button title="Remove from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await api(`/gmail/awaiting-reply/${i.emailId}/dismiss`, { method: 'POST' }); setEmailReplies((prev) => prev ? { ...prev, missed: prev.missed.filter((x) => x.emailId !== i.emailId) } : prev); } catch { /* */ } }}
@@ -443,6 +444,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <span>✉️</span>
                 <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
                 <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail}: {i.subject || i.snippet}</span>
+                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
                 <span className="font-bold text-blue-600 shrink-0">{fmtAge(i.ageMs)}</span>
               </div>
             ))}

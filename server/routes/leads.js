@@ -269,6 +269,25 @@ router.get('/', requireAuth, async (req, res, next) => {
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
     if (country) where.country = country;
+    // Date-range quick filter (Today/Yesterday/Last 7/This month/Last month),
+    // on either the created date or the last-activity date (dateField toggle).
+    const { dateRange, dateField } = req.query;
+    if (dateRange && dateRange !== 'all') {
+      const col = dateField === 'activity' ? 'lastActivityAt' : 'createdAt';
+      const now = new Date();
+      const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+      let from, to;
+      if (dateRange === 'today') { from = startOfDay(now); }
+      else if (dateRange === 'yesterday') { to = startOfDay(now); from = new Date(to.getTime() - 86400000); }
+      else if (dateRange === '7d') { from = new Date(startOfDay(now).getTime() - 6 * 86400000); }
+      else if (dateRange === 'month') { from = new Date(now.getFullYear(), now.getMonth(), 1); }
+      else if (dateRange === 'lastmonth') { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 1); }
+      if (from || to) {
+        where[col] = {};
+        if (from) where[col][Op.gte] = from;
+        if (to) where[col][Op.lt] = to;
+      }
+    }
     // "untouched": no activity for 3+ days (stale) — used by the dashboard box.
     if (untouched) {
       const days = untouched === '7' ? 7 : 3;
@@ -630,7 +649,9 @@ router.get('/config', requireAuth, async (req, res, next) => {
         where: {
           active: true,
           role: { [Op.in]: ['agent', 'manager'] }, // never a lead manager
-          [Op.or]: [{ id: req.user.id }, ...(or.length ? or : [])],
+          // Self, direct-report agents (managerId), and anyone in the manager's
+          // team/shift scopes.
+          [Op.or]: [{ id: req.user.id }, { managerId: req.user.id }, ...(or.length ? or : [])],
         },
         attributes: ['id', 'name', 'role', 'team', 'shift'],
       });
@@ -1755,10 +1776,13 @@ async function resolveOwner(user, ownerId) {
   if (ownerId && ['admin', 'manager', 'leadmanager'].includes(user.role)) {
     owner = await User.findByPk(ownerId);
   }
-  // Agents own the leads they create.
-  if (!owner && user.role === 'agent') owner = await User.findByPk(user.id);
-  // Lead managers never own leads (they only coordinate intake). Admins CAN own
-  // leads now, so only a lead-manager owner is rejected.
+  // When no owner is chosen, the creator owns the lead they add — agents always,
+  // and admins/managers by default (both can own leads). Lead managers can't own,
+  // so they must pick someone.
+  if (!owner && (user.role === 'agent' || user.role === 'admin' || user.role === 'manager')) {
+    owner = await User.findByPk(user.id);
+  }
+  // Lead managers never own leads (they only coordinate intake).
   if (owner && owner.role === 'leadmanager') owner = null;
   return owner;
 }
