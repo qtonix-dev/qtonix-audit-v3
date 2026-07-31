@@ -255,10 +255,15 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
 
     const modeInstruction = buildModeInstruction(b, { leadName, phone: lead.phone, briefText, lastInbound, history });
 
+    // The name the agent signs off with: their first client-facing alias (a
+    // "sudo name"), falling back to their real name.
+    const aliases = Array.isArray(viewer.aliases) ? viewer.aliases.filter(Boolean) : [];
+    const signName = (aliases[0] || viewer.name || 'The Qtonix team').trim();
+
     const system = [
       'You are a senior sales manager at Qtonix, a digital marketing and website design company.',
       'You write emails to prospects and clients. Tone: professional, warm and friendly, confident but never pushy.',
-      'Keep emails well-structured and concise. Sign off as the Qtonix team (do not invent a personal name unless given one).',
+      `Keep emails well-structured and concise. Sign off as "${signName}" on its own line, after "Best regards," (do NOT sign off as "The Qtonix team").`,
       'FORMATTING: the body must be clean HTML with proper spacing — wrap every paragraph in its own <p> tag, use <br> for line breaks, and <ul><li> for any lists. Separate the greeting, each paragraph, and the sign-off into distinct <p> tags. Do NOT return a single run-on block or plain text with no tags.',
       'Return your answer as strict JSON: {"subject": "...", "body": "<p>...</p><p>...</p>"}. No markdown, no <html> wrapper, no commentary outside the JSON.',
     ].join(' ');
@@ -285,15 +290,48 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
     const raw = data.choices?.[0]?.message?.content || '{}';
     let parsed = {};
     try { parsed = JSON.parse(raw); } catch { parsed = { subject: '', body: raw }; }
-    let body = parsed.body || '';
-    // If the model returned plain text (or newline-separated) without HTML tags,
-    // convert paragraphs/line-breaks to HTML so the email reads with spacing.
-    if (body && !/<(p|br|div|ul|ol|table)\b/i.test(body)) {
-      body = body.split(/\n{2,}/).map((para) => `<p>${para.replace(/\n/g, '<br>')}</p>`).join('');
+    let body = formatEmailBody(parsed.body || '');
+    // Safety net: if the model still signed off generically, swap in the agent's
+    // sign-off name.
+    if (signName && signName !== 'The Qtonix team') {
+      body = body.replace(/The Qtonix team/gi, signName);
     }
     res.json({ subject: parsed.subject || '', body });
   } catch (e) { next(e); }
 });
+
+/**
+ * Turn whatever the model returns (plain text, single-newline lines, or <p>
+ * tags whose margins a contentEditable would collapse) into clean, well-spaced
+ * paragraphs. Each paragraph gets an explicit bottom margin via inline style so
+ * the gaps survive both the editor and the final sent email.
+ */
+function formatEmailBody(input) {
+  let s = String(input || '').trim();
+  if (!s) return '';
+  // If it's HTML, flatten block tags back to newlines so we can re-space evenly.
+  if (/<(p|br|div|ul|ol|li|table)\b/i.test(s)) {
+    s = s
+      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+      .replace(/<\/\s*(p|div|li|h[1-6])\s*>/gi, '\n\n')
+      .replace(/<\s*li\b[^>]*>/gi, '• ')
+      .replace(/<[^>]+>/g, '') // strip any remaining tags
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>');
+  }
+  // Split into paragraphs on blank lines; if the model used single newlines
+  // only (the common failure), treat each non-empty line as its own paragraph.
+  const hasBlankLines = /\n\s*\n/.test(s);
+  const parts = hasBlankLines
+    ? s.split(/\n\s*\n/)
+    : s.split(/\n/);
+  const paras = parts.map((p) => p.trim()).filter(Boolean);
+  return paras
+    .map((p) => `<p style="margin:0 0 14px 0">${p.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
 
 // Translate the requested mode + inputs into a concrete instruction for the LLM.
 function buildModeInstruction(b, ctx) {
