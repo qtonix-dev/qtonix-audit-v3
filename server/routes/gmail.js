@@ -13,6 +13,7 @@ router.get('/config', requireAuth, requireAdmin, async (req, res, next) => {
       clientId: s.getKey('gmailClientId') || '',
       hasSecret: !!s.getKey('gmailClientSecret'),
       redirectUri: gmail.redirectUri(),
+      baseUrlOk: gmail.hasValidBaseUrl(),
     });
   } catch (e) { next(e); }
 });
@@ -38,6 +39,7 @@ router.get('/connect', requireAuth, async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     if (!gmail.isConfigured(s)) return res.status(400).json({ error: 'Gmail isn’t set up yet. Ask an admin to add the app credentials.' });
+    if (!gmail.hasValidBaseUrl()) return res.status(400).json({ error: 'The server’s public URL (APP_URL) isn’t configured, so Google would reject the sign-in. Ask an admin to set APP_URL and redeploy.' });
     // state carries the user id, signed lightly with the JWT secret to prevent tampering.
     const jwt = require('jsonwebtoken');
     const state = jwt.sign({ uid: req.user.id }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });

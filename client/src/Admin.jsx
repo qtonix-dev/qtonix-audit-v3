@@ -1542,6 +1542,11 @@ function EmailPanel({ say }) {
           <code className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-[11px] break-all">{cfg.redirectUri || '—'}</code>
           <button onClick={() => { navigator.clipboard?.writeText(cfg.redirectUri); say && say('Redirect URI copied.'); }} className="text-[11px] font-bold text-blue-500 whitespace-nowrap">Copy</button>
         </div>
+        {cfg.redirectUri && !cfg.baseUrlOk && (
+          <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">
+            The server’s public URL isn’t set, so this redirect URI has no domain and Google will reject sign-in. Set the <code>APP_URL</code> environment variable to your public HTTPS address (e.g. <code>https://yourapp.up.railway.app</code>) and redeploy.
+          </div>
+        )}
         <div className="mt-2">Then paste the Client ID and Secret below.</div>
       </div>
 

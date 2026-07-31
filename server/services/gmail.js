@@ -36,7 +36,12 @@ function isConfigured(settings) {
 
 function redirectUri() {
   const base = (process.env.APP_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
-  return `${base}/api/gmail/callback`;
+  return base ? `${base}/api/gmail/callback` : '';
+}
+
+// True only when APP_URL/PUBLIC_URL is set to a proper absolute https URL.
+function hasValidBaseUrl() {
+  return /^https?:\/\/.+/.test(redirectUri());
 }
 
 function oauthClient(settings) {
@@ -181,6 +186,6 @@ async function markRead(settings, refreshToken, gmailMessageId) {
 }
 
 module.exports = {
-  SCOPES, isConfigured, redirectUri, authUrl, exchangeCode,
+  SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, markRead, parseAddress,
 };
