@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const fs = require('fs');
-const { User, Lead, LeadEmail, ScheduledEmail, Report, Settings, Op } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Report, Settings, Op } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -41,15 +41,19 @@ router.get('/connect', requireAuth, async (req, res, next) => {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     if (!gmail.isConfigured(s)) return res.status(400).json({ error: 'Gmail isn’t set up yet. Ask an admin to add the app credentials.' });
     if (!gmail.hasValidBaseUrl()) return res.status(400).json({ error: 'The server’s public URL (APP_URL) isn’t configured, so Google would reject the sign-in. Ask an admin to set APP_URL and redeploy.' });
-    // state carries the user id, signed lightly with the JWT secret to prevent tampering.
+    // `extra` (admin only) links an additional mailbox with a friendly label
+    // rather than replacing the user's primary one.
+    const extra = req.query.extra === '1';
+    if (extra && req.user.role !== 'admin') return res.status(403).json({ error: 'Only admins can link additional mailboxes.' });
+    const label = String(req.query.label || '').slice(0, 120);
     const jwt = require('jsonwebtoken');
-    const state = jwt.sign({ uid: req.user.id }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });
+    const state = jwt.sign({ uid: req.user.id, extra, label }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });
     res.json({ url: gmail.authUrl(s, state) });
   } catch (e) { next(e); }
 });
 
 /** OAuth callback (Google redirects the browser here). Attaches the refresh
- *  token to the user, then closes the popup / redirects back to the app. */
+ *  token to the user (or an extra Mailbox row), then closes the popup. */
 router.get('/callback', async (req, res) => {
   const { code, state, error } = req.query;
   const done = (msg, ok) => res.send(`<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:40px;text-align:center">
@@ -59,14 +63,25 @@ router.get('/callback', async (req, res) => {
   try {
     if (error) return done('Connection cancelled.', false);
     const jwt = require('jsonwebtoken');
-    let uid;
-    try { uid = jwt.verify(String(state), process.env.JWT_SECRET || 'change-me-in-production').uid; }
+    let payload;
+    try { payload = jwt.verify(String(state), process.env.JWT_SECRET || 'change-me-in-production'); }
     catch { return done('This connection link expired. Please try again.', false); }
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const { refreshToken, email } = await gmail.exchangeCode(s, code);
     if (!refreshToken) return done('Google did not return a refresh token. Remove the app’s access in your Google account and try again.', false);
-    const user = await User.findByPk(uid);
+    const user = await User.findByPk(payload.uid);
     if (!user) return done('User not found.', false);
+
+    if (payload.extra && user.role === 'admin') {
+      // Link as an additional mailbox (or update the token if already linked).
+      const [mb] = await Mailbox.findOrCreate({ where: { userId: user.id, email }, defaults: { userId: user.id, email, label: payload.label || email.split('@')[0] } });
+      mb.refreshToken = refreshToken;
+      if (payload.label) mb.label = payload.label;
+      mb.active = true;
+      await mb.save();
+      return done(`Mailbox linked: ${email}.`, true);
+    }
+
     user.gmailRefreshToken = refreshToken; // encrypted by model hook
     user.gmailConnectedEmail = email;
     user.gmailConnectedAt = new Date();
@@ -92,6 +107,56 @@ router.post('/disconnect', requireAuth, async (req, res, next) => {
     u.gmailRefreshToken = null; u.gmailConnectedEmail = null; u.gmailConnectedAt = null; u.gmailHistoryId = null;
     await u.save();
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- Multiple mailboxes (admin) + signatures --------------------------------
+
+/** GET /api/gmail/mailboxes — the user's linked mailboxes (primary + extras)
+ *  with signatures. Extras are admin-only. */
+router.get('/mailboxes', requireAuth, async (req, res, next) => {
+  try {
+    const u = await User.findByPk(req.user.id);
+    const list = [];
+    if (u.gmailConnectedEmail) list.push({ _id: `user:${u.id}`, kind: 'primary', label: 'Me', email: u.gmailConnectedEmail, connected: !!u.gmailRefreshToken, signature: u.emailSignature || '' });
+    if (u.role === 'admin') {
+      const extras = await Mailbox.findAll({ where: { userId: u.id, active: true }, order: [['label', 'ASC']] });
+      extras.forEach((m) => list.push({ _id: m.id, kind: 'extra', label: m.label, email: m.email, connected: m.connected, signature: m.signature || '' }));
+    }
+    res.json({ isAdmin: u.role === 'admin', defaultSignature: u.emailSignature || '', mailboxes: list });
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/gmail/mailboxes/:id — unlink an extra mailbox (admin). */
+router.delete('/mailboxes/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const m = await Mailbox.findByPk(req.params.id);
+    if (!m || m.userId !== req.user.id) return res.status(404).json({ error: 'Mailbox not found.' });
+    await m.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** PUT /api/gmail/mailboxes/:id — rename or set an extra mailbox's signature. */
+router.put('/mailboxes/:id', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const m = await Mailbox.findByPk(req.params.id);
+    if (!m || m.userId !== req.user.id) return res.status(404).json({ error: 'Mailbox not found.' });
+    const b = req.body || {};
+    if (b.label !== undefined) m.label = String(b.label).slice(0, 120);
+    if (b.signature !== undefined) m.signature = b.signature;
+    await m.save();
+    res.json(m.toJSON());
+  } catch (e) { next(e); }
+});
+
+/** PUT /api/gmail/signature — set the user's default signature (HTML). */
+router.put('/signature', requireAuth, async (req, res, next) => {
+  try {
+    const u = await User.findByPk(req.user.id);
+    u.emailSignature = (req.body && req.body.signature) || '';
+    await u.save();
+    res.json({ ok: true, signature: u.emailSignature });
   } catch (e) { next(e); }
 });
 
@@ -159,12 +224,18 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
 
     // Mailboxes the viewer can send AS (their own, plus — for admins/managers —
     // any connected mailbox in their scope, so they can send on behalf).
-    const scopeUsers = await User.findAll({ where: { id: { [Op.in]: allowed }, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail'] });
-    const fromOptions = scopeUsers.filter((u) => u.gmailConnectedEmail).map((u) => ({ userId: u.id, email: u.gmailConnectedEmail, name: u.name, self: u.id === viewer.id }));
+    const scopeUsers = await User.findAll({ where: { id: { [Op.in]: allowed }, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
+    const fromOptions = scopeUsers.filter((u) => u.gmailConnectedEmail).map((u) => ({ value: `user:${u.id}`, userId: u.id, email: u.gmailConnectedEmail, name: u.name, self: u.id === viewer.id, signature: u.emailSignature || '' }));
+    // The viewer's own extra mailboxes (admins).
+    if (viewer.role === 'admin') {
+      const extras = await Mailbox.findAll({ where: { userId: viewer.id, active: true, refreshToken: { [Op.ne]: null } } });
+      extras.forEach((m) => fromOptions.push({ value: `mailbox:${m.id}`, mailboxId: m.id, email: m.email, name: m.label || m.email, self: true, signature: m.signature || viewer.emailSignature || '' }));
+    }
 
     res.json({
-      connected: !!viewer.gmailRefreshToken,
+      connected: !!viewer.gmailRefreshToken || (viewer.role === 'admin' && fromOptions.length > 0),
       email: viewer.gmailConnectedEmail,
+      defaultSignature: viewer.emailSignature || '',
       fromOptions,
       unread,
       emails,
@@ -201,14 +272,31 @@ router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Resolve the mailbox to send from. Non-admins can only send as themselves;
-// admins/managers may send as any connected mailbox within their scope.
-async function resolveSender(viewer, fromUserId) {
-  if (!fromUserId || Number(fromUserId) === viewer.id) return viewer;
+// Resolve the mailbox to send from. Accepts a `from` value of "user:<id>" or
+// "mailbox:<id>" (or a bare numeric userId for back-compat). Returns a
+// normalized sender { id, email, name, getToken(), signature } or null.
+async function resolveSender(viewer, from) {
+  // Back-compat: bare number = userId.
+  let kind = 'user', id = viewer.id;
+  if (from && /^(user|mailbox):/.test(String(from))) { const [k, i] = String(from).split(':'); kind = k; id = Number(i); }
+  else if (from) { kind = 'user'; id = Number(from); }
+
+  if (kind === 'mailbox') {
+    if (viewer.role !== 'admin') return null;
+    const m = await Mailbox.findByPk(id);
+    if (!m || m.userId !== viewer.id || !m.refreshToken) return null;
+    return { id: `mailbox:${m.id}`, email: m.email, name: m.label || m.email, getToken: () => m.getRefreshToken(), signature: m.signature || viewer.emailSignature || '', dbUserId: viewer.id };
+  }
+  // user mailbox
+  if (id === viewer.id) {
+    if (!viewer.gmailRefreshToken) return null;
+    return { id: viewer.id, email: viewer.gmailConnectedEmail, name: viewer.name, getToken: () => viewer.getGmailRefreshToken(), signature: viewer.emailSignature || '', dbUserId: viewer.id };
+  }
   const allowed = await visibleUserIds(viewer);
-  if (!allowed.includes(Number(fromUserId))) return null;
-  const target = await User.findByPk(Number(fromUserId));
-  return target && target.gmailRefreshToken ? target : null;
+  if (!allowed.includes(id)) return null;
+  const target = await User.findByPk(id);
+  if (!target || !target.gmailRefreshToken) return null;
+  return { id: target.id, email: target.gmailConnectedEmail, name: target.name, getToken: () => target.getGmailRefreshToken(), signature: target.emailSignature || '', dbUserId: target.id };
 }
 
 // Turn requested attachments into MIME-ready parts. Supports uploaded files
@@ -250,8 +338,8 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
     const viewer = await User.findByPk(req.user.id);
     const b = req.body || {};
-    const sender = await resolveSender(viewer, b.fromUserId);
-    if (!sender || !sender.gmailRefreshToken) return res.status(400).json({ error: 'Connect a Gmail mailbox first, or pick one you’re allowed to send from.' });
+    const sender = await resolveSender(viewer, b.from || b.fromUserId);
+    if (!sender) return res.status(400).json({ error: 'Connect a Gmail mailbox first, or pick one you’re allowed to send from.' });
 
     const to = b.to || lead.email;
     if (!to) return res.status(400).json({ error: 'Add at least one recipient.' });
@@ -262,7 +350,7 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
       const when = new Date(b.sendAt);
       if (isNaN(when.getTime()) || when.getTime() < Date.now() - 60000) return res.status(400).json({ error: 'Pick a valid future date and time.' });
       const sched = await ScheduledEmail.create({
-        leadId: lead.id, userId: sender.id, fromEmail: sender.gmailConnectedEmail,
+        leadId: lead.id, userId: sender.dbUserId, fromEmail: sender.email,
         toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
         subject: b.subject, bodyHtml: b.body, attachments: b.attachments || null,
         threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
@@ -274,13 +362,13 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
 
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const attachments = await buildAttachments(b.attachments, lead);
-    const sent = await gmail.sendMessage(s, sender.getGmailRefreshToken(), sender.gmailConnectedEmail, {
-      from: sender.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
+    const sent = await gmail.sendMessage(s, sender.getToken(), sender.email, {
+      from: sender.email, to, cc: b.cc, bcc: b.bcc,
       subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
     });
     await LeadEmail.create({
-      leadId: lead.id, userId: sender.id, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
-      direction: 'outbound', fromEmail: sender.gmailConnectedEmail, fromName: sender.name,
+      leadId: lead.id, userId: sender.dbUserId, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
+      direction: 'outbound', fromEmail: sender.email, fromName: sender.name,
       toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
       subject: b.subject, snippet: String(b.body).replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: b.body,
       attachments: (attachments || []).map((a) => ({ filename: a.filename, mimeType: a.mimeType })),

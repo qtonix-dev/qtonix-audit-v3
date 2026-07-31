@@ -379,6 +379,111 @@ export function Pagination({ page, pages, total, perPage, onPage, onPerPage, lab
 // Lightweight rich-text editor (contentEditable + execCommand). Avoids pulling
 // in a heavy dependency; stores HTML. Toolbar covers the formatting sales notes
 // actually need: bold/italic/underline, lists, and clearing formatting.
+/**
+ * Gmail-style rich text editor for the email composer. A format menu (aA) holds
+ * font/size/style/color/alignment/list/quote actions; the row also exposes AI
+ * draft (placeholder), attachment, hyperlink and signature actions via props.
+ */
+export function MailEditor({ value, onChange, placeholder, minHeight = 200, onAttach, onAiDraft, onInsertSignature, extraTools }) {
+  const ref = React.useRef(null);
+  const [focused, setFocused] = useState(false);
+  const [showFormat, setShowFormat] = useState(false);
+  const [showColor, setShowColor] = useState(null); // 'fore' | 'back' | null
+
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || '';
+  }, [value]);
+
+  const exec = (cmd, arg) => {
+    ref.current && ref.current.focus();
+    document.execCommand(cmd, false, arg || null);
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
+  const link = () => { const url = prompt('Link URL'); if (url) exec('createLink', url); };
+  const isEmpty = !value || value === '<br>' || value === '<div><br></div>';
+
+  const FONTS = ['Sans Serif', 'Serif', 'Fixed Width', 'Plus Jakarta Sans', 'Arial', 'Georgia'];
+  const SIZES = [['Small', '2'], ['Normal', '3'], ['Large', '5'], ['Huge', '7']];
+  const COLORS = ['#000000', '#434343', '#666666', '#FF4500', '#FF6A00', '#E53935', '#1A73E8', '#43A047', '#8E24AA', '#00897B', '#FDD835', '#FFFFFF'];
+
+  const TBtn = ({ onClick, title, children, active }) => (
+    <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); onClick(); }}
+      className={`w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-200 ${active ? 'bg-slate-200' : ''}`}>{children}</button>
+  );
+
+  return (
+    <div className={`rounded-lg border ${focused ? 'border-orange-400 ring-2 ring-orange-100' : 'border-slate-300'}`}>
+      {/* Editing surface first (Gmail puts the toolbar at the bottom) */}
+      <div className="relative">
+        {isEmpty && !focused && placeholder && <div className="absolute top-2 left-3 text-sm text-slate-300 pointer-events-none">{placeholder}</div>}
+        <div ref={ref} contentEditable suppressContentEditableWarning
+          onInput={() => onChange(ref.current.innerHTML)}
+          onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
+          onFocus={() => setFocused(true)}
+          className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight }} />
+      </div>
+
+      {/* Toolbar */}
+      <div className="relative flex items-center gap-0.5 border-t border-slate-200 px-1.5 py-1 bg-slate-50 rounded-b-lg flex-wrap">
+        {/* Format menu (aA) */}
+        <TBtn title="Formatting options" onClick={() => setShowFormat((v) => !v)} active={showFormat}>
+          <span className="text-xs font-bold">A<span className="text-[9px]">a</span></span>
+        </TBtn>
+        {onAiDraft && <TBtn title="AI draft (coming soon)" onClick={onAiDraft}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4z" /><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z" /></svg>
+        </TBtn>}
+        <TBtn title="Attach file" onClick={() => onAttach && onAttach()}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>
+        </TBtn>
+        <TBtn title="Insert link" onClick={link}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
+        </TBtn>
+        {onInsertSignature && <TBtn title="Insert signature" onClick={onInsertSignature}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 17c3 0 3-6 6-6s2 4 5 4 4-5 7-5" /><path d="M3 21h18" /></svg>
+        </TBtn>}
+        {extraTools}
+
+        {/* Format popover */}
+        {showFormat && (
+          <div className="absolute bottom-10 left-0 bg-white rounded-lg border border-slate-200 shadow-lg p-2 z-50 flex items-center gap-1 flex-wrap w-[420px]">
+            <select onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec('fontName', e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-1">
+              {FONTS.map((f) => <option key={f} value={f === 'Sans Serif' ? 'sans-serif' : f === 'Serif' ? 'serif' : f === 'Fixed Width' ? 'monospace' : f}>{f}</option>)}
+            </select>
+            <select onMouseDown={(e) => e.stopPropagation()} onChange={(e) => exec('fontSize', e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-1">
+              {SIZES.map(([l, v]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <span className="w-px h-5 bg-slate-200 mx-0.5" />
+            <TBtn title="Bold" onClick={() => exec('bold')}><b className="text-sm">B</b></TBtn>
+            <TBtn title="Italic" onClick={() => exec('italic')}><i className="text-sm">I</i></TBtn>
+            <TBtn title="Underline" onClick={() => exec('underline')}><u className="text-sm">U</u></TBtn>
+            <TBtn title="Strikethrough" onClick={() => exec('strikeThrough')}><span className="text-sm line-through">S</span></TBtn>
+            <span className="w-px h-5 bg-slate-200 mx-0.5" />
+            <TBtn title="Text color" onClick={() => setShowColor(showColor === 'fore' ? null : 'fore')}><span className="text-sm font-bold" style={{ borderBottom: '3px solid #FF4500' }}>A</span></TBtn>
+            <TBtn title="Highlight color" onClick={() => setShowColor(showColor === 'back' ? null : 'back')}><span className="text-sm font-bold px-0.5" style={{ background: '#FDD835' }}>A</span></TBtn>
+            <span className="w-px h-5 bg-slate-200 mx-0.5" />
+            <TBtn title="Align left" onClick={() => exec('justifyLeft')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M4 6h16M4 12h10M4 18h13" /></svg></TBtn>
+            <TBtn title="Align center" onClick={() => exec('justifyCenter')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M4 6h16M7 12h10M6 18h12" /></svg></TBtn>
+            <TBtn title="Align right" onClick={() => exec('justifyRight')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M4 6h16M10 12h10M7 18h13" /></svg></TBtn>
+            <span className="w-px h-5 bg-slate-200 mx-0.5" />
+            <TBtn title="Bulleted list" onClick={() => exec('insertUnorderedList')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /><path d="M8 6h12M8 12h12M8 18h12" /></svg></TBtn>
+            <TBtn title="Numbered list" onClick={() => exec('insertOrderedList')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M9 6h11M9 12h11M9 18h11M4 5v3M4 11h1.5L4 13h1.5M4 17h1.5v3H4" /></svg></TBtn>
+            <TBtn title="Quote" onClick={() => exec('formatBlock', 'blockquote')}><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M6 17h3l2-4V7H5v6h3zM14 17h3l2-4V7h-6v6h3z" /></svg></TBtn>
+
+            {showColor && (
+              <div className="w-full mt-1 pt-1 border-t border-slate-100 flex flex-wrap gap-1">
+                {COLORS.map((c) => (
+                  <button key={c} onMouseDown={(e) => { e.preventDefault(); exec(showColor === 'fore' ? 'foreColor' : 'hiliteColor', c); setShowColor(null); }}
+                    className="w-5 h-5 rounded border border-slate-200" style={{ background: c }} title={c} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
   const ref = React.useRef(null);
   const [focused, setFocused] = useState(false);
@@ -1477,15 +1582,12 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
           <div className="flex border-b border-slate-100">
             {/* A call-back prospect isn't a worked lead yet, so it has no deals
                 or reports — those tabs appear only once it's a real lead. */}
-            {['timeline', 'inbox', 'notes', 'activity', 'deals', 'reports', 'emaildraft']
+            {['timeline', 'email', 'notes', 'activity', 'deals', 'reports']
               .filter((t) => !(lead.status === 'callback' && (t === 'deals' || t === 'reports')))
-              // Email draft is the pre-sales first-reply/reminder workflow, so
-              // it only appears on pre-sales leads.
-              .filter((t) => !(t === 'emaildraft' && !/pre-?sales/i.test(String(lead.leadSource || ''))))
               .map((t) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`relative px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t === 'inbox' ? 'Email' : t}
-                {t === 'inbox' && emailUnread > 0 && <span className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FF4500] text-white text-[9px] font-bold align-middle">{emailUnread}</span>}
+                className={`relative px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'email' ? 'Email' : t}
+                {t === 'email' && emailUnread > 0 && <span className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FF4500] text-white text-[9px] font-bold align-middle">{emailUnread}</span>}
               </button>
             ))}
           </div>
@@ -1495,8 +1597,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
             {effTab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'deals' && !isCallback && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'reports' && !isCallback && <ReportsTab lead={lead} onChange={setLead} />}
-            {effTab === 'emaildraft' && <EmailDraftTab lead={lead} user={user} onChange={setLead} />}
-            {effTab === 'inbox' && <EmailInboxTab lead={lead} user={user} />}
+            {effTab === 'email' && <EmailTab lead={lead} user={user} onChange={setLead} />}
           </div>
         </div>
       </div>
@@ -1560,6 +1661,24 @@ function Row({ k, v }) {
 // The live Gmail thread for a lead: messages synced from the current user's
 // connected mailbox (matched by the lead's email/domain), with read + reply +
 // compose. Distinct from the pre-sales "Email draft" workflow.
+// Merged Email tab: switches between the Gmail-style inbox (default) and the
+// pre-sales draft workflow. The Draft view only appears for pre-sales leads.
+function EmailTab({ lead, user, onChange }) {
+  const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
+  const [view, setView] = useState('inbox');
+  return (
+    <div>
+      {isPresales && (
+        <div className="flex items-center gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
+          <button onClick={() => setView('inbox')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === 'inbox' ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>Email</button>
+          <button onClick={() => setView('draft')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === 'draft' ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>Draft</button>
+        </div>
+      )}
+      {view === 'inbox' ? <EmailInboxTab lead={lead} user={user} /> : <EmailDraftTab lead={lead} user={user} onChange={onChange} />}
+    </div>
+  );
+}
+
 function EmailInboxTab({ lead, user }) {
   const [data, setData] = useState(null); // { connected, email, fromOptions, unread, emails }
   const [err, setErr] = useState('');
@@ -1590,12 +1709,12 @@ function EmailInboxTab({ lead, user }) {
   threads.forEach((t) => t.messages.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt)));
   threads.sort((a, b) => new Date(b.messages[b.messages.length - 1].sentAt) - new Date(a.messages[a.messages.length - 1].sentAt));
 
-  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', fromUserId: data.fromOptions[0]?.userId });
+  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: data.fromOptions[0]?.value });
 
   return (
-    <div className="-m-5">
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50/50">
         <div className="flex items-center gap-3">
           <button onClick={load} title="Refresh" className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><Icon.Globe size={16} /></button>
           <span className="text-xs text-slate-400">{data.email}{data.unread ? ` · ${data.unread} unread` : ''}</span>
@@ -1634,8 +1753,8 @@ function EmailInboxTab({ lead, user }) {
         })}
       </div>
 
-      {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
-      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); }} />}
+      {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); }} />}
     </div>
   );
 }
@@ -1657,74 +1776,103 @@ function timeAgo(d) {
 async function toggleStar(id, reload) { try { await api(`/gmail/email/${id}/star`, { method: 'POST' }); reload && reload(); } catch { /* noop */ } }
 
 // The thread popup (Image 1): subject header + message chain + reply actions.
-function ThreadPopup({ lead, thread, fromOptions, onClose, onReload }) {
+function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onReload }) {
   const [messages, setMessages] = useState(null);
   const [err, setErr] = useState('');
   const [composer, setComposer] = useState(null);
+  const [expanded, setExpanded] = useState({}); // messageId -> bool
 
   const load = () => {
-    const idQuery = thread.threadId ? `/gmail/thread/${thread.threadId}` : null;
-    if (!idQuery) { setMessages([]); return; }
-    api(idQuery).then((d) => {
-      setMessages(d.messages || []);
-      // Mark inbound unread as read on open.
-      (d.messages || []).filter((m) => m.direction === 'inbound' && !m.isRead && m._id).forEach((m) => api(`/gmail/email/${m._id}/read`, { method: 'POST' }).catch(() => {}));
+    if (!thread.threadId) { setMessages([]); return; }
+    api(`/gmail/thread/${thread.threadId}`).then((d) => {
+      const msgs = d.messages || [];
+      setMessages(msgs);
+      // Expand only the latest by default (Gmail-style).
+      const exp = {}; msgs.forEach((m, i) => { exp[m._id || m.gmailMessageId || i] = i === msgs.length - 1; });
+      setExpanded(exp);
+      msgs.filter((m) => m.direction === 'inbound' && !m.isRead && m._id).forEach((m) => api(`/gmail/email/${m._id}/read`, { method: 'POST' }).catch(() => {}));
     }).catch((e) => setErr(e.message));
   };
   useEffect(() => { load(); }, [thread.threadId]);
 
+  const keyOf = (m, i) => m._id || m.gmailMessageId || i;
+  const toggle = (k) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
+
   const replyTo = (msg, mode) => {
-    const last = msg;
     const recipients = mode === 'replyall'
-      ? [...new Set([last.fromEmail, ...(last.toEmail || '').split(',').map((x) => x.trim())].filter((e) => e && e !== lead._ownEmail))]
-      : [last.direction === 'inbound' ? last.fromEmail : (last.toEmail || lead.email)];
+      ? [...new Set([msg.fromEmail, ...(msg.toEmail || '').split(',').map((x) => x.trim())].filter(Boolean))]
+      : [msg.direction === 'inbound' ? msg.fromEmail : (msg.toEmail || lead.email)];
     setComposer({
-      mode, to: recipients.filter(Boolean), cc: mode === 'replyall' ? (last.ccEmail || '').split(',').map((x) => x.trim()).filter(Boolean) : [], bcc: [],
-      subject: /^re:/i.test(last.subject || '') ? last.subject : `Re: ${last.subject || ''}`,
-      body: '', threadId: thread.threadId, inReplyTo: last.rfcMessageId || undefined,
-      fromUserId: fromOptions[0]?.userId, quote: last,
+      mode, to: recipients.filter(Boolean),
+      cc: mode === 'replyall' ? (msg.ccEmail || '').split(',').map((x) => x.trim()).filter(Boolean) : [], bcc: [],
+      subject: /^re:/i.test(msg.subject || '') ? msg.subject : `Re: ${msg.subject || ''}`,
+      body: '', threadId: thread.threadId, inReplyTo: msg.rfcMessageId || undefined,
+      from: fromOptions[0]?.value,
     });
   };
   const forward = (msg) => setComposer({
     mode: 'forward', to: [], cc: [], bcc: [],
     subject: /^fwd:/i.test(msg.subject || '') ? msg.subject : `Fwd: ${msg.subject || ''}`,
     body: `<br><br>---------- Forwarded message ----------<br>From: ${msg.fromName || msg.fromEmail}<br>Subject: ${msg.subject}<br><br>${msg.bodyHtml || msg.snippet}`,
-    threadId: thread.threadId, fromUserId: fromOptions[0]?.userId,
+    threadId: thread.threadId, from: fromOptions[0]?.value,
   });
+
+  const MsgActions = ({ m }) => (
+    <div className="flex gap-2 mt-3">
+      <button onClick={() => replyTo(m, 'reply')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg> Reply
+      </button>
+      <button onClick={() => replyTo(m, 'replyall')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 17l-5-5 5-5M12 17l-5-5 5-5M9 12h9a4 4 0 0 1 4 4v1" /></svg> Reply all
+      </button>
+      <button onClick={() => forward(m)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9a5 5 0 0 0-5 5v1" /></svg> Forward
+      </button>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-3xl my-6" onClick={(e) => e.stopPropagation()}>
-        {/* Subject header */}
+      <div className="bg-white rounded-xl w-full max-w-4xl my-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-normal text-[#202124] pr-4">{thread.subject || '(no subject)'} <span className="inline-block align-middle ml-1 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">Inbox</span></h2>
+          <h2 className="text-xl font-normal text-[#202124] pr-4">{thread.subject || '(no subject)'} <span className="inline-block align-middle ml-1 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">Inbox</span></h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
 
-        <div className="px-6 py-4 max-h-[60vh] overflow-y-auto">
+        <div className="px-6 py-4 max-h-[68vh] overflow-y-auto">
           {err && <div className="mb-3 text-xs text-red-600">{err}</div>}
           {!messages && <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>}
           {messages && messages.length === 0 && <div className="text-slate-400 text-sm py-6 text-center">Couldn’t load the full thread.</div>}
           {messages && messages.map((m, i) => {
-            const isLast = i === messages.length - 1;
+            const k = keyOf(m, i);
+            const isOpen = !!expanded[k];
             return (
-              <div key={m._id || m.gmailMessageId || i} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
-                <div className="flex items-start gap-3">
+              <div key={k} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                {/* Collapsed header row (click to toggle) */}
+                <div className="flex items-start gap-3 cursor-pointer" onClick={() => toggle(k)}>
                   <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.direction === 'outbound' ? '#FF6A0022' : '#6366F122', color: m.direction === 'outbound' ? '#FF4500' : '#4F46E5' }}>
                     {(m.fromName || m.fromEmail || '?').trim()[0]?.toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <div className="text-sm">
+                      <div className="text-sm min-w-0">
                         <span className="font-bold text-[#202124]">{m.fromName || m.fromEmail}</span>
-                        <span className="text-slate-400 text-xs ml-2">{m.direction === 'outbound' ? `to ${m.toEmail}` : 'to me'}</span>
+                        <span className="text-slate-400 text-xs ml-2">{isOpen ? (m.direction === 'outbound' ? `to ${m.toEmail}` : 'to me') : ''}</span>
+                        {!isOpen && <span className="text-slate-400 text-xs ml-1 truncate">— {m.snippet}</span>}
                       </div>
-                      <div className="flex items-center gap-2 text-slate-400">
-                        <span className="text-xs">{new Date(m.sentAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })} ({timeAgo(m.sentAt)})</span>
-                        {m._id && <button onClick={() => toggleStar(m._id, load)} title="Star" className="hover:text-amber-400"><svg width="15" height="15" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg></button>}
+                      <div className="flex items-center gap-2 text-slate-400 flex-shrink-0">
+                        <span className="text-xs">{new Date(m.sentAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}</span>
+                        {isOpen && <span className="text-[10px]">({timeAgo(m.sentAt)})</span>}
+                        {m._id && <button onClick={(e) => { e.stopPropagation(); toggleStar(m._id, load); }} title="Star" className="hover:text-amber-400"><svg width="15" height="15" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg></button>}
                       </div>
                     </div>
-                    <div className={`text-sm text-slate-700 mt-2 ${isLast ? '' : 'line-clamp-3'} prose prose-sm max-w-none`} dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
+                  </div>
+                </div>
+
+                {/* Expanded body + per-message actions */}
+                {isOpen && (
+                  <div className="pl-12 mt-2">
+                    <div className="text-sm text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
                     {(m.attachments || []).length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-3">
                         {m.attachments.map((a, ai) => (
@@ -1736,38 +1884,22 @@ function ThreadPopup({ lead, thread, fromOptions, onClose, onReload }) {
                         ))}
                       </div>
                     )}
+                    <MsgActions m={m} />
                   </div>
-                </div>
+                )}
               </div>
             );
           })}
         </div>
-
-        {/* Reply actions */}
-        <div className="px-6 py-4 border-t border-slate-100 flex gap-2">
-          {messages && messages.length > 0 && <>
-            <button onClick={() => replyTo(messages[messages.length - 1], 'reply')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg> Reply
-            </button>
-            <button onClick={() => replyTo(messages[messages.length - 1], 'replyall')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 17l-5-5 5-5M12 17l-5-5 5-5M9 12h9a4 4 0 0 1 4 4v1" /></svg> Reply all
-            </button>
-            <button onClick={() => forward(messages[messages.length - 1])} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9a5 5 0 0 0-5 5v1" /></svg> Forward
-            </button>
-          </>}
-        </div>
       </div>
 
-      {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} defaultSignature={defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
     </div>
   );
 }
 
-// The composer (Image 2): From dropdown, To/Cc/Bcc, subject, body, attachments
-// (file + CRM report), and Send with a schedule-send dropdown.
-function Composer({ lead, initial, fromOptions, onClose, onSent }) {
-  const [from, setFrom] = useState(initial.fromUserId || fromOptions[0]?.userId);
+function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignature }) {
+  const [from, setFrom] = useState(initial.from || fromOptions[0]?.value || `user:${fromOptions[0]?.userId}`);
   const [to, setTo] = useState(initial.to || []);
   const [cc, setCc] = useState(initial.cc || []);
   const [bcc, setBcc] = useState(initial.bcc || []);
@@ -1775,15 +1907,21 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
   const [showBcc, setShowBcc] = useState((initial.bcc || []).length > 0);
   const [subject, setSubject] = useState(initial.subject || '');
   const [body, setBody] = useState(initial.body || '');
-  const [attachments, setAttachments] = useState([]); // {filename,mimeType,contentBase64} or {reportId,businessName}
+  const [attachments, setAttachments] = useState([]);
   const [reports, setReports] = useState([]);
   const [showReports, setShowReports] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [schedDate, setSchedDate] = useState('');
   const [schedTime, setSchedTime] = useState('');
-  const [tz, setTz] = useState(lead.timezone || lead.countryTimezone || 'Asia/Kolkata');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
+
+  // Customer timezone only; fall back to IST when the lead has none.
+  const hasCustomerTz = !!lead.timezone;
+  const tz = lead.timezone || 'Asia/Kolkata';
+
+  const currentFrom = fromOptions.find((o) => o.value === from) || fromOptions[0];
+  const sigFor = () => (currentFrom && currentFrom.signature) || defaultSignature || '';
 
   useEffect(() => { api(`/gmail/lead/${lead._id || lead.id}/reports`).then(setReports).catch(() => {}); }, []);
 
@@ -1799,6 +1937,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
   };
   const attachReport = (r) => { setAttachments((a) => [...a, { reportId: r._id || r.id, filename: `${r.businessName || 'report'}.pdf` }]); setShowReports(false); };
   const removeAtt = (i) => setAttachments((a) => a.filter((_, idx) => idx !== i));
+  const insertSignature = () => { const sig = sigFor(); if (sig) setBody((b) => `${b || ''}<br><br>${sig}`); };
 
   const doSend = async (scheduled) => {
     setErr('');
@@ -1807,13 +1946,12 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
     let sendAt;
     if (scheduled) {
       if (!schedDate || !schedTime) return setErr('Pick a date and time to schedule.');
-      // Interpret the chosen wall-clock time in the selected timezone.
       sendAt = new Date(`${schedDate}T${schedTime}:00`).toISOString();
     }
     setSending(true);
     try {
       await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
-        fromUserId: from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
+        from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
         threadId: initial.threadId, inReplyTo: initial.inReplyTo, attachments,
         ...(scheduled ? { sendAt, timezone: tz } : {}),
       }) });
@@ -1822,48 +1960,47 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-[80] p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        {/* Header bar */}
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-3xl shadow-2xl my-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl">
           <span className="text-sm font-semibold">{initial.mode === 'forward' ? 'Forward message' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message'}</span>
           <button onClick={onClose} className="text-slate-300 hover:text-white text-lg leading-none">×</button>
         </div>
 
-        <div className="px-4 pt-3 space-y-2">
+        <div className="px-5 pt-3 space-y-2">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
 
-          {/* From */}
           {fromOptions.length > 0 && (
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-              <span className="text-xs text-slate-400 w-10">From</span>
-              <select value={from} onChange={(e) => setFrom(Number(e.target.value))} className="flex-1 text-sm text-slate-700 outline-none bg-transparent">
-                {fromOptions.map((o) => <option key={o.userId} value={o.userId}>{o.name} &lt;{o.email}&gt;{o.self ? ' (you)' : ''}</option>)}
+              <span className="text-xs text-slate-400 w-12">From</span>
+              <select value={from} onChange={(e) => setFrom(e.target.value)} className="flex-1 text-sm text-slate-700 outline-none bg-transparent">
+                {fromOptions.map((o) => <option key={o.value} value={o.value}>{o.name} &lt;{o.email}&gt;{o.self && o.value.startsWith('user') ? ' (you)' : ''}</option>)}
               </select>
             </div>
           )}
 
-          {/* To + Cc/Bcc toggles */}
           <div className="flex items-start gap-2 border-b border-slate-100 pb-2">
-            <span className="text-xs text-slate-400 w-10 pt-1.5">To</span>
+            <span className="text-xs text-slate-400 w-12 pt-1.5">To</span>
             <div className="flex-1"><ChipInput value={to} onChange={setTo} placeholder="Recipients" /></div>
             <div className="flex gap-2 pt-1.5 text-xs font-semibold text-slate-400">
               {!showCc && <button onClick={() => setShowCc(true)} className="hover:text-slate-600">Cc</button>}
               {!showBcc && <button onClick={() => setShowBcc(true)} className="hover:text-slate-600">Bcc</button>}
             </div>
           </div>
-          {showCc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-10 pt-1.5">Cc</span><div className="flex-1"><ChipInput value={cc} onChange={setCc} placeholder="Cc" /></div></div>}
-          {showBcc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-10 pt-1.5">Bcc</span><div className="flex-1"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc" /></div></div>}
+          {showCc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Cc</span><div className="flex-1"><ChipInput value={cc} onChange={setCc} placeholder="Cc" /></div></div>}
+          {showBcc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Bcc</span><div className="flex-1"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc" /></div></div>}
 
-          {/* Subject */}
           <div className="border-b border-slate-100 pb-2">
             <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="w-full text-sm text-slate-700 outline-none" />
           </div>
 
-          {/* Body */}
-          <div className="py-1"><RichText value={body} onChange={setBody} placeholder="Write your message…" minHeight={180} /></div>
+          <div className="py-1">
+            <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
+              onAttach={() => fileInput.current?.click()}
+              onAiDraft={() => alert('AI draft coming soon.')}
+              onInsertSignature={insertSignature} />
+          </div>
 
-          {/* Attachment chips */}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 pb-2">
               {attachments.map((a, i) => (
@@ -1877,11 +2014,8 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
           )}
         </div>
 
-        {/* Timezone note */}
-        <div className="px-4 text-[11px] text-slate-400">Times shown in <span className="font-semibold">{tzLabel(tz)}</span>{lead.email ? ` · lead: ${lead.email}` : ''}</div>
-
         {/* Bottom toolbar */}
-        <div className="flex items-center gap-2 px-4 py-3 relative">
+        <div className="flex items-center gap-2 px-5 py-3 relative">
           <div className="flex">
             <button onClick={() => doSend(false)} disabled={sending} className="rounded-l-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
             <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
@@ -1911,18 +2045,16 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
             )}
           </div>
 
-          {/* Schedule popover */}
           {showSchedule && (
             <div className="absolute bottom-14 left-4 w-80 bg-white rounded-xl border border-slate-200 shadow-xl p-4 z-50">
-              <div className="text-sm font-bold text-[#050A1F] mb-2">Schedule send</div>
-              <div className="grid grid-cols-2 gap-2 mb-2">
-                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Date</label><input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
-                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Time</label><input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
+              <div className="text-sm font-bold text-[#050A1F] mb-1">Schedule send</div>
+              <div className="text-[11px] text-slate-400 mb-2">
+                {hasCustomerTz ? <>Customer time zone: <span className="font-semibold text-slate-600">{tzLabel(tz)}</span></> : <>No customer time zone on file — using <span className="font-semibold text-slate-600">IST</span>.</>}
               </div>
-              <label className="block text-[10px] font-bold text-slate-400 mb-1">Time zone</label>
-              <select value={tz} onChange={(e) => setTz(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm mb-3">
-                {TZ_CHOICES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}
-              </select>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Date</label><input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
+                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Time ({tzShortLabel(tz)})</label><input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
+              </div>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setShowSchedule(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
                 <button onClick={() => doSend(true)} disabled={sending} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>Schedule send</button>
@@ -1931,6 +2063,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
           )}
 
           <div className="flex-1" />
+          <span className="text-[10px] text-slate-400">{hasCustomerTz ? tzLabel(tz) : 'IST'}</span>
           <button onClick={onClose} title="Discard" className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /></svg>
           </button>
@@ -1940,7 +2073,6 @@ function Composer({ lead, initial, fromOptions, onClose, onSent }) {
   );
 }
 
-// Email chip input: type an address, Enter/comma commits it as a removable chip.
 function ChipInput({ value, onChange, placeholder }) {
   const [text, setText] = useState('');
   const commit = () => { const t = text.trim().replace(/,$/, ''); if (t) { onChange([...value, t]); setText(''); } };

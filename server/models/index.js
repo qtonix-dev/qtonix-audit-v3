@@ -129,6 +129,7 @@ const User = sequelize.define(
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
     gmailConnectedEmail: { type: DataTypes.STRING, allowNull: true },
+    emailSignature: { type: DataTypes.TEXT, allowNull: true }, // user default signature (HTML)
     gmailConnectedAt: { type: DataTypes.DATE, allowNull: true },
     gmailHistoryId: { type: DataTypes.STRING, allowNull: true }, // last synced marker
   },
@@ -659,6 +660,42 @@ const ScheduledEmail = sequelize.define(
 );
 ScheduledEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Additional linked mailboxes (primarily for admins who manage several inboxes
+// like accounts@, louis@, etc). Each has a friendly label and its own signature
+// override. The user's own primary mailbox still lives on the User row; these
+// are extras. Refresh tokens are encrypted at rest.
+const Mailbox = sequelize.define(
+  'Mailbox',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // owning user (an admin)
+    label: { type: DataTypes.STRING(120), defaultValue: '' }, // "Accounts", "Louis"
+    email: { type: DataTypes.STRING(255), allowNull: false },
+    refreshToken: { type: DataTypes.TEXT, allowNull: true },
+    signature: { type: DataTypes.TEXT, allowNull: true }, // per-mailbox override (HTML)
+    active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  },
+  { tableName: 'mailboxes', indexes: [{ name: 'idx_mailbox_user', fields: ['userId'] }, { name: 'idx_mailbox_email', fields: ['email'] }] }
+);
+Mailbox.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get());
+  o._id = o.id;
+  o.connected = !!o.refreshToken;
+  delete o.refreshToken;
+  return o;
+};
+Mailbox.prototype.getRefreshToken = function () {
+  const v = this.refreshToken;
+  if (!v) return '';
+  return /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(v) ? decrypt(v) : v;
+};
+function encryptMailboxToken(instance) {
+  const v = instance.refreshToken;
+  if (v && !/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(String(v))) instance.refreshToken = encrypt(String(v));
+}
+Mailbox.beforeCreate(encryptMailboxToken);
+Mailbox.beforeUpdate(encryptMailboxToken);
+
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
 
@@ -1041,7 +1078,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

@@ -1556,6 +1556,47 @@ function EmailPanel({ say }) {
       </div>
       {status && <div className={`mt-3 rounded-lg px-3 py-2.5 text-sm ${status.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{status.message}</div>}
       <div className="flex justify-end mt-4"><Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save credentials'}</Btn></div>
+
+      <AdminMailboxes say={say} />
+    </div>
+  );
+}
+
+// Admin-only: link and manage additional mailboxes (accounts@, louis@, etc).
+function AdminMailboxes({ say }) {
+  const [data, setData] = useState(null);
+  const [label, setLabel] = useState('');
+  const load = () => api('/gmail/mailboxes').then(setData).catch(() => {});
+  useEffect(() => {
+    load();
+    const onMsg = (e) => { if (e.data && e.data.gmail) load(); };
+    window.addEventListener('message', onMsg); return () => window.removeEventListener('message', onMsg);
+  }, []);
+  const link = async () => {
+    if (!label.trim()) return;
+    try { const { url } = await api(`/gmail/connect?extra=1&label=${encodeURIComponent(label.trim())}`); window.open(url, 'gmail_oauth', 'width=520,height=640'); setLabel(''); }
+    catch (e) { say && say(e.message); }
+  };
+  const remove = async (id) => { if (!confirm('Unlink this mailbox?')) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); load(); } catch { /* */ } };
+  if (!data || !data.isAdmin) return null;
+  const extras = (data.mailboxes || []).filter((m) => m.kind === 'extra');
+  return (
+    <div className="mt-6 border-t border-slate-100 pt-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Additional mailboxes</div>
+      <div className="text-xs text-slate-500 mb-3">Link shared inboxes like accounts@ or a colleague’s mailbox. Each shows up as a “From” option when composing.</div>
+      <div className="space-y-2 mb-3">
+        {extras.length === 0 && <div className="text-xs text-slate-400">No additional mailboxes linked yet.</div>}
+        {extras.map((m) => (
+          <div key={m._id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+            <div className="text-xs"><span className="font-bold text-[#050A1F]">{m.label}</span> <span className="text-slate-400">· {m.email}</span> {m.connected ? <span className="text-green-600 font-bold ml-1">● connected</span> : <span className="text-slate-300 ml-1">○</span>}</div>
+            <button onClick={() => remove(m._id)} className="text-[11px] font-bold text-red-500">Remove</button>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Accounts)" className={inputCls} />
+        <Btn onClick={link}>+ Link mailbox</Btn>
+      </div>
     </div>
   );
 }
