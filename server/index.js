@@ -242,6 +242,24 @@ connectWithRetry()
       console.error('[migrate] domain backfill skipped:', e.message);
     }
 
+    // One-time backfill: leads marked converted before convertedAt was tracked
+    // (e.g. set directly from the edit form) may have a null convertedAt, which
+    // stranded them off the Converted tab's dated views. Stamp them with their
+    // createdAt (or now) so they appear correctly.
+    try {
+      const { Lead, Op } = require('./models');
+      const stranded = await Lead.findAll({ where: { status: 'converted', convertedAt: null }, attributes: ['id', 'createdAt'] });
+      let stamped = 0;
+      for (const l of stranded) {
+        l.convertedAt = l.createdAt || new Date();
+        await l.save();
+        stamped++;
+      }
+      if (stamped) console.log(`[migrate] backfilled convertedAt on ${stamped} converted lead(s)`);
+    } catch (e) {
+      console.error('[migrate] convertedAt backfill skipped:', e.message);
+    }
+
     // One-time cleanup: keep only the latest report per lead. Older reports for
     // the same lead are deleted (with their PDFs); a timeline note on the lead
     // records that a prior report existed. Runs every boot but is a no-op once

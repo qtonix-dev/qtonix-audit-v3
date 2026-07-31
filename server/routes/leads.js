@@ -1257,7 +1257,19 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       from = new Date(now.getFullYear(), 0, 1);
     }
     if (from) {
-      where.convertedAt = to ? { [Op.gte]: from, [Op.lt]: to } : { [Op.gte]: from };
+      // A lead marked converted before we tracked convertedAt (or via an older
+      // path) may have a null convertedAt. Fall back to createdAt for the date
+      // window, and always include null/undated converted leads so they can't
+      // disappear from the Converted tab entirely.
+      const range = to ? { [Op.gte]: from, [Op.lt]: to } : { [Op.gte]: from };
+      where[Op.and] = [
+        ...(where[Op.and] || []),
+        { [Op.or]: [
+          { convertedAt: range },
+          { convertedAt: null, createdAt: range },
+          { convertedAt: null, createdAt: null },
+        ] },
+      ];
     }
 
     const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
@@ -1918,7 +1930,18 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     }
     if (b.status !== undefined && b.status !== lead.status) {
       pushTimeline(lead, 'status', `Status changed to "${b.status}"`, author);
-      lead.status = String(b.status).slice(0, 40);
+      const newStatus = String(b.status).slice(0, 40);
+      // Keep convertedAt in sync with the status so the lead lands on (and is
+      // dateable in) the Converted tab. Setting it here matters when someone
+      // marks a lead converted directly from the edit form rather than by
+      // closing a deal — otherwise convertedAt stays null and the lead is
+      // filtered out of the Converted tab's period views.
+      if (newStatus === 'converted' && lead.status !== 'converted') {
+        lead.convertedAt = lead.convertedAt || new Date();
+      } else if (newStatus !== 'converted' && lead.status === 'converted') {
+        lead.convertedAt = null; // conversion undone
+      }
+      lead.status = newStatus;
     }
     const simple = ['firstName', 'lastName', 'email', 'secondaryEmail', 'mobile', 'phone', 'leadSource', 'generatedBy', 'country', 'city', 'timezone', 'additionalInfo'];
     for (const f of simple) if (b[f] !== undefined) lead[f] = String(b[f]).slice(0, 10000);
