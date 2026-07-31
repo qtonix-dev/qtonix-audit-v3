@@ -621,6 +621,7 @@ const LeadEmail = sequelize.define(
     bodyText: { type: DataTypes.TEXT('long'), allowNull: true },
     attachments: { type: DataTypes.JSON, allowNull: true }, // [{filename,mimeType,attachmentId,size}]
     starred: { type: DataTypes.BOOLEAN, defaultValue: false },
+    dismissedFromMissed: { type: DataTypes.BOOLEAN, defaultValue: false }, // admin cleared it from the dashboard
     sentAt: { type: DataTypes.DATE },
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },
   },
@@ -716,6 +717,22 @@ const Signature = sequelize.define(
   { tableName: 'signatures', indexes: [{ name: 'idx_sig_user', fields: ['userId'] }] }
 );
 Signature.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Email templates. Each belongs to a user; admins may mark a template `global`
+// so everyone sees it. Body is raw HTML. Subject optional.
+const EmailTemplate = sequelize.define(
+  'EmailTemplate',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // owner
+    name: { type: DataTypes.STRING(160), defaultValue: 'Template' },
+    subject: { type: DataTypes.TEXT, allowNull: true },
+    bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
+    isGlobal: { type: DataTypes.BOOLEAN, defaultValue: false },
+  },
+  { tableName: 'email_templates', indexes: [{ name: 'idx_tpl_user', fields: ['userId'] }, { name: 'idx_tpl_global', fields: ['isGlobal'] }] }
+);
+EmailTemplate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
@@ -1099,7 +1116,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

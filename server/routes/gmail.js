@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const fs = require('fs');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, Report, Settings, Op } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, BusinessBrief, Report, Settings, Op } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -211,8 +211,10 @@ router.delete('/signatures/:id', requireAuth, async (req, res, next) => {
 });
 
 /**
- * POST /api/gmail/ai-draft — generate an email draft via OpenAI. Wired now;
- * fuller prompt/behaviour to come. Returns { draft } HTML.
+ * POST /api/gmail/ai-draft — generate an email draft via OpenAI, acting as a
+ * senior sales manager at Qtonix. Pulls the lead's details, AI brief and recent
+ * email history for context. Supports several modes (see buildModeInstruction).
+ * Returns { subject, body } — body is HTML, subject plain text.
  */
 router.post('/ai-draft', requireAuth, async (req, res, next) => {
   try {
@@ -221,27 +223,92 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
     if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in Admin → API keys.' });
     const b = req.body || {};
     const lead = b.leadId ? await Lead.findByPk(b.leadId) : null;
-    const prompt = b.prompt || 'Write a short, friendly follow-up email to this lead.';
-    const context = lead ? `Lead: ${lead.firstName || ''} ${lead.lastName || ''}, website ${lead.website || 'n/a'}, email ${lead.email || 'n/a'}.` : '';
+    if (!lead) return res.status(400).json({ error: 'Lead not found.' });
+
+    // Assemble context: lead details, AI brief (if any), recent email history.
+    const viewer = await User.findByPk(req.user.id);
+    const leadName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || 'there';
+    const details = [
+      `Name: ${leadName}`,
+      lead.website ? `Website: ${lead.website}` : '',
+      lead.email ? `Email: ${lead.email}` : '',
+      lead.phone ? `Phone: ${lead.phone}` : '',
+      lead.country ? `Country: ${lead.country}` : '',
+      lead.timezone ? `Timezone: ${lead.timezone}` : '',
+    ].filter(Boolean).join('\n');
+
+    let briefText = '';
+    if (lead.domain) {
+      const brief = await BusinessBrief.findOne({ where: { domain: lead.domain }, order: [['createdAt', 'DESC']] });
+      if (brief && brief.brief) {
+        try { briefText = typeof brief.brief === 'string' ? brief.brief : JSON.stringify(brief.brief); }
+        catch { briefText = ''; }
+        briefText = briefText.slice(0, 6000);
+      }
+    }
+
+    // Recent thread/email history for this lead (viewer's scope).
+    const allowed = await visibleUserIds(viewer);
+    const recent = await LeadEmail.findAll({ where: { leadId: lead.id, userId: { [Op.in]: allowed } }, order: [['sentAt', 'DESC']], limit: 6 });
+    const history = recent.reverse().map((m) => `[${m.direction === 'outbound' ? 'Us' : leadName} · ${new Date(m.sentAt).toLocaleDateString()}] ${m.subject ? `(${m.subject}) ` : ''}${String(m.bodyText || m.snippet || '').replace(/\s+/g, ' ').slice(0, 400)}`).join('\n');
+    const lastInbound = recent.slice().reverse().find((m) => m.direction === 'inbound');
+
+    const modeInstruction = buildModeInstruction(b, { leadName, phone: lead.phone, briefText, lastInbound, history });
+
+    const system = [
+      'You are a senior sales manager at Qtonix, a digital marketing and website design company.',
+      'You write emails to prospects and clients. Tone: professional, warm and friendly, confident but never pushy.',
+      'Keep emails well-structured and concise. Sign off as the Qtonix team (do not invent a personal name unless given one).',
+      'Return your answer as strict JSON: {"subject": "...", "body": "<p>...</p>"}. The body must be simple HTML (paragraphs, lists, links). No markdown, no <html> wrapper, no commentary outside the JSON.',
+    ].join(' ');
+
+    const userMsg = [
+      'LEAD DETAILS:', details,
+      briefText ? `\nAI BRIEF (use to personalise and add value):\n${briefText}` : '',
+      history ? `\nRECENT EMAIL HISTORY (most recent last):\n${history}` : '',
+      `\nTASK:\n${modeInstruction}`,
+    ].filter(Boolean).join('\n');
 
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: b.model || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'You are a helpful sales assistant that drafts concise, professional emails. Return only the email body as simple HTML (no <html> wrapper).' },
-          { role: 'user', content: `${context}\n\n${prompt}` },
-        ],
-        max_tokens: 600,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: userMsg }],
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
       }),
     });
     const data = await resp.json();
     if (!resp.ok) return res.status(502).json({ error: data.error?.message || 'OpenAI request failed.' });
-    const draft = data.choices?.[0]?.message?.content || '';
-    res.json({ draft });
+    const raw = data.choices?.[0]?.message?.content || '{}';
+    let parsed = {};
+    try { parsed = JSON.parse(raw); } catch { parsed = { subject: '', body: raw }; }
+    res.json({ subject: parsed.subject || '', body: parsed.body || '' });
   } catch (e) { next(e); }
 });
+
+// Translate the requested mode + inputs into a concrete instruction for the LLM.
+function buildModeInstruction(b, ctx) {
+  const { leadName, phone, briefText, lastInbound, history } = ctx;
+  switch (b.mode) {
+    case 'technical':
+      return `Write a detailed first "technical" outreach email to ${leadName}. Use the AI brief above to reference specific, concrete observations about their website and online presence, demonstrating genuine expertise and building confidence. Explain briefly how Qtonix can help. End by asking them to share the best date and time for a detailed meeting/call. ${briefText ? '' : 'If no brief is available, keep the technical observations general but still credible.'}`;
+    case 'followup':
+      return `Write a friendly follow-up reminder to ${leadName}. ${lastInbound ? `Their last message to us said: "${String(lastInbound.bodyText || lastInbound.snippet || '').slice(0, 500)}". Reference it naturally.` : 'Reference our previous conversation naturally.'} Politely ask for an update, and include one or two attention-grabbing points (a fresh insight, a quick win, or a relevant result) to re-engage them.`;
+    case 'newreminder':
+      return `Write a reminder email to ${leadName} based on this instruction from the sales rep: "${b.prompt || 'Send a gentle reminder.'}"`;
+    case 'voicemail':
+      return `Write a short email to ${leadName} explaining that we tried to call them${phone ? ` on ${phone}` : ''} but it went to voicemail. Politely ask them to share their availability for a quick call. Keep it brief and friendly.`;
+    case 'meeting': {
+      const when = [b.meetingDate, b.meetingTime].filter(Boolean).join(' at ');
+      return `Write an email to ${leadName} requesting a meeting${when ? ` on ${when}${b.timezone ? ` (${b.timezone})` : ''}` : ''}. Propose the time clearly, explain briefly what we'll cover, and ask them to confirm or suggest an alternative.`;
+    }
+    case 'custom':
+    default:
+      return b.prompt || 'Write a professional, friendly email to this lead.';
+  }
+}
 
 // --- Lead email thread ------------------------------------------------------
 
@@ -583,6 +650,7 @@ router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
       msgs.sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt)); // newest first
       const latest = msgs[0];
       if (latest.direction !== 'inbound') continue; // already replied (latest outbound)
+      if (latest.dismissedFromMissed) continue; // an admin cleared this one
       // The most recent inbound that still awaits a reply.
       pending.push(latest);
     }
@@ -598,7 +666,7 @@ router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
       if (!lead) return null;
       const ageMs = now - new Date(p.sentAt).getTime();
       return {
-        emailId: p._id, leadId: p.leadId,
+        emailId: p.id, leadId: p.leadId,
         leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || lead.email || 'Lead',
         ownerId: lead.ownerId,
         fromName: p.fromName, fromEmail: p.fromEmail,
@@ -612,6 +680,76 @@ router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
       awaiting: items.filter((i) => i.ageMs < DAY),
       missed: items.filter((i) => i.ageMs >= DAY),
     });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/gmail/awaiting-reply/:emailId/dismiss — admin clears a missed
+ * commitment for everyone (marks the inbound email handled globally).
+ */
+router.post('/awaiting-reply/:emailId/dismiss', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const row = await LeadEmail.findByPk(req.params.emailId);
+    if (!row) return res.status(404).json({ error: 'Email not found.' });
+    row.dismissedFromMissed = true;
+    await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- Email templates --------------------------------------------------------
+
+/** GET /api/gmail/templates — the user's own templates plus any global ones.
+ *  Admins see all templates (own + everyone's + global). */
+router.get('/templates', requireAuth, async (req, res, next) => {
+  try {
+    const where = req.user.role === 'admin'
+      ? {}
+      : { [Op.or]: [{ userId: req.user.id }, { isGlobal: true }] };
+    const rows = await EmailTemplate.findAll({ where, order: [['isGlobal', 'DESC'], ['name', 'ASC']] });
+    // Tag ownership for the UI.
+    const out = rows.map((r) => { const o = r.toJSON(); o.mine = r.userId === req.user.id; return o; });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/templates — create. Only admins may set isGlobal. */
+router.post('/templates', requireAuth, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const row = await EmailTemplate.create({
+      userId: req.user.id, name: (b.name || 'Template').slice(0, 160),
+      subject: b.subject || '', bodyHtml: b.bodyHtml || '',
+      isGlobal: req.user.role === 'admin' ? !!b.isGlobal : false,
+    });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+/** PUT /api/gmail/templates/:id — update own (or any, for admins). */
+router.put('/templates/:id', requireAuth, async (req, res, next) => {
+  try {
+    const row = await EmailTemplate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Template not found.' });
+    if (row.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed.' });
+    const b = req.body || {};
+    if (b.name !== undefined) row.name = String(b.name).slice(0, 160);
+    if (b.subject !== undefined) row.subject = b.subject;
+    if (b.bodyHtml !== undefined) row.bodyHtml = b.bodyHtml;
+    if (b.isGlobal !== undefined && req.user.role === 'admin') row.isGlobal = !!b.isGlobal;
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/gmail/templates/:id — delete own (or any, for admins). */
+router.delete('/templates/:id', requireAuth, async (req, res, next) => {
+  try {
+    const row = await EmailTemplate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Template not found.' });
+    if (row.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed.' });
+    await row.destroy();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

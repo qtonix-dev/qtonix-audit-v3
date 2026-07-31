@@ -1666,7 +1666,7 @@ function Row({ k, v }) {
 function EmailTab({ lead, user, onChange }) {
   const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
   const [view, setView] = useState('inbox');
-  const tabs = [['inbox', 'Email'], ...(isPresales ? [['draft', 'Draft']] : []), ['template', 'Template']];
+  const tabs = [['inbox', 'Email'], ...(isPresales ? [['draft', 'PCF Draft']] : [])];
   return (
     <div>
       <div className="flex items-center gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
@@ -1676,13 +1676,6 @@ function EmailTab({ lead, user, onChange }) {
       </div>
       {view === 'inbox' && <EmailInboxTab lead={lead} user={user} />}
       {view === 'draft' && <EmailDraftTab lead={lead} user={user} onChange={onChange} />}
-      {view === 'template' && (
-        <div className="text-center py-16">
-          <div className="text-3xl mb-2">📋</div>
-          <div className="text-sm font-bold text-[#050A1F]">Email templates</div>
-          <div className="text-xs text-slate-400 mt-1">Coming soon — reusable templates you can drop into any email.</div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1951,6 +1944,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const [schedTime, setSchedTime] = useState('');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
+  const [showAi, setShowAi] = useState(false);
 
   // Customer timezone only; fall back to IST when the lead has none.
   const hasCustomerTz = !!lead.timezone;
@@ -2033,14 +2027,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
           <div className="py-1">
             <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
               onAttach={() => fileInput.current?.click()}
-              onAiDraft={async () => {
-                const prompt = window.prompt('What should this email say? (Give the AI a short instruction)');
-                if (!prompt) return;
-                try {
-                  const { draft } = await api(`/gmail/ai-draft`, { method: 'POST', body: JSON.stringify({ leadId: lead._id || lead.id, prompt }) });
-                  if (draft) setBody((b) => (b ? `${b}<br>${draft}` : draft));
-                } catch (e) { setErr(e.message); }
-              }}
+              onAiDraft={() => setShowAi(true)}
               onInsertSignature={insertSignature} />
           </div>
 
@@ -2110,6 +2097,103 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
           <button onClick={onClose} title="Discard" className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /></svg>
           </button>
+        </div>
+      </div>
+
+      {showAi && <AiDraftModal lead={lead} onClose={() => setShowAi(false)} onDraft={({ subject: sj, body: bd }) => { if (sj) setSubject(sj); if (bd) setBody(bd); setShowAi(false); }} />}
+    </div>
+  );
+}
+
+// AI draft assistant. CRM-styled popup with modes; sends the lead's full
+// context (details, AI brief, email history) to OpenAI and fills subject+body.
+function AiDraftModal({ lead, onClose, onDraft }) {
+  const [mode, setMode] = useState('technical');
+  const [prompt, setPrompt] = useState('');
+  const [meetingDate, setMeetingDate] = useState('');
+  const [meetingTime, setMeetingTime] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const MODES = [
+    { id: 'technical', label: '1st technical email', desc: 'Detailed, brief-backed intro that builds confidence and asks for a meeting time.', icon: '🔬' },
+    { id: 'followup', label: 'Follow-up reminder', desc: 'References their last email and nudges for an update with attention-grabbing points.', icon: '🔁' },
+    { id: 'newreminder', label: 'New reminder', desc: 'Write a reminder from your own instruction.', icon: '⏰', needsPrompt: true },
+    { id: 'voicemail', label: 'Voicemail follow-up', desc: `“I tried calling you${lead.phone ? ` on ${lead.phone}` : ''} but reached voicemail…”`, icon: '📞' },
+    { id: 'meeting', label: 'Ask for a meeting', desc: 'Propose a specific date and time to meet.', icon: '📅', needsMeeting: true },
+    { id: 'custom', label: 'Custom', desc: 'Write anything — give the AI your own prompt.', icon: '✍️', needsPrompt: true },
+  ];
+  const active = MODES.find((m) => m.id === mode);
+
+  const generate = async () => {
+    setErr(''); setBusy(true);
+    try {
+      const payload = { leadId: lead._id || lead.id, mode, prompt };
+      if (mode === 'meeting') { payload.meetingDate = meetingDate; payload.meetingTime = meetingTime; payload.timezone = lead.timezone || 'Asia/Kolkata'; }
+      const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify(payload) });
+      onDraft({ subject: res.subject, body: res.body });
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[90] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-xl my-8 shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 rounded-t-2xl" style={{ background: 'linear-gradient(90deg,#050A1F,#0b1533)' }}>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4z" /><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z" /></svg>
+            </div>
+            <div>
+              <div className="text-sm font-extrabold text-white">AI email assistant</div>
+              <div className="text-[11px] text-slate-400">Drafts using this lead’s details, AI brief & history</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+
+        <div className="p-5">
+          {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+
+          {/* Mode grid */}
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            {MODES.map((m) => (
+              <button key={m.id} onClick={() => setMode(m.id)}
+                className={`text-left rounded-xl border p-3 transition ${mode === m.id ? 'border-[#FF4500] bg-orange-50/50 ring-1 ring-[#FF4500]/30' : 'border-slate-200 hover:border-slate-300'}`}>
+                <div className="flex items-center gap-2 mb-0.5"><span>{m.icon}</span><span className="text-xs font-bold text-[#050A1F]">{m.label}</span></div>
+                <div className="text-[10px] text-slate-500 leading-snug">{m.desc}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Mode-specific inputs */}
+          {active?.needsPrompt && (
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Your instruction</label>
+              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} placeholder={mode === 'custom' ? 'e.g. Thank them for the call and summarise next steps…' : 'e.g. Remind them the proposal expires Friday…'} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            </div>
+          )}
+          {active?.needsMeeting && (
+            <div className="mb-4 grid grid-cols-2 gap-3">
+              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Meeting date</label><input type="date" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+              <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">Time ({tzShortLabel(lead.timezone || 'Asia/Kolkata')})</label><input type="time" value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+            </div>
+          )}
+
+          {/* Context chips */}
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            <span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">✓ Lead details</span>
+            <span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">✓ AI brief (if available)</span>
+            <span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">✓ Email history</span>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={generate} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50 inline-flex items-center gap-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+              {busy ? 'Drafting…' : 'Generate draft'}
+            </button>
+          </div>
+          <div className="text-[10px] text-slate-400 mt-2 text-center">The draft fills the subject and body — review it before sending.</div>
         </div>
       </div>
     </div>
@@ -3845,6 +3929,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const filtered = items
     .filter((l) => (q ? (fullName(l) + ' ' + (l.website || '') + ' ' + (l.ownerName || '')).toLowerCase().includes(q.toLowerCase()) : true));
 
+  // Converted-with-an-open-deal show as cards; converted with no open deal go
+  // into a compact table below (server flags each row with `openDeal`).
+  const hasOpen = (l) => (typeof l.openDeal === 'boolean') ? l.openDeal : (l.deals || []).some((d) => d && d.stage !== 'closed_won' && d.stage !== 'closed_lost');
+  const openDealLeads = filtered.filter(hasOpen);
+  const noOpenDealLeads = filtered.filter((l) => !hasOpen(l));
+
   // Page totals.
   const totals = filtered.reduce((acc, l) => {
     const s = summarize(l);
@@ -3910,8 +4000,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           No converted clients for this period. A lead converts when one of its deals is marked Closed Won.
         </div>
       ) : viewMode === 'table' ? null : (
+        <>
+        {openDealLeads.length > 0 && (
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">With open deals · {openDealLeads.length}</div>
+        )}
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((l) => {
+          {openDealLeads.map((l) => {
             const s = summarize(l);
             const pct = s.booked > 0 ? Math.round((s.collected / s.booked) * 100) : 0;
             const fullyPaid = s.due <= 0 && s.booked > 0;
@@ -4008,6 +4102,37 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             );
           })}
         </div>
+
+        {/* Converted clients with no open deal — shown as a compact table, not
+            cards, since there's no active deal to work. */}
+        {noOpenDealLeads.length > 0 && (
+          <div className="mt-6">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">No open deal · {noOpenDealLeads.length}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">
+                  <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Website</th><th className="px-4 py-2.5">Collected</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Converted</th><th className="px-4 py-2.5"></th>
+                </tr></thead>
+                <tbody>
+                  {noOpenDealLeads.map((l) => {
+                    const s = summarize(l);
+                    return (
+                      <tr key={l._id} onClick={() => onOpen(l._id, 'deals')} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer">
+                        <td className="px-4 py-2.5 font-bold text-[#050A1F]">{fullName(l)}</td>
+                        <td className="px-4 py-2.5 text-slate-500">{l.website ? l.website.replace(/^https?:\/\//, '') : '—'}</td>
+                        <td className="px-4 py-2.5 text-slate-600">${s.collected.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-slate-500">{l.ownerName}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
+                        <td className="px-4 py-2.5 text-right"><span className="rounded-md bg-purple-50 text-purple-600 px-2 py-0.5 text-[10px] font-bold whitespace-nowrap">✨ Cross-sell</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {/* Full client table — easier to scan than cards once the list grows. */}

@@ -807,7 +807,7 @@ function useGmail() {
 }
 
 // The circular avatar + name/designation + dropdown in the header.
-function UserMenu({ user, onEditProfile, onEmailSettings, onSignOut }) {
+function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -837,6 +837,10 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onSignOut }) {
           <button onClick={() => { setOpen(false); onEmailSettings(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
             Email settings
+          </button>
+          <button onClick={() => { setOpen(false); onTemplates(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+            Templates
           </button>
           <button onClick={() => { setOpen(false); onSignOut(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 text-left border-t border-slate-100 mt-1 pt-2.5">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></svg>
@@ -1061,17 +1065,9 @@ function EmailSettingsModal({ user, onClose }) {
                 </select>
               </div>
               <label className="flex items-center gap-2 text-xs text-slate-600 mb-2"><input type="checkbox" checked={!!editing.isDefault} onChange={(e) => setEditing({ ...editing, isDefault: e.target.checked })} /> Make this my default signature</label>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1">HTML (paste your signature)</label>
-                  <textarea value={editing.bodyHtml} onChange={(e) => setEditing({ ...editing, bodyHtml: e.target.value })} rows={8} placeholder="<table>…</table>" className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-mono" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1">Live preview</label>
-                  <div className="rounded-lg border border-slate-200 px-2 py-1.5 h-[172px] overflow-auto bg-slate-50/50" dangerouslySetInnerHTML={{ __html: editing.bodyHtml || '<span style="color:#cbd5e1">Preview appears here…</span>' }} />
-                </div>
-              </div>
-              <div className="text-[10px] text-slate-400 mt-1.5">Tip: in Gmail, open your signature, select all, copy, then paste here — or paste the HTML source to keep the exact layout and CSS.</div>
+              <label className="block text-[10px] font-bold text-slate-400 mb-1">Signature</label>
+              <PasteHtmlEditor value={editing.bodyHtml} onChange={(html) => setEditing({ ...editing, bodyHtml: html })} minHeight={150} />
+              <div className="text-[10px] text-slate-400 mt-1.5">Paste directly from your Gmail signature — the layout, colours, and images are preserved.</div>
               <div className="flex justify-end gap-2 mt-3">
                 <button onClick={() => setEditing(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
                 <button onClick={saveSig} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>Save signature</button>
@@ -1084,6 +1080,111 @@ function EmailSettingsModal({ user, onClose }) {
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Global template library. Each user manages their own; admins can mark a
+// template global (visible to everyone). Body uses the paste-preserving editor.
+function TemplatesModal({ user, onClose }) {
+  const [list, setList] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [msg, setMsg] = useState('');
+  const isAdmin = user.role === 'admin';
+
+  const load = () => api('/gmail/templates').then(setList).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const blank = () => ({ name: '', subject: '', bodyHtml: '', isGlobal: false });
+  const save = async () => {
+    try {
+      if (editing._id) await api(`/gmail/templates/${editing._id}`, { method: 'PUT', body: JSON.stringify(editing) });
+      else await api('/gmail/templates', { method: 'POST', body: JSON.stringify(editing) });
+      setEditing(null); load();
+    } catch (e) { setMsg(e.message); }
+  };
+  const del = async (id) => { if (!confirm('Delete this template?')) return; try { await api(`/gmail/templates/${id}`, { method: 'DELETE' }); load(); } catch (e) { setMsg(e.message); } };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl my-8" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-extrabold text-[#050A1F]">Email templates</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        {msg && <div className="mb-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">{msg}</div>}
+
+        {!editing && (
+          <>
+            <div className="flex justify-end mb-3">
+              <button onClick={() => setEditing(blank())} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>+ New template</button>
+            </div>
+            <div className="space-y-2">
+              {list.length === 0 && <div className="text-xs text-slate-400 text-center py-6">No templates yet. Create one to reuse across all leads.</div>}
+              {list.map((t) => (
+                <div key={t._id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{t.name}
+                      {t.isGlobal && <span className="text-[9px] bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">GLOBAL</span>}
+                      {isAdmin && !t.mine && <span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">other user</span>}
+                    </div>
+                    {t.subject && <div className="text-[11px] text-slate-400 truncate">Subject: {t.subject}</div>}
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    {(t.mine || isAdmin) && <button onClick={() => setEditing({ ...t })} className="text-[11px] font-bold text-blue-500">Edit</button>}
+                    {(t.mine || isAdmin) && <button onClick={() => del(t._id)} className="text-[11px] font-bold text-red-500">Delete</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {editing && (
+          <div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="Template name" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <input value={editing.subject || ''} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Subject (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            </div>
+            {isAdmin && <label className="flex items-center gap-2 text-xs text-slate-600 mb-2"><input type="checkbox" checked={!!editing.isGlobal} onChange={(e) => setEditing({ ...editing, isGlobal: e.target.checked })} /> Make this a global template (visible to everyone)</label>}
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Body</label>
+            <PasteHtmlEditor value={editing.bodyHtml} onChange={(html) => setEditing({ ...editing, bodyHtml: html })} minHeight={200} />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setEditing(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={save} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save template</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// A contentEditable that preserves pasted HTML/CSS/layout (e.g. a signature or
+// template copied from Gmail keeps its formatting, not just plain text).
+function PasteHtmlEditor({ value, onChange, minHeight = 160 }) {
+  const ref = useRef(null);
+  const [showSource, setShowSource] = useState(false);
+  useEffect(() => { if (ref.current && ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || ''; }, [value, showSource]);
+  return (
+    <div className="rounded-lg border border-slate-300">
+      <div className="flex items-center justify-between border-b border-slate-200 px-2 py-1 bg-slate-50 rounded-t-lg">
+        <span className="text-[10px] font-bold text-slate-400 uppercase">{showSource ? 'HTML source' : 'Paste from Gmail — formatting is kept'}</span>
+        <button onClick={() => setShowSource((v) => !v)} className="text-[11px] font-bold text-blue-500">{showSource ? 'Visual' : '</> HTML'}</button>
+      </div>
+      {showSource ? (
+        <textarea value={value || ''} onChange={(e) => onChange(e.target.value)} style={{ minHeight }} className="w-full px-3 py-2 text-xs font-mono outline-none rounded-b-lg" />
+      ) : (
+        <div ref={ref} contentEditable suppressContentEditableWarning
+          onInput={() => onChange(ref.current.innerHTML)}
+          onBlur={() => onChange(ref.current.innerHTML)}
+          className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight }} />
+      )}
+      <div className="border-t border-slate-100 px-3 py-1.5 flex items-center justify-between">
+        <span className="text-[10px] text-slate-400">Tip: open your Gmail signature, select all, copy, and paste here.</span>
+        <div className="text-[10px] text-slate-400">Live preview below</div>
+      </div>
+      <div className="px-3 py-2 bg-slate-50/50 border-t border-slate-100 rounded-b-lg max-h-32 overflow-auto" dangerouslySetInnerHTML={{ __html: value || '<span style="color:#cbd5e1;font-size:12px">Preview…</span>' }} />
     </div>
   );
 }
@@ -1144,6 +1245,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showEmailSettings, setShowEmailSettings] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [view, setView] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -1300,13 +1402,14 @@ export default function App() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onSignOut={signOut} />
+            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onTemplates={() => setShowTemplates(true)} onSignOut={signOut} />
           </div>
         </div>
       </header>
 
       {showProfile && <EditProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => setUser((prev) => ({ ...prev, ...u }))} />}
       {showEmailSettings && <EmailSettingsModal user={user} onClose={() => setShowEmailSettings(false)} />}
+      {showTemplates && <TemplatesModal user={user} onClose={() => setShowTemplates(false)} />}
 
       <main className="max-w-6xl mx-auto px-6 py-8">
         {view === 'dashboard' && dashMode === 'analytics' && isManagerOrAdmin && (

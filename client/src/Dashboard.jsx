@@ -418,11 +418,15 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           <div className="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-2">✉️ Missed commitments · Emails awaiting reply over 24h · {emailReplies.missed.length}</div>
           <div className="space-y-1 max-h-40 overflow-auto">
             {emailReplies.missed.slice(0, 8).map((i) => (
-              <div key={i.emailId} onClick={() => onViewToday && onViewToday(i.leadId)} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-red-50">
-                <span>✉️</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
-                <span className="text-slate-500 truncate flex-1">{i.subject || i.snippet}</span>
+              <div key={i.emailId} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-red-50 group">
+                <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>✉️</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.subject || i.snippet}</span>
                 <span className="font-bold text-red-600 shrink-0">{fmtAge(i.ageMs)}</span>
+                {user.role === 'admin' && (
+                  <button title="Remove from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await api(`/gmail/awaiting-reply/${i.emailId}/dismiss`, { method: 'POST' }); setEmailReplies((prev) => prev ? { ...prev, missed: prev.missed.filter((x) => x.emailId !== i.emailId) } : prev); } catch { /* */ } }}
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                )}
               </div>
             ))}
           </div>

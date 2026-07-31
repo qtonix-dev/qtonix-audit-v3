@@ -1235,7 +1235,16 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       offset: (page - 1) * perPage,
     });
     res.json({
-      items: rows.map((l) => l.toJSON()),
+      items: rows.map((l) => {
+        const o = l.toJSON();
+        // A deal is "open" if it's still in play (not closed won or lost). The
+        // frontend shows converted-with-open-deal as cards and the rest in a
+        // separate table.
+        const deals = Array.isArray(o.deals) ? o.deals : [];
+        o.openDeal = deals.some((d) => d && !['closed_won', 'closed_lost'].includes(d.stage));
+        o.dealCount = deals.length;
+        return o;
+      }),
       total: count, page, perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
       period,
