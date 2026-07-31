@@ -1472,7 +1472,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
           <div className="flex border-b border-slate-100">
             {/* A call-back prospect isn't a worked lead yet, so it has no deals
                 or reports — those tabs appear only once it's a real lead. */}
-            {['timeline', 'notes', 'activity', 'deals', 'reports', 'emaildraft', 'inbox']
+            {['timeline', 'inbox', 'notes', 'activity', 'deals', 'reports', 'emaildraft']
               .filter((t) => !(lead.status === 'callback' && (t === 'deals' || t === 'reports')))
               // Email draft is the pre-sales first-reply/reminder workflow, so
               // it only appears on pre-sales leads.
