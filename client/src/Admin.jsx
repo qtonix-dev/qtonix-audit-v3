@@ -745,6 +745,7 @@ function ApiKeys({ settings, setSettings, say }) {
   const RULES = {
     seranking: { label: 'SE Ranking', required: true, hint: 'Rankings, backlinks, competitors, AI Overview data' },
     anthropic: { label: 'Claude (Anthropic)', required: true, hint: 'AI visibility test, cover tagline, executive summary' },
+    openai: { label: 'OpenAI', required: false, hint: 'AI draft generator in the email composer (gpt-4o-mini)' },
     pagespeed: { label: 'Google PageSpeed', required: false, hint: 'Free, 25k/day. Real-visitor Core Web Vitals' },
     googlePlaces: { label: 'Google Places', required: false, hint: 'Local SEO section — GBP reviews, ratings, NAP' },
   };

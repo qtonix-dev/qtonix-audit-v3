@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const fs = require('fs');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Report, Settings, Op } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, Report, Settings, Op } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -160,6 +160,89 @@ router.put('/signature', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// --- Signature library ------------------------------------------------------
+
+/** GET /api/gmail/signatures — the user's signature library. */
+router.get('/signatures', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await Signature.findAll({ where: { userId: req.user.id }, order: [['isDefault', 'DESC'], ['name', 'ASC']] });
+    res.json(rows.map((r) => r.toJSON()));
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/signatures — create a signature. */
+router.post('/signatures', requireAuth, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const row = await Signature.create({
+      userId: req.user.id, name: (b.name || 'Signature').slice(0, 120), bodyHtml: b.bodyHtml || '',
+      scope: b.scope === 'mailbox' ? 'mailbox' : 'all', mailboxRef: b.scope === 'mailbox' ? (b.mailboxRef || null) : null,
+      isDefault: !!b.isDefault,
+    });
+    if (row.isDefault) await Signature.update({ isDefault: false }, { where: { userId: req.user.id, id: { [Op.ne]: row.id } } });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+/** PUT /api/gmail/signatures/:id — update a signature. */
+router.put('/signatures/:id', requireAuth, async (req, res, next) => {
+  try {
+    const row = await Signature.findByPk(req.params.id);
+    if (!row || row.userId !== req.user.id) return res.status(404).json({ error: 'Signature not found.' });
+    const b = req.body || {};
+    if (b.name !== undefined) row.name = String(b.name).slice(0, 120);
+    if (b.bodyHtml !== undefined) row.bodyHtml = b.bodyHtml;
+    if (b.scope !== undefined) { row.scope = b.scope === 'mailbox' ? 'mailbox' : 'all'; row.mailboxRef = b.scope === 'mailbox' ? (b.mailboxRef || null) : null; }
+    if (b.isDefault !== undefined) row.isDefault = !!b.isDefault;
+    await row.save();
+    if (row.isDefault) await Signature.update({ isDefault: false }, { where: { userId: req.user.id, id: { [Op.ne]: row.id } } });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/gmail/signatures/:id */
+router.delete('/signatures/:id', requireAuth, async (req, res, next) => {
+  try {
+    const row = await Signature.findByPk(req.params.id);
+    if (!row || row.userId !== req.user.id) return res.status(404).json({ error: 'Signature not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/gmail/ai-draft — generate an email draft via OpenAI. Wired now;
+ * fuller prompt/behaviour to come. Returns { draft } HTML.
+ */
+router.post('/ai-draft', requireAuth, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s.getKey('openai');
+    if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in Admin → API keys.' });
+    const b = req.body || {};
+    const lead = b.leadId ? await Lead.findByPk(b.leadId) : null;
+    const prompt = b.prompt || 'Write a short, friendly follow-up email to this lead.';
+    const context = lead ? `Lead: ${lead.firstName || ''} ${lead.lastName || ''}, website ${lead.website || 'n/a'}, email ${lead.email || 'n/a'}.` : '';
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: b.model || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a helpful sales assistant that drafts concise, professional emails. Return only the email body as simple HTML (no <html> wrapper).' },
+          { role: 'user', content: `${context}\n\n${prompt}` },
+        ],
+        max_tokens: 600,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(502).json({ error: data.error?.message || 'OpenAI request failed.' });
+    const draft = data.choices?.[0]?.message?.content || '';
+    res.json({ draft });
+  } catch (e) { next(e); }
+});
+
 // --- Lead email thread ------------------------------------------------------
 
 // Which user mailboxes may the viewer see for lead emails?
@@ -231,6 +314,16 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
       const extras = await Mailbox.findAll({ where: { userId: viewer.id, active: true, refreshToken: { [Op.ne]: null } } });
       extras.forEach((m) => fromOptions.push({ value: `mailbox:${m.id}`, mailboxId: m.id, email: m.email, name: m.label || m.email, self: true, signature: m.signature || viewer.emailSignature || '' }));
     }
+
+    // Overlay signatures from the viewer's signature library: a mailbox-scoped
+    // signature wins for its target; otherwise the default 'all' signature.
+    const sigs = await Signature.findAll({ where: { userId: viewer.id } });
+    const allSig = sigs.find((x) => x.scope === 'all' && x.isDefault) || sigs.find((x) => x.scope === 'all');
+    fromOptions.forEach((o) => {
+      const specific = sigs.find((x) => x.scope === 'mailbox' && x.mailboxRef === o.value);
+      if (specific) o.signature = specific.bodyHtml || o.signature;
+      else if (allSig) o.signature = allSig.bodyHtml || o.signature;
+    });
 
     res.json({
       connected: !!viewer.gmailRefreshToken || (viewer.role === 'admin' && fromOptions.length > 0),

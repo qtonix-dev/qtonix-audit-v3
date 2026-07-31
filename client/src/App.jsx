@@ -807,7 +807,7 @@ function useGmail() {
 }
 
 // The circular avatar + name/designation + dropdown in the header.
-function UserMenu({ user, onEditProfile, onSignOut }) {
+function UserMenu({ user, onEditProfile, onEmailSettings, onSignOut }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -834,9 +834,13 @@ function UserMenu({ user, onEditProfile, onSignOut }) {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg>
             Edit Profile
           </button>
-          <button onClick={() => { setOpen(false); onSignOut(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 text-left">
+          <button onClick={() => { setOpen(false); onEmailSettings(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+            Email settings
+          </button>
+          <button onClick={() => { setOpen(false); onSignOut(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 text-left border-t border-slate-100 mt-1 pt-2.5">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></svg>
-            Sign out
+            Logout
           </button>
         </div>
       )}
@@ -844,11 +848,12 @@ function UserMenu({ user, onEditProfile, onSignOut }) {
   );
 }
 
-// The self-service Edit Profile modal: picture, password, birthday, and Gmail.
+// The self-service Edit Profile modal: picture, password, DOB, marital status.
 function EditProfileModal({ user, onClose, onSaved }) {
-  const gmail = useGmail();
   const [avatar, setAvatar] = useState(user.avatar || '');
   const [birthday, setBirthday] = useState(user.birthday || '');
+  const [maritalStatus, setMaritalStatus] = useState(user.maritalStatus || '');
+  const [anniversary, setAnniversary] = useState(user.anniversary || '');
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
   const [msg, setMsg] = useState('');
@@ -868,7 +873,7 @@ function EditProfileModal({ user, onClose, onSaved }) {
     if (pw && pw !== pw2) return setErr('The two passwords don’t match.');
     setBusy(true);
     try {
-      const body = { avatar, birthday: birthday || null };
+      const body = { avatar, birthday: birthday || null, maritalStatus: maritalStatus || null, anniversary: maritalStatus === 'married' ? (anniversary || null) : null };
       if (pw) body.password = pw;
       const res = await api('/auth/me/profile', { method: 'PUT', body: JSON.stringify(body) });
       onSaved && onSaved(res);
@@ -893,10 +898,26 @@ function EditProfileModal({ user, onClose, onSaved }) {
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Birthday</label>
-            <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Date of birth</label>
+              <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Marital status</label>
+              <select value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm">
+                <option value="">Prefer not to say</option>
+                <option value="single">Single</option>
+                <option value="married">Married</option>
+              </select>
+            </div>
           </div>
+          {maritalStatus === 'married' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Anniversary date</label>
+              <input type="date" value={anniversary} onChange={(e) => setAnniversary(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">New password</label>
@@ -908,9 +929,6 @@ function EditProfileModal({ user, onClose, onSaved }) {
             </div>
           </div>
         </div>
-
-        {/* Email connection + mailboxes + signatures */}
-        <EmailSection user={user} gmail={gmail} />
 
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
@@ -924,90 +942,152 @@ function EditProfileModal({ user, onClose, onSaved }) {
 // Email management inside Edit Profile: primary mailbox connect/disconnect, a
 // default signature, and (admins) additional labelled mailboxes each with their
 // own signature override.
-function EmailSection({ user, gmail }) {
-  const [data, setData] = useState(null); // { isAdmin, defaultSignature, mailboxes }
-  const [defSig, setDefSig] = useState('');
-  const [savingSig, setSavingSig] = useState(false);
-  const [newLabel, setNewLabel] = useState('');
+// Email settings modal: connect your mailbox, admins add extra named mailboxes,
+// a connected-emails table, and a signature library (assign to all/specific,
+// raw HTML paste with live preview).
+function EmailSettingsModal({ user, onClose }) {
+  const gmail = useGmail();
+  const [data, setData] = useState(null); // { isAdmin, mailboxes }
+  const [newName, setNewName] = useState('');
+  const [sigs, setSigs] = useState([]);
+  const [editing, setEditing] = useState(null); // signature being edited/created
   const [msg, setMsg] = useState('');
-  const [editSig, setEditSig] = useState(null); // { id, value }
 
-  const load = () => api('/gmail/mailboxes').then((d) => { setData(d); setDefSig(d.defaultSignature || ''); }).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const loadMailboxes = () => api('/gmail/mailboxes').then(setData).catch(() => {});
+  const loadSigs = () => api('/gmail/signatures').then(setSigs).catch(() => {});
+  useEffect(() => { loadMailboxes(); loadSigs(); }, []);
   useEffect(() => {
-    const onMsg = (e) => { if (e.data && e.data.gmail) load(); };
+    const onMsg = (e) => { if (e.data && e.data.gmail) { loadMailboxes(); gmail.reload && gmail.reload(); } };
     window.addEventListener('message', onMsg); return () => window.removeEventListener('message', onMsg);
   }, []);
 
-  const saveDefaultSig = async () => { setSavingSig(true); try { await api('/gmail/signature', { method: 'PUT', body: JSON.stringify({ signature: defSig }) }); setMsg('Signature saved.'); } catch { /* */ } finally { setSavingSig(false); } };
+  const mailboxes = (data?.mailboxes) || [];
   const linkExtra = async () => {
-    if (!newLabel.trim()) return;
-    try { const { url } = await api(`/gmail/connect?extra=1&label=${encodeURIComponent(newLabel.trim())}`); window.open(url, 'gmail_oauth', 'width=520,height=640'); setNewLabel(''); }
+    if (!newName.trim()) return setMsg('Enter a name for the mailbox first.');
+    try { const { url } = await api(`/gmail/connect?extra=1&label=${encodeURIComponent(newName.trim())}`); window.open(url, 'gmail_oauth', 'width=520,height=640'); setNewName(''); }
     catch (e) { setMsg(e.message); }
   };
-  const removeMailbox = async (id) => { if (!confirm('Unlink this mailbox?')) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); load(); } catch { /* */ } };
-  const saveMailboxSig = async (id) => { try { await api(`/gmail/mailboxes/${id}`, { method: 'PUT', body: JSON.stringify({ signature: editSig.value }) }); setEditSig(null); load(); } catch { /* */ } };
+  const disconnectPrimary = async () => { await gmail.disconnect(); loadMailboxes(); };
+  const removeExtra = async (id) => { if (!confirm('Disconnect this mailbox?')) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); loadMailboxes(); } catch { /* */ } };
+
+  const blankSig = () => ({ name: '', bodyHtml: '', scope: 'all', mailboxRef: '', isDefault: false });
+  const saveSig = async () => {
+    try {
+      if (editing._id) await api(`/gmail/signatures/${editing._id}`, { method: 'PUT', body: JSON.stringify(editing) });
+      else await api('/gmail/signatures', { method: 'POST', body: JSON.stringify(editing) });
+      setEditing(null); loadSigs();
+    } catch (e) { setMsg(e.message); }
+  };
+  const delSig = async (id) => { if (!confirm('Delete this signature?')) return; try { await api(`/gmail/signatures/${id}`, { method: 'DELETE' }); loadSigs(); } catch { /* */ } };
+
+  const mailboxOptions = [{ value: 'all', label: 'All mailboxes' }, ...mailboxes.map((m) => ({ value: m.kind === 'primary' ? `user:${user.id}` : String(m._id), label: `${m.label || m.email} (${m.email})` }))];
 
   return (
-    <div className="mt-5 rounded-xl border border-slate-200 p-4">
-      <div className="text-sm font-bold text-[#050A1F] mb-2">Email</div>
-
-      {/* Primary mailbox */}
-      <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
-        <div>
-          <div className="text-xs font-semibold text-slate-600">Your mailbox</div>
-          <div className="text-xs text-slate-500 mt-0.5">{gmail.status?.connected ? <>Connected as <span className="font-semibold text-slate-700">{gmail.status.email}</span></> : 'Connect your Google Workspace mailbox.'}</div>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl my-8" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-extrabold text-[#050A1F]">Email settings</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
-        {gmail.status?.connected
-          ? <button onClick={gmail.disconnect} className="rounded-lg border border-red-200 text-red-600 px-3 py-2 text-xs font-bold hover:bg-red-50 whitespace-nowrap">Disconnect</button>
-          : <button onClick={gmail.connect} disabled={gmail.busy} className="rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50 whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{gmail.busy ? 'Opening…' : 'Connect Gmail'}</button>}
-      </div>
+        {msg && <div className="mb-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">{msg}</div>}
 
-      {/* Default signature */}
-      <div className="mb-3">
-        <label className="block text-xs font-semibold text-slate-600 mb-1.5">Default signature</label>
-        <textarea value={defSig.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')} onChange={(e) => setDefSig(e.target.value.replace(/\n/g, '<br>'))} rows={3} placeholder={'Your Name\nQtonix Software'} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-        <div className="flex justify-end mt-1.5"><button onClick={saveDefaultSig} disabled={savingSig} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{savingSig ? 'Saving…' : 'Save signature'}</button></div>
-      </div>
+        {/* Your mailbox */}
+        <div className="rounded-xl border border-slate-200 p-4 mb-4">
+          <div className="text-sm font-bold text-[#050A1F] mb-2">Your mailbox</div>
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-slate-500">{gmail.status?.connected ? <>Connected as <span className="font-semibold text-slate-700">{gmail.status.email}</span></> : 'Connect your Google Workspace mailbox to read & reply to lead emails.'}</div>
+            {gmail.status?.connected
+              ? <button onClick={disconnectPrimary} className="rounded-lg border border-red-200 text-red-600 px-3 py-1.5 text-xs font-bold hover:bg-red-50">Disconnect</button>
+              : <button onClick={gmail.connect} disabled={gmail.busy} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{gmail.busy ? 'Opening…' : 'Connect Gmail'}</button>}
+          </div>
+          {gmail.err && <div className="mt-2 text-[11px] text-red-500">{gmail.err}</div>}
+        </div>
 
-      {/* Admin: additional mailboxes */}
-      {data?.isAdmin && (
-        <div className="border-t border-slate-100 pt-3">
-          <div className="text-xs font-semibold text-slate-600 mb-2">Additional mailboxes</div>
-          <div className="space-y-2 mb-3">
-            {(data.mailboxes || []).filter((m) => m.kind === 'extra').map((m) => (
-              <div key={m._id} className="rounded-lg border border-slate-200 p-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs"><span className="font-bold text-[#050A1F]">{m.label}</span> <span className="text-slate-400">· {m.email}</span> {m.connected ? <span className="text-green-600 font-bold">●</span> : <span className="text-slate-300">○</span>}</div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setEditSig(editSig?.id === m._id ? null : { id: m._id, value: m.signature || '' })} className="text-[11px] font-bold text-blue-500">Signature</button>
-                    <button onClick={() => removeMailbox(m._id)} className="text-[11px] font-bold text-red-500">Remove</button>
-                  </div>
+        {/* Admin: add new email + connected table */}
+        {data?.isAdmin && (
+          <div className="rounded-xl border border-slate-200 p-4 mb-4">
+            <div className="text-sm font-bold text-[#050A1F] mb-2">Add new email</div>
+            <div className="flex gap-2 mb-3">
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name (e.g. Accounts)" className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <button onClick={linkExtra} className="rounded-lg px-4 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Connect</button>
+            </div>
+            <div className="text-[10px] text-slate-400 mb-3">Enter a name, then Connect — you’ll pick the Google account in the popup. The email address comes from the Google sign-in.</div>
+
+            <div className="text-xs font-semibold text-slate-600 mb-2">Connected mailboxes</div>
+            <table className="w-full text-xs">
+              <thead><tr className="text-left text-slate-400 border-b border-slate-100"><th className="py-1.5">Name</th><th>Email</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {mailboxes.map((m) => (
+                  <tr key={m._id} className="border-b border-slate-50">
+                    <td className="py-2 font-semibold text-[#050A1F]">{m.label || (m.kind === 'primary' ? 'Me' : '—')}</td>
+                    <td className="text-slate-600">{m.email}</td>
+                    <td>{m.connected ? <span className="text-green-600 font-bold">● Connected</span> : <span className="text-slate-300">○</span>}</td>
+                    <td className="text-right">{m.kind === 'extra' ? <button onClick={() => removeExtra(m._id)} className="text-red-500 font-bold">Disconnect</button> : <span className="text-slate-300">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Signature library */}
+        <div className="rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-bold text-[#050A1F]">Signatures</div>
+            <button onClick={() => setEditing(blankSig())} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>+ New signature</button>
+          </div>
+          {sigs.length === 0 && !editing && <div className="text-xs text-slate-400">No signatures yet. Create one and assign it to all mailboxes or a specific one.</div>}
+          <div className="space-y-2">
+            {sigs.map((sg) => (
+              <div key={sg._id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-[#050A1F]">{sg.name} {sg.isDefault && <span className="text-[9px] bg-orange-100 text-[#FF4500] rounded px-1.5 py-0.5 ml-1">DEFAULT</span>}</div>
+                  <div className="text-[10px] text-slate-400">{sg.scope === 'all' ? 'All mailboxes' : `Specific: ${mailboxOptions.find((o) => o.value === sg.mailboxRef)?.label || sg.mailboxRef}`}</div>
                 </div>
-                {editSig?.id === m._id && (
-                  <div className="mt-2">
-                    <textarea value={editSig.value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')} onChange={(e) => setEditSig({ id: m._id, value: e.target.value.replace(/\n/g, '<br>') })} rows={2} placeholder="Signature for this mailbox" className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
-                    <div className="flex justify-end mt-1"><button onClick={() => saveMailboxSig(m._id)} className="rounded px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: '#050A1F' }}>Save</button></div>
-                  </div>
-                )}
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={() => setEditing({ ...sg })} className="text-[11px] font-bold text-blue-500">Edit</button>
+                  <button onClick={() => delSig(sg._id)} className="text-[11px] font-bold text-red-500">Delete</button>
+                </div>
               </div>
             ))}
           </div>
-          <div className="flex gap-2">
-            <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g. Accounts)" className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <button onClick={linkExtra} className="rounded-lg px-3 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ Link mailbox</button>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1.5">Link accounts@, louis@, etc. Each opens a Google sign-in for that mailbox.</div>
-        </div>
-      )}
 
-      {(gmail.err || msg) && <div className="mt-2 text-[11px] text-slate-500">{gmail.err || msg}</div>}
+          {editing && (
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="Signature name" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                <select value={editing.scope === 'all' ? 'all' : (editing.mailboxRef || 'all')} onChange={(e) => { const v = e.target.value; setEditing({ ...editing, scope: v === 'all' ? 'all' : 'mailbox', mailboxRef: v === 'all' ? '' : v }); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  {mailboxOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-600 mb-2"><input type="checkbox" checked={!!editing.isDefault} onChange={(e) => setEditing({ ...editing, isDefault: e.target.checked })} /> Make this my default signature</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 mb-1">HTML (paste your signature)</label>
+                  <textarea value={editing.bodyHtml} onChange={(e) => setEditing({ ...editing, bodyHtml: e.target.value })} rows={8} placeholder="<table>…</table>" className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-mono" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 mb-1">Live preview</label>
+                  <div className="rounded-lg border border-slate-200 px-2 py-1.5 h-[172px] overflow-auto bg-slate-50/50" dangerouslySetInnerHTML={{ __html: editing.bodyHtml || '<span style="color:#cbd5e1">Preview appears here…</span>' }} />
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1.5">Tip: in Gmail, open your signature, select all, copy, then paste here — or paste the HTML source to keep the exact layout and CSS.</div>
+              <div className="flex justify-end gap-2 mt-3">
+                <button onClick={() => setEditing(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                <button onClick={saveSig} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>Save signature</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
+        </div>
+      </div>
     </div>
   );
 }
 
-// A dismissible-until-done banner shown on the dashboard while the user hasn't
-// connected their email. Disappears automatically once connected.
 export function DashboardGmailNotice({ onOpenProfile }) {
   const { status, connect, busy } = useGmail();
   if (!status || status.connected) return null;
@@ -1063,6 +1143,7 @@ export default function App() {
 
   const [user, setUser] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [showEmailSettings, setShowEmailSettings] = useState(false);
   const [view, setView] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -1219,12 +1300,13 @@ export default function App() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onSignOut={signOut} />
+            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onSignOut={signOut} />
           </div>
         </div>
       </header>
 
       {showProfile && <EditProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => setUser((prev) => ({ ...prev, ...u }))} />}
+      {showEmailSettings && <EmailSettingsModal user={user} onClose={() => setShowEmailSettings(false)} />}
 
       <main className="max-w-6xl mx-auto px-6 py-8">
         {view === 'dashboard' && dashMode === 'analytics' && isManagerOrAdmin && (

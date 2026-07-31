@@ -125,6 +125,8 @@ const User = sequelize.define(
     avatar: { type: DataTypes.TEXT, allowNull: true },
     birthday: { type: DataTypes.DATEONLY, allowNull: true },
     workAnniversary: { type: DataTypes.DATEONLY, allowNull: true },
+    maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // 'single' | 'married'
+    anniversary: { type: DataTypes.DATEONLY, allowNull: true }, // wedding anniversary (if married)
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
@@ -397,7 +399,7 @@ const Settings = sequelize.define(
 
     apiKeys: {
       type: DataTypes.JSON,
-      defaultValue: { seranking: '', anthropic: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '' },
+      defaultValue: { seranking: '', anthropic: '', openai: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '' },
     },
 
     pricing: { type: DataTypes.JSON },
@@ -695,6 +697,25 @@ function encryptMailboxToken(instance) {
 }
 Mailbox.beforeCreate(encryptMailboxToken);
 Mailbox.beforeUpdate(encryptMailboxToken);
+
+// Signature library. A user creates named signatures and assigns each to all of
+// their mailboxes or a specific one. `scope` is 'all' or 'mailbox'; when
+// 'mailbox', `mailboxRef` identifies the target ("user:<id>" primary or the
+// extra Mailbox id). Body is raw HTML (paste-preserving, full CSS/layout).
+const Signature = sequelize.define(
+  'Signature',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false },
+    name: { type: DataTypes.STRING(120), defaultValue: 'Signature' },
+    bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
+    scope: { type: DataTypes.STRING(20), defaultValue: 'all' }, // 'all' | 'mailbox'
+    mailboxRef: { type: DataTypes.STRING(60), allowNull: true }, // e.g. 'user:3' or '7'
+    isDefault: { type: DataTypes.BOOLEAN, defaultValue: false },
+  },
+  { tableName: 'signatures', indexes: [{ name: 'idx_sig_user', fields: ['userId'] }] }
+);
+Signature.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
@@ -1078,7 +1099,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

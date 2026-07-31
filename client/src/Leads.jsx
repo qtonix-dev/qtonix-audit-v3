@@ -1661,20 +1661,28 @@ function Row({ k, v }) {
 // The live Gmail thread for a lead: messages synced from the current user's
 // connected mailbox (matched by the lead's email/domain), with read + reply +
 // compose. Distinct from the pre-sales "Email draft" workflow.
-// Merged Email tab: switches between the Gmail-style inbox (default) and the
-// pre-sales draft workflow. The Draft view only appears for pre-sales leads.
+// Merged Email tab: switches between the Gmail-style inbox (default), the
+// pre-sales draft workflow, and a templates view (coming soon).
 function EmailTab({ lead, user, onChange }) {
   const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
   const [view, setView] = useState('inbox');
+  const tabs = [['inbox', 'Email'], ...(isPresales ? [['draft', 'Draft']] : []), ['template', 'Template']];
   return (
     <div>
-      {isPresales && (
-        <div className="flex items-center gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
-          <button onClick={() => setView('inbox')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === 'inbox' ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>Email</button>
-          <button onClick={() => setView('draft')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === 'draft' ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>Draft</button>
+      <div className="flex items-center gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
+        {tabs.map(([id, label]) => (
+          <button key={id} onClick={() => setView(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === id ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>{label}</button>
+        ))}
+      </div>
+      {view === 'inbox' && <EmailInboxTab lead={lead} user={user} />}
+      {view === 'draft' && <EmailDraftTab lead={lead} user={user} onChange={onChange} />}
+      {view === 'template' && (
+        <div className="text-center py-16">
+          <div className="text-3xl mb-2">📋</div>
+          <div className="text-sm font-bold text-[#050A1F]">Email templates</div>
+          <div className="text-xs text-slate-400 mt-1">Coming soon — reusable templates you can drop into any email.</div>
         </div>
       )}
-      {view === 'inbox' ? <EmailInboxTab lead={lead} user={user} /> : <EmailDraftTab lead={lead} user={user} onChange={onChange} />}
     </div>
   );
 }
@@ -1780,14 +1788,14 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
   const [messages, setMessages] = useState(null);
   const [err, setErr] = useState('');
   const [composer, setComposer] = useState(null);
-  const [expanded, setExpanded] = useState({}); // messageId -> bool
+  const [expanded, setExpanded] = useState({});
+  const [showTo, setShowTo] = useState({}); // messageId -> show full to/from line
 
   const load = () => {
     if (!thread.threadId) { setMessages([]); return; }
     api(`/gmail/thread/${thread.threadId}`).then((d) => {
       const msgs = d.messages || [];
       setMessages(msgs);
-      // Expand only the latest by default (Gmail-style).
       const exp = {}; msgs.forEach((m, i) => { exp[m._id || m.gmailMessageId || i] = i === msgs.length - 1; });
       setExpanded(exp);
       msgs.filter((m) => m.direction === 'inbound' && !m.isRead && m._id).forEach((m) => api(`/gmail/email/${m._id}/read`, { method: 'POST' }).catch(() => {}));
@@ -1798,6 +1806,15 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
   const keyOf = (m, i) => m._id || m.gmailMessageId || i;
   const toggle = (k) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
 
+  // Build a Gmail-style quoted block of the message being replied to / forwarded.
+  const quoteBlock = (msg) => {
+    const when = new Date(msg.sentAt).toLocaleString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const who = `${msg.fromName || ''} &lt;${msg.fromEmail || ''}&gt;`.trim();
+    const inner = msg.bodyHtml || `<div style="white-space:pre-wrap">${(msg.bodyText || msg.snippet || '')}</div>`;
+    return `<br><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On ${when}, ${who} wrote:</div>` +
+      `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex;color:#555">${inner}</blockquote></div>`;
+  };
+
   const replyTo = (msg, mode) => {
     const recipients = mode === 'replyall'
       ? [...new Set([msg.fromEmail, ...(msg.toEmail || '').split(',').map((x) => x.trim())].filter(Boolean))]
@@ -1806,40 +1823,31 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
       mode, to: recipients.filter(Boolean),
       cc: mode === 'replyall' ? (msg.ccEmail || '').split(',').map((x) => x.trim()).filter(Boolean) : [], bcc: [],
       subject: /^re:/i.test(msg.subject || '') ? msg.subject : `Re: ${msg.subject || ''}`,
-      body: '', threadId: thread.threadId, inReplyTo: msg.rfcMessageId || undefined,
+      // Include the quoted chain so context isn't lost (was sending fresh before).
+      body: quoteBlock(msg), threadId: thread.threadId, inReplyTo: msg.rfcMessageId || undefined,
       from: fromOptions[0]?.value,
     });
   };
   const forward = (msg) => setComposer({
     mode: 'forward', to: [], cc: [], bcc: [],
     subject: /^fwd:/i.test(msg.subject || '') ? msg.subject : `Fwd: ${msg.subject || ''}`,
-    body: `<br><br>---------- Forwarded message ----------<br>From: ${msg.fromName || msg.fromEmail}<br>Subject: ${msg.subject}<br><br>${msg.bodyHtml || msg.snippet}`,
+    body: `<br><br>---------- Forwarded message ----------<br>From: ${msg.fromName || msg.fromEmail}<br>Date: ${new Date(msg.sentAt).toLocaleString()}<br>Subject: ${msg.subject || ''}<br>To: ${msg.toEmail || ''}<br><br>${msg.bodyHtml || msg.snippet || ''}`,
     threadId: thread.threadId, from: fromOptions[0]?.value,
   });
 
-  const MsgActions = ({ m }) => (
-    <div className="flex gap-2 mt-3">
-      <button onClick={() => replyTo(m, 'reply')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg> Reply
-      </button>
-      <button onClick={() => replyTo(m, 'replyall')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 17l-5-5 5-5M12 17l-5-5 5-5M9 12h9a4 4 0 0 1 4 4v1" /></svg> Reply all
-      </button>
-      <button onClick={() => forward(m)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9a5 5 0 0 0-5 5v1" /></svg> Forward
-      </button>
-    </div>
-  );
+  const latest = messages && messages.length ? messages[messages.length - 1] : null;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-4xl my-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-xl font-normal text-[#202124] pr-4">{thread.subject || '(no subject)'} <span className="inline-block align-middle ml-1 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">Inbox</span></h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+      <div className="bg-white rounded-xl w-full max-w-4xl my-6 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        {/* Subject header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+          <h2 className="text-xl font-normal text-[#202124] pr-4 break-words">{thread.subject || '(no subject)'} <span className="inline-block align-middle ml-1 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">Inbox</span></h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none flex-shrink-0">×</button>
         </div>
 
-        <div className="px-6 py-4 max-h-[68vh] overflow-y-auto">
+        {/* Scrollable message list */}
+        <div className="px-6 py-4 overflow-y-auto flex-1">
           {err && <div className="mb-3 text-xs text-red-600">{err}</div>}
           {!messages && <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>}
           {messages && messages.length === 0 && <div className="text-slate-400 text-sm py-6 text-center">Couldn’t load the full thread.</div>}
@@ -1848,49 +1856,77 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
             const isOpen = !!expanded[k];
             return (
               <div key={k} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
-                {/* Collapsed header row (click to toggle) */}
-                <div className="flex items-start gap-3 cursor-pointer" onClick={() => toggle(k)}>
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.direction === 'outbound' ? '#FF6A0022' : '#6366F122', color: m.direction === 'outbound' ? '#FF4500' : '#4F46E5' }}>
+                {/* Header row: avatar | name+to | right meta */}
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.direction === 'outbound' ? '#FF6A0022' : '#6366F122', color: m.direction === 'outbound' ? '#FF4500' : '#4F46E5' }}>
                     {(m.fromName || m.fromEmail || '?').trim()[0]?.toUpperCase()}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm min-w-0">
-                        <span className="font-bold text-[#202124]">{m.fromName || m.fromEmail}</span>
-                        <span className="text-slate-400 text-xs ml-2">{isOpen ? (m.direction === 'outbound' ? `to ${m.toEmail}` : 'to me') : ''}</span>
-                        {!isOpen && <span className="text-slate-400 text-xs ml-1 truncate">— {m.snippet}</span>}
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggle(k)}>
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Left: name on top, "to me ▾" below */}
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-[#202124] truncate">{m.fromName || m.fromEmail}</div>
+                        {isOpen ? (
+                          <button onClick={(e) => { e.stopPropagation(); setShowTo((s) => ({ ...s, [k]: !s[k] })); }} className="text-xs text-slate-400 flex items-center gap-1 hover:text-slate-600">
+                            {m.direction === 'outbound' ? 'from me' : 'to me'}
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
+                          </button>
+                        ) : (
+                          <div className="text-xs text-slate-400 truncate">{m.snippet}</div>
+                        )}
+                        {isOpen && showTo[k] && (
+                          <div className="mt-1 text-[11px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5 inline-block">
+                            <div><span className="text-slate-400">from:</span> {m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail}</div>
+                            <div><span className="text-slate-400">to:</span> {m.toEmail || '—'}</div>
+                            {m.ccEmail && <div><span className="text-slate-400">cc:</span> {m.ccEmail}</div>}
+                            <div><span className="text-slate-400">date:</span> {new Date(m.sentAt).toLocaleString()}</div>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 text-slate-400 flex-shrink-0">
-                        <span className="text-xs">{new Date(m.sentAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}</span>
-                        {isOpen && <span className="text-[10px]">({timeAgo(m.sentAt)})</span>}
-                        {m._id && <button onClick={(e) => { e.stopPropagation(); toggleStar(m._id, load); }} title="Star" className="hover:text-amber-400"><svg width="15" height="15" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg></button>}
+                      {/* Right: date/time, star, reply */}
+                      <div className="flex items-center gap-2.5 text-slate-400 flex-shrink-0 pt-0.5">
+                        <span className="text-xs whitespace-nowrap">{new Date(m.sentAt).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric' })}, {new Date(m.sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} <span className="text-slate-300">({timeAgo(m.sentAt)})</span></span>
+                        {m._id && <button onClick={(e) => { e.stopPropagation(); toggleStar(m._id, load); }} title="Star" className="hover:text-amber-400"><svg width="16" height="16" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg></button>}
+                        <button onClick={(e) => { e.stopPropagation(); replyTo(m, 'reply'); }} title="Reply" className="hover:text-slate-600"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg></button>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Expanded body + per-message actions */}
-                {isOpen && (
-                  <div className="pl-12 mt-2">
-                    <div className="text-sm text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
-                    {(m.attachments || []).length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-3">
-                        {m.attachments.map((a, ai) => (
-                          <a key={ai} href={a.attachmentId ? `${API_BASE}/api/gmail/email/${m._id}/attachment/${a.attachmentId}` : undefined} target="_blank" rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-                            {a.filename}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                    <MsgActions m={m} />
-                  </div>
-                )}
+                {/* Body (indented, wrapped, clamped when collapsed) */}
+                <div className={`pl-13 mt-2 ${isOpen ? '' : 'hidden'}`} style={{ paddingLeft: '3.25rem' }}>
+                  <div className="text-sm text-slate-700 prose prose-sm max-w-none break-words overflow-x-auto pr-2" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
+                  {(m.attachments || []).length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {m.attachments.map((a, ai) => (
+                        <a key={ai} href={a.attachmentId ? `${API_BASE}/api/gmail/email/${m._id}/attachment/${a.attachmentId}` : undefined} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                          {a.filename}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
+
+        {/* Sticky action bar */}
+        {latest && (
+          <div className="flex gap-2 px-6 py-3 border-t border-slate-100 flex-shrink-0 bg-white rounded-b-xl">
+            <button onClick={() => replyTo(latest, 'reply')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg> Reply
+            </button>
+            <button onClick={() => replyTo(latest, 'replyall')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 17l-5-5 5-5M12 17l-5-5 5-5M9 12h9a4 4 0 0 1 4 4v1" /></svg> Reply all
+            </button>
+            <button onClick={() => forward(latest)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9a5 5 0 0 0-5 5v1" /></svg> Forward
+            </button>
+          </div>
+        )}
       </div>
 
       {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} defaultSignature={defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
@@ -1997,7 +2033,14 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
           <div className="py-1">
             <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
               onAttach={() => fileInput.current?.click()}
-              onAiDraft={() => alert('AI draft coming soon.')}
+              onAiDraft={async () => {
+                const prompt = window.prompt('What should this email say? (Give the AI a short instruction)');
+                if (!prompt) return;
+                try {
+                  const { draft } = await api(`/gmail/ai-draft`, { method: 'POST', body: JSON.stringify({ leadId: lead._id || lead.id, prompt }) });
+                  if (draft) setBody((b) => (b ? `${b}<br>${draft}` : draft));
+                } catch (e) { setErr(e.message); }
+              }}
               onInsertSignature={insertSignature} />
           </div>
 
