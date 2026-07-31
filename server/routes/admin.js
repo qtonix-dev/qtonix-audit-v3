@@ -193,6 +193,14 @@ router.post('/settings/test-key', async (req, res) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
       return res.json({ ok: true, detail: 'Key is valid. (Ensure "Places API (New)" is enabled.)' });
     }
+    if (service === 'openai') {
+      // Listing models is a cheap, read-only way to validate the key.
+      const r = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${useKey}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
+      return res.json({ ok: true, detail: 'Key is valid.' });
+    }
     res.status(400).json({ ok: false, error: 'Unknown service.' });
   } catch (e) {
     res.json({ ok: false, error: e.message });
