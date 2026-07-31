@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
-const { initDb, sequelize, User, pruneDuplicateIndexes } = require('./models');
+const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
