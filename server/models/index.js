@@ -609,10 +609,15 @@ const LeadEmail = sequelize.define(
     fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
     fromName: { type: DataTypes.STRING(255), defaultValue: '' },
     toEmail: { type: DataTypes.TEXT, allowNull: true },
+    ccEmail: { type: DataTypes.TEXT, allowNull: true },
+    bccEmail: { type: DataTypes.TEXT, allowNull: true },
+    rfcMessageId: { type: DataTypes.STRING(255), allowNull: true }, // RFC 822 Message-ID, for threading
     subject: { type: DataTypes.TEXT, allowNull: true },
     snippet: { type: DataTypes.TEXT, allowNull: true },
     bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
     bodyText: { type: DataTypes.TEXT('long'), allowNull: true },
+    attachments: { type: DataTypes.JSON, allowNull: true }, // [{filename,mimeType,attachmentId,size}]
+    starred: { type: DataTypes.BOOLEAN, defaultValue: false },
     sentAt: { type: DataTypes.DATE },
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },
   },
@@ -625,6 +630,34 @@ const LeadEmail = sequelize.define(
   }
 );
 LeadEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Emails queued for later delivery. A dispatcher sends them when sendAt passes,
+// via the owning user's connected mailbox. Gmail has no native schedule-send,
+// so we hold them here and send at the chosen time (customer TZ, else IST).
+const ScheduledEmail = sequelize.define(
+  'ScheduledEmail',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    leadId: { type: DataTypes.INTEGER, allowNull: false },
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // sender's mailbox
+    fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
+    toEmail: { type: DataTypes.TEXT, allowNull: true },
+    ccEmail: { type: DataTypes.TEXT, allowNull: true },
+    bccEmail: { type: DataTypes.TEXT, allowNull: true },
+    subject: { type: DataTypes.TEXT, allowNull: true },
+    bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
+    attachments: { type: DataTypes.JSON, allowNull: true }, // [{filename,mimeType,contentBase64}] or {reportId}
+    threadId: { type: DataTypes.STRING(120), allowNull: true },
+    inReplyTo: { type: DataTypes.STRING(255), allowNull: true },
+    timezone: { type: DataTypes.STRING(60), defaultValue: 'Asia/Kolkata' },
+    sendAt: { type: DataTypes.DATE, allowNull: false },
+    status: { type: DataTypes.ENUM('pending', 'sent', 'failed', 'cancelled'), defaultValue: 'pending' },
+    error: { type: DataTypes.TEXT, allowNull: true },
+    sentMessageId: { type: DataTypes.STRING(120), allowNull: true },
+  },
+  { tableName: 'scheduled_emails', indexes: [{ name: 'idx_sched_status', fields: ['status'] }, { name: 'idx_sched_lead', fields: ['leadId'] }] }
+);
+ScheduledEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
@@ -1008,7 +1041,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

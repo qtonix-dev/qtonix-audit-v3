@@ -305,6 +305,9 @@ connectWithRetry()
       // Background Gmail sync (per-user OAuth mailboxes → lead_emails).
       try { require('./jobs/gmailSync').start(require('./models')); }
       catch (e) { console.error('[gmail-sync] not started:', e.message); }
+      // Scheduled-email dispatcher (sends queued emails at their chosen time).
+      try { require('./jobs/scheduledEmail').start(require('./models')); }
+      catch (e) { console.error('[sched-email] not started:', e.message); }
     });
   })
   .catch((e) => {

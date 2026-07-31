@@ -1,5 +1,6 @@
 const router = require('express').Router();
-const { User, Lead, LeadEmail, Settings, Op } = require('../models');
+const fs = require('fs');
+const { User, Lead, LeadEmail, ScheduledEmail, Report, Settings, Op } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -96,6 +97,22 @@ router.post('/disconnect', requireAuth, async (req, res, next) => {
 
 // --- Lead email thread ------------------------------------------------------
 
+// Which user mailboxes may the viewer see for lead emails?
+//   admin    → everyone
+//   manager  → self + direct-report agents (managerId === manager.id)
+//   agent/LM → self only
+async function visibleUserIds(viewer) {
+  if (viewer.role === 'admin') {
+    const all = await User.findAll({ attributes: ['id'] });
+    return all.map((u) => u.id);
+  }
+  if (viewer.role === 'manager') {
+    const team = await User.findAll({ where: { managerId: viewer.id }, attributes: ['id'] });
+    return [viewer.id, ...team.map((u) => u.id)];
+  }
+  return [viewer.id];
+}
+
 // Build the Gmail search query for a lead: their email plus their domain.
 function leadQuery(lead) {
   const parts = [];
@@ -106,70 +123,314 @@ function leadQuery(lead) {
 }
 
 /**
- * GET /api/gmail/lead/:leadId — the email thread for a lead, from the current
- * user's synced mailbox. Reads from our DB (populated by background sync); if
- * empty, does a one-off live fetch so the first open isn't blank.
+ * GET /api/gmail/lead/:leadId — lead email list, filtered by the viewer's
+ * visibility scope. Reads from our DB (populated by background sync); if the
+ * viewer has their own mailbox connected and nothing is synced, does a one-off
+ * live fetch of their own mailbox so the first open isn't blank.
  */
 router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
   try {
     const lead = await Lead.findByPk(req.params.leadId);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
-    const u = await User.findByPk(req.user.id);
-    if (!u.gmailRefreshToken) return res.json({ connected: false, emails: [] });
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
 
-    let rows = await LeadEmail.findAll({ where: { leadId: lead.id, userId: u.id }, order: [['sentAt', 'DESC']], limit: 50 });
-
-    // First open with nothing synced yet → do a live fetch and persist.
-    if (rows.length === 0 && (lead.email || lead.domain)) {
+    // Live backfill from the viewer's OWN mailbox on first open.
+    const mine = await LeadEmail.count({ where: { leadId: lead.id, userId: viewer.id } });
+    if (mine === 0 && viewer.gmailRefreshToken && (lead.email || lead.domain)) {
       const s = await Settings.findOne({ where: { singleton: 'settings' } });
       const q = leadQuery(lead);
       if (q) {
-        const msgs = await gmail.searchMessages(s, u.getGmailRefreshToken(), u.gmailConnectedEmail, q, 25);
-        for (const m of msgs) {
-          await LeadEmail.findOrCreate({ where: { userId: u.id, gmailMessageId: m.gmailMessageId }, defaults: { ...m, leadId: lead.id, userId: u.id } }).catch(() => {});
-        }
-        rows = await LeadEmail.findAll({ where: { leadId: lead.id, userId: u.id }, order: [['sentAt', 'DESC']], limit: 50 });
+        try {
+          const msgs = await gmail.searchMessages(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, q, 25);
+          for (const m of msgs) {
+            await LeadEmail.findOrCreate({ where: { userId: viewer.id, gmailMessageId: m.gmailMessageId }, defaults: { ...m, leadId: lead.id, userId: viewer.id } }).catch(() => {});
+          }
+        } catch (e) { /* live fetch is best-effort */ }
       }
     }
-    res.json({ connected: true, email: u.gmailConnectedEmail, emails: rows.map((r) => r.toJSON()) });
+
+    const rows = await LeadEmail.findAll({
+      where: { leadId: lead.id, userId: { [Op.in]: allowed } },
+      order: [['sentAt', 'DESC']], limit: 200,
+    });
+    const emails = rows.map((r) => r.toJSON());
+    const unread = emails.filter((e) => e.direction === 'inbound' && !e.isRead).length;
+
+    // Mailboxes the viewer can send AS (their own, plus — for admins/managers —
+    // any connected mailbox in their scope, so they can send on behalf).
+    const scopeUsers = await User.findAll({ where: { id: { [Op.in]: allowed }, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail'] });
+    const fromOptions = scopeUsers.filter((u) => u.gmailConnectedEmail).map((u) => ({ userId: u.id, email: u.gmailConnectedEmail, name: u.name, self: u.id === viewer.id }));
+
+    res.json({
+      connected: !!viewer.gmailRefreshToken,
+      email: viewer.gmailConnectedEmail,
+      fromOptions,
+      unread,
+      emails,
+    });
   } catch (e) { next(e); }
 });
 
-/** POST /api/gmail/lead/:leadId/send — send an email to the lead. */
+/** GET /api/gmail/lead/:leadId/unread — just the unread count (for the badge). */
+router.get('/lead/:leadId/unread', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const unread = await LeadEmail.count({ where: { leadId: req.params.leadId, userId: { [Op.in]: allowed }, direction: 'inbound', isRead: false } });
+    res.json({ unread });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/thread/:threadId — every message in a Gmail thread. */
+router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    // Prefer our stored copies (respecting visibility); fall back to live fetch
+    // from the viewer's mailbox for anything not yet synced.
+    let rows = await LeadEmail.findAll({ where: { threadId: req.params.threadId, userId: { [Op.in]: allowed } }, order: [['sentAt', 'ASC']] });
+    if (rows.length === 0 && viewer.gmailRefreshToken) {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      try {
+        const msgs = await gmail.getThread(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, req.params.threadId);
+        return res.json({ messages: msgs });
+      } catch (e) { /* fall through */ }
+    }
+    res.json({ messages: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Resolve the mailbox to send from. Non-admins can only send as themselves;
+// admins/managers may send as any connected mailbox within their scope.
+async function resolveSender(viewer, fromUserId) {
+  if (!fromUserId || Number(fromUserId) === viewer.id) return viewer;
+  const allowed = await visibleUserIds(viewer);
+  if (!allowed.includes(Number(fromUserId))) return null;
+  const target = await User.findByPk(Number(fromUserId));
+  return target && target.gmailRefreshToken ? target : null;
+}
+
+// Turn requested attachments into MIME-ready parts. Supports uploaded files
+// ({filename,mimeType,contentBase64}) and CRM reports ({reportId}).
+async function buildAttachments(list, lead) {
+  const out = [];
+  for (const a of (Array.isArray(list) ? list : [])) {
+    if (a && a.contentBase64 && a.filename) {
+      out.push({ filename: a.filename, mimeType: a.mimeType || 'application/octet-stream', contentBase64: a.contentBase64 });
+    } else if (a && a.reportId) {
+      const report = await Report.findByPk(a.reportId);
+      if (report && report.pdfPath && fs.existsSync(report.pdfPath)) {
+        const buf = fs.readFileSync(report.pdfPath);
+        out.push({ filename: `${(report.businessName || 'report').replace(/[^a-z0-9]+/gi, '-')}.pdf`, mimeType: 'application/pdf', contentBase64: buf.toString('base64') });
+      }
+    }
+  }
+  return out;
+}
+
+// Append an entry to a lead's timeline for an email event.
+async function emailTimeline(lead, text, author, meta) {
+  try {
+    const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+    tl.push({ type: 'email', text, time: new Date().toISOString(), author, ...(meta || {}) });
+    lead.timeline = tl; lead.changed('timeline', true); lead.lastActivityAt = new Date();
+    await lead.save();
+  } catch (e) { /* timeline is best-effort */ }
+}
+
+/**
+ * POST /api/gmail/lead/:leadId/send — send now (or schedule). Handles new mail,
+ * reply, reply-all and forward via To/Cc/Bcc + attachments. If sendAt is given,
+ * the email is queued and delivered later by the dispatcher.
+ */
 router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
   try {
     const lead = await Lead.findByPk(req.params.leadId);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
-    const u = await User.findByPk(req.user.id);
-    if (!u.gmailRefreshToken) return res.status(400).json({ error: 'Connect your Gmail first (Users portal → Connect Gmail).' });
-    const { to, subject, body, threadId, inReplyTo } = req.body || {};
-    const recipient = to || lead.email;
-    if (!recipient) return res.status(400).json({ error: 'This lead has no email address on file.' });
-    if (!subject || !body) return res.status(400).json({ error: 'Subject and message are both required.' });
+    const viewer = await User.findByPk(req.user.id);
+    const b = req.body || {};
+    const sender = await resolveSender(viewer, b.fromUserId);
+    if (!sender || !sender.gmailRefreshToken) return res.status(400).json({ error: 'Connect a Gmail mailbox first, or pick one you’re allowed to send from.' });
+
+    const to = b.to || lead.email;
+    if (!to) return res.status(400).json({ error: 'Add at least one recipient.' });
+    if (!b.subject || !b.body) return res.status(400).json({ error: 'Subject and message are both required.' });
+
+    // Scheduled send → queue it.
+    if (b.sendAt) {
+      const when = new Date(b.sendAt);
+      if (isNaN(when.getTime()) || when.getTime() < Date.now() - 60000) return res.status(400).json({ error: 'Pick a valid future date and time.' });
+      const sched = await ScheduledEmail.create({
+        leadId: lead.id, userId: sender.id, fromEmail: sender.gmailConnectedEmail,
+        toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
+        subject: b.subject, bodyHtml: b.body, attachments: b.attachments || null,
+        threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
+        timezone: b.timezone || 'Asia/Kolkata', sendAt: when,
+      });
+      await emailTimeline(lead, `Email scheduled: "${b.subject}" for ${when.toLocaleString('en-IN', { timeZone: b.timezone || 'Asia/Kolkata' })}`, sender.name, { direction: 'scheduled' });
+      return res.json({ ok: true, scheduled: true, id: sched.id, sendAt: when });
+    }
+
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const sent = await gmail.sendMessage(s, u.getGmailRefreshToken(), u.gmailConnectedEmail, { to: recipient, subject, bodyHtml: body, threadId, inReplyTo });
-    // Store our own copy as an outbound record.
+    const attachments = await buildAttachments(b.attachments, lead);
+    const sent = await gmail.sendMessage(s, sender.getGmailRefreshToken(), sender.gmailConnectedEmail, {
+      from: sender.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
+      subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
+    });
     await LeadEmail.create({
-      leadId: lead.id, userId: u.id, gmailMessageId: sent.id, threadId: sent.threadId || threadId || '',
-      direction: 'outbound', fromEmail: u.gmailConnectedEmail, fromName: u.name, toEmail: recipient,
-      subject, snippet: String(body).replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: body, sentAt: new Date(), isRead: true,
+      leadId: lead.id, userId: sender.id, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
+      direction: 'outbound', fromEmail: sender.gmailConnectedEmail, fromName: sender.name,
+      toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
+      subject: b.subject, snippet: String(b.body).replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: b.body,
+      attachments: (attachments || []).map((a) => ({ filename: a.filename, mimeType: a.mimeType })),
+      sentAt: new Date(), isRead: true,
     }).catch(() => {});
+    await emailTimeline(lead, `Email sent: "${b.subject}"`, sender.name, { direction: 'outbound' });
     res.json({ ok: true, id: sent.id });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/lead/:leadId/scheduled — pending scheduled emails for a lead. */
+router.get('/lead/:leadId/scheduled', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const rows = await ScheduledEmail.findAll({ where: { leadId: req.params.leadId, userId: { [Op.in]: allowed }, status: 'pending' }, order: [['sendAt', 'ASC']] });
+    res.json(rows.map((r) => { const o = r.toJSON(); delete o.attachments; return o; }));
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/scheduled/:id/cancel — cancel a pending scheduled email. */
+router.post('/scheduled/:id/cancel', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const row = await ScheduledEmail.findByPk(req.params.id);
+    if (!row || !allowed.includes(row.userId)) return res.status(404).json({ error: 'Not found.' });
+    if (row.status !== 'pending') return res.status(400).json({ error: 'That email already went out or was cancelled.' });
+    row.status = 'cancelled'; await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/lead/:leadId/reports — CRM reports available to attach. */
+router.get('/lead/:leadId/reports', requireAuth, async (req, res, next) => {
+  try {
+    const reports = await Report.findAll({
+      where: { leadId: req.params.leadId },
+      attributes: ['id', 'businessName', 'createdAt', 'pdfPath'],
+      order: [['createdAt', 'DESC']],
+    });
+    res.json(reports.filter((r) => r.pdfPath).map((r) => ({ _id: r.id, id: r.id, businessName: r.businessName, createdAt: r.createdAt })));
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/email/:id/attachment/:attId — download an inbound attachment. */
+router.get('/email/:id/attachment/:attId', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const row = await LeadEmail.findByPk(req.params.id);
+    if (!row || !allowed.includes(row.userId)) return res.status(404).json({ error: 'Not found.' });
+    const owner = await User.findByPk(row.userId);
+    if (!owner || !owner.gmailRefreshToken) return res.status(400).json({ error: 'Mailbox not connected.' });
+    const meta = (row.attachments || []).find((a) => a.attachmentId === req.params.attId);
+    if (!meta) return res.status(404).json({ error: 'Attachment not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const data = await gmail.getAttachment(s, owner.getGmailRefreshToken(), row.gmailMessageId, req.params.attId);
+    const buf = Buffer.from(String(data).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    res.setHeader('Content-Type', meta.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${meta.filename}"`);
+    res.send(buf);
   } catch (e) { next(e); }
 });
 
 /** POST /api/gmail/email/:id/read — mark a synced email read. */
 router.post('/email/:id/read', requireAuth, async (req, res, next) => {
   try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
     const row = await LeadEmail.findByPk(req.params.id);
-    if (!row || row.userId !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    if (!row || !allowed.includes(row.userId)) return res.status(404).json({ error: 'Not found.' });
     row.isRead = true; await row.save();
-    const u = await User.findByPk(req.user.id);
-    if (u.gmailRefreshToken) {
+    const owner = await User.findByPk(row.userId);
+    if (owner && owner.gmailRefreshToken) {
       const s = await Settings.findOne({ where: { singleton: 'settings' } });
-      gmail.markRead(s, u.getGmailRefreshToken(), row.gmailMessageId).catch(() => {});
+      gmail.markRead(s, owner.getGmailRefreshToken(), row.gmailMessageId).catch(() => {});
     }
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/email/:id/star — toggle star. */
+router.post('/email/:id/star', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const row = await LeadEmail.findByPk(req.params.id);
+    if (!row || !allowed.includes(row.userId)) return res.status(404).json({ error: 'Not found.' });
+    row.starred = !row.starred; await row.save();
+    res.json({ ok: true, starred: row.starred });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/gmail/awaiting-reply — leads with an inbound email that has no
+ * outbound reply in the same thread yet. Scoped to the viewer's visibility.
+ * Splits into `awaiting` (<24h) and `missed` (≥24h since the inbound arrived).
+ */
+router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const rows = await LeadEmail.findAll({
+      where: { userId: { [Op.in]: allowed } },
+      order: [['sentAt', 'DESC']],
+      limit: 2000,
+    });
+
+    // Group by thread; a thread needs a reply if its latest message is inbound.
+    const byThread = new Map();
+    for (const r of rows) {
+      const key = r.threadId || `single:${r.gmailMessageId}`;
+      if (!byThread.has(key)) byThread.set(key, []);
+      byThread.get(key).push(r);
+    }
+    const pending = [];
+    for (const [, msgs] of byThread) {
+      msgs.sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt)); // newest first
+      const latest = msgs[0];
+      if (latest.direction !== 'inbound') continue; // already replied (latest outbound)
+      // The most recent inbound that still awaits a reply.
+      pending.push(latest);
+    }
+
+    // Attach lead info; drop any whose lead is gone.
+    const leadIds = [...new Set(pending.map((p) => p.leadId))];
+    const leads = await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName', 'website', 'email', 'ownerId'] });
+    const leadById = new Map(leads.map((l) => [l.id, l]));
+
+    const now = Date.now();
+    const shape = (p) => {
+      const lead = leadById.get(p.leadId);
+      if (!lead) return null;
+      const ageMs = now - new Date(p.sentAt).getTime();
+      return {
+        emailId: p._id, leadId: p.leadId,
+        leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || lead.email || 'Lead',
+        ownerId: lead.ownerId,
+        fromName: p.fromName, fromEmail: p.fromEmail,
+        subject: p.subject, snippet: p.snippet, threadId: p.threadId,
+        receivedAt: p.sentAt, ageMs,
+      };
+    };
+    const items = pending.map(shape).filter(Boolean).sort((a, b) => b.ageMs - a.ageMs);
+    const DAY = 24 * 60 * 60 * 1000;
+    res.json({
+      awaiting: items.filter((i) => i.ageMs < DAY),
+      missed: items.filter((i) => i.ageMs >= DAY),
+    });
   } catch (e) { next(e); }
 });
 

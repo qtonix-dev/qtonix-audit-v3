@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { api, DashboardGmailNotice } from './App.jsx';
+
+// Human-readable "how long ago" for email awaiting-reply ages.
+function fmtAge(ms) {
+  const h = Math.floor(ms / 3600000);
+  if (h < 1) return `${Math.max(1, Math.floor(ms / 60000))}m`;
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
 import { Pagination } from './Leads.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
@@ -283,6 +291,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   // whole team's; an agent sees only their own.
   const [missed, setMissed] = useState(null);
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
+  const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
+  useEffect(() => { api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null)); }, []);
   // Pre-sales leads still waiting on their first reply. For an owner this is a
   // to-do; for a lead manager or admin it's who to chase.
   // Leads where a Lead Manager has asked the owner for a first-reply draft.
@@ -396,6 +406,40 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <span className="text-slate-500 truncate flex-1">{i.title}</span>
                 {(isAdmin || isManager) && <span className="text-slate-400 shrink-0">{i.ownerName}</span>}
                 <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Emails past 24h without a reply → treated as missed commitments. */}
+      {emailReplies && emailReplies.missed.length > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-2">✉️ Missed commitments · Emails awaiting reply over 24h · {emailReplies.missed.length}</div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {emailReplies.missed.slice(0, 8).map((i) => (
+              <div key={i.emailId} onClick={() => onViewToday && onViewToday(i.leadId)} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-red-50">
+                <span>✉️</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1">{i.subject || i.snippet}</span>
+                <span className="font-bold text-red-600 shrink-0">{fmtAge(i.ageMs)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* New inbound emails still within 24h — awaiting a reply. */}
+      {emailReplies && emailReplies.awaiting.length > 0 && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-blue-700 mb-2">📥 New emails awaiting reply · {emailReplies.awaiting.length}</div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {emailReplies.awaiting.slice(0, 8).map((i) => (
+              <div key={i.emailId} onClick={() => onViewToday && onViewToday(i.leadId)} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-blue-50">
+                <span>✉️</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail}: {i.subject || i.snippet}</span>
+                <span className="font-bold text-blue-600 shrink-0">{fmtAge(i.ageMs)}</span>
               </div>
             ))}
           </div>

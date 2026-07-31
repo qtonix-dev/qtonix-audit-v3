@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
@@ -1247,6 +1247,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
   const [lead, setLead] = useState(null);
   const [config, setConfig] = useState({});
   const [tab, setTab] = useState(initialTab || 'timeline');
+  const [emailUnread, setEmailUnread] = useState(0);
   const [editSection, setEditSection] = useState(null); // 'all' | 'basic' | 'tags' | 'description' | 'other'
   const [draft, setDraft] = useState(null);
   const [quickModal, setQuickModal] = useState(null); // 'note' | 'task' | 'call' | 'deal'
@@ -1274,6 +1275,10 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
     } catch (e) { console.error(e); /* config is non-critical */ }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [leadId]);
+  useEffect(() => {
+    if (!leadId) return;
+    api(`/gmail/lead/${leadId}/unread`).then((d) => setEmailUnread(d.unread || 0)).catch(() => setEmailUnread(0));
+  }, [leadId, tab]);
 
   if (loadError) return (
     <div className="text-center py-12">
@@ -1479,7 +1484,9 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
               .filter((t) => !(t === 'emaildraft' && !/pre-?sales/i.test(String(lead.leadSource || ''))))
               .map((t) => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t === 'inbox' ? 'Email' : t}</button>
+                className={`relative px-5 py-3 text-xs font-bold capitalize transition ${effTab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{t === 'emaildraft' ? 'Email draft' : t === 'inbox' ? 'Email' : t}
+                {t === 'inbox' && emailUnread > 0 && <span className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FF4500] text-white text-[9px] font-bold align-middle">{emailUnread}</span>}
+              </button>
             ))}
           </div>
           <div className="p-5 min-h-[300px]">
@@ -1554,103 +1561,405 @@ function Row({ k, v }) {
 // connected mailbox (matched by the lead's email/domain), with read + reply +
 // compose. Distinct from the pre-sales "Email draft" workflow.
 function EmailInboxTab({ lead, user }) {
-  const [data, setData] = useState(null); // { connected, email, emails }
+  const [data, setData] = useState(null); // { connected, email, fromOptions, unread, emails }
   const [err, setErr] = useState('');
-  const [openId, setOpenId] = useState(null);
-  const [composing, setComposing] = useState(false);
-  const [reply, setReply] = useState(null); // the message being replied to
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [sending, setSending] = useState(false);
+  const [openThread, setOpenThread] = useState(null); // { threadId, subject }
+  const [composer, setComposer] = useState(null); // { mode, to, cc, bcc, subject, body, threadId, inReplyTo, fromUserId }
 
   const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [lead._id, lead.id]);
 
-  const openMsg = async (m) => {
-    setOpenId(openId === m._id ? null : m._id);
-    if (!m.isRead && openId !== m._id) { try { await api(`/gmail/email/${m._id}/read`, { method: 'POST' }); m.isRead = true; } catch { /* noop */ } }
-  };
-
-  const startReply = (m) => {
-    setReply(m); setComposing(true);
-    setSubject(m.subject && /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject || ''}`);
-    setBody('');
-  };
-  const startCompose = () => { setReply(null); setComposing(true); setSubject(''); setBody(''); };
-
-  const send = async () => {
-    setSending(true); setErr('');
-    try {
-      await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
-        to: lead.email, subject, body,
-        threadId: reply ? reply.threadId : undefined,
-        inReplyTo: reply ? reply.gmailMessageId : undefined,
-      }) });
-      setComposing(false); setBody(''); setSubject(''); setReply(null); load();
-    } catch (e) { setErr(e.message); } finally { setSending(false); }
-  };
-
   if (!data) return <div className="text-slate-400 text-sm py-8 text-center">{err || 'Loading…'}</div>;
-
   if (!data.connected) {
     return (
       <div className="text-center py-10">
         <div className="text-sm font-bold text-[#050A1F] mb-1">Connect your email to see this thread</div>
-        <p className="text-xs text-slate-500 mb-4">Link your Google Workspace mailbox from “Connect email” in the top bar. Then emails to and from this lead show up here.</p>
+        <p className="text-xs text-slate-500 mb-4">Link your Google Workspace mailbox from the profile menu (top-right → Edit Profile). Then emails to and from this lead show up here.</p>
       </div>
     );
   }
 
+  // Group emails into threads for the list (one row per thread, newest first).
+  const threads = [];
+  const seen = new Map();
+  for (const e of data.emails) {
+    const key = e.threadId || `single:${e._id}`;
+    if (!seen.has(key)) { const t = { key, threadId: e.threadId, messages: [] }; seen.set(key, t); threads.push(t); }
+    seen.get(key).messages.push(e);
+  }
+  threads.forEach((t) => t.messages.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt)));
+  threads.sort((a, b) => new Date(b.messages[b.messages.length - 1].sentAt) - new Date(a.messages[a.messages.length - 1].sentAt));
+
+  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', fromUserId: data.fromOptions[0]?.userId });
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-xs text-slate-400">Synced from <span className="font-semibold text-slate-600">{data.email}</span>{lead.email ? ` · matching ${lead.email}` : ''}</div>
-        <div className="flex gap-2">
-          <button onClick={load} className="text-xs font-bold text-slate-400 hover:text-slate-600">Refresh</button>
-          <button onClick={startCompose} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Compose</button>
+    <div className="-m-5">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+        <div className="flex items-center gap-3">
+          <button onClick={load} title="Refresh" className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><Icon.Globe size={16} /></button>
+          <span className="text-xs text-slate-400">{data.email}{data.unread ? ` · ${data.unread} unread` : ''}</span>
+        </div>
+        <button onClick={startCompose} className="rounded-full px-4 py-1.5 text-xs font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Compose</button>
+      </div>
+
+      {err && <div className="mx-4 mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+
+      {/* Gmail-style list */}
+      <div className="divide-y divide-slate-100">
+        {threads.length === 0 && <div className="text-slate-400 text-sm text-center py-10">No emails found for this lead yet. New messages sync every few minutes.</div>}
+        {threads.map((t) => {
+          const last = t.messages[t.messages.length - 1];
+          const hasUnread = t.messages.some((m) => m.direction === 'inbound' && !m.isRead);
+          const anyStar = t.messages.some((m) => m.starred);
+          const names = [...new Set(t.messages.map((m) => m.direction === 'outbound' ? 'me' : (m.fromName || m.fromEmail).split(' ')[0]))].join(', ');
+          const attachCount = (last.attachments || []).length;
+          return (
+            <div key={t.key} onClick={() => setOpenThread({ threadId: t.threadId, subject: last.subject, key: t.key })}
+              className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:shadow-[inset_0_0_0_9999px_rgba(0,0,0,0.015)] ${hasUnread ? 'bg-white' : 'bg-slate-50/40'}`}>
+              <button onClick={(e) => { e.stopPropagation(); toggleStar(last._id, load); }} className="text-slate-300 hover:text-amber-400" title="Star">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill={anyStar ? '#FBBF24' : 'none'} stroke={anyStar ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg>
+              </button>
+              <span className={`w-40 flex-shrink-0 text-sm truncate ${hasUnread ? 'font-bold text-[#050A1F]' : 'text-slate-600'}`}>
+                {names}{t.messages.length > 1 && <span className="text-slate-400 font-normal"> {t.messages.length}</span>}
+              </span>
+              <span className="flex-1 min-w-0 text-sm truncate">
+                <span className={hasUnread ? 'font-bold text-[#050A1F]' : 'text-slate-700'}>{last.subject || '(no subject)'}</span>
+                <span className="text-slate-400"> — {last.snippet}</span>
+                {attachCount > 0 && <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-slate-400 align-middle"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>{attachCount}</span>}
+              </span>
+              <span className={`flex-shrink-0 text-[11px] ${hasUnread ? 'font-bold text-[#050A1F]' : 'text-slate-400'}`}>{gmailDate(last.sentAt)}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); }} />}
+    </div>
+  );
+}
+
+// Short Gmail-style date: time if today, "MMM D" otherwise.
+function gmailDate(d) {
+  const dt = new Date(d); const now = new Date();
+  const sameDay = dt.toDateString() === now.toDateString();
+  if (sameDay) return dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function timeAgo(d) {
+  const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h} hour${h > 1 ? 's' : ''} ago`;
+  const days = Math.floor(h / 24); return `${days} day${days > 1 ? 's' : ''} ago`;
+}
+async function toggleStar(id, reload) { try { await api(`/gmail/email/${id}/star`, { method: 'POST' }); reload && reload(); } catch { /* noop */ } }
+
+// The thread popup (Image 1): subject header + message chain + reply actions.
+function ThreadPopup({ lead, thread, fromOptions, onClose, onReload }) {
+  const [messages, setMessages] = useState(null);
+  const [err, setErr] = useState('');
+  const [composer, setComposer] = useState(null);
+
+  const load = () => {
+    const idQuery = thread.threadId ? `/gmail/thread/${thread.threadId}` : null;
+    if (!idQuery) { setMessages([]); return; }
+    api(idQuery).then((d) => {
+      setMessages(d.messages || []);
+      // Mark inbound unread as read on open.
+      (d.messages || []).filter((m) => m.direction === 'inbound' && !m.isRead && m._id).forEach((m) => api(`/gmail/email/${m._id}/read`, { method: 'POST' }).catch(() => {}));
+    }).catch((e) => setErr(e.message));
+  };
+  useEffect(() => { load(); }, [thread.threadId]);
+
+  const replyTo = (msg, mode) => {
+    const last = msg;
+    const recipients = mode === 'replyall'
+      ? [...new Set([last.fromEmail, ...(last.toEmail || '').split(',').map((x) => x.trim())].filter((e) => e && e !== lead._ownEmail))]
+      : [last.direction === 'inbound' ? last.fromEmail : (last.toEmail || lead.email)];
+    setComposer({
+      mode, to: recipients.filter(Boolean), cc: mode === 'replyall' ? (last.ccEmail || '').split(',').map((x) => x.trim()).filter(Boolean) : [], bcc: [],
+      subject: /^re:/i.test(last.subject || '') ? last.subject : `Re: ${last.subject || ''}`,
+      body: '', threadId: thread.threadId, inReplyTo: last.rfcMessageId || undefined,
+      fromUserId: fromOptions[0]?.userId, quote: last,
+    });
+  };
+  const forward = (msg) => setComposer({
+    mode: 'forward', to: [], cc: [], bcc: [],
+    subject: /^fwd:/i.test(msg.subject || '') ? msg.subject : `Fwd: ${msg.subject || ''}`,
+    body: `<br><br>---------- Forwarded message ----------<br>From: ${msg.fromName || msg.fromEmail}<br>Subject: ${msg.subject}<br><br>${msg.bodyHtml || msg.snippet}`,
+    threadId: thread.threadId, fromUserId: fromOptions[0]?.userId,
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-3xl my-6" onClick={(e) => e.stopPropagation()}>
+        {/* Subject header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-normal text-[#202124] pr-4">{thread.subject || '(no subject)'} <span className="inline-block align-middle ml-1 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">Inbox</span></h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+
+        <div className="px-6 py-4 max-h-[60vh] overflow-y-auto">
+          {err && <div className="mb-3 text-xs text-red-600">{err}</div>}
+          {!messages && <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>}
+          {messages && messages.length === 0 && <div className="text-slate-400 text-sm py-6 text-center">Couldn’t load the full thread.</div>}
+          {messages && messages.map((m, i) => {
+            const isLast = i === messages.length - 1;
+            return (
+              <div key={m._id || m.gmailMessageId || i} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.direction === 'outbound' ? '#FF6A0022' : '#6366F122', color: m.direction === 'outbound' ? '#FF4500' : '#4F46E5' }}>
+                    {(m.fromName || m.fromEmail || '?').trim()[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm">
+                        <span className="font-bold text-[#202124]">{m.fromName || m.fromEmail}</span>
+                        <span className="text-slate-400 text-xs ml-2">{m.direction === 'outbound' ? `to ${m.toEmail}` : 'to me'}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-400">
+                        <span className="text-xs">{new Date(m.sentAt).toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })} ({timeAgo(m.sentAt)})</span>
+                        {m._id && <button onClick={() => toggleStar(m._id, load)} title="Star" className="hover:text-amber-400"><svg width="15" height="15" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg></button>}
+                      </div>
+                    </div>
+                    <div className={`text-sm text-slate-700 mt-2 ${isLast ? '' : 'line-clamp-3'} prose prose-sm max-w-none`} dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
+                    {(m.attachments || []).length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {m.attachments.map((a, ai) => (
+                          <a key={ai} href={a.attachmentId ? `${API_BASE}/api/gmail/email/${m._id}/attachment/${a.attachmentId}` : undefined} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                            {a.filename}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Reply actions */}
+        <div className="px-6 py-4 border-t border-slate-100 flex gap-2">
+          {messages && messages.length > 0 && <>
+            <button onClick={() => replyTo(messages[messages.length - 1], 'reply')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg> Reply
+            </button>
+            <button onClick={() => replyTo(messages[messages.length - 1], 'replyall')} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 17l-5-5 5-5M12 17l-5-5 5-5M9 12h9a4 4 0 0 1 4 4v1" /></svg> Reply all
+            </button>
+            <button onClick={() => forward(messages[messages.length - 1])} className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 17l5-5-5-5M20 12H9a5 5 0 0 0-5 5v1" /></svg> Forward
+            </button>
+          </>}
         </div>
       </div>
 
-      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
+    </div>
+  );
+}
 
-      {composing && (
-        <div className="mb-4 rounded-xl border-2 p-4" style={{ borderColor: '#2563EB' }}>
-          <div className="text-xs font-bold text-[#050A1F] mb-2">{reply ? `Reply to ${reply.fromName || reply.fromEmail}` : `New email to ${lead.email || 'lead'}`}</div>
-          <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
-          <RichText value={body} onChange={setBody} placeholder="Write your message…" minHeight={140} />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => { setComposing(false); setReply(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600">Cancel</button>
-            <button onClick={send} disabled={sending} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{sending ? 'Sending…' : 'Send'}</button>
-          </div>
+// The composer (Image 2): From dropdown, To/Cc/Bcc, subject, body, attachments
+// (file + CRM report), and Send with a schedule-send dropdown.
+function Composer({ lead, initial, fromOptions, onClose, onSent }) {
+  const [from, setFrom] = useState(initial.fromUserId || fromOptions[0]?.userId);
+  const [to, setTo] = useState(initial.to || []);
+  const [cc, setCc] = useState(initial.cc || []);
+  const [bcc, setBcc] = useState(initial.bcc || []);
+  const [showCc, setShowCc] = useState((initial.cc || []).length > 0);
+  const [showBcc, setShowBcc] = useState((initial.bcc || []).length > 0);
+  const [subject, setSubject] = useState(initial.subject || '');
+  const [body, setBody] = useState(initial.body || '');
+  const [attachments, setAttachments] = useState([]); // {filename,mimeType,contentBase64} or {reportId,businessName}
+  const [reports, setReports] = useState([]);
+  const [showReports, setShowReports] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [schedDate, setSchedDate] = useState('');
+  const [schedTime, setSchedTime] = useState('');
+  const [tz, setTz] = useState(lead.timezone || lead.countryTimezone || 'Asia/Kolkata');
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => { api(`/gmail/lead/${lead._id || lead.id}/reports`).then(setReports).catch(() => {}); }, []);
+
+  const fileInput = useRef(null);
+  const onFile = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = () => setAttachments((a) => [...a, { filename: f.name, mimeType: f.type || 'application/octet-stream', contentBase64: String(reader.result).split(',')[1] }]);
+      reader.readAsDataURL(f);
+    });
+    e.target.value = '';
+  };
+  const attachReport = (r) => { setAttachments((a) => [...a, { reportId: r._id || r.id, filename: `${r.businessName || 'report'}.pdf` }]); setShowReports(false); };
+  const removeAtt = (i) => setAttachments((a) => a.filter((_, idx) => idx !== i));
+
+  const doSend = async (scheduled) => {
+    setErr('');
+    if (to.length === 0) return setErr('Add at least one recipient.');
+    if (!subject.trim()) return setErr('Add a subject.');
+    let sendAt;
+    if (scheduled) {
+      if (!schedDate || !schedTime) return setErr('Pick a date and time to schedule.');
+      // Interpret the chosen wall-clock time in the selected timezone.
+      sendAt = new Date(`${schedDate}T${schedTime}:00`).toISOString();
+    }
+    setSending(true);
+    try {
+      await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
+        fromUserId: from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
+        threadId: initial.threadId, inReplyTo: initial.inReplyTo, attachments,
+        ...(scheduled ? { sendAt, timezone: tz } : {}),
+      }) });
+      onSent();
+    } catch (e) { setErr(e.message); setSending(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-[80] p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl">
+          <span className="text-sm font-semibold">{initial.mode === 'forward' ? 'Forward message' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message'}</span>
+          <button onClick={onClose} className="text-slate-300 hover:text-white text-lg leading-none">×</button>
         </div>
-      )}
 
-      <div className="space-y-2">
-        {data.emails.length === 0 && <div className="text-slate-400 text-sm text-center py-8">No emails found for this lead yet. New messages sync every few minutes.</div>}
-        {data.emails.map((m) => (
-          <div key={m._id} className={`rounded-xl border ${m.isRead ? 'border-slate-100' : 'border-[#FF6A00]/40 bg-orange-50/30'}`}>
-            <button onClick={() => openMsg(m)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
-              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.direction === 'outbound' ? 'bg-blue-400' : m.isRead ? 'bg-slate-200' : 'bg-[#FF4500]'}`} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs ${m.isRead ? 'font-semibold text-slate-600' : 'font-bold text-[#050A1F]'}`}>{m.direction === 'outbound' ? `To ${m.toEmail}` : (m.fromName || m.fromEmail)}</span>
-                  <span className="text-[10px] text-slate-400">{new Date(m.sentAt).toLocaleString()}</span>
-                </div>
-                <div className="text-xs text-slate-500 truncate">{m.subject || '(no subject)'} — {m.snippet}</div>
-              </div>
+        <div className="px-4 pt-3 space-y-2">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+
+          {/* From */}
+          {fromOptions.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <span className="text-xs text-slate-400 w-10">From</span>
+              <select value={from} onChange={(e) => setFrom(Number(e.target.value))} className="flex-1 text-sm text-slate-700 outline-none bg-transparent">
+                {fromOptions.map((o) => <option key={o.userId} value={o.userId}>{o.name} &lt;{o.email}&gt;{o.self ? ' (you)' : ''}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* To + Cc/Bcc toggles */}
+          <div className="flex items-start gap-2 border-b border-slate-100 pb-2">
+            <span className="text-xs text-slate-400 w-10 pt-1.5">To</span>
+            <div className="flex-1"><ChipInput value={to} onChange={setTo} placeholder="Recipients" /></div>
+            <div className="flex gap-2 pt-1.5 text-xs font-semibold text-slate-400">
+              {!showCc && <button onClick={() => setShowCc(true)} className="hover:text-slate-600">Cc</button>}
+              {!showBcc && <button onClick={() => setShowBcc(true)} className="hover:text-slate-600">Bcc</button>}
+            </div>
+          </div>
+          {showCc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-10 pt-1.5">Cc</span><div className="flex-1"><ChipInput value={cc} onChange={setCc} placeholder="Cc" /></div></div>}
+          {showBcc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-10 pt-1.5">Bcc</span><div className="flex-1"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc" /></div></div>}
+
+          {/* Subject */}
+          <div className="border-b border-slate-100 pb-2">
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="w-full text-sm text-slate-700 outline-none" />
+          </div>
+
+          {/* Body */}
+          <div className="py-1"><RichText value={body} onChange={setBody} placeholder="Write your message…" minHeight={180} /></div>
+
+          {/* Attachment chips */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 pb-2">
+              {attachments.map((a, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                  {a.filename}{a.reportId ? ' (CRM report)' : ''}
+                  <button onClick={() => removeAtt(i)} className="text-slate-400 hover:text-red-500 ml-1">×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Timezone note */}
+        <div className="px-4 text-[11px] text-slate-400">Times shown in <span className="font-semibold">{tzLabel(tz)}</span>{lead.email ? ` · lead: ${lead.email}` : ''}</div>
+
+        {/* Bottom toolbar */}
+        <div className="flex items-center gap-2 px-4 py-3 relative">
+          <div className="flex">
+            <button onClick={() => doSend(false)} disabled={sending} className="rounded-l-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
             </button>
-            {openId === m._id && (
-              <div className="px-4 pb-4 border-t border-slate-100 pt-3">
-                <div className="text-[11px] text-slate-400 mb-2">From {m.fromEmail} · To {m.toEmail}</div>
-                <div className="text-sm text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<pre style="white-space:pre-wrap;font-family:inherit">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</pre>` }} />
-                <div className="mt-3"><button onClick={() => startReply(m)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>Reply</button></div>
+          </div>
+          <button onClick={() => fileInput.current?.click()} title="Attach file" className="p-2 rounded-full hover:bg-slate-100 text-slate-500">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>
+          </button>
+          <input ref={fileInput} type="file" multiple className="hidden" onChange={onFile} />
+          <div className="relative">
+            <button onClick={() => setShowReports((v) => !v)} title="Attach CRM report" className="p-2 rounded-full hover:bg-slate-100 text-slate-500 flex items-center gap-1">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 13h6M9 17h6" /></svg>
+              <span className="text-[10px] font-bold">CRM</span>
+            </button>
+            {showReports && (
+              <div className="absolute bottom-11 left-0 w-64 bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+                <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">Attach a report</div>
+                {reports.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No reports for this lead.</div>}
+                {reports.map((r) => (
+                  <button key={r._id || r.id} onClick={() => attachReport(r)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50">
+                    <div className="font-semibold text-[#050A1F] truncate">{r.businessName || 'Report'}</div>
+                    <div className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString()}</div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
-        ))}
+
+          {/* Schedule popover */}
+          {showSchedule && (
+            <div className="absolute bottom-14 left-4 w-80 bg-white rounded-xl border border-slate-200 shadow-xl p-4 z-50">
+              <div className="text-sm font-bold text-[#050A1F] mb-2">Schedule send</div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Date</label><input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
+                <div><label className="block text-[10px] font-bold text-slate-400 mb-1">Time</label><input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></div>
+              </div>
+              <label className="block text-[10px] font-bold text-slate-400 mb-1">Time zone</label>
+              <select value={tz} onChange={(e) => setTz(e.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm mb-3">
+                {TZ_CHOICES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}
+              </select>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowSchedule(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                <button onClick={() => doSend(true)} disabled={sending} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>Schedule send</button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1" />
+          <button onClick={onClose} title="Discard" className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /></svg>
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+// Email chip input: type an address, Enter/comma commits it as a removable chip.
+function ChipInput({ value, onChange, placeholder }) {
+  const [text, setText] = useState('');
+  const commit = () => { const t = text.trim().replace(/,$/, ''); if (t) { onChange([...value, t]); setText(''); } };
+  return (
+    <div className="flex flex-wrap gap-1.5 items-center">
+      {value.map((v, i) => (
+        <span key={i} className="inline-flex items-center gap-1 bg-orange-50 text-[#050A1F] rounded-full px-2.5 py-1 text-xs font-semibold">
+          {v}<button onClick={() => onChange(value.filter((_, idx) => idx !== i))} className="text-slate-400 hover:text-red-500">×</button>
+        </span>
+      ))}
+      <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); } if (e.key === 'Backspace' && !text && value.length) onChange(value.slice(0, -1)); }} onBlur={commit} placeholder={value.length === 0 ? placeholder : ''} className="flex-1 min-w-[120px] text-sm outline-none py-1" />
+    </div>
+  );
+}
+
+const TZ_CHOICES = ['Asia/Kolkata', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Asia/Dubai', 'Asia/Singapore', 'Australia/Sydney'];
+function tzLabel(tz) {
+  const map = { 'Asia/Kolkata': 'IST (India)', 'America/New_York': 'ET (New York)', 'America/Chicago': 'CT (Chicago)', 'America/Denver': 'MT (Denver)', 'America/Los_Angeles': 'PT (Los Angeles)', 'Europe/London': 'GMT/BST (London)', 'Europe/Berlin': 'CET (Berlin)', 'Asia/Dubai': 'GST (Dubai)', 'Asia/Singapore': 'SGT (Singapore)', 'Australia/Sydney': 'AEST (Sydney)' };
+  return map[tz] || tz;
 }
 
 function EmailDraftTab({ lead, user, onChange }) {
@@ -2174,7 +2483,7 @@ function AiBriefModal({ lead, onClose }) {
 function Timeline({ lead }) {
   const raw = Array.isArray(lead.timeline) ? lead.timeline : [];
   if (!raw.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
-  const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄' };
+  const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄', email: '✉️' };
 
   // An activity counts as missed once it is more than an hour past the agreed
   // time and still isn't done. We check the live activity list rather than the

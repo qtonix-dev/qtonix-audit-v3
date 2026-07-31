@@ -45,11 +45,26 @@ async function syncOnce(models) {
         const domain = counterparty.split('@')[1] || '';
         const leadId = byEmail.get(counterparty) || byDomain.get(domain);
         if (!leadId) continue;
-        const [, created] = await LeadEmail.findOrCreate({
+        const [row, created] = await LeadEmail.findOrCreate({
           where: { userId: u.id, gmailMessageId: m.gmailMessageId },
           defaults: { ...m, leadId, userId: u.id },
         });
-        if (created) inserted++;
+        if (created) {
+          inserted++;
+          // Note inbound arrivals on the lead timeline (once, from the owner's
+          // mailbox or whoever synced it first).
+          if (m.direction === 'inbound') {
+            try {
+              const lead = await Lead.findByPk(leadId);
+              if (lead) {
+                const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+                tl.push({ type: 'email', text: `Email received from ${m.fromName || m.fromEmail}: "${m.subject || '(no subject)'}"`, time: (m.sentAt || new Date()).toISOString ? (m.sentAt || new Date()).toISOString() : new Date().toISOString(), author: m.fromName || m.fromEmail, direction: 'inbound' });
+                lead.timeline = tl; lead.changed('timeline', true); lead.lastActivityAt = new Date();
+                await lead.save();
+              }
+            } catch (e) { /* best-effort */ }
+          }
+        }
       }
     } catch (e) {
       console.error(`[gmail-sync] user ${u.id} failed:`, e.message);
