@@ -74,4 +74,34 @@ function employeeFolder(hrUser, sub) {
   return `/qtonix-hr/employees/${idPart}-${safe}/${sub}`;
 }
 
-module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder };
+// The folder for a user's email attachments: /email/{id}-{name}/
+function emailFolder(user) {
+  const safe = String(user.name || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `/email/${user.id}-${safe}`;
+}
+
+/**
+ * Upload a file to ImageKit from the server (base64 content). Returns the
+ * hosted file info { url, fileId, name } or throws. Used for email attachments,
+ * which we pull from Gmail server-side and re-host so the CRM can display them.
+ */
+async function uploadFile({ base64, fileName, folder }) {
+  const cfg = await getConfig();
+  if (!cfg.privateKey) throw new Error('ImageKit is not configured.');
+  const auth = 'Basic ' + Buffer.from(cfg.privateKey + ':').toString('base64');
+  const form = new URLSearchParams();
+  form.set('file', base64.startsWith('data:') ? base64 : `data:application/octet-stream;base64,${base64}`);
+  form.set('fileName', fileName || 'attachment');
+  if (folder) form.set('folder', folder);
+  form.set('useUniqueFileName', 'true');
+  const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+    method: 'POST',
+    headers: { Authorization: auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `ImageKit upload failed (${res.status}).`);
+  return { url: data.url, fileId: data.fileId, name: data.name, thumbnailUrl: data.thumbnailUrl, size: data.size };
+}
+
+module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder, emailFolder, uploadFile };

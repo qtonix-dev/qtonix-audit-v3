@@ -8,6 +8,7 @@ import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
 import MotivatorTV from './MotivatorTV.jsx';
 import AiBriefPage from './AiBriefPage.jsx';
+import AllEmailPage from './AllEmailPage.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -955,11 +956,13 @@ function EmailSettingsModal({ user, onClose }) {
   const [newName, setNewName] = useState('');
   const [sigs, setSigs] = useState([]);
   const [editing, setEditing] = useState(null); // signature being edited/created
+  const [sigTemplates, setSigTemplates] = useState([]);
+  const [showGallery, setShowGallery] = useState(false);
   const [msg, setMsg] = useState('');
 
   const loadMailboxes = () => api('/gmail/mailboxes').then(setData).catch(() => {});
   const loadSigs = () => api('/gmail/signatures').then(setSigs).catch(() => {});
-  useEffect(() => { loadMailboxes(); loadSigs(); }, []);
+  useEffect(() => { loadMailboxes(); loadSigs(); api('/gmail/signature-templates').then(setSigTemplates).catch(() => {}); }, []);
   useEffect(() => {
     const onMsg = (e) => { if (e.data && e.data.gmail) { loadMailboxes(); gmail.reload && gmail.reload(); } };
     window.addEventListener('message', onMsg); return () => window.removeEventListener('message', onMsg);
@@ -1038,9 +1041,32 @@ function EmailSettingsModal({ user, onClose }) {
         <div className="rounded-xl border border-slate-200 p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm font-bold text-[#050A1F]">Signatures</div>
-            <button onClick={() => setEditing(blankSig())} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>+ New signature</button>
+            <div className="flex gap-2">
+              <button onClick={() => { setShowGallery((v) => !v); }} className="rounded-lg px-3 py-1.5 text-xs font-bold border border-slate-300 text-slate-600 hover:bg-slate-50">✨ Start from a template</button>
+              <button onClick={() => { setShowGallery(false); setEditing(blankSig()); }} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>+ New signature</button>
+            </div>
           </div>
-          {sigs.length === 0 && !editing && <div className="text-xs text-slate-400">No signatures yet. Create one and assign it to all mailboxes or a specific one.</div>}
+
+          {/* Template gallery: pick a ready-made design, then customise it. */}
+          {showGallery && (
+            <div className="mb-3 grid grid-cols-1 gap-2">
+              {sigTemplates.map((t) => (
+                <div key={t.id} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="text-xs font-bold text-[#050A1F]">{t.name}</div>
+                      <div className="text-[10px] text-slate-400">{t.description}</div>
+                    </div>
+                    <button onClick={() => { setShowGallery(false); setEditing({ ...blankSig(), name: t.name, bodyHtml: t.html }); }} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white flex-shrink-0" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Use &amp; customise</button>
+                  </div>
+                  <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-2 overflow-auto" dangerouslySetInnerHTML={{ __html: t.html }} />
+                </div>
+              ))}
+              {sigTemplates.length === 0 && <div className="text-xs text-slate-400">Loading templates…</div>}
+            </div>
+          )}
+
+          {sigs.length === 0 && !editing && !showGallery && <div className="text-xs text-slate-400">No signatures yet. Create one from scratch, or start from a template above.</div>}
           <div className="space-y-2">
             {sigs.map((sg) => (
               <div key={sg._id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
@@ -1359,6 +1385,8 @@ export default function App() {
     // Standalone AI brief lookup for cold calling — enter a domain, get the
     // pitch. Sits right after Leads, available to everyone.
     { id: 'aibrief', label: 'AI Brief', icon: 'sparkles' },
+    // Gmail-style browser for the connected mailbox (all emails, folders, labels).
+    { id: 'allemail', label: 'All Email', icon: 'mail' },
     // Agents run reports only from inside a lead's detail page, so they don't
     // get the top-level Reports menu (which also lists reports across leads).
     ...(user.role !== 'agent' ? [{ id: 'list', label: 'Reports', icon: 'chart' }] : []),
@@ -1454,6 +1482,7 @@ export default function App() {
             when switching between the two. */}
         {view === 'prospects' && <Leads key="prospects" user={user} initialView="prospects" />}
         {view === 'aibrief' && <AiBriefPage user={user} />}
+        {view === 'allemail' && <AllEmailPage user={user} />}
         {view === 'emaildrafts' && (user.role === 'leadmanager' || user.role === 'admin') && (
           <EmailDraftsPage user={user}
             onOpenLead={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />

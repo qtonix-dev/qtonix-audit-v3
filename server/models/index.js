@@ -604,7 +604,7 @@ const LeadEmail = sequelize.define(
   'LeadEmail',
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    leadId: { type: DataTypes.INTEGER, allowNull: false },
+    leadId: { type: DataTypes.INTEGER, allowNull: true }, // null = not tied to a CRM lead (All Email)
     userId: { type: DataTypes.INTEGER, allowNull: false }, // whose mailbox
     gmailMessageId: { type: DataTypes.STRING(120), allowNull: false },
     threadId: { type: DataTypes.STRING(120), defaultValue: '' },
@@ -620,6 +620,7 @@ const LeadEmail = sequelize.define(
     bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
     bodyText: { type: DataTypes.TEXT('long'), allowNull: true },
     attachments: { type: DataTypes.JSON, allowNull: true }, // [{filename,mimeType,attachmentId,size}]
+    inlines: { type: DataTypes.JSON, allowNull: true }, // inline images [{contentId,filename,mimeType,attachmentId}]
     starred: { type: DataTypes.BOOLEAN, defaultValue: false },
     dismissedFromMissed: { type: DataTypes.BOOLEAN, defaultValue: false }, // admin cleared it from the dashboard
     sentAt: { type: DataTypes.DATE },

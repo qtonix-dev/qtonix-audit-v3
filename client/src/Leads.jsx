@@ -1910,13 +1910,24 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
                   <div className="text-sm text-slate-700 prose prose-sm max-w-none break-words overflow-x-auto pr-2" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
                   {(m.attachments || []).length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-3">
-                      {m.attachments.map((a, ai) => (
-                        <a key={ai} href={a.attachmentId ? `${API_BASE}/api/gmail/email/${m._id}/attachment/${a.attachmentId}` : undefined} target="_blank" rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-                          {a.filename}
-                        </a>
-                      ))}
+                      {m.attachments.map((a, ai) => {
+                        const href = a.url || (a.attachmentId ? `${API_BASE}/api/gmail/email/${m._id}/attachment/${a.attachmentId}` : undefined);
+                        const isImg = /^image\//i.test(a.mimeType || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a.filename || '');
+                        if (isImg && a.url) {
+                          return (
+                            <a key={ai} href={href} target="_blank" rel="noreferrer" className="block">
+                              <img src={a.url} alt={a.filename} className="max-h-40 rounded-lg border border-slate-200 object-cover" />
+                            </a>
+                          );
+                        }
+                        return (
+                          <a key={ai} href={href} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                            {a.filename}
+                          </a>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2021,13 +2032,13 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-3xl shadow-2xl my-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl">
+      <div className="bg-white rounded-xl w-full max-w-3xl shadow-2xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl flex-shrink-0">
           <span className="text-sm font-semibold">{initial.mode === 'forward' ? 'Forward message' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message'}</span>
           <button onClick={onClose} className="text-slate-300 hover:text-white text-lg leading-none">×</button>
         </div>
 
-        <div className="px-5 pt-3 space-y-2">
+        <div className="px-5 pt-3 space-y-2 overflow-y-auto flex-1 min-h-0">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
 
           {fromOptions.length > 0 && (
@@ -2075,7 +2086,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex items-center gap-2 px-5 py-3 relative">
+        <div className="flex items-center gap-2 px-5 py-3 relative flex-shrink-0 border-t border-slate-100 bg-white rounded-b-xl">
           <div className="flex">
             <button onClick={() => doSend(false)} disabled={sending} className="rounded-l-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
             <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
@@ -4052,7 +4063,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       ) : viewMode === 'table' ? null : (
         <>
         {openDealLeads.length > 0 && (
-          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">With open deals · {openDealLeads.length}</div>
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Active — open deal or payment pending · {openDealLeads.length}</div>
         )}
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {openDealLeads.map((l) => {
@@ -4157,7 +4168,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             cards, since there's no active deal to work. */}
         {noOpenDealLeads.length > 0 && (
           <div className="mt-6">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">No open deal · {noOpenDealLeads.length}</div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Completed — service done, ready for cross-sell · {noOpenDealLeads.length}</div>
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">

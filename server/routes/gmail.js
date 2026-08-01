@@ -170,6 +170,22 @@ router.get('/signatures', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** GET /api/gmail/signature-templates — built-in signature gallery, pre-filled
+ *  with the agent's known details so the preview is immediately realistic. */
+router.get('/signature-templates', requireAuth, async (req, res, next) => {
+  try {
+    const sig = require('../services/signatureTemplates');
+    const u = await User.findByPk(req.user.id);
+    const aliases = Array.isArray(u.aliases) ? u.aliases.filter(Boolean) : [];
+    const vals = {
+      name: aliases[0] || u.name,
+      title: u.designation || 'Sales Manager',
+      email: u.gmailConnectedEmail || u.email,
+    };
+    res.json(sig.templates.map((t) => ({ id: t.id, name: t.name, description: t.description, html: sig.fill(t.html, vals) })));
+  } catch (e) { next(e); }
+});
+
 /** POST /api/gmail/signatures — create a signature. */
 router.post('/signatures', requireAuth, async (req, res, next) => {
   try {
@@ -477,6 +493,64 @@ router.get('/lead/:leadId/unread', requireAuth, async (req, res, next) => {
 });
 
 /** GET /api/gmail/thread/:threadId — every message in a Gmail thread. */
+/**
+ * Ensure a message's attachments and inline images are hosted on ImageKit and
+ * its HTML has cid: references rewritten to real URLs. Downloads from Gmail once,
+ * caches the hosted URL back onto the row so we don't re-upload. Best-effort:
+ * failures leave the original data intact.
+ */
+async function hydrateMedia(row, viewer, settings) {
+  try {
+    const imagekit = require('../services/imagekit');
+    if (!(await imagekit.isConfigured())) return row.toJSON();
+    const owner = await User.findByPk(row.userId);
+    const token = owner && owner.gmailRefreshToken ? owner.getGmailRefreshToken() : (viewer.gmailRefreshToken ? viewer.getGmailRefreshToken() : null);
+    if (!token) return row.toJSON();
+    const folder = imagekit.emailFolder(owner || viewer);
+    let changed = false;
+    let html = row.bodyHtml || '';
+
+    // Inline images: upload each, then rewrite its cid: reference in the HTML.
+    const inlines = Array.isArray(row.inlines) ? [...row.inlines] : [];
+    for (const inl of inlines) {
+      if (!inl.url && inl.attachmentId) {
+        try {
+          const raw = await gmail.getAttachment(settings, token, row.gmailMessageId, inl.attachmentId);
+          const b64 = String(raw || '').replace(/-/g, '+').replace(/_/g, '/');
+          const up = await imagekit.uploadFile({ base64: b64, fileName: inl.filename || 'image', folder });
+          inl.url = up.url; changed = true;
+        } catch (e) { /* leave as-is */ }
+      }
+      if (inl.url && inl.contentId) {
+        const cid = inl.contentId.replace(/^<|>$/g, '');
+        html = html.replace(new RegExp(`cid:${cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'), inl.url);
+      }
+    }
+
+    // File attachments: re-host so the CRM can link them directly.
+    const attachments = Array.isArray(row.attachments) ? [...row.attachments] : [];
+    for (const att of attachments) {
+      if (!att.url && att.attachmentId) {
+        try {
+          const raw = await gmail.getAttachment(settings, token, row.gmailMessageId, att.attachmentId);
+          const b64 = String(raw || '').replace(/-/g, '+').replace(/_/g, '/');
+          const up = await imagekit.uploadFile({ base64: b64, fileName: att.filename || 'attachment', folder });
+          att.url = up.url; att.size = att.size || up.size; changed = true;
+        } catch (e) { /* leave as-is */ }
+      }
+    }
+
+    if (changed || html !== row.bodyHtml) {
+      row.inlines = inlines; row.attachments = attachments; row.bodyHtml = html;
+      row.changed('inlines', true); row.changed('attachments', true);
+      await row.save();
+    }
+    return row.toJSON();
+  } catch (e) {
+    return row.toJSON();
+  }
+}
+
 router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
   try {
     const viewer = await User.findByPk(req.user.id);
@@ -491,7 +565,10 @@ router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
         return res.json({ messages: msgs });
       } catch (e) { /* fall through */ }
     }
-    res.json({ messages: rows.map((r) => r.toJSON()) });
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const messages = [];
+    for (const r of rows) messages.push(await hydrateMedia(r, viewer, settings));
+    res.json({ messages });
   } catch (e) { next(e); }
 });
 
@@ -894,6 +971,216 @@ router.post('/templates/:id/apply', requireAuth, async (req, res, next) => {
     if (!lead) return res.status(400).json({ error: 'Lead not found.' });
     const vars = await templateVars(lead);
     res.json({ subject: applyVars(tpl.subject, vars), body: applyVars(tpl.bodyHtml, vars) });
+  } catch (e) { next(e); }
+});
+
+// --- All Email (Gmail-style mailbox browser) --------------------------------
+
+/**
+ * Resolve which connected mailbox the viewer is browsing in All Email.
+ * By default it's their own. Admins may pass ?as=<userId> to view another
+ * connected user's mailbox. Returns { user, token, settings } or null.
+ */
+async function resolveBrowseMailbox(viewer, asUserId) {
+  const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+  let target = viewer;
+  if (asUserId && viewer.role === 'admin') {
+    const u = await User.findByPk(Number(asUserId));
+    if (u && u.gmailRefreshToken) target = u;
+  }
+  if (!target.gmailRefreshToken) return null;
+  return { user: target, token: target.getGmailRefreshToken(), settings };
+}
+
+/** GET /api/gmail/all/mailboxes — connected mailboxes the viewer can browse.
+ *  Everyone gets their own; admins get every connected user + extra mailboxes. */
+router.get('/all/mailboxes', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const list = [];
+    if (viewer.gmailRefreshToken && viewer.gmailConnectedEmail) list.push({ value: String(viewer.id), label: 'Me', email: viewer.gmailConnectedEmail, signature: viewer.emailSignature || '' });
+    if (viewer.role === 'admin') {
+      const users = await User.findAll({ where: { gmailRefreshToken: { [Op.ne]: null }, id: { [Op.ne]: viewer.id } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
+      users.forEach((u) => list.push({ value: String(u.id), label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
+    }
+    res.json({ mailboxes: list, isAdmin: viewer.role === 'admin' });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/all/folder — live list of a Gmail folder/label.
+ *  Query: box (INBOX|SENT|SPAM|TRASH|STARRED|ALL), labelId, q, pageToken, as. */
+router.get('/all/folder', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox. Connect Gmail in Email settings first.' });
+    const box = String(req.query.box || 'INBOX').toUpperCase();
+    const out = await gmail.listFolder(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
+      box, labelId: req.query.labelId || null, q: req.query.q || '',
+      max: Math.min(50, Number(req.query.max) || 25), pageToken: req.query.pageToken || null,
+    });
+    // Flag which messages are tied to a CRM lead (so the UI can hide delete for
+    // those). Match by our stored copies first (fast), else by counterparty.
+    const ids = out.messages.map((m) => m.gmailMessageId);
+    const linked = ids.length ? await LeadEmail.findAll({ where: { gmailMessageId: { [Op.in]: ids } }, attributes: ['gmailMessageId', 'leadId'] }) : [];
+    const leadByMsg = new Map(linked.map((r) => [r.gmailMessageId, r.leadId]));
+    out.messages.forEach((m) => { m.leadId = leadByMsg.get(m.gmailMessageId) || null; });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/all/labels — the mailbox's Gmail labels. */
+router.get('/all/labels', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.json({ labels: [] });
+    const labels = await gmail.listLabels(mb.settings, mb.token);
+    res.json({ labels });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/all/labels — create a custom label. Body: { name, color, as }. */
+router.post('/all/labels', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, (req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const b = req.body || {};
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Label name is required.' });
+    const label = await gmail.createLabel(mb.settings, mb.token, String(b.name).trim(), b.color || null);
+    res.json(label);
+  } catch (e) { next(e); }
+});
+
+/** PATCH /api/gmail/all/labels/:id — rename/recolor. Body: { name, color, as }. */
+router.patch('/all/labels/:id', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, (req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const patch = {};
+    if (req.body.name !== undefined) patch.name = String(req.body.name).trim();
+    if (req.body.color !== undefined) patch.color = req.body.color;
+    const label = await gmail.updateLabel(mb.settings, mb.token, req.params.id, patch);
+    res.json(label);
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/gmail/all/labels/:id?as= — delete a custom label. */
+router.delete('/all/labels/:id', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.deleteLabel(mb.settings, mb.token, req.params.id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/all/message/:gmailMessageId/labels — apply/remove labels.
+ *  Body: { add:[labelId], remove:[labelId], as }. */
+router.post('/all/message/:gmailMessageId/labels', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, (req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.modifyMessageLabels(mb.settings, mb.token, req.params.gmailMessageId, { add: req.body.add || [], remove: req.body.remove || [] });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/all/message/:gmailMessageId/star — star/unstar. Body {starred, as}. */
+router.post('/all/message/:gmailMessageId/star', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, (req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.setStar(mb.settings, mb.token, req.params.gmailMessageId, !!req.body.starred);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/gmail/all/message/:gmailMessageId?as= — trash a message. Only
+ *  allowed when the email is NOT tied to a CRM lead. */
+router.delete('/all/message/:gmailMessageId', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    // Guard: refuse to delete an email that belongs to a CRM lead thread.
+    const linked = await LeadEmail.findOne({ where: { gmailMessageId: req.params.gmailMessageId } });
+    if (linked && linked.leadId) return res.status(400).json({ error: 'This email is linked to a lead and can’t be deleted here.' });
+    await gmail.trashMessage(mb.settings, mb.token, req.params.gmailMessageId);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/all/thread/:threadId?as= — full thread for the reader,
+ *  fetched live from the browsed mailbox (works for non-lead emails too). */
+router.get('/all/thread/:threadId', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const msgs = await gmail.getThread(mb.settings, mb.token, mb.user.gmailConnectedEmail, req.params.threadId);
+    res.json({ messages: msgs });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/all/send — send a new mail / reply / forward directly from
+ *  the browsed mailbox, independent of any lead. Body: { to, cc, bcc, subject,
+ *  body, threadId, inReplyTo, attachments:[{filename,mimeType,contentBase64}],
+ *  as }. If the thread or recipient matches a known lead, we also log the
+ *  outbound copy against that lead so the CRM stays in sync. */
+router.post('/all/send', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const b = req.body || {};
+    const mb = await resolveBrowseMailbox(viewer, b.as);
+    if (!mb) return res.status(400).json({ error: 'Connect a Gmail mailbox first.' });
+    const to = b.to;
+    if (!to || (Array.isArray(to) && to.length === 0)) return res.status(400).json({ error: 'Add at least one recipient.' });
+    if (!b.subject || !b.body) return res.status(400).json({ error: 'Subject and message are both required.' });
+
+    // Attachments here arrive already base64-encoded from the browser (no CRM
+    // report shortcut in All Email), so pass them straight through.
+    const attachments = Array.isArray(b.attachments)
+      ? b.attachments.filter((a) => a && a.contentBase64).map((a) => ({ filename: a.filename || 'attachment', mimeType: a.mimeType || 'application/octet-stream', contentBase64: a.contentBase64 }))
+      : [];
+
+    const sent = await gmail.sendMessage(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
+      from: mb.user.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
+      subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
+    });
+
+    // Best-effort: if this thread already belongs to a lead, or the recipient
+    // matches a lead, record the outbound message so it shows on the lead too.
+    try {
+      const toStr = Array.isArray(to) ? to.join(', ') : String(to);
+      let leadId = null;
+      if (b.threadId) {
+        const existing = await LeadEmail.findOne({ where: { threadId: b.threadId, leadId: { [Op.ne]: null } } });
+        if (existing) leadId = existing.leadId;
+      }
+      if (!leadId) {
+        const firstTo = (Array.isArray(to) ? to[0] : String(to).split(',')[0] || '').trim().toLowerCase();
+        if (firstTo) {
+          const lead = await Lead.findOne({ where: { email: firstTo } });
+          if (lead) leadId = lead.id;
+        }
+      }
+      await LeadEmail.create({
+        leadId, userId: mb.user.id, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
+        direction: 'outbound', fromEmail: mb.user.gmailConnectedEmail, fromName: mb.user.name,
+        toEmail: toStr, ccEmail: b.cc || null, bccEmail: b.bcc || null,
+        subject: b.subject, snippet: String(b.body).replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: b.body,
+        attachments: attachments.map((a) => ({ filename: a.filename, mimeType: a.mimeType })),
+        sentAt: new Date(), isRead: true,
+      });
+    } catch (e) { /* logging is best-effort */ }
+
+    res.json({ ok: true, id: sent.id, threadId: sent.threadId });
   } catch (e) { next(e); }
 });
 

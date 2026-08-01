@@ -105,23 +105,35 @@ function decodeBody(data) {
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 }
 
-// Walk the MIME tree collecting text/plain and text/html parts.
+// Walk the MIME tree collecting text/plain and text/html parts, plus both file
+// attachments and inline images (which are referenced from the HTML via cid:).
 function extractBodies(payload) {
   let html = '', text = '';
   const attachments = [];
+  const inlines = []; // { contentId, filename, mimeType, attachmentId }
   const walk = (part) => {
     if (!part) return;
     const mime = part.mimeType || '';
     if (mime === 'text/html' && part.body && part.body.data) html += decodeBody(part.body.data);
     else if (mime === 'text/plain' && part.body && part.body.data) text += decodeBody(part.body.data);
-    // A part with a filename + attachmentId is a file attachment.
-    if (part.filename && part.body && part.body.attachmentId) {
-      attachments.push({ filename: part.filename, mimeType: mime, attachmentId: part.body.attachmentId, size: part.body.size || 0 });
+    // Read headers for Content-ID / disposition so we can tell inline from file.
+    const headers = part.headers || [];
+    const hget = (n) => { const h = headers.find((x) => (x.name || '').toLowerCase() === n); return h ? h.value : ''; };
+    const contentId = (hget('content-id') || '').replace(/^<|>$/g, '');
+    const disposition = (hget('content-disposition') || '').toLowerCase();
+    if (part.body && part.body.attachmentId) {
+      const isImage = /^image\//i.test(mime);
+      const isInline = disposition.includes('inline') || (!!contentId && isImage);
+      if (isInline) {
+        inlines.push({ contentId, filename: part.filename || contentId || 'image', mimeType: mime, attachmentId: part.body.attachmentId, size: part.body.size || 0 });
+      } else if (part.filename) {
+        attachments.push({ filename: part.filename, mimeType: mime, attachmentId: part.body.attachmentId, size: part.body.size || 0 });
+      }
     }
     (part.parts || []).forEach(walk);
   };
   walk(payload);
-  return { html, text, attachments };
+  return { html, text, attachments, inlines };
 }
 
 /** Turn a full Gmail message resource into our flat record shape. */
@@ -133,7 +145,7 @@ function normalizeMessage(msg, connectedEmail) {
   const subject = headerVal(headers, 'Subject');
   const dateHdr = headerVal(headers, 'Date');
   const messageIdHdr = headerVal(headers, 'Message-ID') || headerVal(headers, 'Message-Id');
-  const { html, text, attachments } = extractBodies(msg.payload);
+  const { html, text, attachments, inlines } = extractBodies(msg.payload);
   const isOutbound = from.email && connectedEmail && from.email === String(connectedEmail).toLowerCase();
   return {
     gmailMessageId: msg.id,
@@ -149,6 +161,7 @@ function normalizeMessage(msg, connectedEmail) {
     bodyHtml: html,
     bodyText: text,
     attachments,
+    inlines: inlines || [],
     sentAt: dateHdr ? new Date(dateHdr) : new Date(Number(msg.internalDate) || Date.now()),
     isRead: !(msg.labelIds || []).includes('UNREAD'),
   };
@@ -231,7 +244,102 @@ async function markRead(settings, refreshToken, gmailMessageId) {
   await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody: { removeLabelIds: ['UNREAD'] } });
 }
 
+/**
+ * List messages in a Gmail folder/label. `box` maps to a system label
+ * (INBOX/SENT/SPAM/TRASH/STARRED) or a custom label id. Supports an optional
+ * search string. Returns normalized message summaries (metadata only — no
+ * bodies — for a fast list view) plus the next page token.
+ */
+async function listFolder(settings, refreshToken, connectedEmail, { box = 'INBOX', labelId, q = '', max = 25, pageToken } = {}) {
+  const gmail = gmailFor(settings, refreshToken);
+  const params = { userId: 'me', maxResults: max };
+  const labelIds = [];
+  if (box === 'STARRED') labelIds.push('STARRED');
+  else if (box === 'ALL') { /* no label filter = all mail */ }
+  else if (labelId) labelIds.push(labelId);
+  else labelIds.push(box); // INBOX / SENT / SPAM / TRASH / DRAFT
+  if (labelIds.length) params.labelIds = labelIds;
+  if (q) params.q = q;
+  if (pageToken) params.pageToken = pageToken;
+  const list = await gmail.users.messages.list(params);
+  const ids = (list.data.messages || []).map((m) => m.id);
+  const out = [];
+  for (const id of ids) {
+    try {
+      // metadata format is much lighter than full — good for a list.
+      const meta = await gmail.users.messages.get({ userId: 'me', id, format: 'metadata', metadataHeaders: ['From', 'To', 'Subject', 'Date'] });
+      const m = meta.data;
+      const headers = (m.payload && m.payload.headers) || [];
+      const from = parseAddress(headerVal(headers, 'From'));
+      const isOutbound = from.email && connectedEmail && from.email === String(connectedEmail).toLowerCase();
+      out.push({
+        gmailMessageId: m.id,
+        threadId: m.threadId || '',
+        fromEmail: from.email, fromName: from.name,
+        toEmail: headerVal(headers, 'To'),
+        subject: headerVal(headers, 'Subject'),
+        snippet: m.snippet || '',
+        sentAt: new Date(Number(m.internalDate) || Date.now()),
+        isRead: !(m.labelIds || []).includes('UNREAD'),
+        starred: (m.labelIds || []).includes('STARRED'),
+        labelIds: m.labelIds || [],
+        direction: isOutbound ? 'outbound' : 'inbound',
+        hasAttachments: /attachment/i.test(JSON.stringify(m.payload && m.payload.parts || [])) || false,
+      });
+    } catch (e) { /* skip individual failures */ }
+  }
+  return { messages: out, nextPageToken: list.data.nextPageToken || null };
+}
+
+/** List the user's Gmail labels (system + custom). */
+async function listLabels(settings, refreshToken) {
+  const gmail = gmailFor(settings, refreshToken);
+  const res = await gmail.users.labels.list({ userId: 'me' });
+  return (res.data.labels || []).map((l) => ({ id: l.id, name: l.name, type: l.type, color: l.color || null }));
+}
+
+/** Create a custom Gmail label. */
+async function createLabel(settings, refreshToken, name, color) {
+  const gmail = gmailFor(settings, refreshToken);
+  const body = { name, labelListVisibility: 'labelShow', messageListVisibility: 'show' };
+  if (color && color.backgroundColor) body.color = color;
+  const res = await gmail.users.labels.create({ userId: 'me', requestBody: body });
+  return { id: res.data.id, name: res.data.name, color: res.data.color || null };
+}
+
+/** Rename / recolor a label. */
+async function updateLabel(settings, refreshToken, id, patch) {
+  const gmail = gmailFor(settings, refreshToken);
+  const res = await gmail.users.labels.patch({ userId: 'me', id, requestBody: patch });
+  return { id: res.data.id, name: res.data.name, color: res.data.color || null };
+}
+
+/** Delete a custom label. */
+async function deleteLabel(settings, refreshToken, id) {
+  const gmail = gmailFor(settings, refreshToken);
+  await gmail.users.labels.delete({ userId: 'me', id });
+}
+
+/** Apply/remove labels on a message. */
+async function modifyMessageLabels(settings, refreshToken, gmailMessageId, { add = [], remove = [] } = {}) {
+  const gmail = gmailFor(settings, refreshToken);
+  await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody: { addLabelIds: add, removeLabelIds: remove } });
+}
+
+/** Move a message to Trash (soft delete). */
+async function trashMessage(settings, refreshToken, gmailMessageId) {
+  const gmail = gmailFor(settings, refreshToken);
+  await gmail.users.messages.trash({ userId: 'me', id: gmailMessageId });
+}
+
+/** Star / unstar a message in Gmail. */
+async function setStar(settings, refreshToken, gmailMessageId, starred) {
+  const gmail = gmailFor(settings, refreshToken);
+  await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody: starred ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] } });
+}
+
 module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
+  listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
 };

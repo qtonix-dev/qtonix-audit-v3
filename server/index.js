@@ -260,6 +260,21 @@ connectWithRetry()
       console.error('[migrate] convertedAt backfill skipped:', e.message);
     }
 
+    // One-time migration: "callback" is reserved for the Call Backs section
+    // (cold-calling prospects). Any lead sitting in callback status whose source
+    // is NOT cold calling was mis-categorised — move it to "followup" so it
+    // stops appearing in the Call Backs tab. Genuine cold-calling prospects stay.
+    try {
+      const { Lead, Op } = require('./models');
+      const [affected] = await Lead.update(
+        { status: 'followup' },
+        { where: { status: 'callback', leadSource: { [Op.notLike]: '%cold%' } } }
+      );
+      if (affected) console.log(`[migrate] moved ${affected} non-cold-calling callback lead(s) to followup`);
+    } catch (e) {
+      console.error('[migrate] callback→followup migration skipped:', e.message);
+    }
+
     // One-time cleanup: keep only the latest report per lead. Older reports for
     // the same lead are deleted (with their PDFs); a timeline note on the lead
     // records that a prior report existed. Runs every boot but is a no-op once

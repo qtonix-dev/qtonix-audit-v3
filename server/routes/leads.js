@@ -242,29 +242,22 @@ router.get('/', requireAuth, async (req, res, next) => {
   try {
     const where = await visibilityWhere(req.user);
     const { q, status, source, ownerId, country, untouched, stage } = req.query;
-    // Converted leads live on their own page, which only managers and admins
-    // can open. An agent must never see them here either — otherwise picking
-    // "converted" in the status filter would be a way around that.
-    if (req.user.role === 'agent') {
-      where.status = (status && status !== 'converted') ? status : { [Op.ne]: 'converted' };
-    } else if (status) {
+    // Converted leads ALWAYS live on their own Converted page and must never
+    // appear in the main Leads list or Call Backs tab — not even when a status
+    // filter is applied. The Call Backs (prospect) tab shows stage=callback
+    // prospects; the main Leads list shows everything else that isn't converted.
+    const notConverted = { [Op.ne]: 'converted' };
+    if (stage === 'prospect') {
+      // The Call Backs section: cold-calling prospects not yet worked.
+      where.status = 'callback';
+    } else if (status && status !== 'converted' && status !== 'callback') {
+      // A specific status filter on the main list — but still never converted,
+      // and never the reserved 'callback' prospect stage.
       where.status = status;
     } else {
-      where.status = { [Op.ne]: 'converted' };
-    }
-    // The funnel splits in two: "prospects" are call-back-generated leads not
-    // yet worked; "leads" is everything past that stage. The Prospects tab asks
-    // for stage=prospect; the main Leads list asks for stage=lead (or nothing,
-    // in which case callbacks are still excluded so they don't leak in). An
-    // explicit status filter overrides the split.
-    if (!status) {
-      if (stage === 'prospect') {
-        where.status = 'callback';
-      } else if (stage === 'lead') {
-        where.status = { [Op.notIn]: ['converted', 'callback'] };
-      } else {
-        where.status = { [Op.notIn]: ['converted', 'callback'] };
-      }
+      // Default main list: everything that is neither converted nor a call-back
+      // prospect.
+      where.status = { [Op.notIn]: ['converted', 'callback'] };
     }
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
@@ -1283,11 +1276,17 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     res.json({
       items: rows.map((l) => {
         const o = l.toJSON();
-        // A deal is "open" if it's still in play (not closed won or lost). The
-        // frontend shows converted-with-open-deal as cards and the rest in a
-        // separate table.
         const deals = Array.isArray(o.deals) ? o.deals : [];
-        o.openDeal = deals.some((d) => d && !['closed_won', 'closed_lost'].includes(d.stage));
+        // Table 1 ("Active / pending") = the client still has something in
+        // flight: a deal that isn't closed, or a won deal with unpaid
+        // installments. Table 2 ("Completed") = converted with nothing pending
+        // (their service is done) — kept for cross-sell follow-up. Legacy Zoho
+        // imports (converted, no deals) fall into Table 2.
+        const hasOpenDeal = deals.some((d) => d && !['closed_won', 'closed_lost'].includes(d.stage));
+        const hasPendingPayment = deals.some((d) => d && d.stage === 'closed_won'
+          && Array.isArray(d.installments) && d.installments.some((it) => !it.paid));
+        o.openDeal = hasOpenDeal || hasPendingPayment; // Table 1 when true
+        o.pendingPayment = hasPendingPayment;
         o.dealCount = deals.length;
         return o;
       }),
@@ -1837,6 +1836,13 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Choose a lead owner (an agent or manager). Lead managers and admins can’t own leads.' });
     }
 
+    // A call-back prospect (status 'callback') can only be created from a Cold
+    // Calling source. For any other source, callback is not a valid status.
+    const isCold = /cold\s*call/i.test(String(b.leadSource || ''));
+    if (b.status === 'callback' && !isCold) {
+      return res.status(400).json({ error: 'Call-backs can only be created from a Cold Calling source.' });
+    }
+
     /**
      * Back-dating captures when the lead was GENERATED in the real world (e.g.
      * migrating historical leads out of Zoho). It sets generatedAt, not
@@ -1929,13 +1935,16 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
       lead.assignedAt = new Date();
     }
     if (b.status !== undefined && b.status !== lead.status) {
-      pushTimeline(lead, 'status', `Status changed to "${b.status}"`, author);
       const newStatus = String(b.status).slice(0, 40);
-      // Keep convertedAt in sync with the status so the lead lands on (and is
-      // dateable in) the Converted tab. Setting it here matters when someone
-      // marks a lead converted directly from the edit form rather than by
-      // closing a deal — otherwise convertedAt stays null and the lead is
-      // filtered out of the Converted tab's period views.
+      // "callback" is the reserved early funnel stage (the Call Backs section),
+      // not a status a worked lead can move to. Once a call-back has been
+      // transferred into the lead funnel it can never go back. Reject any attempt
+      // to set a lead's status to callback from here.
+      if (newStatus === 'callback' && lead.status !== 'callback') {
+        return res.status(400).json({ error: 'A lead can’t be moved back to Call Backs. Use the "Follow up" status instead.' });
+      }
+      pushTimeline(lead, 'status', `Status changed to "${newStatus}"`, author);
+      // Keep convertedAt in sync so the lead lands on the Converted tab.
       if (newStatus === 'converted' && lead.status !== 'converted') {
         lead.convertedAt = lead.convertedAt || new Date();
       } else if (newStatus !== 'converted' && lead.status === 'converted') {
