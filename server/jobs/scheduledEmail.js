@@ -37,15 +37,27 @@ async function dispatchDue(models) {
     try {
       const sender = await User.findByPk(job.userId);
       if (!sender || !sender.gmailRefreshToken) { job.status = 'failed'; job.error = 'Sender mailbox not connected.'; await job.save(); continue; }
-      const lead = await Lead.findByPk(job.leadId);
+      const lead = job.leadId ? await Lead.findByPk(job.leadId) : null;
       const attachments = await buildAttachments(job.attachments, lead, models);
+      // Open-tracking pixel (automatic on every send).
+      let body = job.bodyHtml; let trackToken = null;
+      try {
+        const base = (process.env.APP_URL || '').replace(/\/+$/, '');
+        if (base) {
+          const crypto = require('crypto');
+          trackToken = crypto.randomBytes(16).toString('hex');
+          await models.EmailOpen.create({ token: trackToken, leadId: job.leadId || null, userId: sender.id, toEmail: job.toEmail || '', subject: job.subject || '', threadId: job.threadId || null, sentAt: new Date() });
+          body = `${body || ''}<img src="${base}/api/track/open/${trackToken}.gif" width="1" height="1" alt="" style="display:none;width:1px;height:1px" />`;
+        }
+      } catch (e) { /* tracking best-effort */ }
       const res = await gmail.sendMessage(s, sender.getGmailRefreshToken(), sender.gmailConnectedEmail, {
         from: sender.gmailConnectedEmail, to: job.toEmail, cc: job.ccEmail, bcc: job.bccEmail,
-        subject: job.subject, bodyHtml: job.bodyHtml, threadId: job.threadId, inReplyTo: job.inReplyTo, attachments,
+        subject: job.subject, bodyHtml: body, threadId: job.threadId, inReplyTo: job.inReplyTo, attachments,
       });
+      if (trackToken) { try { await models.EmailOpen.update({ gmailMessageId: res.id, threadId: res.threadId || job.threadId || null }, { where: { token: trackToken } }); } catch (e) { /* */ } }
       job.status = 'sent'; job.sentMessageId = res.id; await job.save();
       await LeadEmail.create({
-        leadId: job.leadId, userId: sender.id, gmailMessageId: res.id, threadId: res.threadId || job.threadId || '',
+        leadId: job.leadId || null, userId: sender.id, gmailMessageId: res.id, threadId: res.threadId || job.threadId || '',
         direction: 'outbound', fromEmail: sender.gmailConnectedEmail, fromName: sender.name,
         toEmail: job.toEmail, ccEmail: job.ccEmail, bccEmail: job.bccEmail, subject: job.subject,
         snippet: String(job.bodyHtml || '').replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: job.bodyHtml,

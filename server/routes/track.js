@@ -1,0 +1,82 @@
+const express = require('express');
+const router = express.Router();
+const { EmailOpen, Lead } = require('../models');
+
+// A 1x1 transparent GIF, served for every pixel hit regardless of outcome so
+// the recipient's client always gets a valid image.
+const PIXEL = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+function sendPixel(res) {
+  res.set('Content-Type', 'image/gif');
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.end(PIXEL);
+}
+
+/**
+ * GET /api/track/open/:token.gif — the tracking pixel. Public (no auth: the
+ * recipient isn't logged in). Records the open, and on the FIRST open posts a
+ * note to the lead's timeline. Always returns the pixel.
+ */
+router.get('/open/:token.gif', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').slice(0, 64);
+    const row = await EmailOpen.findOne({ where: { token } });
+    if (row) {
+      const now = new Date();
+      const firstOpen = !row.firstOpenAt;
+      row.opens = (row.opens || 0) + 1;
+      row.lastOpenAt = now;
+      if (firstOpen) row.firstOpenAt = now;
+      await row.save();
+
+      // On the first open, drop a note on the lead's timeline.
+      if (firstOpen && row.leadId) {
+        try {
+          const lead = await Lead.findByPk(row.leadId);
+          if (lead) {
+            const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+            tl.push({
+              type: 'email', direction: 'open',
+              text: `📖 Email opened by recipient: "${row.subject || '(no subject)'}"`,
+              time: now.toISOString(), author: 'Recipient',
+            });
+            lead.timeline = tl; lead.changed('timeline', true);
+            await lead.save();
+          }
+        } catch (e) { /* best-effort */ }
+      }
+    }
+  } catch (e) { /* never fail the pixel */ }
+  return sendPixel(res);
+});
+
+// Some clients strip the extension; accept a bare token too.
+router.get('/open/:token', async (req, res) => {
+  req.params.token = String(req.params.token || '').replace(/\.gif$/i, '');
+  // Reuse the handler logic by delegating.
+  try {
+    const token = String(req.params.token || '').slice(0, 64);
+    const row = await EmailOpen.findOne({ where: { token } });
+    if (row) {
+      const now = new Date();
+      const firstOpen = !row.firstOpenAt;
+      row.opens = (row.opens || 0) + 1; row.lastOpenAt = now;
+      if (firstOpen) row.firstOpenAt = now;
+      await row.save();
+      if (firstOpen && row.leadId) {
+        try {
+          const lead = await Lead.findByPk(row.leadId);
+          if (lead) {
+            const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+            tl.push({ type: 'email', direction: 'open', text: `📖 Email opened by recipient: "${row.subject || '(no subject)'}"`, time: now.toISOString(), author: 'Recipient' });
+            lead.timeline = tl; lead.changed('timeline', true); await lead.save();
+          }
+        } catch (e) { /* */ }
+      }
+    }
+  } catch (e) { /* */ }
+  return sendPixel(res);
+});
+
+module.exports = router;

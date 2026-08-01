@@ -48,6 +48,7 @@ app.use('/api/briefs', briefs);
 app.use('/api/tv', tv);
 app.use('/api/hr', hr);
 app.use('/api/gmail', gmailRoutes);
+app.use('/api/track', require('./routes/track'));
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.
@@ -341,6 +342,9 @@ connectWithRetry()
       // Scheduled-email dispatcher (sends queued emails at their chosen time).
       try { require('./jobs/scheduledEmail').start(require('./models')); }
       catch (e) { console.error('[sched-email] not started:', e.message); }
+      // Unopened-email nudge (flags tracked emails not opened within 24h).
+      try { require('./jobs/unopenedEmail').start(require('./models')); }
+      catch (e) { console.error('[unopened-email] not started:', e.message); }
     });
   })
   .catch((e) => {

@@ -2835,7 +2835,7 @@ function Timeline({ lead }) {
             className={`flex gap-3 rounded-lg px-3 py-2 ${
               miss ? 'bg-red-50 border border-red-200' : 'border border-transparent'
             }`}>
-            <div className="text-lg leading-none mt-0.5">{icons[e.type] || '•'}</div>
+            <div className="text-lg leading-none mt-0.5">{e.type === 'email' && e.direction === 'open' ? '📖' : e.type === 'email' && e.direction === 'unopened' ? '📭' : (icons[e.type] || '•')}</div>
             <div className="min-w-0 flex-1">
               {/* Notes show what was actually written, not a generic label. */}
               <div className={`text-sm whitespace-pre-wrap break-words ${miss ? 'text-red-800' : 'text-slate-700'}`}>

@@ -643,7 +643,7 @@ const ScheduledEmail = sequelize.define(
   'ScheduledEmail',
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    leadId: { type: DataTypes.INTEGER, allowNull: false },
+    leadId: { type: DataTypes.INTEGER, allowNull: true }, // null = All Email (no lead)
     userId: { type: DataTypes.INTEGER, allowNull: false }, // sender's mailbox
     fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
     toEmail: { type: DataTypes.TEXT, allowNull: true },
@@ -734,6 +734,32 @@ const EmailTemplate = sequelize.define(
   { tableName: 'email_templates', indexes: [{ name: 'idx_tpl_user', fields: ['userId'] }, { name: 'idx_tpl_global', fields: ['isGlobal'] }] }
 );
 EmailTemplate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Open tracking: one row per sent email carrying a unique pixel token. When the
+// recipient's client loads the pixel, we stamp firstOpenAt/opens. A background
+// job flags rows unopened after 24h so the agent can follow up.
+const EmailOpen = sequelize.define(
+  'EmailOpen',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    token: { type: DataTypes.STRING(64), allowNull: false, unique: true }, // pixel id
+    leadId: { type: DataTypes.INTEGER, allowNull: true }, // null = All Email (no lead)
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // sender (mailbox owner)
+    gmailMessageId: { type: DataTypes.STRING(120), allowNull: true },
+    threadId: { type: DataTypes.STRING(120), allowNull: true },
+    toEmail: { type: DataTypes.STRING(400), allowNull: true },
+    subject: { type: DataTypes.TEXT, allowNull: true },
+    sentAt: { type: DataTypes.DATE, allowNull: false },
+    firstOpenAt: { type: DataTypes.DATE, allowNull: true },
+    lastOpenAt: { type: DataTypes.DATE, allowNull: true },
+    opens: { type: DataTypes.INTEGER, defaultValue: 0 },
+    // Whether we've already posted the "not opened in 24h" nudge (timeline +
+    // dashboard), so we only notify once.
+    unopenedNotifiedAt: { type: DataTypes.DATE, allowNull: true },
+  },
+  { tableName: 'email_opens', indexes: [{ name: 'idx_open_token', fields: ['token'] }, { name: 'idx_open_lead', fields: ['leadId'] }, { name: 'idx_open_user', fields: ['userId'] }] }
+);
+EmailOpen.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
@@ -1117,7 +1143,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate,
+  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

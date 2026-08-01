@@ -1,8 +1,30 @@
 const router = require('express').Router();
 const fs = require('fs');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, BusinessBrief, Report, Settings, Op } = require('../models');
+const crypto = require('crypto');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BusinessBrief, Report, Settings, Op } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
+
+/**
+ * Create an open-tracking pixel for an outgoing email and append it to the body.
+ * Returns { body, token }. Tracking is automatic on every send. The pixel URL
+ * uses APP_URL (the public Railway URL) so the recipient's client can load it.
+ * If APP_URL isn't set, we skip tracking gracefully (body unchanged).
+ */
+async function attachTrackingPixel({ body, leadId, userId, toEmail, subject, threadId }) {
+  const base = (process.env.APP_URL || '').replace(/\/+$/, '');
+  if (!base) return { body, token: null };
+  const token = crypto.randomBytes(16).toString('hex');
+  try {
+    await EmailOpen.create({
+      token, leadId: leadId || null, userId,
+      toEmail: Array.isArray(toEmail) ? toEmail.join(', ') : (toEmail || ''),
+      subject: subject || '', threadId: threadId || null, sentAt: new Date(),
+    });
+  } catch (e) { return { body, token: null }; }
+  const pixel = `<img src="${base}/api/track/open/${token}.gif" width="1" height="1" alt="" style="display:none;width:1px;height:1px" />`;
+  return { body: `${body || ''}${pixel}`, token };
+}
 
 // --- Admin: Gmail OAuth app keys --------------------------------------------
 
@@ -662,10 +684,14 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
 
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const attachments = await buildAttachments(b.attachments, lead);
+    // Add an open-tracking pixel (automatic on every send).
+    const track = await attachTrackingPixel({ body: b.body, leadId: lead.id, userId: sender.dbUserId, toEmail: to, subject: b.subject, threadId: b.threadId });
     const sent = await gmail.sendMessage(s, sender.getToken(), sender.email, {
       from: sender.email, to, cc: b.cc, bcc: b.bcc,
-      subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
+      subject: b.subject, bodyHtml: track.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
     });
+    // Record the Gmail message/thread id on the tracking row.
+    if (track.token) { try { await EmailOpen.update({ gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || null }, { where: { token: track.token } }); } catch (e) { /* */ } }
     await LeadEmail.create({
       leadId: lead.id, userId: sender.dbUserId, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
       direction: 'outbound', fromEmail: sender.email, fromName: sender.name,
@@ -1149,29 +1175,45 @@ router.post('/all/send', requireAuth, async (req, res, next) => {
       ? b.attachments.filter((a) => a && a.contentBase64).map((a) => ({ filename: a.filename || 'attachment', mimeType: a.mimeType || 'application/octet-stream', contentBase64: a.contentBase64 }))
       : [];
 
-    const sent = await gmail.sendMessage(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
-      from: mb.user.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
-      subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
-    });
-
-    // Best-effort: if this thread already belongs to a lead, or the recipient
-    // matches a lead, record the outbound message so it shows on the lead too.
+    // Resolve a lead link first (so tracking can attribute to the lead).
+    let linkedLeadId = null;
     try {
-      const toStr = Array.isArray(to) ? to.join(', ') : String(to);
-      let leadId = null;
       if (b.threadId) {
         const existing = await LeadEmail.findOne({ where: { threadId: b.threadId, leadId: { [Op.ne]: null } } });
-        if (existing) leadId = existing.leadId;
+        if (existing) linkedLeadId = existing.leadId;
       }
-      if (!leadId) {
+      if (!linkedLeadId) {
         const firstTo = (Array.isArray(to) ? to[0] : String(to).split(',')[0] || '').trim().toLowerCase();
-        if (firstTo) {
-          const lead = await Lead.findOne({ where: { email: firstTo } });
-          if (lead) leadId = lead.id;
-        }
+        if (firstTo) { const lead = await Lead.findOne({ where: { email: firstTo } }); if (lead) linkedLeadId = lead.id; }
       }
+    } catch (e) { /* */ }
+
+    // Scheduled send → queue it (tracking pixel is added by the dispatcher).
+    if (b.sendAt) {
+      const when = new Date(b.sendAt);
+      if (isNaN(when.getTime()) || when.getTime() < Date.now() - 60000) return res.status(400).json({ error: 'Pick a valid future date and time.' });
+      const sched = await ScheduledEmail.create({
+        leadId: linkedLeadId, userId: mb.user.id, fromEmail: mb.user.gmailConnectedEmail,
+        toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
+        subject: b.subject, bodyHtml: b.body, attachments: attachments.length ? attachments : null,
+        threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
+        timezone: b.timezone || 'Asia/Kolkata', sendAt: when,
+      });
+      return res.json({ ok: true, scheduled: true, id: sched.id, sendAt: when });
+    }
+
+    const track = await attachTrackingPixel({ body: b.body, leadId: linkedLeadId, userId: mb.user.id, toEmail: to, subject: b.subject, threadId: b.threadId });
+    const sent = await gmail.sendMessage(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
+      from: mb.user.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
+      subject: b.subject, bodyHtml: track.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
+    });
+    if (track.token) { try { await EmailOpen.update({ gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || null }, { where: { token: track.token } }); } catch (e) { /* */ } }
+
+    // Best-effort: record the outbound message so it shows on the lead too.
+    try {
+      const toStr = Array.isArray(to) ? to.join(', ') : String(to);
       await LeadEmail.create({
-        leadId, userId: mb.user.id, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
+        leadId: linkedLeadId, userId: mb.user.id, gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || '',
         direction: 'outbound', fromEmail: mb.user.gmailConnectedEmail, fromName: mb.user.name,
         toEmail: toStr, ccEmail: b.cc || null, bccEmail: b.bcc || null,
         subject: b.subject, snippet: String(b.body).replace(/<[^>]+>/g, '').slice(0, 200), bodyHtml: b.body,
@@ -1181,6 +1223,35 @@ router.post('/all/send', requireAuth, async (req, res, next) => {
     } catch (e) { /* logging is best-effort */ }
 
     res.json({ ok: true, id: sent.id, threadId: sent.threadId });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/unopened — tracked emails the viewer sent that haven't been
+ *  opened after 24h, for the dashboard follow-up nudge. Scoped by visibility. */
+router.get('/unopened', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rows = await EmailOpen.findAll({
+      where: { userId: { [Op.in]: allowed }, firstOpenAt: null, sentAt: { [Op.lte]: cutoff } },
+      order: [['sentAt', 'DESC']], limit: 100,
+    });
+    // Attach owner + lead names.
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))];
+    const users = await User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id', 'name'] });
+    const leads = leadIds.length ? await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName'] }) : [];
+    const uById = new Map(users.map((u) => [u.id, u.name]));
+    const lById = new Map(leads.map((l) => [l.id, `${l.firstName || ''} ${l.lastName || ''}`.trim()]));
+    const now = Date.now();
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id, leadId: r.leadId, leadName: r.leadId ? (lById.get(r.leadId) || 'Lead') : null,
+        ownerName: uById.get(r.userId) || '', toEmail: r.toEmail, subject: r.subject,
+        sentAt: r.sentAt, ageMs: now - new Date(r.sentAt).getTime(),
+      })),
+    });
   } catch (e) { next(e); }
 });
 

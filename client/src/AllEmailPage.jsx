@@ -387,6 +387,16 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
   const fileInput = React.useRef(null);
+  // Schedule + templates + AI.
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [sendAt, setSendAt] = useState('');
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showAi, setShowAi] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+
+  useEffect(() => { api('/gmail/templates').then(setTemplates).catch(() => {}); }, []);
 
   const onFile = (e) => {
     const files = Array.from(e.target.files || []);
@@ -403,19 +413,58 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
   const removeAtt = (i) => setAttachments((prev) => prev.filter((_, idx) => idx !== i));
   const insertSignature = () => { if (signature) setBody((b) => `${b}<br><br>${signature}`); };
 
-  const send = async () => {
+  const send = async (scheduled = false) => {
     setErr('');
     if (to.length === 0) return setErr('Add at least one recipient.');
     if (!subject.trim()) return setErr('Add a subject.');
+    if (scheduled && !sendAt) return setErr('Pick a date and time to schedule.');
     setSending(true);
     try {
       await api('/gmail/all/send', { method: 'POST', body: JSON.stringify({
         to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
         threadId: initial.threadId || undefined, inReplyTo: initial.inReplyTo || undefined,
         attachments, as: as || undefined,
+        ...(scheduled ? { sendAt: new Date(sendAt).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } : {}),
       }) });
       onSent();
     } catch (e) { setErr(e.message); setSending(false); }
+  };
+
+  // Templates: resolve variables against a lead matched by the first recipient,
+  // if any; otherwise insert the raw template.
+  const applyTemplate = async (tpl) => {
+    setShowTemplates(false);
+    try {
+      const firstTo = (to[0] || '').trim();
+      // Try to resolve variables via the server (needs a lead); fall back to raw.
+      let res = null;
+      try {
+        const leadLookup = firstTo ? await api(`/leads?q=${encodeURIComponent(firstTo)}&perPage=1`).catch(() => null) : null;
+        const leadId = leadLookup && (leadLookup.leads || leadLookup.items || [])[0]?._id;
+        if (leadId) res = await api(`/gmail/templates/${tpl._id}/apply`, { method: 'POST', body: JSON.stringify({ leadId }) });
+      } catch (e) { /* fall back to raw */ }
+      if (res) { if (res.subject) setSubject(res.subject); if (res.body) setBody((b) => (b ? `${b}<br>${res.body}` : res.body)); }
+      else { if (tpl.subject && !subject) setSubject(tpl.subject); setBody((b) => (b ? `${b}<br>${tpl.bodyHtml || ''}` : (tpl.bodyHtml || ''))); }
+    } catch (e) { setErr(e.message); }
+  };
+
+  // AI draft: match a lead by recipient for full context; otherwise use a simple
+  // custom prompt.
+  const runAi = async () => {
+    setErr(''); setAiBusy(true);
+    try {
+      const firstTo = (to[0] || '').trim();
+      let leadId = null;
+      if (firstTo) {
+        const lk = await api(`/leads?q=${encodeURIComponent(firstTo)}&perPage=1`).catch(() => null);
+        leadId = lk && (lk.leads || lk.items || [])[0]?._id;
+      }
+      if (!leadId) { setErr('AI draft needs a recipient that matches a CRM lead. Add the recipient first, or write manually.'); setAiBusy(false); return; }
+      const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify({ leadId, mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly email.' }) });
+      if (res.subject) setSubject(res.subject);
+      if (res.body) setBody(res.body);
+      setShowAi(false); setAiPrompt('');
+    } catch (e) { setErr(e.message); } finally { setAiBusy(false); }
   };
 
   const title = initial.mode === 'forward' ? 'Forward' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message';
@@ -444,7 +493,8 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
           </div>
           <div className="py-1">
             <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
-              onAttach={() => fileInput.current?.click()} onInsertSignature={signature ? insertSignature : undefined} />
+              onAttach={() => fileInput.current?.click()} onAiDraft={() => setShowAi(true)}
+              onInsertSignature={signature ? insertSignature : undefined} />
           </div>
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 pb-2">
@@ -457,13 +507,59 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
               ))}
             </div>
           )}
+          {showAi && (
+            <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div className="text-xs font-bold text-[#050A1F] mb-1.5">AI draft</div>
+              <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={2} placeholder="What should this email say? (leave blank for a friendly default)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" />
+              <div className="text-[10px] text-slate-400 mb-2">Uses the CRM lead matched to the first recipient for context (brief, history).</div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowAi(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                <button onClick={runAi} disabled={aiBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{aiBusy ? 'Drafting…' : 'Generate'}</button>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-2 px-5 py-3 flex-shrink-0 border-t border-slate-100 bg-white rounded-b-xl">
-          <button onClick={send} disabled={sending} className="rounded-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
+        <div className="flex items-center gap-2 px-5 py-3 flex-shrink-0 border-t border-slate-100 bg-white rounded-b-xl relative">
+          <div className="flex">
+            <button onClick={() => send(false)} disabled={sending} className="rounded-l-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
+            <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} title="Schedule send" className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+            </button>
+          </div>
           <button onClick={() => fileInput.current?.click()} title="Attach file" className="p-2 rounded-full hover:bg-slate-100 text-slate-500">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>
           </button>
           <input ref={fileInput} type="file" multiple className="hidden" onChange={onFile} />
+          {/* Template picker */}
+          <div className="relative">
+            <button onClick={() => setShowTemplates((v) => !v)} title="Use a template" className="p-2 rounded-full hover:bg-slate-100 text-slate-500 flex items-center gap-1">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+              <span className="text-[10px] font-bold">Tpl</span>
+            </button>
+            {showTemplates && (
+              <div className="absolute bottom-11 left-0 w-64 max-h-64 overflow-auto bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+                <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase">Insert a template</div>
+                {templates.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No templates yet.</div>}
+                {templates.map((t) => (
+                  <button key={t._id} onClick={() => applyTemplate(t)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50">
+                    <div className="font-semibold text-[#050A1F] truncate flex items-center gap-1.5">{t.name}{t.isGlobal && <span className="text-[8px] bg-blue-100 text-blue-700 rounded px-1 py-0.5">GLOBAL</span>}</div>
+                    {t.subject && <div className="text-[10px] text-slate-400 truncate">{t.subject}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {showSchedule && (
+            <div className="absolute bottom-14 left-4 w-80 bg-white rounded-xl border border-slate-200 shadow-xl p-4 z-50">
+              <div className="text-sm font-bold text-[#050A1F] mb-2">Schedule send</div>
+              <input type="datetime-local" value={sendAt} onChange={(e) => setSendAt(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" />
+              <div className="text-[10px] text-slate-400 mb-2">Uses your local timezone.</div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowSchedule(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                <button onClick={() => send(true)} disabled={sending} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>Schedule</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

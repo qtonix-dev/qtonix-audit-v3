@@ -293,6 +293,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
   useEffect(() => { api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null)); }, []);
+  const [unopened, setUnopened] = useState(null); // { items }
+  useEffect(() => { api('/gmail/unopened').then(setUnopened).catch(() => setUnopened(null)); }, []);
   // Pre-sales leads still waiting on their first reply. For an owner this is a
   // to-do; for a lead manager or admin it's who to chase.
   // Leads where a Lead Manager has asked the owner for a first-reply draft.
@@ -446,6 +448,24 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail}: {i.subject || i.snippet}</span>
                 {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
                 <span className="font-bold text-blue-600 shrink-0">{fmtAge(i.ageMs)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sent emails not opened after 24h — nudge to follow up. */}
+      {unopened && unopened.items && unopened.items.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-2">📭 Sent but not opened after 24h · {unopened.items.length}</div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {unopened.items.slice(0, 8).map((i) => (
+              <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
+                <span>📭</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
+                <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}</span>
+                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                <span className="font-bold text-amber-600 shrink-0">{fmtAge(i.ageMs)}</span>
               </div>
             ))}
           </div>
