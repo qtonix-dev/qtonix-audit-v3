@@ -42,6 +42,7 @@ router.get('/me', requireAuth, async (req, res) => {
     designation: u.designation, reportsRun: u.reportsRun, avatar: u.avatar || null,
     birthday: u.birthday || null, workAnniversary: u.workAnniversary || null,
     maritalStatus: u.maritalStatus || null, anniversary: u.anniversary || null,
+    calendly: (u.socialLinks && u.socialLinks.calendly) || '',
     gmailConnected: !!u.gmailRefreshToken,
   } });
 });
@@ -54,11 +55,13 @@ router.put('/me/profile', requireAuth, async (req, res, next) => {
   try {
     const u = await User.findByPk(req.user.id);
     if (!u) return res.status(404).json({ error: 'User not found.' });
-    const { avatar, birthday, maritalStatus, anniversary, password } = req.body || {};
+    const { avatar, birthday, maritalStatus, anniversary, password, calendly } = req.body || {};
     if (avatar !== undefined) u.avatar = avatar || null;
     if (birthday !== undefined) u.birthday = birthday || null;
     if (maritalStatus !== undefined) u.maritalStatus = maritalStatus || null;
     if (anniversary !== undefined) u.anniversary = anniversary || null;
+    // Agent's own Calendly link for their email signature.
+    if (calendly !== undefined) { u.socialLinks = { ...(u.socialLinks || {}), calendly: calendly || '' }; u.changed('socialLinks', true); }
     // Clear anniversary if no longer married.
     if (maritalStatus && maritalStatus !== 'married') u.anniversary = null;
     if (password) {

@@ -324,7 +324,7 @@ async function scoreManagers(groups, period) {
  */
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
       return res.status(403).json({ error: 'Only managers and admins can view reviews.' });
     }
     const period = String(req.query.period || periodKey());
@@ -355,7 +355,7 @@ router.get('/', requireAuth, async (req, res, next) => {
  */
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
       return res.status(403).json({ error: 'Only managers and admins can record reviews.' });
     }
     const b = req.body || {};
@@ -460,7 +460,7 @@ router.post('/managers', requireAuth, async (req, res, next) => {
 /** GET /api/reviews/history/:agentId — every review recorded for one agent. */
 router.get('/history/:agentId', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
       return res.status(403).json({ error: 'Not permitted.' });
     }
     const rows = await Review.findAll({
@@ -479,7 +479,7 @@ router.get('/history/:agentId', requireAuth, async (req, res, next) => {
  */
 router.get('/sales-history/:agentId', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
       return res.status(403).json({ error: 'Not permitted.' });
     }
     const agentId = Number(req.params.agentId);
@@ -560,7 +560,7 @@ router.get('/sales-history/:agentId', requireAuth, async (req, res, next) => {
  */
 router.get('/lead-daily/:agentId', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
       return res.status(403).json({ error: 'Not permitted.' });
     }
     const agentId = Number(req.params.agentId);

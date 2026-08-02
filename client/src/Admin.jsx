@@ -287,6 +287,19 @@ function Branding({ settings, setSettings, say, reload }) {
         <Field label="Website"><input className={inputCls} value={settings.website || ''} onChange={(e) => setSettings({ ...settings, website: e.target.value })} /></Field>
         <Field label="Phone"><input className={inputCls} value={settings.phone || ''} onChange={(e) => setSettings({ ...settings, phone: e.target.value })} /></Field>
       </div>
+
+      {/* Company social links — universal, auto-pulled into every agent/manager
+          email signature. */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-1">Social media links</div>
+        <div className="text-xs text-slate-400 mb-4">Used in email signatures for everyone. Agents add their own Calendly link separately in their profile.</div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="LinkedIn"><input className={inputCls} placeholder="https://linkedin.com/company/…" value={(settings.socialLinks && settings.socialLinks.linkedin) || ''} onChange={(e) => setSettings({ ...settings, socialLinks: { ...(settings.socialLinks || {}), linkedin: e.target.value } })} /></Field>
+          <Field label="Facebook"><input className={inputCls} placeholder="https://facebook.com/…" value={(settings.socialLinks && settings.socialLinks.facebook) || ''} onChange={(e) => setSettings({ ...settings, socialLinks: { ...(settings.socialLinks || {}), facebook: e.target.value } })} /></Field>
+          <Field label="Instagram"><input className={inputCls} placeholder="https://instagram.com/…" value={(settings.socialLinks && settings.socialLinks.instagram) || ''} onChange={(e) => setSettings({ ...settings, socialLinks: { ...(settings.socialLinks || {}), instagram: e.target.value } })} /></Field>
+          <Field label="Website (social)" hint="Shown in signatures; can match the site above"><input className={inputCls} placeholder="https://www.qtonix.com" value={(settings.socialLinks && settings.socialLinks.website) || ''} onChange={(e) => setSettings({ ...settings, socialLinks: { ...(settings.socialLinks || {}), website: e.target.value } })} /></Field>
+        </div>
+      </div>
     </div>
   );
 }

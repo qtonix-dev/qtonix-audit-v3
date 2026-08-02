@@ -83,6 +83,7 @@ router.put('/settings', async (req, res, next) => {
                    'fontFamily','reportValidDays','dailyReportLimit','cacheDays','defaultCountry'];
     for (const f of plain) if (body[f] !== undefined) s[f] = body[f];
     if (body.colors) { s.colors = { ...s.colors, ...body.colors }; s.changed('colors', true); }
+    if (body.socialLinks) { s.socialLinks = { ...(s.socialLinks || {}), ...body.socialLinks }; s.changed('socialLinks', true); }
     if (body.pricing) { s.pricing = body.pricing; s.changed('pricing', true); }
     if (body.crmConfig) { s.crmConfig = body.crmConfig; s.changed('crmConfig', true); }
 

@@ -401,13 +401,16 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           <div className="space-y-1 max-h-40 overflow-auto">
             {missed.items.filter((i) => !i.resolved).slice(0, 8).map((i) => (
               <div key={i.activityId}
-                onClick={() => onViewToday && onViewToday(i.leadId)}
-                className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-red-50 transition-colors">
-                <span>{i.kind === 'call' ? '📞' : '✅'}</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[160px]">{i.leadName}</span>
-                <span className="text-slate-500 truncate flex-1">{i.title}</span>
+                className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-red-50 transition-colors group">
+                <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.kind === 'call' ? '📞' : i.kind === 'draft' ? '✍️' : '✅'}</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[160px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.title}</span>
                 {(isAdmin || isManager) && <span className="text-slate-400 shrink-0">{i.ownerName}</span>}
                 <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+                {user.role === 'admin' && (
+                  <button title="Clear from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await api(`/leads/missed-activities/${i.leadId}/dismiss`, { method: 'POST', body: JSON.stringify({ activityId: i.activityId }) }); setMissed((prev) => prev ? { ...prev, items: prev.items.filter((x) => x.activityId !== i.activityId), stillOpen: Math.max(0, prev.stillOpen - 1) } : prev); } catch { /* */ } }}
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                )}
               </div>
             ))}
           </div>

@@ -1227,6 +1227,25 @@ function targetForToday(targets, kind) {
   return 0;
 }
 
+/** GET /api/leads/search?q= — lightweight scoped lead lookup for pickers (e.g.
+ *  linking a report to a lead). Returns id, name, website, ownerName. Excludes
+ *  call-back prospects (a report can't attach to one). Declared before /:id. */
+router.get('/search', requireAuth, async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ leads: [] });
+    const where = await visibilityWhere(req.user);
+    where.status = { [Op.ne]: 'callback' };
+    const like = { [Op.like]: `%${q}%` };
+    where[Op.and] = [
+      ...(where[Op.and] || []),
+      { [Op.or]: [{ firstName: like }, { lastName: like }, { website: like }, { domain: like }, { email: like }] },
+    ];
+    const rows = await Lead.findAll({ where, attributes: ['id', 'firstName', 'lastName', 'website', 'ownerName', 'status'], limit: 15, order: [['lastActivityAt', 'DESC']] });
+    res.json({ leads: rows.map((l) => ({ _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.website || 'Lead', website: l.website, ownerName: l.ownerName, status: l.status })) });
+  } catch (e) { next(e); }
+});
+
 router.get('/converted', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'manager') {
@@ -1365,6 +1384,28 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
       // they become a lead via transfer. Back-dated leads are NOT exempt —
       // a missed scheduled activity is a miss whenever it happens.
       if (l.status === 'callback') continue;
+      const dismissed = Array.isArray(l.dismissedMissed) ? l.dismissedMissed : [];
+
+      // Unsubmitted first-reply draft: a pre-sales lead whose agent hasn't
+      // submitted the first draft within 24h of the lead entering the system is
+      // a missed commitment (the customer emailed in and is waiting).
+      const isPreSales = /re-?\s*sales|presales/i.test(String(l.leadSource || ''));
+      if (isPreSales && !l.firstDraftAt && l.status !== 'converted' && !dismissed.includes(`draft-${l.id}`)) {
+        const enteredAt = new Date(l.createdAt).getTime();
+        if (!Number.isNaN(enteredAt) && now > enteredAt + 24 * 60 * 60 * 1000) {
+          const dueAt = new Date(enteredAt + 24 * 60 * 60 * 1000).toISOString();
+          items.push({
+            leadId: l.id, leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
+            ownerId: l.ownerId, ownerName: l.ownerName,
+            activityId: `draft-${l.id}`, kind: 'draft', title: 'First-reply draft not submitted',
+            dueAt, hoursLate: Math.max(0, Math.round((now - enteredAt - 24 * 3600000) / 3600000)),
+            status: 'open', resolved: false,
+          });
+          byOwner[l.ownerId] = byOwner[l.ownerId] || { ownerId: l.ownerId, ownerName: l.ownerName, missed: 0, stillOpen: 0 };
+          byOwner[l.ownerId].missed++; byOwner[l.ownerId].stillOpen++;
+        }
+      }
+
       for (const a of (l.activities || [])) {
         const dueAt = a.kind === 'call'
           ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
@@ -1377,6 +1418,7 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
         const stillOpen = a.status !== 'done' && now > due + GRACE;
         const doneLate = a.status === 'done' && a.completedLate;
         if (!stillOpen && !doneLate) continue;
+        if (dismissed.includes(String(a.id))) continue; // admin cleared this one
 
         items.push({
           leadId: l.id, leadName: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
@@ -1398,6 +1440,25 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
       items: items.slice(0, 100),
       byOwner: Object.values(byOwner).sort((a, b) => b.missed - a.missed),
     });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/leads/missed-activities/:leadId/dismiss — admin-only. Removes a
+ * specific missed item (call/task/draft) from the dashboard's missed
+ * commitments by recording its id in the lead's dismissedMissed list. Body:
+ * { activityId }.
+ */
+router.post('/missed-activities/:leadId/dismiss', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can clear missed commitments.' });
+    const lead = await Lead.findByPk(req.params.leadId);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    const activityId = String((req.body && req.body.activityId) || '');
+    if (!activityId) return res.status(400).json({ error: 'activityId is required.' });
+    const list = Array.isArray(lead.dismissedMissed) ? lead.dismissedMissed : [];
+    if (!list.includes(activityId)) { list.push(activityId); lead.dismissedMissed = list; lead.changed('dismissedMissed', true); await lead.save(); }
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

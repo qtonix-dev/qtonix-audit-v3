@@ -384,7 +384,7 @@ export function Pagination({ page, pages, total, perPage, onPage, onPerPage, lab
  * font/size/style/color/alignment/list/quote actions; the row also exposes AI
  * draft (placeholder), attachment, hyperlink and signature actions via props.
  */
-export function MailEditor({ value, onChange, placeholder, minHeight = 200, onAttach, onAiDraft, onInsertSignature, extraTools }) {
+export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxHeight, onAttach, onAiDraft, onInsertSignature, extraTools }) {
   const ref = React.useRef(null);
   const [focused, setFocused] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
@@ -420,7 +420,7 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, onAt
           onInput={() => onChange(ref.current.innerHTML)}
           onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
           onFocus={() => setFocused(true)}
-          className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight }} />
+          className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight, ...(maxHeight ? { maxHeight } : {}) }} />
       </div>
 
       {/* Toolbar */}
@@ -2066,7 +2066,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
           </div>
 
           <div className="py-1">
-            <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
+            <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={200} maxHeight={340}
               onAttach={() => fileInput.current?.click()}
               onAiDraft={() => setShowAi(true)}
               onInsertSignature={insertSignature} />
@@ -2810,9 +2810,13 @@ function Timeline({ lead }) {
   const GRACE = 60 * 60 * 1000;
   const now = Date.now();
   const missState = (e) => {
-    if (!e.activityId || !e.scheduled) return null;
+    // An entry is a candidate for the red "missed" highlight if it references a
+    // scheduled activity. We tolerate older entries that lack the `scheduled`
+    // flag by falling back to the linked activity's own mode.
+    if (!e.activityId) return null;
     const a = acts.find((x) => x.id === e.activityId);
     if (!a) return null;
+    if (a.mode === 'done' && a.status === 'done' && !a.completedLate) return null;
     const dueAt = a.kind === 'call'
       ? (a.date ? `${a.date}T${a.time || '09:00'}` : '')
       : (a.dueDate ? `${a.dueDate}T17:00` : '');

@@ -64,6 +64,13 @@ function reviewerFor(agent, users) {
  */
 function canReviewGroup(user, team, shift, users) {
   if (user.role === 'admin') return true;
+  if (user.role === 'leadmanager') {
+    // A lead manager reviews her direct-report (pre-sales) agents. The group is
+    // reviewable if any of its agents report to her.
+    const groups = buildGroups(users);
+    const g = groups.find((x) => x.team === team && x.shift === shift);
+    return !!(g && g.agents && g.agents.some((a) => String(a.managerId) === String(user.id)));
+  }
   if (user.role !== 'manager') return false;
   const groups = buildGroups(users);
   const g = groups.find((x) => x.team === team && x.shift === shift);
@@ -75,6 +82,13 @@ function groupsForUser(user, users) {
   const groups = buildGroups(users);
   if (user.role === 'admin') return groups;
   if (user.role === 'manager') return groups.filter((g) => g.manager && g.manager.id === user.id);
+  if (user.role === 'leadmanager') {
+    // Only groups containing at least one of her direct-report agents, and
+    // narrow each group's agent list to just those reports.
+    return groups
+      .map((g) => ({ ...g, agents: (g.agents || []).filter((a) => String(a.managerId) === String(user.id)) }))
+      .filter((g) => g.agents.length > 0);
+  }
   return [];
 }
 

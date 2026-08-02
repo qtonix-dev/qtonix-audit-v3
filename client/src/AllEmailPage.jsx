@@ -456,11 +456,16 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
       const firstTo = (to[0] || '').trim();
       let leadId = null;
       if (firstTo) {
-        const lk = await api(`/leads?q=${encodeURIComponent(firstTo)}&perPage=1`).catch(() => null);
-        leadId = lk && (lk.leads || lk.items || [])[0]?._id;
+        const lk = await api(`/leads/search?q=${encodeURIComponent(firstTo)}`).catch(() => null);
+        leadId = lk && (lk.leads || [])[0]?._id;
       }
-      if (!leadId) { setErr('AI draft needs a recipient that matches a CRM lead. Add the recipient first, or write manually.'); setAiBusy(false); return; }
-      const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify({ leadId, mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly email.' }) });
+      // With a matched lead, use the full lead-aware draft. Without one, fall
+      // back to a custom-prompt draft (senior sales manager persona on the
+      // server) so All Email to a brand-new contact still works.
+      const payload = leadId
+        ? { leadId, mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly email.' }
+        : { mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly introduction email.', to, subject };
+      const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify(payload) });
       if (res.subject) setSubject(res.subject);
       if (res.body) setBody(res.body);
       setShowAi(false); setAiPrompt('');
@@ -492,7 +497,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
             <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="w-full text-sm text-slate-700 outline-none" />
           </div>
           <div className="py-1">
-            <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={220}
+            <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={200} maxHeight={340}
               onAttach={() => fileInput.current?.click()} onAiDraft={() => setShowAi(true)}
               onInsertSignature={signature ? insertSignature : undefined} />
           </div>
@@ -511,7 +516,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
               <div className="text-xs font-bold text-[#050A1F] mb-1.5">AI draft</div>
               <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={2} placeholder="What should this email say? (leave blank for a friendly default)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" />
-              <div className="text-[10px] text-slate-400 mb-2">Uses the CRM lead matched to the first recipient for context (brief, history).</div>
+              <div className="text-[10px] text-slate-400 mb-2">If the recipient matches a CRM lead, uses their brief and history for context. Otherwise drafts from your prompt.</div>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setShowAi(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
                 <button onClick={runAi} disabled={aiBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{aiBusy ? 'Drafting…' : 'Generate'}</button>

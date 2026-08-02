@@ -193,18 +193,38 @@ router.get('/signatures', requireAuth, async (req, res, next) => {
 });
 
 /** GET /api/gmail/signature-templates — built-in signature gallery, pre-filled
- *  with the agent's known details so the preview is immediately realistic. */
+ *  with the agent's details, company social links (admin-set, universal), the
+ *  agent's own Calendly link, and a photo (their avatar, or the company logo as
+ *  a fallback). */
 router.get('/signature-templates', requireAuth, async (req, res, next) => {
   try {
     const sig = require('../services/signatureTemplates');
     const u = await User.findByPk(req.user.id);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const aliases = Array.isArray(u.aliases) ? u.aliases.filter(Boolean) : [];
+    const company = (s && s.socialLinks) || {};
+    const mine = (u.socialLinks && typeof u.socialLinks === 'object') ? u.socialLinks : {};
+    // Photo: agent avatar first, else the company logo (absolute URL).
+    let photo = u.avatar || '';
+    if (!photo && s && s.logoPath) {
+      const base = (process.env.APP_URL || '').replace(/\/+$/, '');
+      photo = /^https?:/i.test(s.logoPath) ? s.logoPath : `${base}${s.logoPath}`;
+    }
     const vals = {
       name: aliases[0] || u.name,
       title: u.designation || 'Sales Manager',
+      company: (s && s.companyName) || 'Qtonix',
       email: u.gmailConnectedEmail || u.email,
+      phone: u.phone || '',
+      website: company.website || (s && s.website) || '',
+      photo,
+      // Company socials are universal; Calendly is the agent's own.
+      linkedin: company.linkedin || '',
+      facebook: company.facebook || '',
+      instagram: company.instagram || '',
+      calendly: mine.calendly || '',
     };
-    res.json(sig.templates.map((t) => ({ id: t.id, name: t.name, description: t.description, html: sig.fill(t.html, vals) })));
+    res.json(sig.templates.map((t) => ({ id: t.id, name: t.name, description: t.description, html: sig.render(t, vals) })));
   } catch (e) { next(e); }
 });
 
@@ -261,7 +281,41 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
     if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in Admin → API keys.' });
     const b = req.body || {};
     const lead = b.leadId ? await Lead.findByPk(b.leadId) : null;
-    if (!lead) return res.status(400).json({ error: 'Lead not found.' });
+
+    // Lead-less path (e.g. All Email to a non-lead recipient): draft purely from
+    // the agent's custom prompt using the default senior-sales-manager persona.
+    if (!lead) {
+      const viewer0 = await User.findByPk(req.user.id);
+      const aliases0 = Array.isArray(viewer0.aliases) ? viewer0.aliases.filter(Boolean) : [];
+      const signName0 = (aliases0[0] || viewer0.name || 'The Qtonix team').trim();
+      const prompt = String(b.prompt || '').trim();
+      if (!prompt) return res.status(400).json({ error: 'Add a short prompt describing what the email should say.' });
+      const system0 = [
+        'Act as a senior professional sales manager having experience in Digital Marketing, Social Media Marketing, Website design & Development.',
+        'Tone should be friendly, professional, confident. Make the draft well structured and in proper flow, with formatting.',
+        `Sign off as "${signName0}" on its own line, after "Best regards," (do NOT sign off as "The Qtonix team").`,
+        'FORMATTING: the body must be clean HTML with proper spacing — wrap every paragraph in its own <p> tag, use <br> for line breaks, and <ul><li> for any lists. Separate the greeting, each paragraph, and the sign-off into distinct <p> tags. Do NOT return a single run-on block or plain text with no tags.',
+        'Return your answer as strict JSON: {"subject": "...", "body": "<p>...</p><p>...</p>"}. No markdown, no <html> wrapper, no commentary outside the JSON.',
+      ].join(' ');
+      const userMsg0 = [
+        b.to ? `Recipient: ${Array.isArray(b.to) ? b.to.join(', ') : b.to}` : '',
+        b.subject ? `Current subject (optional): ${b.subject}` : '',
+        `TASK:\n${prompt}`,
+      ].filter(Boolean).join('\n');
+      const resp0 = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: b.model || 'gpt-4o-mini', messages: [{ role: 'system', content: system0 }, { role: 'user', content: userMsg0 }], max_tokens: 1000, response_format: { type: 'json_object' } }),
+      });
+      const data0 = await resp0.json();
+      if (!resp0.ok) return res.status(502).json({ error: data0.error?.message || 'OpenAI request failed.' });
+      const raw0 = data0.choices?.[0]?.message?.content || '{}';
+      let parsed0 = {};
+      try { parsed0 = JSON.parse(raw0); } catch { parsed0 = { subject: '', body: raw0 }; }
+      let body0 = formatEmailBody(parsed0.body || '');
+      if (signName0 && signName0 !== 'The Qtonix team') body0 = body0.replace(/The Qtonix team/gi, signName0);
+      return res.json({ subject: parsed0.subject || '', body: body0 });
+    }
 
     // Assemble context: lead details, AI brief (if any), recent email history.
     const viewer = await User.findByPk(req.user.id);

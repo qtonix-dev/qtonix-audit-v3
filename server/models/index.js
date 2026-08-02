@@ -123,6 +123,9 @@ const User = sequelize.define(
     // Small profile photo as a data URL (base64). Kept in the DB so it survives
     // Railway's ephemeral filesystem. Shown on the leaderboard.
     avatar: { type: DataTypes.TEXT, allowNull: true },
+    // Social links for the email signature builder: { linkedin, twitter,
+    // facebook, instagram, website }. Optional, prefilled into signatures.
+    socialLinks: { type: DataTypes.JSON, allowNull: true },
     birthday: { type: DataTypes.DATEONLY, allowNull: true },
     workAnniversary: { type: DataTypes.DATEONLY, allowNull: true },
     maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // 'single' | 'married'
@@ -277,6 +280,9 @@ const Lead = sequelize.define(
     // refresh once it is more than a week old.
     aiBrief: { type: DataTypes.JSON, defaultValue: null },
     timeline: { type: DataTypes.JSON, defaultValue: [] },
+    // Ids of missed-commitment items (activity ids or `draft-<id>`) an admin has
+    // cleared from the dashboard's missed commitments block.
+    dismissedMissed: { type: DataTypes.JSON, defaultValue: [] },
 
     lastActivityAt: { type: DataTypes.DATE },
     convertedAt: { type: DataTypes.DATE },
@@ -390,6 +396,8 @@ const Settings = sequelize.define(
     email: { type: DataTypes.STRING(190), defaultValue: 'info@qtonix.com' },
     phone: { type: DataTypes.STRING(40), defaultValue: '+91-8249016547' },
     address: { type: DataTypes.STRING(255), defaultValue: '608, 6th Floor, Utkal Signature Building, Bhubaneswar, India 752101' },
+    // Company-wide social links for email signatures (universal, admin-set).
+    socialLinks: { type: DataTypes.JSON, defaultValue: { linkedin: '', facebook: '', instagram: '', website: '' } },
 
     colors: {
       type: DataTypes.JSON,

@@ -578,8 +578,8 @@ function LinkToLeadModal({ report, onClose, onLinked }) {
   const search = async () => {
     setSearching(true); setError('');
     try {
-      const r = await api(`/leads?q=${encodeURIComponent(q)}`);
-      setResults(r.items || []);
+      const r = await api(`/leads/search?q=${encodeURIComponent(q)}`);
+      setResults(r.leads || []);
     } catch (e) { setError(e.message); }
     setSearching(false);
   };
@@ -614,7 +614,7 @@ function LinkToLeadModal({ report, onClose, onLinked }) {
             {results.map((l) => (
               <div key={l._id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
                 <div className="min-w-0">
-                  <div className="font-bold text-sm text-[#050A1F] truncate">{l.firstName} {l.lastName}</div>
+                  <div className="font-bold text-sm text-[#050A1F] truncate">{l.name}</div>
                   <div className="text-[11px] text-slate-400 truncate">{l.website || '—'} · {l.ownerName || 'unassigned'}</div>
                 </div>
                 <button onClick={() => link(l)} disabled={busyId === l._id}
@@ -639,6 +639,7 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
+  const [linkReport, setLinkReport] = useState(null); // report being linked to a lead from the list
 
   const load = async () => {
     setLoading(true);
@@ -712,7 +713,8 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                     {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
                     <StatusPill status={r.status} />
                     {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
-                    {r.leadId && <span className="text-[10px] text-slate-400">· Linked to a lead</span>}
+                    {r.leadId ? <span className="text-[10px] text-slate-400">· Linked to a lead</span>
+                      : <span className="text-[10px] font-bold text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">⚠ Not linked to a lead</span>}
                   </div>
                 </div>
 
@@ -738,6 +740,12 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                       <Icon.Refresh size={14} /> <span className="hidden sm:inline">Retry</span>
                     </button>
                   )}
+                  {!r.leadId && r.status === 'complete' && (
+                    <button onClick={() => setLinkReport(r)} title="Link this report to a lead"
+                      className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-600 hover:bg-amber-50 inline-flex items-center gap-1.5">
+                      🔗 <span className="hidden sm:inline">Link</span>
+                    </button>
+                  )}
                   {isAdmin && (
                     <button onClick={async () => {
                       if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
@@ -757,6 +765,14 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
 
       <Pagination page={page} pages={data.pages || 1} total={data.total || 0} perPage={perPage}
         onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="reports" />
+
+      {linkReport && (
+        <LinkToLeadModal
+          report={linkReport}
+          onClose={() => setLinkReport(null)}
+          onLinked={() => { setLinkReport(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -859,6 +875,7 @@ function EditProfileModal({ user, onClose, onSaved }) {
   const [birthday, setBirthday] = useState(user.birthday || '');
   const [maritalStatus, setMaritalStatus] = useState(user.maritalStatus || '');
   const [anniversary, setAnniversary] = useState(user.anniversary || '');
+  const [calendly, setCalendly] = useState(user.calendly || '');
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
   const [msg, setMsg] = useState('');
@@ -878,7 +895,7 @@ function EditProfileModal({ user, onClose, onSaved }) {
     if (pw && pw !== pw2) return setErr('The two passwords don’t match.');
     setBusy(true);
     try {
-      const body = { avatar, birthday: birthday || null, maritalStatus: maritalStatus || null, anniversary: maritalStatus === 'married' ? (anniversary || null) : null };
+      const body = { avatar, birthday: birthday || null, maritalStatus: maritalStatus || null, anniversary: maritalStatus === 'married' ? (anniversary || null) : null, calendly: calendly || '' };
       if (pw) body.password = pw;
       const res = await api('/auth/me/profile', { method: 'PUT', body: JSON.stringify(body) });
       onSaved && onSaved(res);
@@ -923,6 +940,10 @@ function EditProfileModal({ user, onClose, onSaved }) {
               <input type="date" value={anniversary} onChange={(e) => setAnniversary(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
             </div>
           )}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Calendly link <span className="font-normal text-slate-400">· added to your email signature</span></label>
+            <input type="url" value={calendly} onChange={(e) => setCalendly(e.target.value)} placeholder="https://calendly.com/your-name" className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5">New password</label>
@@ -1296,6 +1317,7 @@ export default function App() {
 
   const [user, setUser] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [emailMenuOpen, setEmailMenuOpen] = useState(false);
   const [showEmailSettings, setShowEmailSettings] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [view, setView] = useState(() => {
@@ -1375,24 +1397,35 @@ export default function App() {
   const isAdmin = user.role === 'admin';
 
   const isManagerOrAdmin = user && (user.role === 'admin' || user.role === 'manager');
+  const isLeadManager = user && user.role === 'leadmanager';
+  // Per-role navigation:
+  // - Admin: All Email + Email Drafts live under an "Email" dropdown (keeps the
+  //   crowded admin bar tidy).
+  // - Manager / Agent: All Email stays a top-level item; no dropdown.
+  // - Lead Manager: no All Email, no AI Brief, no Call Backs; gets Reviews
+  //   (scoped to her pre-sales team) and Email Drafts.
   const nav = [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-    // Call Backs = call-back-generated leads, the earliest funnel stage before
-    // a lead is worked. Sits right after Dashboard so it reads left-to-right as
-    // the pipeline: call backs → leads → reports.
-    { id: 'prospects', label: 'Call Backs', icon: 'phone' },
+    // Call Backs — cold-calling prospects. Hidden for lead managers.
+    ...(!isLeadManager ? [{ id: 'prospects', label: 'Call Backs', icon: 'phone' }] : []),
     { id: 'leads', label: 'Leads', icon: 'users' },
-    // Standalone AI brief lookup for cold calling — enter a domain, get the
-    // pitch. Sits right after Leads, available to everyone.
-    { id: 'aibrief', label: 'AI Brief', icon: 'sparkles' },
-    // Gmail-style browser for the connected mailbox (all emails, folders, labels).
-    { id: 'allemail', label: 'All Email', icon: 'mail' },
-    // Agents run reports only from inside a lead's detail page, so they don't
-    // get the top-level Reports menu (which also lists reports across leads).
+    // AI Brief — hidden for lead managers.
+    ...(!isLeadManager ? [{ id: 'aibrief', label: 'AI Brief', icon: 'sparkles' }] : []),
+    // Agents run reports only from inside a lead's detail page.
     ...(user.role !== 'agent' ? [{ id: 'list', label: 'Reports', icon: 'chart' }] : []),
-    ...(isManagerOrAdmin ? [{ id: 'reviews', label: 'Reviews', icon: 'star' }] : []),
-    // Lead managers coordinate the pre-sales draft workflow; admins oversee it.
-    ...((user.role === 'leadmanager' || user.role === 'admin') ? [{ id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' }] : []),
+    // Reviews — managers, admins, and now lead managers (her pre-sales team).
+    ...((isManagerOrAdmin || isLeadManager) ? [{ id: 'reviews', label: 'Reviews', icon: 'star' }] : []),
+    // Email area:
+    ...(user.role === 'admin'
+      ? [{ id: 'email', label: 'Email', icon: 'mail', children: [
+          { id: 'allemail', label: 'All Email', icon: 'mail' },
+          { id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' },
+        ] }]
+      : []),
+    // Manager / agent keep All Email as a top-level item (no dropdown).
+    ...((user.role === 'manager' || user.role === 'agent') ? [{ id: 'allemail', label: 'All Email', icon: 'mail' }] : []),
+    // Lead manager keeps Email Drafts (top-level, no All Email).
+    ...(isLeadManager ? [{ id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' }] : []),
   ];
 
   return (
@@ -1423,6 +1456,37 @@ export default function App() {
             </div>
             <nav className="flex gap-0.5">
               {nav.map((n) => {
+                // Dropdown parent (e.g. Email → All Email / Email Drafts).
+                if (n.children) {
+                  const childActive = n.children.some((c) => c.id === view);
+                  return (
+                    <div key={n.id} className="relative"
+                      onMouseEnter={() => setEmailMenuOpen(true)} onMouseLeave={() => setEmailMenuOpen(false)}>
+                      <button
+                        onClick={() => setEmailMenuOpen((v) => !v)}
+                        className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${childActive ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
+                        <NavIcon name={n.icon} className="w-4 h-4" />
+                        <span>{n.label}</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M6 9l6 6 6-6" /></svg>
+                        {childActive && <span className="absolute left-3 right-3 -bottom-[7px] h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />}
+                      </button>
+                      {emailMenuOpen && (
+                        <div className="absolute left-0 top-full pt-1 z-50">
+                          <div className="w-48 bg-[#0A1230] border border-white/10 rounded-xl shadow-2xl py-1.5">
+                            {n.children.map((c) => (
+                              <button key={c.id}
+                                onClick={() => { setView(c.id); setActiveReport(null); setEmailMenuOpen(false); }}
+                                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-left transition-colors ${view === c.id ? 'text-[#FF6A00] bg-white/5' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}>
+                                <NavIcon name={c.icon} className="w-4 h-4" />
+                                <span>{c.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
                 const active = view === n.id;
                 // Call Backs carries the due-count badge; everything else is plain.
                 const badge = n.id === 'leads' ? dueCount : 0;
@@ -1475,7 +1539,7 @@ export default function App() {
           onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }}
           onViewConverted={() => { setLeadsEntry({ view: 'converted', convertedMonth: true }); setView('leads'); }}
           onViewToday={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />}
-        {view === 'reviews' && isManagerOrAdmin && <Reviews user={user} />}
+        {view === 'reviews' && (isManagerOrAdmin || isLeadManager) && <Reviews user={user} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} />}
         {/* Prospects reuses Leads but opens on the call-back-generated list and
             hides the deal/report machinery. A fresh key resets internal state

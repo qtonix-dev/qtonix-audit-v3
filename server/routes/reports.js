@@ -168,8 +168,10 @@ router.post('/', requireAuth, async (req, res, next) => {
         }
       }
 
-      if (!lead && !ownerConflict) {
-        // create a fresh lead under the running agent
+      if (!lead && !ownerConflict && req.user.role !== 'leadmanager') {
+        // Create a fresh lead under the running user. Lead managers are excluded:
+        // they never own leads, so their report simply stays unlinked and they
+        // can attach it to an existing lead from the report listing.
         const nameParts = String(input.customerName || input.businessName || 'Unknown').trim().split(/\s+/);
         lead = await Lead.create({
           ownerId: req.user.id,
