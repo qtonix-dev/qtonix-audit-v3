@@ -139,12 +139,12 @@ function Login({ onSignIn }) {
           <div className="text-3xl font-extrabold text-white tracking-tight">
             Qtonix<span className="text-[#FF6A00]">.</span>
           </div>
-          <p className="text-slate-400 text-sm mt-2">Sales CRM &amp; Lead Management</p>
+          <p className="text-slate-400 text-sm mt-2">QHub CRM &amp; Lead Management</p>
         </div>
 
         <div className="bg-white rounded-2xl p-7 shadow-2xl">
           <h1 className="text-xl font-bold text-[#050A1F] mb-1">Sign in</h1>
-          <p className="text-sm text-slate-500 mb-6">Run a free site analysis for a prospect.</p>
+          <p className="text-sm text-slate-500 mb-6">Your all-in-one workspace for leads, deals, and sales.</p>
 
           {error && (
             <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">
@@ -838,7 +838,9 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 hover:bg-white/5 transition">
         {user.avatar
           ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full object-cover" />
-          : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
+          : user.companyLogo
+            ? <img src={user.companyLogo} alt={user.name} className="w-9 h-9 rounded-full object-cover bg-white border border-white/10" />
+            : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
         <span className="text-right leading-tight">
           <span className="block text-xs font-semibold text-white">{user.name}</span>
           <span className="block text-[10px] text-slate-400">{user.designation}</span>
@@ -1280,11 +1282,13 @@ export function DashboardGmailNotice({ onOpenProfile }) {
 }
 
 // Upload a CRM avatar to ImageKit (falls back to base64 if not configured).
+// Uses the self-service /auth/imagekit endpoints so any user (not just admins)
+// can upload their own photo.
 async function uploadCrmAvatar(file, userName) {
   let ik = null;
-  try { ik = await api('/admin/imagekit'); } catch { ik = null; }
+  try { ik = await api('/auth/imagekit'); } catch { ik = null; }
   if (ik && ik.configured) {
-    const auth = await api('/admin/imagekit/auth');
+    const auth = await api('/auth/imagekit/auth');
     const safe = (userName || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const form = new FormData();
     form.append('file', file); form.append('fileName', `${safe}.jpg`); form.append('folder', '/qtonix-crm/avatars');

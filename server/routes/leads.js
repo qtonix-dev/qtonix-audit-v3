@@ -1304,6 +1304,29 @@ function targetForToday(targets, kind) {
   return 0;
 }
 
+/** GET /api/leads/celebrations — today's birthdays, work anniversaries, and
+ *  wedding anniversaries across all active employees, for a dashboard wish card
+ *  shown to everyone. Declared before /:id. */
+router.get('/celebrations', requireAuth, async (req, res, next) => {
+  try {
+    const users = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'birthday', 'workAnniversary', 'anniversary', 'designation'] });
+    const now = new Date();
+    const mmdd = (d) => { if (!d) return null; const x = new Date(d); return `${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+    const today = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const items = [];
+    users.forEach((u) => {
+      if (mmdd(u.birthday) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'birthday' });
+      if (mmdd(u.workAnniversary) === today) {
+        const years = u.workAnniversary ? (now.getFullYear() - new Date(u.workAnniversary).getFullYear()) : 0;
+        items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'work', years: years > 0 ? years : null });
+      }
+      if (mmdd(u.anniversary) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'anniversary' });
+    });
+    res.json({ items });
+  } catch (e) { next(e); }
+});
+
+
 /** GET /api/leads/search?q= — lightweight scoped lead lookup for pickers (e.g.
  *  linking a report to a lead). Returns id, name, website, ownerName. Excludes
  *  call-back prospects (a report can't attach to one). Declared before /:id. */
@@ -1453,22 +1476,25 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
     const leads = await Lead.findAll({ where });
     const now = Date.now();
     const GRACE = 60 * 60 * 1000; // one hour past the agreed time
+    // The CRM went live on 3 Aug 2026. Anything due before that is pre-launch
+    // noise (migrated/backfilled data) and must never show as a missed
+    // commitment. Activities, status changes and email history are untouched;
+    // this only affects what the missed-commitments view computes.
+    const GO_LIVE = new Date('2026-08-03T00:00:00Z').getTime();
     const items = [];
     const byOwner = {};
 
     for (const l of leads) {
-      // Call-back prospects are pre-rules: no missed-activity flagging until
-      // they become a lead via transfer. Back-dated leads are NOT exempt —
-      // a missed scheduled activity is a miss whenever it happens.
       if (l.status === 'callback') continue;
       const dismissed = Array.isArray(l.dismissedMissed) ? l.dismissedMissed : [];
 
       // Unsubmitted first-reply draft: a pre-sales lead whose agent hasn't
-      // submitted the first draft within 24h of the lead entering the system is
-      // a missed commitment (the customer emailed in and is waiting).
+      // submitted the first draft within 24h of the lead entering the system.
+      // Only for leads that entered on/after go-live.
       const isPreSales = /re-?\s*sales|presales/i.test(String(l.leadSource || ''));
-      if (isPreSales && !l.firstDraftAt && l.status !== 'converted' && !dismissed.includes(`draft-${l.id}`)) {
-        const enteredAt = new Date(l.createdAt).getTime();
+      const enteredAt0 = new Date(l.createdAt).getTime();
+      if (isPreSales && !l.firstDraftAt && l.status !== 'converted' && !dismissed.includes(`draft-${l.id}`) && enteredAt0 >= GO_LIVE) {
+        const enteredAt = enteredAt0;
         if (!Number.isNaN(enteredAt) && now > enteredAt + 24 * 60 * 60 * 1000) {
           const dueAt = new Date(enteredAt + 24 * 60 * 60 * 1000).toISOString();
           items.push({
@@ -1490,6 +1516,7 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
         if (!dueAt) continue;
         const due = new Date(dueAt).getTime();
         if (Number.isNaN(due)) continue;
+        if (due < GO_LIVE) continue; // pre-launch, don't surface as missed
 
         // Missed = still open past the grace period, or completed late.
         const stillOpen = a.status !== 'done' && now > due + GRACE;
@@ -2210,7 +2237,9 @@ router.post('/:id/activities', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Mark an activity done / reopen, or edit basic fields.
+// Mark an activity done / reopen, or edit its fields (title/agenda, date, time,
+// due date). Editing is allowed for the person who created the activity, or an
+// admin. Status toggles remain open to anyone with lead access.
 router.patch('/:id/activities/:actId', requireAuth, async (req, res, next) => {
   try {
     const lead = await Lead.findByPk(req.params.id);
@@ -2220,14 +2249,35 @@ router.patch('/:id/activities/:actId', requireAuth, async (req, res, next) => {
     const act = list.find((a) => a.id === req.params.actId);
     if (!act) return res.status(404).json({ error: 'Activity not found.' });
     const b = req.body || {};
+
+    // Field edits (title/agenda, date, time, due date, priority). Only the
+    // creator or an admin may edit; anyone with lead access can toggle status.
+    const editFields = ['title', 'agenda', 'date', 'time', 'timezone', 'dueDate', 'description', 'priority'];
+    const wantsEdit = editFields.some((f) => b[f] !== undefined);
+    if (wantsEdit) {
+      const isOwner = act.createdBy && act.createdBy === req.user.name;
+      if (req.user.role !== 'admin' && !isOwner) {
+        return res.status(403).json({ error: 'You can only edit activities you created.' });
+      }
+      if (act.kind === 'call') {
+        if (b.agenda !== undefined) { act.agenda = String(b.agenda).slice(0, 500); act.title = act.agenda || 'Call'; }
+        if (b.date !== undefined) act.date = b.date || '';
+        if (b.time !== undefined) act.time = b.time || '';
+        if (b.timezone !== undefined) act.timezone = String(b.timezone || '').slice(0, 80);
+      } else {
+        if (b.title !== undefined) act.title = String(b.title).slice(0, 200) || 'Task';
+        if (b.dueDate !== undefined) act.dueDate = b.dueDate || '';
+        if (b.description !== undefined) act.description = String(b.description).slice(0, 2000);
+        if (b.priority !== undefined) act.priority = String(b.priority).slice(0, 20);
+      }
+      pushTimeline(lead, act.kind, `${act.kind === 'call' ? 'Call' : 'Task'} updated: ${act.title}`, req.user.name, { activityId: act.id });
+    }
+
     if (b.status === 'done' || b.status === 'open') {
       act.status = b.status;
       act.mode = b.status === 'done' ? 'done' : act.mode;
       if (b.status === 'done') {
         act.completedAt = new Date().toISOString();
-        // Was it finished within the hour-long grace period after the agreed
-        // time? Stored on the activity so the miss survives even if the row is
-        // later edited, and so managers can count repeat offences.
         const dueAt = act.kind === 'call'
           ? (act.date ? `${act.date}T${act.time || '09:00'}` : '')
           : (act.dueDate ? `${act.dueDate}T17:00` : '');
@@ -2249,13 +2299,20 @@ router.patch('/:id/activities/:actId', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Delete an activity — admin only (per delete policy).
+// Delete an activity — the creator or an admin.
 router.delete('/:id/activities/:actId', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can delete.' });
     const lead = await Lead.findByPk(req.params.id);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
-    lead.activities = (Array.isArray(lead.activities) ? lead.activities : []).filter((a) => a.id !== req.params.actId);
+    if (!(await canAccessLead(req.user, lead))) return res.status(403).json({ error: 'No access to this lead.' });
+    const list = Array.isArray(lead.activities) ? lead.activities : [];
+    const act = list.find((a) => a.id === req.params.actId);
+    if (!act) return res.status(404).json({ error: 'Activity not found.' });
+    const isOwner = act.createdBy && act.createdBy === req.user.name;
+    if (req.user.role !== 'admin' && !isOwner) {
+      return res.status(403).json({ error: 'You can only delete activities you created.' });
+    }
+    lead.activities = list.filter((a) => a.id !== req.params.actId);
     lead.changed('activities', true);
     await lead.save();
     res.json(lead.toJSON());

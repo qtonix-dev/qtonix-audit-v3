@@ -19,6 +19,25 @@ const LABEL_COLORS = [
   { bg: '#a479e2', fg: '#ffffff' }, { bg: '#f691b3', fg: '#000000' }, { bg: '#cccccc', fg: '#000000' },
 ];
 
+// Given a reply/forward body (new text + signature + quoted chain), return the
+// "tail" — everything from the signature or quoted chain onward — so an AI
+// re-draft can replace only the new-message portion above it. Returns '' if no
+// tail is found (a fresh compose).
+function extractQuotedTail(html) {
+  if (!html) return '';
+  const markers = [
+    html.indexOf('<div style="border-left:2px solid'), // quoted chain wrapper
+    html.indexOf('---------- Forwarded message'),       // forward header
+    html.search(/<table[^>]*(?:signature|Segoe UI)/i),  // signature block
+  ].filter((i) => i >= 0);
+  if (markers.length === 0) return '';
+  const at = Math.min(...markers);
+  // Back up to include the leading <br><br> spacer if present.
+  const pre = html.slice(Math.max(0, at - 12), at);
+  const spacer = pre.match(/(<br\s*\/?>\s*)+$/i);
+  return html.slice(spacer ? at - spacer[0].length : at);
+}
+
 const fmtDate = (d) => {
   const dt = new Date(d); const now = new Date();
   const sameDay = dt.toDateString() === now.toDateString();
@@ -261,7 +280,7 @@ export default function AllEmailPage({ user }) {
       {showNewLabel && <NewLabelModal onClose={() => setShowNewLabel(false)} onCreate={createLabel} />}
 
       {confirmDel && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90] p-4" onClick={() => setConfirmDel(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90] p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
@@ -340,7 +359,7 @@ function AllEmailThread({ threadId, subject, as, onClose, onReply }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto">
       <div className="bg-white rounded-xl w-full max-w-3xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
           <h2 className="text-lg font-normal text-[#202124] pr-4 break-words">{subject || '(no subject)'}</h2>
@@ -504,7 +523,14 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
         : { mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly introduction email.', to, subject };
       const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify(payload) });
       if (res.subject) setSubject(res.subject);
-      if (res.body) setBody(res.body);
+      if (res.body) {
+        // On a reply/forward, keep the existing signature + quoted chain (the
+        // "tail") and only replace the new-message portion above it.
+        setBody((prev) => {
+          const tail = extractQuotedTail(prev);
+          return tail ? `${res.body}${tail}` : res.body;
+        });
+      }
       setShowAi(false); setAiPrompt('');
     } catch (e) { setErr(e.message); } finally { setAiBusy(false); }
   };
@@ -512,7 +538,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
   const title = initial.mode === 'forward' ? 'Forward' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message';
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto">
       <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl flex-shrink-0">
           <span className="text-sm font-semibold">{title}</span>
@@ -631,7 +657,7 @@ function NewLabelModal({ onClose, onCreate }) {
   const [name, setName] = useState('');
   const [color, setColor] = useState(LABEL_COLORS[5]);
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4">
       <div className="bg-white rounded-2xl p-5 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-base font-extrabold text-[#050A1F] mb-3">New label</h3>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Label name" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3" autoFocus />

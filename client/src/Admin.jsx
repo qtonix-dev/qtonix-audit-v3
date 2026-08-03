@@ -1189,8 +1189,12 @@ function Users({ me, say }) {
       )}
 
       {edit && (
-        <div className="bg-white rounded-xl border-2 p-5 mb-5" style={{ borderColor: C.blue }}>
-          <h3 className="font-bold text-sm mb-4" style={{ color: C.navy }}>Edit {edit.name}</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border-2 p-5 my-8 w-full max-w-2xl shadow-2xl" style={{ borderColor: C.blue }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-sm" style={{ color: C.navy }}>Edit {edit.name}</h3>
+            <button onClick={() => setEdit(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+          </div>
           <div className="flex items-center gap-4 mb-4">
             <AvatarPreview name={edit.name} src={edit.avatar} size={56} />
             <div>
@@ -1249,6 +1253,7 @@ function Users({ me, say }) {
           <div className="flex justify-end gap-2 mt-4">
             <Btn variant="ghost" onClick={() => setEdit(null)}>Cancel</Btn>
             <Btn variant="dark" onClick={save}>Save changes</Btn>
+          </div>
           </div>
         </div>
       )}

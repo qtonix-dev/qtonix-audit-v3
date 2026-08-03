@@ -49,6 +49,7 @@ app.use('/api/tv', tv);
 app.use('/api/hr', hr);
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/track', require('./routes/track'));
+app.use('/api/icons', require('./routes/icons'));
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind
 // it enforce that independently, so serving the HTML is harmless either way.

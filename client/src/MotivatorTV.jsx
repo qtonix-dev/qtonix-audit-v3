@@ -11,6 +11,10 @@ import { API_BASE } from './config.js';
 const usd = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+// Set once when the board data loads; used as the avatar fallback when a person
+// has no photo (per the requirement to show the company logo in that case).
+let TV_COMPANY_LOGO = '';
+
 const C = {
   navy: '#22303F',
   navyDark: '#1B2733',
@@ -21,12 +25,13 @@ const C = {
   orange: '#E8562A',
 };
 
-function Avatar({ name, src, size = 96, rank }) {
+function Avatar({ name, src, size = 96, rank, logo }) {
+  const img = src || logo || TV_COMPANY_LOGO;
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
-      {src ? (
-        <img src={src} alt={name} className="rounded-full object-cover w-full h-full"
-          style={{ border: `4px solid ${C.orange}` }} />
+      {img ? (
+        <img src={img} alt={name} className="rounded-full object-cover w-full h-full"
+          style={{ border: `4px solid ${C.orange}`, background: '#fff' }} />
       ) : (
         <div className="rounded-full w-full h-full flex items-center justify-center font-bold text-white"
           style={{ background: '#9AA6B2', border: `4px solid ${C.orange}`, fontSize: size * 0.34 }}>
@@ -141,7 +146,7 @@ export default function MotivatorTV() {
     const fetchData = () => {
       fetch(`${API_BASE}/api/tv/${token.current}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Board not available'))))
-        .then((d) => { if (alive) { setData(d); setErr(''); } })
+        .then((d) => { if (alive) { setData(d); setErr(''); TV_COMPANY_LOGO = (d && d.company && d.company.logo) || ''; } })
         .catch((e) => { if (alive && !data) setErr(e.message); });
     };
     fetchData();

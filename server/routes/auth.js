@@ -1,7 +1,26 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { User, AuditLog } = require('../models');
+const { User, AuditLog, Settings } = require('../models');
 const { sign, requireAuth } = require('../middleware/auth');
+const imagekit = require('../services/imagekit');
+
+// ImageKit config + upload signature for the CURRENT user (any authenticated
+// role) so people can upload their own profile photo in Edit Profile. The
+// equivalent admin endpoints are admin-only; these are self-service and expose
+// nothing sensitive (only a short-lived upload token + the public key).
+router.get('/imagekit', requireAuth, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = imagekit.getConfig(s) || {};
+    res.json({ configured: imagekit.isConfigured(s), publicKey: cfg.publicKey || '', urlEndpoint: cfg.urlEndpoint || '' });
+  } catch (e) { next(e); }
+});
+router.get('/imagekit/auth', requireAuth, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json(imagekit.getAuthParams(s));
+  } catch (e) { next(e); }
+});
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -37,6 +56,13 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   const u = await User.findByPk(req.user.id);
   if (!u) return res.status(404).json({ error: 'User not found.' });
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  // Absolute company logo URL (used as the avatar fallback everywhere).
+  let companyLogo = '';
+  if (s && s.logoPath) {
+    const base = (process.env.APP_URL || '').replace(/\/+$/, '');
+    companyLogo = /^https?:/i.test(s.logoPath) ? s.logoPath : `${base}${s.logoPath}`;
+  }
   res.json({ user: {
     id: u.id, name: u.name, email: u.email, role: u.role, phone: u.phone,
     designation: u.designation, reportsRun: u.reportsRun, avatar: u.avatar || null,
@@ -44,6 +70,7 @@ router.get('/me', requireAuth, async (req, res) => {
     maritalStatus: u.maritalStatus || null, anniversary: u.anniversary || null,
     calendly: (u.socialLinks && u.socialLinks.calendly) || '',
     gmailConnected: !!u.gmailRefreshToken,
+    companyLogo,
   } });
 });
 

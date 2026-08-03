@@ -14,8 +14,9 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
-function Avatar({ name, src, size = 28 }) {
+function Avatar({ name, src, size = 28, logo }) {
   if (src) return <img src={src} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+  if (logo) return <img src={logo} alt={name} className="rounded-full object-cover bg-white border border-slate-100" style={{ width: size, height: size }} />;
   return (
     <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center" style={{ width: size, height: size, fontSize: size * 0.38 }}>
       {initials(name)}
@@ -300,7 +301,7 @@ function Leaderboard({ board, user, maxSales }) {
       {board.map((b, i) => (
         <div key={b.ownerId} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50">
           <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
-          <Avatar name={b.name} src={b.avatar} size={30} />
+          <Avatar name={b.name} src={b.avatar} logo={user && user.companyLogo} size={30} />
           <div className="w-28 shrink-0">
             <div className="font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
             <div className="text-[10px] text-slate-400">{b.conversions} conv</div>
@@ -337,6 +338,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   // whole team's; an agent sees only their own.
   const [missed, setMissed] = useState(null);
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
+  const [celebrations, setCelebrations] = useState([]);
+  useEffect(() => { api('/leads/celebrations').then((d) => setCelebrations(d.items || [])).catch(() => {}); }, []);
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
   useEffect(() => { api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null)); }, []);
@@ -406,6 +409,30 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           </div>
         )}
       </div>
+
+      {/* Celebrations — birthdays, work + wedding anniversaries today. Shown to
+          everyone so the whole team can wish each other. */}
+      {celebrations.length > 0 && (
+        <div className="rounded-2xl border border-pink-200 bg-gradient-to-r from-pink-50 to-orange-50 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-pink-600 mb-2">🎉 Celebrations today</div>
+          <div className="flex flex-wrap gap-2">
+            {celebrations.map((c, i) => {
+              const msg = c.type === 'birthday' ? '🎂 Happy Birthday'
+                : c.type === 'work' ? `🏆 ${c.years ? `${c.years}-year ` : ''}Work Anniversary`
+                : '💍 Happy Anniversary';
+              return (
+                <div key={`${c.id}-${c.type}-${i}`} className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 border border-pink-100 shadow-sm">
+                  <Avatar name={c.name} src={c.avatar} logo={user && user.companyLogo} size={28} />
+                  <div className="leading-tight">
+                    <div className="text-xs font-bold text-[#050A1F]">{c.name}</div>
+                    <div className="text-[10px] text-pink-600 font-semibold">{msg}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ROW 1 — Sales vs target + Converted, 50/50 */}
       <div className="grid md:grid-cols-2 gap-4">
@@ -576,7 +603,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           {topPerformer && topPerformer.salesUsd > 0 ? (
             <>
               <div className="flex items-center gap-3 mt-2">
-                <Avatar name={topPerformer.name} src={topPerformer.avatar} size={40} />
+                <Avatar name={topPerformer.name} src={topPerformer.avatar} logo={user && user.companyLogo} size={40} />
                 <div>
                   <div className="text-xl font-extrabold text-[#050A1F]">{topPerformer.name}</div>
                   <div className="text-sm text-slate-500">{usd(topPerformer.salesUsd)} collected{topPerformer.salesTarget > 0 ? ` · ${topPerformer.pct}% of target` : ''}</div>
@@ -665,7 +692,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               <div key={b.ownerId} className="p-2 rounded-lg hover:bg-slate-50">
                 <div className="flex items-center gap-2.5">
                   <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
-                  <Avatar name={b.name} src={b.avatar} size={28} />
+                  <Avatar name={b.name} src={b.avatar} logo={user && user.companyLogo} size={28} />
                   <div className="w-32 shrink-0 font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
                   <div className="flex-1"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${b.pct != null ? Math.max(3, b.pct) : 3}%`, background: (b.pct || 0) >= 100 ? '#16A34A' : 'linear-gradient(90deg,#2563EB,#7C3AED)' }} /></div></div>
                   <div className="w-24 text-right"><div className="font-extrabold text-xs text-[#050A1F]">{b.transfersToday}{b.dailyTarget > 0 && <span className="text-slate-300 font-normal"> / {b.dailyTarget}</span>}</div>{b.dailyTarget > 0 && <div className={`text-[10px] font-bold ${b.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{b.pct >= 100 ? '✓ done' : `${b.remaining} to go`}</div>}</div>

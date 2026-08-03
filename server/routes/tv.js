@@ -170,6 +170,7 @@ router.get('/:token', async (req, res, next) => {
     res.json({
       company: {
         name: settings.companyName || 'Qtonix',
+        logo: settings.logoPath ? (/^https?:/i.test(settings.logoPath) ? settings.logoPath : `${(process.env.APP_URL || '').replace(/\/+$/, '')}${settings.logoPath}`) : '',
         salesUsd: Math.round(companySales),
         target: Math.round(companyTarget),
         pct: companyPct,

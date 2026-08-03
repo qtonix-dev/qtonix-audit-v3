@@ -15,17 +15,18 @@ const ORANGE_LIGHT = '#FF6A00';
 const MUTED = '#6b7280';
 const LINE = '#e5e7eb';
 
-const ICON = {
-  linkedin: 'https://img.icons8.com/color/48/linkedin.png',
-  facebook: 'https://img.icons8.com/color/48/facebook-new.png',
-  instagram: 'https://img.icons8.com/fluency/48/instagram-new.png',
-  calendly: 'https://img.icons8.com/color/48/calendly.png',
-};
+// Social icons are served from our own domain (see routes/icons.js) so they
+// render reliably in the in-app preview and don't depend on a third-party icon
+// CDN. Built from APP_URL at render time.
+function iconBase() {
+  return (process.env.APP_URL || '').replace(/\/+$/, '') + '/api/icons';
+}
+const ICON_NAMES = ['linkedin', 'facebook', 'instagram', 'calendly'];
 
 function socialIcons(v, gap = 8) {
-  const order = ['linkedin', 'facebook', 'instagram', 'calendly'];
-  const links = order.filter((k) => v[k]).map((k) =>
-    `<a href="${v[k]}" style="text-decoration:none;margin-right:${gap}px"><img src="${ICON[k]}" width="18" height="18" alt="${k}" style="vertical-align:middle;border:0" /></a>`
+  const base = iconBase();
+  const links = ICON_NAMES.filter((k) => v[k]).map((k) =>
+    `<a href="${v[k]}" style="text-decoration:none;margin-right:${gap}px"><img src="${base}/${k}.svg" width="20" height="20" alt="${k}" style="vertical-align:middle;border:0" /></a>`
   );
   return links.join('');
 }

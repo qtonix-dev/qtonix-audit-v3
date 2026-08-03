@@ -10,6 +10,22 @@ import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, da
  * factory) so they're trivially debuggable and evaluate lazily at render time.
  * They inherit text colour, so the same icon works on light and dark buttons.
  */
+// Return the signature/quoted-chain "tail" of a reply body so an AI re-draft
+// replaces only the new-message portion above it (keeps context + signature).
+function extractQuotedTail(html) {
+  if (!html) return '';
+  const markers = [
+    html.indexOf('<div style="border-left:2px solid'),
+    html.indexOf('---------- Forwarded message'),
+    html.search(/<table[^>]*(?:signature|Segoe UI)/i),
+  ].filter((i) => i >= 0);
+  if (markers.length === 0) return '';
+  const at = Math.min(...markers);
+  const pre = html.slice(Math.max(0, at - 12), at);
+  const spacer = pre.match(/(<br\s*\/?>\s*)+$/i);
+  return html.slice(spacer ? at - spacer[0].length : at);
+}
+
 function IconBase({ size = 15, children }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1848,7 +1864,7 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
   const latest = messages && messages.length ? messages[messages.length - 1] : null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[70] p-4 overflow-y-auto">
       <div className="bg-white rounded-xl w-full max-w-4xl my-6 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
         {/* Subject header */}
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
@@ -2036,7 +2052,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[80] p-4 overflow-y-auto">
       <div className="bg-white rounded-xl w-full max-w-3xl shadow-2xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-2.5 bg-[#050A1F] text-white rounded-t-xl flex-shrink-0">
           <span className="text-sm font-semibold">{initial.mode === 'forward' ? 'Forward message' : initial.mode === 'replyall' ? 'Reply all' : initial.mode === 'reply' ? 'Reply' : 'New message'}</span>
@@ -2164,7 +2180,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
         </div>
       </div>
 
-      {showAi && <AiDraftModal lead={lead} onClose={() => setShowAi(false)} onDraft={({ subject: sj, body: bd }) => { if (sj) setSubject(sj); if (bd) setBody(bd); setShowAi(false); }} />}
+      {showAi && <AiDraftModal lead={lead} onClose={() => setShowAi(false)} onDraft={({ subject: sj, body: bd }) => { if (sj) setSubject(sj); if (bd) setBody((prev) => { const tail = extractQuotedTail(prev); return tail ? `${bd}${tail}` : bd; }); setShowAi(false); }} />}
     </div>
   );
 }
@@ -2200,7 +2216,7 @@ function AiDraftModal({ lead, onClose, onDraft }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[90] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[90] p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-xl my-8 shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 rounded-t-2xl" style={{ background: 'linear-gradient(90deg,#050A1F,#0b1533)' }}>
@@ -2910,6 +2926,8 @@ function NotesTab({ lead, onChange }) {
 // ---- Activity tab (tasks + calls) -----------------------------------------
 function ActivityTab({ lead, config, user, onChange }) {
   const [modal, setModal] = useState(null); // 'task' | 'call' | null
+  const [editAct, setEditAct] = useState(null); // activity being edited
+  const [delAct, setDelAct] = useState(null); // activity pending delete confirm
   const acts = Array.isArray(lead.activities) ? [...lead.activities] : [];
   // Sort: open first (by due/scheduled date asc), then done.
   const dueVal = (a) => a.kind === 'task' ? a.dueDate : (a.date ? `${a.date}T${a.time || '00:00'}` : '');
@@ -2921,6 +2939,16 @@ function ActivityTab({ lead, config, user, onChange }) {
       const updated = await api(`/leads/${lead._id}/activities/${act.id}`, { method: 'PATCH', body: JSON.stringify({ status: act.status === 'done' ? 'open' : 'done' }) });
       onChange(updated);
     } catch (e) { alert(e.message); }
+  };
+
+  // A user may edit/delete an activity they created; an admin may manage any.
+  const canManage = (a) => user.role === 'admin' || (a.createdBy && a.createdBy === user.name);
+  const doDelete = async () => {
+    if (!delAct) return;
+    try {
+      const updated = await api(`/leads/${lead._id}/activities/${delAct.id}`, { method: 'DELETE' });
+      onChange(updated); setDelAct(null);
+    } catch (e) { alert(e.message); setDelAct(null); }
   };
 
   const overdue = (a) => {
@@ -2974,6 +3002,18 @@ function ActivityTab({ lead, config, user, onChange }) {
           <span className="ml-1">· {a.createdBy}</span>
         </div>
       </div>
+      {canManage(a) && (
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => setEditAct(a)} title="Edit"
+            className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
+          <button onClick={() => setDelAct(a)} title="Delete"
+            className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-100 hover:text-red-600">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -2995,16 +3035,39 @@ function ActivityTab({ lead, config, user, onChange }) {
       )}
 
       {modal && <ActivityModal kind={modal} lead={lead} config={config} onClose={() => setModal(null)} onSaved={(u) => { onChange(u); setModal(null); }} />}
+      {editAct && <ActivityModal kind={editAct.kind} edit={editAct} lead={lead} config={config} onClose={() => setEditAct(null)} onSaved={(u) => { onChange(u); setEditAct(null); }} />}
+      {delAct && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4" onClick={() => setDelAct(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
+              </div>
+              <div>
+                <div className="text-base font-extrabold text-[#050A1F]">Delete this {delAct.kind === 'call' ? 'call' : 'task'}?</div>
+                <div className="text-xs text-slate-500">This can't be undone.</div>
+              </div>
+            </div>
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 mb-4 text-xs font-bold text-[#050A1F] truncate">{delAct.title}</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDelAct(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={doDelete} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: '#DC2626' }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ActivityModal({ kind, lead, config, onClose, onSaved }) {
+function ActivityModal({ kind, lead, config, onClose, onSaved, edit }) {
   const isCall = kind === 'call';
   const [f, setF] = useState({
-    mode: 'scheduled', agenda: '', title: '', date: '', time: '',
-    timezone: lead.timezone || '',
-    description: '', priority: 'Medium', dueDate: '', reminderOn: false, durationMin: '',
+    mode: edit ? (edit.mode === 'done' ? 'done' : 'scheduled') : 'scheduled',
+    agenda: edit?.agenda || '', title: edit?.title || '', date: edit?.date || '', time: edit?.time || '',
+    timezone: edit?.timezone || lead.timezone || '',
+    description: edit?.description || '', priority: edit?.priority || 'Medium', dueDate: edit?.dueDate || '',
+    reminderOn: edit?.reminder?.on || false, durationMin: edit?.durationMin || '',
   });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -3017,7 +3080,10 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
       const body = isCall
         ? { kind: 'call', mode: f.mode, agenda: f.agenda, date: f.date, time: f.time, timezone: f.timezone, durationMin: f.mode === 'done' ? Number(f.durationMin) || 0 : undefined, reminder: { on: f.mode === 'scheduled' && f.reminderOn, at: `${f.date}T${f.time || '09:00'}` } }
         : { kind: 'task', mode: f.mode, title: f.title, dueDate: f.dueDate, description: f.description, priority: f.priority };
-      const updated = await api(`/leads/${lead._id}/activities`, { method: 'POST', body: JSON.stringify(body) });
+      // Editing an existing activity → PATCH; otherwise create → POST.
+      const updated = edit
+        ? await api(`/leads/${lead._id}/activities/${edit.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+        : await api(`/leads/${lead._id}/activities`, { method: 'POST', body: JSON.stringify(body) });
       onSaved(updated);
     } catch (e) { alert(e.message); }
     setBusy(false);
@@ -3026,7 +3092,7 @@ function ActivityModal({ kind, lead, config, onClose, onSaved }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold text-[#050A1F] mb-4">{isCall ? '📞 Add call' : '✅ Add task'}</h3>
+        <h3 className="text-lg font-bold text-[#050A1F] mb-4">{edit ? (isCall ? '📞 Edit call' : '✅ Edit task') : (isCall ? '📞 Add call' : '✅ Add task')}</h3>
 
         <div className="flex gap-2 mb-4">
           {['scheduled', 'done'].map((m) => (

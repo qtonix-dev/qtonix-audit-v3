@@ -5,6 +5,16 @@ const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
+// Validate an IANA timezone string; fall back to IST if it's missing or the JS
+// runtime doesn't recognise it (prevents "Invalid time zone specified" crashes
+// when scheduling emails).
+function safeTimezone(tz) {
+  const fallback = 'Asia/Kolkata';
+  if (!tz || typeof tz !== 'string') return fallback;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return tz; }
+  catch { return fallback; }
+}
+
 /**
  * Create an open-tracking pixel for an outgoing email and append it to the body.
  * Returns { body, token }. Tracking is automatic on every send. The pixel URL
@@ -730,9 +740,9 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
         toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
         subject: b.subject, bodyHtml: b.body, attachments: b.attachments || null,
         threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
-        timezone: b.timezone || 'Asia/Kolkata', sendAt: when,
+        timezone: safeTimezone(b.timezone), sendAt: when,
       });
-      await emailTimeline(lead, `Email scheduled: "${b.subject}" for ${when.toLocaleString('en-IN', { timeZone: b.timezone || 'Asia/Kolkata' })}`, sender.name, { direction: 'scheduled' });
+      await emailTimeline(lead, `Email scheduled: "${b.subject}" for ${when.toLocaleString('en-IN', { timeZone: safeTimezone(b.timezone) })}`, sender.name, { direction: 'scheduled' });
       return res.json({ ok: true, scheduled: true, id: sched.id, sendAt: when });
     }
 
@@ -866,11 +876,15 @@ router.get('/awaiting-reply', requireAuth, async (req, res, next) => {
       byThread.get(key).push(r);
     }
     const pending = [];
+    // The CRM went live on 3 Aug 2026 — inbound mail received before that is
+    // pre-launch and must not surface as awaiting/missed replies.
+    const GO_LIVE = new Date('2026-08-03T00:00:00Z').getTime();
     for (const [, msgs] of byThread) {
       msgs.sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt)); // newest first
       const latest = msgs[0];
       if (latest.direction !== 'inbound') continue; // already replied (latest outbound)
       if (latest.dismissedFromMissed) continue; // an admin cleared this one
+      if (new Date(latest.sentAt).getTime() < GO_LIVE) continue; // pre-launch
       // The most recent inbound that still awaits a reply.
       pending.push(latest);
     }
@@ -1251,7 +1265,7 @@ router.post('/all/send', requireAuth, async (req, res, next) => {
         toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
         subject: b.subject, bodyHtml: b.body, attachments: attachments.length ? attachments : null,
         threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
-        timezone: b.timezone || 'Asia/Kolkata', sendAt: when,
+        timezone: safeTimezone(b.timezone), sendAt: when,
       });
       return res.json({ ok: true, scheduled: true, id: sched.id, sendAt: when });
     }
