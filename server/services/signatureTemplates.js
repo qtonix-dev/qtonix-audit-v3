@@ -47,11 +47,12 @@ function calendlyButton(v) {
 // the person's initials so there's always something in the ring.
 function avatar(v, size = 66) {
   if (v.photo) {
-    return `<img src="${v.photo}" width="${size}" height="${size}" alt="" style="border-radius:50%;object-fit:cover;display:block;border:2px solid ${ORANGE};width:${size}px;height:${size}px" />`;
+    return `<img src="${v.photo}" width="${size}" height="${size}" alt="" style="border-radius:50%;object-fit:cover;display:block;width:${size}px;height:${size}px" />`;
   }
   const initials = String(v.name || '?').split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-  // Table-based circle so it renders in email clients without CSS flexbox.
-  return `<table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse"><tr><td width="${size}" height="${size}" align="center" valign="middle" style="width:${size}px;height:${size}px;border-radius:50%;background:${NAVY};color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-size:${Math.round(size * 0.36)}px;font-weight:700;text-align:center;border:2px solid ${ORANGE}">${initials}</td></tr></table>`;
+  // Table-based circle so it renders in email clients without CSS flexbox. No
+  // border — just a solid navy circle with white initials.
+  return `<table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse"><tr><td width="${size}" height="${size}" align="center" valign="middle" style="width:${size}px;height:${size}px;border-radius:50%;background:${NAVY};color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-size:${Math.round(size * 0.36)}px;font-weight:700;text-align:center">${initials}</td></tr></table>`;
 }
 
 const templates = [
@@ -63,7 +64,7 @@ const templates = [
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.55;border-collapse:collapse">
   <tr>
     <td style="padding-right:18px;vertical-align:middle">${avatar(v, 72)}</td>
-    <td style="vertical-align:middle;border-left:2px solid ${ORANGE};padding-left:18px">
+    <td style="vertical-align:middle;border-left:1px solid ${LINE};padding-left:18px">
       <div style="font-size:17px;font-weight:700;color:${NAVY};letter-spacing:.2px">${v.name}</div>
       <div style="color:${ORANGE};font-weight:600;font-size:12px;margin-top:1px">${v.title}</div>
       <div style="color:${MUTED};font-size:12px;margin-top:1px">${v.company}</div>
@@ -86,7 +87,7 @@ const templates = [
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.5;border-collapse:collapse;min-width:360px">
   <tr>
     <td style="padding-right:16px;vertical-align:top">${avatar(v, 60)}</td>
-    <td style="vertical-align:top">
+    <td style="vertical-align:top;border-left:1px solid ${LINE};padding-left:16px">
       <div style="font-size:16px;font-weight:700;color:${NAVY}">${v.name}</div>
       <div style="color:${MUTED};font-size:12px">${v.title} &middot; ${v.company}</div>
       <div style="margin-top:6px;font-size:12px">
@@ -115,7 +116,7 @@ const templates = [
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.55;border-collapse:collapse;max-width:500px">
   <tr>
     <td style="padding-right:16px;vertical-align:middle">${avatar(v, 58)}</td>
-    <td style="vertical-align:middle">
+    <td style="vertical-align:middle;border-left:1px solid ${LINE};padding-left:16px">
       <div style="font-size:15px;font-weight:700;color:${NAVY}">${v.name} <span style="color:${MUTED};font-weight:400;font-size:12px">| ${v.title}</span></div>
       <div style="color:${MUTED};font-size:12px;margin-top:2px">${v.company}</div>
       <div style="margin-top:6px;font-size:12px;color:#374151">

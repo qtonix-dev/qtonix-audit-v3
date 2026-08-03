@@ -876,84 +876,89 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
 // confirm it renders the visible square to a canvas and returns a JPEG File.
 function ImageCropModal({ file, onCancel, onCropped }) {
   const [src, setSrc] = useState('');
+  const [nat, setNat] = useState(null); // { w, h }
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const imgRef = useRef(null);
   const dragRef = useRef(null);
-  const BOX = 260; // on-screen crop frame size
+  const BOX = 260; // on-screen circular crop frame
 
   useEffect(() => {
     const r = new FileReader();
-    r.onload = () => setSrc(r.result);
+    r.onload = () => setSrc(String(r.result));
+    r.onerror = () => onCancel();
     r.readAsDataURL(file);
   }, [file]);
 
-  const onDown = (e) => {
-    const p = e.touches ? e.touches[0] : e;
-    dragRef.current = { x: p.clientX - offset.x, y: p.clientY - offset.y };
-  };
-  const onMove = (e) => {
-    if (!dragRef.current) return;
-    const p = e.touches ? e.touches[0] : e;
-    setOffset({ x: p.clientX - dragRef.current.x, y: p.clientY - dragRef.current.y });
-  };
+  // "cover" base scale so the image always fills the circle at scale=1.
+  const baseFit = nat ? Math.max(BOX / nat.w, BOX / nat.h) : 1;
+  const dispScale = baseFit * scale;               // natural px → screen px
+  const dw = nat ? nat.w * dispScale : BOX;
+  const dh = nat ? nat.h * dispScale : BOX;
+
+  const pt = (e) => (e.touches && e.touches[0]) ? e.touches[0] : e;
+  const onDown = (e) => { const p = pt(e); dragRef.current = { x: p.clientX - offset.x, y: p.clientY - offset.y }; };
+  const onMove = (e) => { if (!dragRef.current) return; const p = pt(e); setOffset({ x: p.clientX - dragRef.current.x, y: p.clientY - dragRef.current.y }); };
   const onUp = () => { dragRef.current = null; };
 
   const confirm = () => {
-    const img = imgRef.current;
-    if (!img) return;
-    // Map the on-screen transform to the natural image, then draw the square.
+    if (!nat) { onCancel(); return; }
     const out = 512;
     const canvas = document.createElement('canvas');
     canvas.width = out; canvas.height = out;
     const ctx = canvas.getContext('2d');
-    // Displayed image size within the frame.
-    const baseW = img.naturalWidth, baseH = img.naturalHeight;
-    const fit = Math.max(BOX / baseW, BOX / baseH); // cover
-    const dispScale = fit * scale;
-    const dw = baseW * dispScale, dh = baseH * dispScale;
-    // Top-left of the image relative to the frame (image is centered + offset).
     const left = (BOX - dw) / 2 + offset.x;
     const top = (BOX - dh) / 2 + offset.y;
-    // Source rect in natural pixels that maps onto the frame [0,BOX].
     const sx = (-left) / dispScale;
     const sy = (-top) / dispScale;
     const sSize = BOX / dispScale;
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, out, out);
-    ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, out, out);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const cropped = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
-      onCropped(cropped);
-    }, 'image/jpeg', 0.9);
+    const im = new Image();
+    im.onload = () => {
+      // Clip to a circle so the saved avatar is round (transparent corners).
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(out / 2, out / 2, out / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      try { ctx.drawImage(im, sx, sy, sSize, sSize, 0, 0, out, out); } catch { /* */ }
+      ctx.restore();
+      canvas.toBlob((blob) => {
+        if (!blob) { onCancel(); return; }
+        onCropped(new File([blob], 'avatar.png', { type: 'image/png' }));
+      }, 'image/png', 0.92);
+    };
+    im.onerror = () => onCancel();
+    im.src = src;
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[95] p-4" onClick={onCancel}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
         <h3 className="text-base font-extrabold text-[#050A1F] mb-1">Crop your photo</h3>
-        <p className="text-xs text-slate-500 mb-4">Drag to reposition, use the slider to zoom. Square (1:1).</p>
+        <p className="text-xs text-slate-500 mb-4">Drag to reposition, use the slider to zoom.</p>
         <div className="flex justify-center mb-4">
           <div className="relative overflow-hidden rounded-full bg-slate-100 select-none"
-            style={{ width: BOX, height: BOX, touchAction: 'none', cursor: 'grab' }}
+            style={{ width: BOX, height: BOX, touchAction: 'none', cursor: dragRef.current ? 'grabbing' : 'grab' }}
             onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
             onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
             {src && (
-              <img ref={imgRef} src={src} alt="" draggable={false}
+              // eslint-disable-next-line jsx-a11y/alt-text
+              <img src={src} draggable={false}
+                onLoad={(e) => setNat({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
                 style={{
-                  position: 'absolute', left: '50%', top: '50%',
-                  transform: `translate(-50%,-50%) translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-                  minWidth: '100%', minHeight: '100%', objectFit: 'cover', transformOrigin: 'center',
-                  width: BOX, height: BOX, pointerEvents: 'none',
+                  position: 'absolute',
+                  width: dw, height: dh,
+                  left: (BOX - dw) / 2 + offset.x,
+                  top: (BOX - dh) / 2 + offset.y,
+                  maxWidth: 'none', pointerEvents: 'none',
                 }} />
             )}
-            <div className="absolute inset-0 rounded-full ring-2 ring-white/70 pointer-events-none" />
+            <div className="absolute inset-0 rounded-full ring-2 ring-white/80 pointer-events-none" />
           </div>
         </div>
         <input type="range" min="1" max="3" step="0.01" value={scale} onChange={(e) => setScale(Number(e.target.value))} className="w-full mb-4" />
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-          <button onClick={confirm} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Crop &amp; upload</button>
+          <button onClick={confirm} disabled={!nat} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Crop &amp; upload</button>
         </div>
       </div>
     </div>
@@ -1408,7 +1413,7 @@ async function uploadCrmAvatar(file, userName) {
     const auth = await api('/auth/imagekit/auth');
     const safe = (userName || 'user').toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const form = new FormData();
-    form.append('file', file); form.append('fileName', `${safe}.jpg`); form.append('folder', '/qtonix-crm/avatars');
+    form.append('file', file); form.append('fileName', `${safe}.png`); form.append('folder', '/qtonix-crm/avatars');
     form.append('publicKey', auth.publicKey); form.append('signature', auth.signature);
     form.append('expire', auth.expire); form.append('token', auth.token); form.append('useUniqueFileName', 'true');
     const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: form });

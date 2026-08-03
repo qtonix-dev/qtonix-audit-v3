@@ -917,18 +917,25 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         // True regardless of who is viewing — drives the team-only split.
         const ownerIsAdmin = roleById[l.ownerId] === 'admin';
         insts.forEach((it) => {
+          // Future cycles of a recurring contract are not a debt owed — they're
+          // upcoming revenue the admin manages — so they never count as
+          // "awaiting collection". Only part-payment (non-recurring) unpaid
+          // installments are genuinely awaiting collection.
+          const recurringRepeatInst = !!it.recurring && Number(it.seq || 0) > 1;
           if (!it.paid || !it.paidDate) {
-            if (!ownerIsAdmin) teamAwaitingUsd += toUsd(it.amount, d.currency);
-            if (!adminOwned) {
-              awaitingUsd += toUsd(it.amount, d.currency);
-              // Keep a followup list of who owes what, soonest due first.
-              awaitingList.push({
-                leadId: l.id, dealId: d.id, instId: it.id,
-                client: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
-                dealName: d.name, currency: d.currency, amount: Number(it.amount || 0),
-                dueDate: it.dueDate || '', seq: it.seq, ownerName: l.ownerName,
-                overdue: !!(it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10)),
-              });
+            if (!recurringRepeatInst) {
+              if (!ownerIsAdmin) teamAwaitingUsd += toUsd(it.amount, d.currency);
+              if (!adminOwned) {
+                awaitingUsd += toUsd(it.amount, d.currency);
+                // Keep a followup list of who owes what, soonest due first.
+                awaitingList.push({
+                  leadId: l.id, dealId: d.id, instId: it.id,
+                  client: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
+                  dealName: d.name, currency: d.currency, amount: Number(it.amount || 0),
+                  dueDate: it.dueDate || '', seq: it.seq, ownerName: l.ownerName,
+                  overdue: !!(it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10)),
+                });
+              }
             }
             return;
           }

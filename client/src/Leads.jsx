@@ -4091,23 +4091,20 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
   // Per-client money summary across won deals: total booked, collected, due.
   const summarize = (l) => {
-    // A deal counts towards the money figures once it is Closed Won *or* once
-    // any installment has actually been collected. Marking a payment now
-    // auto-promotes the deal to Closed Won, but older deals (and anything an
-    // admin drags back to an open stage) would otherwise vanish from the
-    // totals and make Outstanding read a misleading zero.
     const hasPayment = (d) => (d.installments || []).some((it) => it.paid);
     const won = (l.deals || []).filter((d) => d.stage === 'closed_won' || (d.stage !== 'closed_lost' && hasPayment(d)));
     const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost' && !hasPayment(d));
     let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
+    // `pending` = money genuinely owed now: unpaid installments of a PART-PAYMENT
+    // (one-time) deal. `recurringUpcoming` = future cycles of a recurring
+    // contract — these are NOT a debt, so they show as upcoming payments inside
+    // the converted box, never in "Awaiting collection".
     const pending = [];
+    const recurringUpcoming = [];
     for (const d of won) {
       const isRecurring = d.planType === 'recurring';
-      // A one-off sale books its whole value up front, so outstanding = booked
-      // minus collected. A recurring contract has no total — future cycles are
-      // not a debt the client owes — so it books only what has actually been
-      // billed and collected, and its upcoming dates show as reminders rather
-      // than as money outstanding.
+      // One-off sale books its whole value up front. A recurring contract books
+      // only what has actually been collected (future cycles aren't owed).
       if (!isRecurring) booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
@@ -4115,18 +4112,22 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           instPaid++;
           collected += toUsd(it.amount, d.currency);
           if (isRecurring) booked += toUsd(it.amount, d.currency);
+        } else if (isRecurring) {
+          // Future recurring cycle — show as an upcoming payment, not as owed.
+          recurringUpcoming.push({ deal: d, inst: it });
         } else {
-          pending.push({ deal: d, inst: it, recurring: isRecurring });
+          // Unpaid part-payment installment — genuinely awaiting collection.
+          pending.push({ deal: d, inst: it, recurring: false });
           if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
         }
       }
     }
-    // Soonest due first, undated last, so the most urgent chase is at the top.
     pending.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
+    recurringUpcoming.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
     return {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
-      pending, nextInst: pending[0] || null,
+      pending, nextInst: pending[0] || null, recurringUpcoming,
     };
   };
 
@@ -4248,7 +4249,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                   {s.pending.length > 0 && (
                     <div className="mt-3">
                       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
-                        Outstanding payments · {s.pending.length}
+                        Awaiting collection · {s.pending.length}
                       </div>
                       <div className="space-y-1.5">
                         {s.pending.slice(0, 4).map(({ deal, inst }) => {
@@ -4284,6 +4285,44 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                         <div className="text-[10px] text-slate-400 mt-1.5">
                           +{s.pending.length - 4} more — open the client to see all
                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Upcoming recurring payments — future cycles of a recurring
+                      contract. Shown here (not in Awaiting collection) since they
+                      aren't a debt owed; the 1st sale is what counts for credit. */}
+                  {s.recurringUpcoming.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-400 mb-1.5">
+                        🔁 Upcoming recurring · {s.recurringUpcoming.length}
+                      </div>
+                      <div className="space-y-1.5">
+                        {s.recurringUpcoming.slice(0, 3).map(({ deal, inst }) => (
+                          <div key={inst.id} className="rounded-lg px-2.5 py-2 bg-indigo-50/50 border border-indigo-100">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-slate-800">
+                                  {deal.currency} {Number(inst.amount || 0).toLocaleString()}
+                                  <span className="text-[10px] font-bold text-indigo-400 ml-1.5">cycle {inst.seq}</span>
+                                </div>
+                                <div className="text-[11px] font-semibold mt-0.5 flex items-center gap-1 text-slate-500">
+                                  <Icon.Calendar size={12} />
+                                  {inst.dueDate || 'no date'}
+                                  {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
+                                </div>
+                              </div>
+                              <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
+                                disabled={busy === inst.id}
+                                className="rounded-md bg-indigo-500 text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
+                                {busy === inst.id ? 'Saving…' : 'Record'}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {s.recurringUpcoming.length > 3 && (
+                        <div className="text-[10px] text-slate-400 mt-1.5">+{s.recurringUpcoming.length - 3} more cycles</div>
                       )}
                     </div>
                   )}
