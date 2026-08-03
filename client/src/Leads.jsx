@@ -1713,6 +1713,40 @@ function EmailTab({ lead, user, onChange }) {
   );
 }
 
+// Reschedule a pending scheduled email to a new time (lead email tab).
+function LeadRescheduleModal({ row, onClose, onSaved }) {
+  const toLocalInput = (iso) => { try { const d = new Date(iso); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 16); } catch { return ''; } };
+  const [when, setWhen] = useState(toLocalInput(row.sendAt));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    setBusy(true); setErr('');
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+      await api(`/gmail/scheduled/${row.id}`, { method: 'PATCH', body: JSON.stringify({ sendAt: new Date(when).toISOString(), timezone: tz }) });
+      onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[95] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-base font-extrabold text-[#050A1F]">Reschedule email</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="text-xs text-slate-500 mb-3 truncate">{row.subject || '(no subject)'} · To: {row.to}</div>
+        {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+        <label className="block text-[11px] font-bold text-slate-500 mb-1">New send time</label>
+        <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={save} disabled={busy || !when} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Reschedule'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmailInboxTab({ lead, user }) {
   const [data, setData] = useState(null); // { connected, email, fromOptions, unread, emails }
   const [err, setErr] = useState('');
@@ -1720,7 +1754,10 @@ function EmailInboxTab({ lead, user }) {
   const [composer, setComposer] = useState(null); // { mode, to, cc, bcc, subject, body, threadId, inReplyTo, fromUserId }
 
   const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, [lead._id, lead.id]);
+  const [scheduled, setScheduled] = useState([]);
+  const [reschedule, setReschedule] = useState(null);
+  const loadScheduled = () => api(`/gmail/lead/${lead._id || lead.id}/scheduled`).then((r) => setScheduled(Array.isArray(r) ? r : [])).catch(() => {});
+  useEffect(() => { load(); loadScheduled(); }, [lead._id, lead.id]);
 
   if (!data) return <div className="text-slate-400 text-sm py-8 text-center">{err || 'Loading…'}</div>;
   if (!data.connected) {
@@ -1758,6 +1795,22 @@ function EmailInboxTab({ lead, user }) {
 
       {err && <div className="mx-4 mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
 
+      {/* Scheduled emails for this lead — cancel or reschedule before they send. */}
+      {scheduled.length > 0 && (
+        <div className="mx-4 mt-3 rounded-xl border border-orange-200 bg-orange-50/50 overflow-hidden">
+          <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-[#FF4500] border-b border-orange-100">🕐 Scheduled ({scheduled.length})</div>
+          {scheduled.map((r) => (
+            <div key={r.id} className="flex items-center gap-2 px-3 py-2 text-xs border-b border-orange-100/60 last:border-0">
+              <span className="flex-1 min-w-0 truncate font-semibold text-[#050A1F]">{r.subject || '(no subject)'}</span>
+              <span className="text-[11px] text-slate-500 shrink-0">To: {r.to}</span>
+              <span className="text-[11px] font-bold text-[#FF4500] shrink-0">{(() => { try { return new Date(r.sendAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return r.sendAt; } })()}</span>
+              <button onClick={() => setReschedule(r)} className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-white shrink-0">Reschedule</button>
+              <button onClick={async () => { try { await api(`/gmail/scheduled/${r.id}/cancel`, { method: 'POST' }); loadScheduled(); } catch (e) { alert(e.message); } }} className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-bold text-red-600 hover:bg-white shrink-0">Cancel</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Gmail-style list */}
       <div className="divide-y divide-slate-100">
         {threads.length === 0 && <div className="text-slate-400 text-sm text-center py-10">No emails found for this lead yet. New messages sync every few minutes.</div>}
@@ -1788,7 +1841,8 @@ function EmailInboxTab({ lead, user }) {
       </div>
 
       {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
-      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); }} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); loadScheduled(); }} />}
+      {reschedule && <LeadRescheduleModal row={reschedule} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadScheduled(); }} />}
     </div>
   );
 }
@@ -4216,7 +4270,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                     {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
                                   </div>
                                 </div>
-                                <button onClick={(e) => { e.stopPropagation(); collect(l, deal, inst); }}
+                                <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
                                   disabled={busy === inst.id}
                                   className="rounded-md bg-[#050A1F] text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
                                   {busy === inst.id ? 'Saving…' : 'Mark paid'}

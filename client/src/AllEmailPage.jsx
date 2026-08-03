@@ -10,6 +10,7 @@ const FOLDERS = [
   { id: 'SPAM', label: 'Spam', icon: 'M12 2l9 4v6c0 5-3.8 8.7-9 10-5.2-1.3-9-5-9-10V6z' },
   { id: 'TRASH', label: 'Trash', icon: 'M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13' },
   { id: 'ALL', label: 'All Mail', icon: 'M3 5h18v14H3zM3 5l9 8 9-8' },
+  { id: 'SCHEDULED', label: 'Scheduled', icon: 'M12 8v4l3 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z' },
 ];
 
 // Gmail label-color swatches (a subset of the palette Gmail accepts).
@@ -49,6 +50,8 @@ export default function AllEmailPage({ user }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [as, setAs] = useState(''); // selected mailbox userId (admin can switch)
   const [box, setBox] = useState('INBOX');
+  const [scheduled, setScheduled] = useState([]);
+  const [reschedule, setReschedule] = useState(null); // scheduled row being rescheduled
   const [labelId, setLabelId] = useState(null);
   const [labels, setLabels] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -84,6 +87,14 @@ export default function AllEmailPage({ user }) {
   const loadFolder = useCallback(async (reset = true) => {
     setLoading(true); setErr('');
     try {
+      // The Scheduled pseudo-folder lists pending scheduled emails (not Gmail
+      // messages) so they can be cancelled or rescheduled.
+      if (box === 'SCHEDULED' && !labelId) {
+        const rows = await api(`/gmail/scheduled${as ? `?as=${as}` : ''}`);
+        setScheduled(Array.isArray(rows) ? rows : []);
+        setNextPage(null);
+        return;
+      }
       const params = new URLSearchParams();
       params.set('box', labelId ? 'LABEL' : box);
       if (labelId) params.set('labelId', labelId);
@@ -215,6 +226,12 @@ export default function AllEmailPage({ user }) {
         {err && <div className="mx-4 mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
 
         <div className="flex-1 overflow-auto">
+          {box === 'SCHEDULED' ? (
+            <ScheduledList rows={scheduled} loading={loading}
+              onCancel={async (row) => { try { await api(`/gmail/scheduled/${row.id}/cancel`, { method: 'POST' }); setScheduled((s) => s.filter((x) => x.id !== row.id)); } catch (e) { setErr(e.message); } }}
+              onReschedule={(row) => setReschedule(row)} />
+          ) : (
+          <>
           {loading && messages.length === 0 && <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>}
           {!loading && messages.length === 0 && <div className="text-slate-400 text-sm py-16 text-center">No emails in this folder.</div>}
           {messages.map((m) => (
@@ -272,8 +289,12 @@ export default function AllEmailPage({ user }) {
               <button onClick={() => loadFolder(false)} disabled={loading} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">{loading ? 'Loading…' : 'Load more'}</button>
             </div>
           )}
+          </>
+          )}
         </div>
       </div>
+
+      {reschedule && <RescheduleModal row={reschedule} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadFolder(true); }} />}
 
       {openThread && <AllEmailThread threadId={openThread.threadId} subject={openThread.subject} as={as} onClose={() => setOpenThread(null)}
         onReply={(payload) => setComposer(payload)} />}
@@ -628,6 +649,70 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A list of pending scheduled emails with cancel + reschedule actions.
+function ScheduledList({ rows, loading, onCancel, onReschedule }) {
+  const fmt = (iso) => {
+    try { return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; }
+  };
+  if (loading && rows.length === 0) return <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>;
+  if (rows.length === 0) return <div className="text-slate-400 text-sm py-16 text-center">No scheduled emails. Emails you schedule to send later will appear here.</div>;
+  return (
+    <div>
+      {rows.map((r) => (
+        <div key={r.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-50 hover:bg-slate-50">
+          <div className="w-9 h-9 rounded-full bg-orange-50 text-[#FF4500] flex items-center justify-center flex-shrink-0">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v4l3 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z"/></svg>
+          </div>
+          <div className="w-44 truncate text-sm flex-shrink-0 text-slate-600">To: {r.to || '—'}</div>
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-semibold text-[#050A1F] truncate">{r.subject || '(no subject)'}</span>
+            {r.leadName && <span className="text-[10px] text-slate-400 ml-2">· {r.leadName}</span>}
+          </div>
+          <span className="text-xs font-bold text-[#FF4500] flex-shrink-0">🕐 {fmt(r.sendAt)}</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={() => onReschedule(r)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100">Reschedule</button>
+            <button onClick={() => onCancel(r)} className="rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-bold text-red-600 hover:bg-red-50">Cancel</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Reschedule a pending email to a new date/time.
+function RescheduleModal({ row, onClose, onSaved }) {
+  const toLocalInput = (iso) => { try { const d = new Date(iso); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 16); } catch { return ''; } };
+  const [when, setWhen] = useState(toLocalInput(row.sendAt));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    setBusy(true); setErr('');
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+      await api(`/gmail/scheduled/${row.id}`, { method: 'PATCH', body: JSON.stringify({ sendAt: new Date(when).toISOString(), timezone: tz }) });
+      onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[95] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-base font-extrabold text-[#050A1F]">Reschedule email</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="text-xs text-slate-500 mb-3 truncate">{row.subject || '(no subject)'} · To: {row.to}</div>
+        {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+        <label className="block text-[11px] font-bold text-slate-500 mb-1">New send time</label>
+        <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={save} disabled={busy || !when} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Reschedule'}</button>
         </div>
       </div>
     </div>

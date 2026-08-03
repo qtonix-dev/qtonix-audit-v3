@@ -2504,6 +2504,10 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     if (b.paid !== undefined) {
       inst.paid = !!b.paid;
       inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
+      // Hour-precise timestamp so the "recent wins" celebration banner (which
+      // uses a 1-hour window) lights up on everyone's dashboard the moment a
+      // payment is confirmed.
+      inst.paidAt = b.paid ? new Date().toISOString() : null;
       if (!b.paid) inst.gateway = '';
       if (b.paid) {
         pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''})`, req.user.name);

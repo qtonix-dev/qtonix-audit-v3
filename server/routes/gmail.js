@@ -792,6 +792,52 @@ router.post('/scheduled/:id/cancel', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** GET /api/gmail/scheduled — all pending scheduled emails visible to the
+ *  viewer (for the All Email "Scheduled" view). Admin sees all; managers see
+ *  their team; agents see their own. */
+router.get('/scheduled', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const rows = await ScheduledEmail.findAll({
+      where: { userId: { [Op.in]: allowed }, status: 'pending' },
+      order: [['sendAt', 'ASC']],
+      limit: 200,
+    });
+    // Attach the sender name + lead name for display.
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))];
+    const users = await User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id', 'name'] });
+    const leads = leadIds.length ? await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName'] }) : [];
+    const uById = new Map(users.map((u) => [u.id, u.name]));
+    const lById = new Map(leads.map((l) => [l.id, `${l.firstName || ''} ${l.lastName || ''}`.trim()]));
+    res.json(rows.map((r) => {
+      const o = r.toJSON(); delete o.attachments;
+      return { ...o, senderName: uById.get(r.userId) || '', leadName: r.leadId ? (lById.get(r.leadId) || '') : '' };
+    }));
+  } catch (e) { next(e); }
+});
+
+/** PATCH /api/gmail/scheduled/:id — reschedule a pending email to a new time. */
+router.patch('/scheduled/:id', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const row = await ScheduledEmail.findByPk(req.params.id);
+    if (!row || !allowed.includes(row.userId)) return res.status(404).json({ error: 'Not found.' });
+    if (row.status !== 'pending') return res.status(400).json({ error: 'That email already went out or was cancelled.' });
+    const b = req.body || {};
+    if (!b.sendAt) return res.status(400).json({ error: 'A new send time is required.' });
+    const when = new Date(b.sendAt);
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Invalid send time.' });
+    if (when.getTime() < Date.now() + 30 * 1000) return res.status(400).json({ error: 'Pick a time at least a minute from now.' });
+    row.sendAt = when;
+    if (b.timezone) row.timezone = safeTimezone(b.timezone);
+    await row.save();
+    res.json({ ok: true, sendAt: row.sendAt });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/gmail/lead/:leadId/reports — CRM reports available to attach. */
 router.get('/lead/:leadId/reports', requireAuth, async (req, res, next) => {
   try {

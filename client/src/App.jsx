@@ -872,6 +872,94 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
 }
 
 // The self-service Edit Profile modal: picture, password, DOB, marital status.
+// A 1:1 crop dialog. The user drags/zooms the image inside a square frame; on
+// confirm it renders the visible square to a canvas and returns a JPEG File.
+function ImageCropModal({ file, onCancel, onCropped }) {
+  const [src, setSrc] = useState('');
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const imgRef = useRef(null);
+  const dragRef = useRef(null);
+  const BOX = 260; // on-screen crop frame size
+
+  useEffect(() => {
+    const r = new FileReader();
+    r.onload = () => setSrc(r.result);
+    r.readAsDataURL(file);
+  }, [file]);
+
+  const onDown = (e) => {
+    const p = e.touches ? e.touches[0] : e;
+    dragRef.current = { x: p.clientX - offset.x, y: p.clientY - offset.y };
+  };
+  const onMove = (e) => {
+    if (!dragRef.current) return;
+    const p = e.touches ? e.touches[0] : e;
+    setOffset({ x: p.clientX - dragRef.current.x, y: p.clientY - dragRef.current.y });
+  };
+  const onUp = () => { dragRef.current = null; };
+
+  const confirm = () => {
+    const img = imgRef.current;
+    if (!img) return;
+    // Map the on-screen transform to the natural image, then draw the square.
+    const out = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = out; canvas.height = out;
+    const ctx = canvas.getContext('2d');
+    // Displayed image size within the frame.
+    const baseW = img.naturalWidth, baseH = img.naturalHeight;
+    const fit = Math.max(BOX / baseW, BOX / baseH); // cover
+    const dispScale = fit * scale;
+    const dw = baseW * dispScale, dh = baseH * dispScale;
+    // Top-left of the image relative to the frame (image is centered + offset).
+    const left = (BOX - dw) / 2 + offset.x;
+    const top = (BOX - dh) / 2 + offset.y;
+    // Source rect in natural pixels that maps onto the frame [0,BOX].
+    const sx = (-left) / dispScale;
+    const sy = (-top) / dispScale;
+    const sSize = BOX / dispScale;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, out, out);
+    ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, out, out);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const cropped = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+      onCropped(cropped);
+    }, 'image/jpeg', 0.9);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[95] p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <h3 className="text-base font-extrabold text-[#050A1F] mb-1">Crop your photo</h3>
+        <p className="text-xs text-slate-500 mb-4">Drag to reposition, use the slider to zoom. Square (1:1).</p>
+        <div className="flex justify-center mb-4">
+          <div className="relative overflow-hidden rounded-full bg-slate-100 select-none"
+            style={{ width: BOX, height: BOX, touchAction: 'none', cursor: 'grab' }}
+            onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+            onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
+            {src && (
+              <img ref={imgRef} src={src} alt="" draggable={false}
+                style={{
+                  position: 'absolute', left: '50%', top: '50%',
+                  transform: `translate(-50%,-50%) translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                  minWidth: '100%', minHeight: '100%', objectFit: 'cover', transformOrigin: 'center',
+                  width: BOX, height: BOX, pointerEvents: 'none',
+                }} />
+            )}
+            <div className="absolute inset-0 rounded-full ring-2 ring-white/70 pointer-events-none" />
+          </div>
+        </div>
+        <input type="range" min="1" max="3" step="0.01" value={scale} onChange={(e) => setScale(Number(e.target.value))} className="w-full mb-4" />
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={confirm} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Crop &amp; upload</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditProfileModal({ user, onClose, onSaved }) {
   const [avatar, setAvatar] = useState(user.avatar || '');
   const [birthday, setBirthday] = useState(user.birthday || '');
@@ -884,12 +972,33 @@ function EditProfileModal({ user, onClose, onSaved }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [cropFile, setCropFile] = useState(null); // file awaiting crop
 
-  const pickPhoto = async (e) => {
-    const file = e.target.files && e.target.files[0]; if (!file) return;
-    setUploading(true); setErr('');
-    try { const url = await uploadCrmAvatar(file, user.name); setAvatar(url); }
-    catch (e2) { setErr(e2.message || 'Could not upload that image.'); } finally { setUploading(false); }
+  // Pick → open the 1:1 crop dialog (don't upload the raw file).
+  const pickPhoto = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+    setErr('');
+    setCropFile(file);
+  };
+
+  // After cropping: upload to ImageKit with a buffering state, then persist the
+  // new avatar immediately (and refresh the app-wide user) so it shows at once.
+  const onCropped = async (cropped) => {
+    setCropFile(null);
+    setUploading(true); setErr(''); setMsg('');
+    try {
+      const url = await uploadCrmAvatar(cropped, user.name);
+      setAvatar(url);
+      // Persist right away so the picture updates everywhere without a separate
+      // Save click.
+      const res = await api('/auth/me/profile', { method: 'PUT', body: JSON.stringify({ avatar: url }) });
+      onSaved && onSaved(res);
+      setMsg('Profile picture updated.');
+    } catch (e2) {
+      setErr(e2.message || 'Could not upload that image.');
+    } finally { setUploading(false); }
   };
   const save = async () => {
     setErr(''); setMsg('');
@@ -914,8 +1023,15 @@ function EditProfileModal({ user, onClose, onSaved }) {
         {msg && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
         <div className="flex items-center gap-4 mb-5">
-          {avatar ? <img src={avatar} alt="" className="w-16 h-16 rounded-full object-cover" /> : <span className="w-16 h-16 rounded-full bg-orange-50 text-[#FF4500] flex items-center justify-center text-xl font-bold">{initial}</span>}
-          <label className={`inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50 ${uploading ? 'opacity-50' : ''}`}>
+          <div className="relative">
+            {avatar ? <img src={avatar} alt="" className="w-16 h-16 rounded-full object-cover" /> : <span className="w-16 h-16 rounded-full bg-orange-50 text-[#FF4500] flex items-center justify-center text-xl font-bold">{initial}</span>}
+            {uploading && (
+              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
+                <svg className="animate-spin" width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" strokeOpacity="0.3" strokeWidth="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="#fff" strokeWidth="3" strokeLinecap="round"/></svg>
+              </div>
+            )}
+          </div>
+          <label className={`inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
             {uploading ? 'Uploading…' : 'Upload picture'}
             <input type="file" accept="image/*" className="hidden" onChange={pickPhoto} disabled={uploading} />
           </label>
@@ -963,6 +1079,7 @@ function EditProfileModal({ user, onClose, onSaved }) {
           <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </div>
+      {cropFile && <ImageCropModal file={cropFile} onCancel={() => setCropFile(null)} onCropped={onCropped} />}
     </div>
   );
 }

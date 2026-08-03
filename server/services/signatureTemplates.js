@@ -23,29 +23,46 @@ function iconBase() {
 }
 const ICON_NAMES = ['linkedin', 'facebook', 'instagram', 'calendly'];
 
-function socialIcons(v, gap = 8) {
+// Render the social icons as a single-row table so email clients (and the
+// contenteditable preview) can never stack them vertically. Each icon is a
+// table cell, not a block element.
+function socialIcons(v, size = 22) {
   const base = iconBase();
-  const links = ICON_NAMES.filter((k) => v[k]).map((k) =>
-    `<a href="${v[k]}" style="text-decoration:none;margin-right:${gap}px"><img src="${base}/${k}.svg" width="20" height="20" alt="${k}" style="vertical-align:middle;border:0" /></a>`
-  );
-  return links.join('');
+  const present = ICON_NAMES.filter((k) => v[k]);
+  if (present.length === 0) return '';
+  const cells = present.map((k) =>
+    `<td style="padding:0 6px 0 0"><a href="${v[k]}" target="_blank" style="text-decoration:none"><img src="${base}/${k}.svg" width="${size}" height="${size}" alt="${k}" style="display:block;border:0;width:${size}px;height:${size}px" /></a></td>`
+  ).join('');
+  return `<table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse"><tr>${cells}</tr></table>`;
 }
 
-// Round avatar with an accent ring; falls back to nothing if no photo.
+// A dedicated Calendly "Book a meeting" button (separate from the icon row) so
+// the call-to-action is obvious.
+function calendlyButton(v) {
+  if (!v.calendly) return '';
+  return `<a href="${v.calendly}" target="_blank" style="display:inline-block;background:${ORANGE};color:#fff;text-decoration:none;font-size:11px;font-weight:700;padding:6px 12px;border-radius:6px;font-family:'Segoe UI',Arial,sans-serif">📅 Book a meeting</a>`;
+}
+
+// Round avatar. Uses the photo when present; otherwise a coloured circle with
+// the person's initials so there's always something in the ring.
 function avatar(v, size = 66) {
-  if (!v.photo) return '';
-  return `<img src="${v.photo}" width="${size}" height="${size}" alt="" style="border-radius:50%;object-fit:cover;display:block;border:2px solid ${ORANGE}" />`;
+  if (v.photo) {
+    return `<img src="${v.photo}" width="${size}" height="${size}" alt="" style="border-radius:50%;object-fit:cover;display:block;border:2px solid ${ORANGE};width:${size}px;height:${size}px" />`;
+  }
+  const initials = String(v.name || '?').split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+  // Table-based circle so it renders in email clients without CSS flexbox.
+  return `<table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse"><tr><td width="${size}" height="${size}" align="center" valign="middle" style="width:${size}px;height:${size}px;border-radius:50%;background:${NAVY};color:#fff;font-family:'Segoe UI',Arial,sans-serif;font-size:${Math.round(size * 0.36)}px;font-weight:700;text-align:center;border:2px solid ${ORANGE}">${initials}</td></tr></table>`;
 }
 
 const templates = [
   {
     id: 'elegant-card',
     name: 'Elegant card',
-    description: 'Photo with accent ring, a clean vertical divider, and a social row. Modern and balanced.',
+    description: 'Photo on the left with an accent ring, a clean vertical divider, and a single-row social bar.',
     build: (v) => `
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.55;border-collapse:collapse">
   <tr>
-    ${v.photo ? `<td style="padding-right:18px;vertical-align:middle">${avatar(v, 70)}</td>` : ''}
+    <td style="padding-right:18px;vertical-align:middle">${avatar(v, 72)}</td>
     <td style="vertical-align:middle;border-left:2px solid ${ORANGE};padding-left:18px">
       <div style="font-size:17px;font-weight:700;color:${NAVY};letter-spacing:.2px">${v.name}</div>
       <div style="color:${ORANGE};font-weight:600;font-size:12px;margin-top:1px">${v.title}</div>
@@ -56,6 +73,7 @@ const templates = [
         ${v.website ? `&nbsp;&nbsp;<a href="${v.website}" style="color:${ORANGE};text-decoration:none;font-weight:600">${String(v.website).replace(/^https?:\/\//, '')}</a>` : ''}
       </div>
       ${socialIcons(v) ? `<div style="margin-top:9px">${socialIcons(v)}</div>` : ''}
+      ${v.calendly ? `<div style="margin-top:10px">${calendlyButton(v)}</div>` : ''}
     </td>
   </tr>
 </table>`.trim(),
@@ -63,11 +81,11 @@ const templates = [
   {
     id: 'banner-footer',
     name: 'Bold banner',
-    description: 'Name and title up top, contacts inline, finished with a gradient brand banner and socials.',
+    description: 'Name and title up top, contacts inline, a single-row social bar, finished with a gradient brand banner.',
     build: (v) => `
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.5;border-collapse:collapse;min-width:360px">
   <tr>
-    ${v.photo ? `<td style="padding-right:16px;vertical-align:top">${avatar(v, 60)}</td>` : ''}
+    <td style="padding-right:16px;vertical-align:top">${avatar(v, 60)}</td>
     <td style="vertical-align:top">
       <div style="font-size:16px;font-weight:700;color:${NAVY}">${v.name}</div>
       <div style="color:${MUTED};font-size:12px">${v.title} &middot; ${v.company}</div>
@@ -75,7 +93,10 @@ const templates = [
         <a href="mailto:${v.email}" style="color:#374151;text-decoration:none">${v.email}</a>
         ${v.phone ? ` &nbsp;|&nbsp; <a href="tel:${v.phone}" style="color:#374151;text-decoration:none">${v.phone}</a>` : ''}
       </div>
-      ${socialIcons(v) ? `<div style="margin-top:8px">${socialIcons(v)}</div>` : ''}
+      <table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;margin-top:8px"><tr>
+        ${socialIcons(v) ? `<td style="padding-right:10px;vertical-align:middle">${socialIcons(v)}</td>` : ''}
+        ${v.calendly ? `<td style="vertical-align:middle">${calendlyButton(v)}</td>` : ''}
+      </tr></table>
     </td>
   </tr>
   <tr><td colspan="2" style="padding-top:10px">
@@ -89,11 +110,11 @@ const templates = [
   {
     id: 'minimal-pro',
     name: 'Minimal professional',
-    description: 'Understated single-column layout with a thin rule and a confidentiality note.',
+    description: 'Understated single-column layout with a thin rule, a single-row social bar, and a confidentiality note.',
     build: (v) => `
 <table cellpadding="0" cellspacing="0" role="presentation" style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#111827;font-size:13px;line-height:1.55;border-collapse:collapse;max-width:500px">
   <tr>
-    ${v.photo ? `<td style="padding-right:16px;vertical-align:middle">${avatar(v, 58)}</td>` : ''}
+    <td style="padding-right:16px;vertical-align:middle">${avatar(v, 58)}</td>
     <td style="vertical-align:middle">
       <div style="font-size:15px;font-weight:700;color:${NAVY}">${v.name} <span style="color:${MUTED};font-weight:400;font-size:12px">| ${v.title}</span></div>
       <div style="color:${MUTED};font-size:12px;margin-top:2px">${v.company}</div>
@@ -102,7 +123,10 @@ const templates = [
         <a href="mailto:${v.email}" style="color:#374151;text-decoration:none">${v.email}</a>
         ${v.website ? ` &middot; <a href="${v.website}" style="color:${ORANGE};text-decoration:none">${String(v.website).replace(/^https?:\/\//, '')}</a>` : ''}
       </div>
-      ${socialIcons(v) ? `<div style="margin-top:8px">${socialIcons(v)}</div>` : ''}
+      <table cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;margin-top:8px"><tr>
+        ${socialIcons(v) ? `<td style="padding-right:10px;vertical-align:middle">${socialIcons(v)}</td>` : ''}
+        ${v.calendly ? `<td style="vertical-align:middle">${calendlyButton(v)}</td>` : ''}
+      </tr></table>
     </td>
   </tr>
   <tr><td colspan="2" style="padding-top:10px">
