@@ -359,7 +359,10 @@ router.get('/recent-wins', requireAuth, async (req, res, next) => {
     const fx = (s && s.crmConfig && s.crmConfig.fxRates) || { USD: 1 };
     const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
 
-    const cutoff = Date.now() - 60 * 60 * 1000;
+    // Show a win on everyone's dashboard until it's 48 hours old (or a newer
+    // win replaces it as the headline). Previously this was a 1-hour window,
+    // which made the celebration vanish almost immediately.
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
     const viewerIsAdmin = req.user.role === 'admin';
     const leads = await Lead.findAll({ where: { status: 'converted' }, limit: 2000 });
     const wins = [];
@@ -380,6 +383,10 @@ router.get('/recent-wins', requireAuth, async (req, res, next) => {
             avatar: owner && owner.avatar ? owner.avatar : null,
             amountUsd: Math.round(toUsd(it.amount, d.currency)),
             currency: d.currency, amount: Number(it.amount || 0),
+            // Customer first name + the service they took, for the banner copy
+            // (we deliberately don't expose the customer's website/company).
+            customerFirstName: (l.firstName || '').trim() || 'a client',
+            service: d.service || d.name || '',
             dealName: d.name, at: new Date(when).toISOString(),
           });
         }

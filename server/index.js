@@ -26,7 +26,29 @@ const app = express();
 // of erroring. '1' = trust the first proxy hop.
 app.set('trust proxy', 1);
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// Content Security Policy. The default helmet CSP is `default-src 'self'`, which
+// blocks the browser from uploading avatars to ImageKit and from loading images
+// served off ImageKit's CDN. We keep a tight policy but explicitly allow the
+// ImageKit upload endpoint (connect-src) and image hosts (img-src), plus data:
+// URIs used for in-app previews.
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      'default-src': ["'self'"],
+      // Avatar uploads POST to upload.imagekit.io; API + own origin also allowed.
+      'connect-src': ["'self'", 'https://upload.imagekit.io', 'https://api.imagekit.io', 'https://ik.imagekit.io'],
+      // Images may come from our origin, ImageKit's CDN, data URIs, and any https
+      // host (signature logos/photos can be hosted anywhere the admin points to).
+      'img-src': ["'self'", 'data:', 'blob:', 'https:'],
+      'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      'frame-src': ["'self'"],
+    },
+  },
+}));
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 

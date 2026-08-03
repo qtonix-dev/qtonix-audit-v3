@@ -1169,7 +1169,12 @@ function SalesCelebration({ latest, others }) {
     const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
     if (mins < 1) return 'just now';
     if (mins === 1) return '1 min ago';
-    return `${mins} min ago`;
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs === 1) return '1 hour ago';
+    if (hrs < 24) return `${hrs} hours ago`;
+    const days = Math.round(hrs / 24);
+    return days === 1 ? 'yesterday' : `${days} days ago`;
   };
   const initials = (name) => (name || '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
   const older = (others || []).filter((w) => w.id !== latest.id).slice(0, 4);
@@ -1189,7 +1194,7 @@ function SalesCelebration({ latest, others }) {
             Congratulations {first} on the sale of {usd(latest.amountUsd)}! 🚀
           </div>
           <div className="text-[11px] text-slate-500 truncate">
-            {latest.dealName}{latest.currency !== 'USD' ? ` · ${latest.currency} ${Number(latest.amount).toLocaleString()}` : ''} · {ago(latest.at)}
+            {latest.customerFirstName || 'a client'}{latest.service ? ` · ${latest.service}` : ''}{latest.currency !== 'USD' ? ` · ${latest.currency} ${Number(latest.amount).toLocaleString()}` : ''} · {ago(latest.at)}
           </div>
         </div>
       </div>
