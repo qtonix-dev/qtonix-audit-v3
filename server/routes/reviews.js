@@ -328,10 +328,22 @@ router.get('/', requireAuth, async (req, res, next) => {
       return res.status(403).json({ error: 'Only managers and admins can view reviews.' });
     }
     const period = String(req.query.period || periodKey());
+    const division = String(req.query.division || 'all'); // 'sales' | 'presales' | 'all'
     const users = (await User.findAll({ attributes: { exclude: ['passwordHash'] } })).map((u) => u.toJSON());
     const groups = groupsForUser(req.user, users);
 
-    const rows = await scoreAgents(groups, period);
+    let rows = await scoreAgents(groups, period);
+    // Admin can split the agent view into Sales (BDE) vs Pre-Sales by jobType.
+    if (division === 'sales' || division === 'presales') {
+      const wantType = division === 'presales' ? 'presales' : 'bde';
+      const typeById = new Map(users.map((u) => [u.id, u.jobType]));
+      rows = rows.filter((r) => {
+        const jt = typeById.get(r.agentId);
+        // Sales view includes anyone not explicitly pre-sales; Pre-Sales view is
+        // strictly pre-sales agents.
+        return division === 'presales' ? jt === 'presales' : jt !== 'presales';
+      });
+    }
     const existing = await Review.findAll({ where: { period, kind: { [Op.or]: ['agent', null] } } });
     const byAgent = {};
     existing.forEach((r) => { byAgent[r.agentId] = r.toJSON(); });
@@ -538,6 +550,28 @@ router.get('/sales-history/:agentId', requireAuth, async (req, res, next) => {
       newSalesUsd: Math.round(b.newSalesUsd),
       crossSalesUsd: Math.round(b.crossSalesUsd),
     }));
+
+    // Overlay any manually-entered monthly figures (Admin → Monthly Targets).
+    // These are the source of truth for historical months (e.g. migrated Zoho
+    // data), so when an entry exists for a period we use its achieved amount as
+    // the sales figure and expose its target. Computed installments are used
+    // only where no manual entry exists.
+    const periods = series.map((s) => s.period);
+    const stored = await MonthlyTarget.findAll({ where: { userId: agentId, period: periods } });
+    const byPeriod = {};
+    stored.forEach((r) => { byPeriod[r.period] = r; });
+    series.forEach((s) => {
+      const rec = byPeriod[s.period];
+      if (rec) {
+        s.targetUsd = Math.round(Number(rec.targetUsd || 0));
+        // If an achieved amount was entered, it takes precedence over the
+        // computed installment sum for that month.
+        if (Number(rec.achievedUsd || 0) > 0 || s.salesUsd === 0) {
+          s.salesUsd = Math.round(Number(rec.achievedUsd || 0));
+        }
+      }
+    });
+
     const total = series.reduce((s, b) => s + b.salesUsd, 0);
     const best = series.reduce((m, b) => (b.salesUsd > (m ? m.salesUsd : -1) ? b : m), null);
 

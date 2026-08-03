@@ -538,15 +538,19 @@ export default function Reviews({ user }) {
   const [mgrData, setMgrData] = useState(null);
   const [activeMgr, setActiveMgr] = useState(null);
   const isAdmin = user.role === 'admin';
+  // Admin can split into Sales (existing agents + managers) vs Pre-Sales (the
+  // lead-manager view — pre-sales agents only).
+  const [division, setDivision] = useState('sales');
 
   const load = () => {
-    api(`/reviews?period=${period}`).then(setData).catch((e) => setErr(e.message));
+    const divParam = isAdmin ? `&division=${division === 'presales' ? 'presales' : 'sales'}` : '';
+    api(`/reviews?period=${period}${divParam}`).then(setData).catch((e) => setErr(e.message));
   };
   const loadManagers = () => {
     api(`/reviews/managers?period=${period}`).then(setMgrData).catch((e) => setErr(e.message));
   };
-  useEffect(() => { setData(null); load(); /* eslint-disable-next-line */ }, [period]);
-  useEffect(() => { if (isAdmin && tab === 'managers') { setMgrData(null); loadManagers(); } /* eslint-disable-next-line */ }, [period, tab]);
+  useEffect(() => { setData(null); load(); /* eslint-disable-next-line */ }, [period, division]);
+  useEffect(() => { if (isAdmin && division === 'sales' && tab === 'managers') { setMgrData(null); loadManagers(); } /* eslint-disable-next-line */ }, [period, tab, division]);
 
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading reviews…</div>;
@@ -623,17 +627,32 @@ export default function Reviews({ user }) {
         </select>
       </div>
 
-      {/* Admins can review agents (1-to-1s) or managers (on team performance). */}
+      {/* Admin: choose the division (Sales vs Pre-Sales), then within Sales
+          switch between agent 1-to-1s and manager reviews. Pre-Sales mirrors the
+          lead-manager view (pre-sales agents only). */}
       {isAdmin && (
-        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
-          <button onClick={() => setTab('agents')}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'agents' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Agent reviews</button>
-          <button onClick={() => setTab('managers')}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'managers' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Manager reviews</button>
+        <div className="flex flex-wrap items-center gap-3 mb-5">
+          <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => { setDivision('sales'); }}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold ${division === 'sales' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Sales</button>
+            <button onClick={() => { setDivision('presales'); setTab('agents'); }}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold ${division === 'presales' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Pre-Sales</button>
+          </div>
+          {division === 'sales' && (
+            <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+              <button onClick={() => setTab('agents')}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'agents' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Agent reviews</button>
+              <button onClick={() => setTab('managers')}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'managers' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Manager reviews</button>
+            </div>
+          )}
+          {division === 'presales' && (
+            <span className="text-xs text-slate-400 font-semibold">Pre-sales team monthly reviews</span>
+          )}
         </div>
       )}
 
-      {isAdmin && tab === 'managers' ? (
+      {isAdmin && division === 'sales' && tab === 'managers' ? (
         <ManagerReviews period={period} data={mgrData} onSaved={loadManagers} active={activeMgr} setActive={setActiveMgr} user={user} />
       ) : (
       <>

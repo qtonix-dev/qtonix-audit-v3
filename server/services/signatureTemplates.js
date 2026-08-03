@@ -16,10 +16,10 @@ const MUTED = '#6b7280';
 const LINE = '#e5e7eb';
 
 const ICON = {
-  linkedin: 'https://cdn.simpleicons.org/linkedin/0A66C2',
-  facebook: 'https://cdn.simpleicons.org/facebook/1877F2',
-  instagram: 'https://cdn.simpleicons.org/instagram/E4405F',
-  calendly: 'https://cdn.simpleicons.org/calendly/006BFF',
+  linkedin: 'https://img.icons8.com/color/48/linkedin.png',
+  facebook: 'https://img.icons8.com/color/48/facebook-new.png',
+  instagram: 'https://img.icons8.com/fluency/48/instagram-new.png',
+  calendly: 'https://img.icons8.com/color/48/calendly.png',
 };
 
 function socialIcons(v, gap = 8) {

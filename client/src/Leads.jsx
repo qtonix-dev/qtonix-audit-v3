@@ -703,11 +703,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
               <option value="">All statuses</option>
               {(config.leadStatuses || [])
-                // Agents can't open converted leads, so offering the filter would
-                // just return nothing.
-                .filter((s) => !(user.role === 'agent' && s.id === 'converted'))
-                // Callback is its own tab; don't offer it in the leads filter.
-                .filter((s) => s.id !== 'callback')
+                // Converted has its own dedicated page — never a filter here, for
+                // anyone. Callback is its own tab too.
+                .filter((s) => s.id !== 'converted' && s.id !== 'callback')
                 .map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           )}
@@ -831,9 +829,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                     )}
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     {isProspect && (
-                      <td className="px-4 py-3 text-xs">
+                      <td className="px-4 py-3 text-xs whitespace-nowrap">
                         {l.callbackAt ? (
-                          <span className={callbackTone(l.callbackAt)}>
+                          <span className={`${callbackTone(l.callbackAt)} whitespace-nowrap`}>
                             {fmtDate(l.callbackAt)} · {callbackCountdown(l.callbackAt)}
                           </span>
                         ) : <span className="text-slate-300">—</span>}
@@ -1965,7 +1963,14 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const [showCc, setShowCc] = useState((initial.cc || []).length > 0);
   const [showBcc, setShowBcc] = useState((initial.bcc || []).length > 0);
   const [subject, setSubject] = useState(initial.subject || '');
-  const [body, setBody] = useState(initial.body || '');
+  // On reply/forward, initial.body is the quoted chain; place the default
+  // signature above it (below the new message area), Gmail-style.
+  const isReplyOrForward = ['reply', 'replyall', 'forward'].includes(initial.mode);
+  const [body, setBody] = useState(() => {
+    const sig = (initial.from && fromOptions.find((o) => o.value === initial.from)?.signature) || defaultSignature || '';
+    if (isReplyOrForward && sig) return `<br><br>${sig}<br>${initial.body || ''}`;
+    return initial.body || '';
+  });
   const [attachments, setAttachments] = useState([]);
   const [reports, setReports] = useState([]);
   const [showReports, setShowReports] = useState(false);
@@ -3828,12 +3833,26 @@ function ReportsTab({ lead, onChange }) {
 // Top-level Leads view controller — switches between list / new / detail.
 export default function Leads({ user, initialView, initialUntouched, initialLeadId, initialConvertedMonth }) {
   const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
-  const [activeId, setActiveId] = useState(initialLeadId || null);
+  const [activeId, setActiveId] = useState(() => {
+    if (initialLeadId) return initialLeadId;
+    try { return new URLSearchParams(window.location.search).get('leadId') || null; } catch { return null; }
+  });
   const [untouched, setUntouched] = useState(initialUntouched || null);
   const [detailTab, setDetailTab] = useState(null);
   // `tab` lets callers deep-link straight to a section (e.g. the Deals tab when
   // a deal is clicked from the pipeline or converted-clients page).
-  const openDetail = (id, tab) => { setActiveId(id); setDetailTab(tab || null); setView('detail'); };
+  const openDetail = (id, tab) => {
+    setActiveId(id); setDetailTab(tab || null); setView('detail');
+    try { const p = new URLSearchParams(window.location.search); p.set('leadId', id); window.history.replaceState(null, '', `${window.location.pathname}?${p.toString()}`); } catch { /* */ }
+  };
+  // If we landed with a leadId in the URL (a refresh on a detail page), open it.
+  const [bootedDetail, setBootedDetail] = useState(false);
+  useEffect(() => {
+    if (bootedDetail) return; setBootedDetail(true);
+    try { const lid = new URLSearchParams(window.location.search).get('leadId'); if (lid && view !== 'detail') { setActiveId(lid); setView('detail'); } } catch { /* */ }
+    // eslint-disable-next-line
+  }, []);
+  const clearLeadIdParam = () => { try { const p = new URLSearchParams(window.location.search); p.delete('leadId'); const qs = p.toString(); window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`); } catch { /* */ } };
   const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
   return (
     <div>
@@ -3853,7 +3872,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && isManagerOrAdmin && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
       {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onOpenLead={(id) => openDetail(id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
-      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list')} />}
+      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
     </div>
   );
 }
@@ -4434,56 +4453,90 @@ function DealsPipeline({ user, onOpenLead }) {
     const insts = d.installments || [];
     if (insts.length <= 1) return null;
     const paid = insts.filter((i) => i.paid).length;
-    return `${paid}/${insts.length} paid`;
+    return { paid, total: insts.length, pct: Math.round((paid / insts.length) * 100) };
   };
 
   if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading pipeline…</div>;
 
+  // Soft pastel header tint per column, derived from the stage colour.
+  const softBg = (hex) => `${hex}14`;
+
   return (
     <div>
-      <div className="mb-4">
+      <div className="mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Deals pipeline</h1>
         <div className="text-sm text-slate-400">{deals.length} deals · drag a card to move it between stages</div>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-4">
+      <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
           const col = deals.filter((d) => d.stage === s.id);
           return (
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => { const d = deals.find((x) => x.id === dragId); if (d) moveDeal(d, s.id); setDragId(null); }}
-              className="shrink-0 w-64 bg-slate-50/70 rounded-2xl border border-slate-100">
-              <div className="px-3 py-2.5 rounded-t-2xl flex items-center justify-between" style={{ background: s.color + '12' }}>
+              className="shrink-0 w-72 rounded-3xl p-3"
+              style={{ background: softBg(s.color) }}>
+              {/* Column header — pill dot, label, count, and stage total */}
+              <div className="flex items-center justify-between px-2 pt-1 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
-                  <span className="text-xs font-bold text-[#050A1F]">{s.label}</span>
+                  <span className="text-sm font-extrabold text-[#050A1F]">{s.label}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
                 </div>
-                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: s.color + '22', color: s.color }}>{col.length}</span>
+                <span className="text-[11px] font-bold text-slate-500">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</span>
               </div>
-              <div className="px-3 py-1.5 text-[11px] font-bold text-slate-500 border-b border-slate-100">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</div>
-              <div className="p-2 space-y-2 min-h-[140px]">
+
+              <div className="space-y-3 min-h-[160px]">
                 {col.map((d) => {
                   const pinfo = paidInfo(d);
+                  const pct = pinfo ? pinfo.pct : (d.stage === 'closed_won' ? 100 : 0);
+                  // Priority label + tint mirrors the reference "Medium/High/Low"
+                  // chip; we derive it from saleType/plan without changing data.
+                  const prio = d.saleType === 'cross' ? { label: 'Cross-sell', bg: '#F3E8FF', fg: '#9333EA' }
+                    : d.planType && d.planType !== 'one-time' ? { label: 'Recurring', bg: '#FFF4E5', fg: '#C2410C' }
+                    : { label: 'New', bg: '#E7F6EF', fg: '#0F9D58' };
                   return (
                     <div key={d.id} draggable
                       onDragStart={() => setDragId(d.id)}
                       onClick={() => onOpenLead(d.leadId, 'deals')}
-                      className="bg-white rounded-xl border border-slate-200 p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-orange-200 transition">
-                      <div className="flex items-start justify-between gap-1">
-                        <div className="font-bold text-xs text-[#050A1F] truncate">{d.name}</div>
-                        {d.saleType === 'cross' && <span className="text-[8px] font-bold bg-purple-100 text-purple-600 px-1 rounded shrink-0">CROSS</span>}
+                      className="bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all">
+                      {/* Priority chip */}
+                      <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: prio.bg, color: prio.fg }}>{prio.label}</span>
+
+                      {/* Title = deal / client name */}
+                      <div className="font-extrabold text-sm text-[#050A1F] leading-snug">{d.name}</div>
+                      {d.leadName && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{d.leadName}{d.service ? ` · ${d.service}` : ''}</div>}
+
+                      {/* Amount */}
+                      <div className="text-lg font-extrabold text-[#050A1F] mt-2">{fmtMoney(d)}</div>
+
+                      {/* Progress bar (installments collected, or stage completion) */}
+                      <div className="mt-3">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 mb-1">
+                          <span>Progress</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(3, Math.min(100, pct))}%`, background: s.color }} />
+                        </div>
                       </div>
-                      <div className="text-sm font-extrabold text-[#050A1F] mt-1">{fmtMoney(d)}</div>
-                      <div className="text-[10px] text-slate-400 mt-1 truncate">{d.leadName}{d.service ? ` · ${d.service}` : ''}</div>
-                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                        {d.planType && d.planType !== 'one-time' && <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{d.planType}</span>}
-                        {pinfo && <span className="text-[9px] font-bold bg-green-50 text-green-600 px-1.5 py-0.5 rounded">💵 {pinfo}</span>}
-                        {d.expectedClose && <span className="text-[9px] text-slate-400">📅 {d.expectedClose}</span>}
+
+                      {/* Footer meta: avatar initial, paid chip, expected close */}
+                      <div className="flex items-center justify-between mt-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center">
+                            {(d.ownerName || d.leadName || '?').trim()[0]?.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400">
+                          {pinfo && <span className="inline-flex items-center gap-1 text-green-600">💵 {pinfo.paid}/{pinfo.total}</span>}
+                          {d.expectedClose && <span className="inline-flex items-center gap-1">📅 {d.expectedClose}</span>}
+                        </div>
                       </div>
                     </div>
                   );
                 })}
-                {col.length === 0 && <div className="text-[11px] text-slate-300 text-center py-8">Drop deals here</div>}
+                {col.length === 0 && <div className="text-[11px] text-slate-300 text-center py-10 border-2 border-dashed border-slate-200 rounded-2xl">Drop deals here</div>}
               </div>
             </div>
           );

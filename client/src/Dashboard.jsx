@@ -220,6 +220,52 @@ function LeadMonthlyChart({ monthly }) {
   );
 }
 
+// Sales funnel overview: an inverted-funnel visual of deals by stage. Each band
+// shows the stage, its total amount, and the achieved count with a % of all
+// deals. The top row shows intake = leads assigned + generated this month.
+function SalesFunnel({ funnel }) {
+  const usd = (n) => `$${Math.round(n || 0).toLocaleString()}`;
+  const stages = (funnel && funnel.stages) || [];
+  const maxCount = Math.max(1, ...stages.map((s) => s.count));
+  return (
+    <div>
+      {/* Top of funnel: intake */}
+      <div className="flex items-center justify-between rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 mb-3">
+        <div className="text-xs font-bold text-[#050A1F]">Top of funnel · intake</div>
+        <div className="text-xs font-bold text-slate-500">
+          {funnel.leadsAssignedMonth} assigned + {funnel.leadsGeneratedMonth} generated =
+          <span className="text-[#FF4500]"> {funnel.topOfFunnel}</span>
+        </div>
+      </div>
+
+      {stages.length === 0 ? (
+        <div className="text-slate-300 text-sm py-6 text-center">No deals yet.</div>
+      ) : (
+        <div className="space-y-1.5">
+          {stages.map((s, i) => {
+            // Funnel taper: each band a bit narrower than the one above.
+            const width = 100 - i * (55 / Math.max(1, stages.length));
+            return (
+              <div key={s.id} className="flex items-center gap-3">
+                <div className="flex-1 flex justify-center">
+                  <div className="rounded-lg py-2 px-3 text-center transition-all"
+                    style={{ width: `${Math.max(38, width)}%`, background: `${s.color || '#2563EB'}`, color: '#fff' }}>
+                    <div className="text-[11px] font-bold leading-tight truncate">{s.label}</div>
+                    <div className="text-[10px] opacity-90">{usd(s.amountUsd)}</div>
+                  </div>
+                </div>
+                <div className="w-24 text-right shrink-0">
+                  <div className="text-sm font-extrabold text-[#050A1F] leading-tight">{s.count} <span className="text-[10px] font-bold text-slate-400">({s.pct}%)</span></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrendChart({ trend }) {
   if (!trend || trend.length === 0) return null;
   const W = 520, H = 150, pad = 26;
@@ -290,6 +336,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   // Commitments that blew past their agreed time. Managers and admins see the
   // whole team's; an agent sees only their own.
   const [missed, setMissed] = useState(null);
+  const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
   useEffect(() => { api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null)); }, []);
@@ -389,12 +436,15 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               </div>
             </div>
             {(isAdmin || isManager) && missed.byOwner.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {missed.byOwner.slice(0, 5).map((o) => (
-                  <span key={o.ownerId} className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-700">
+                  <button key={o.ownerId} onClick={() => setMissedModal({ ownerId: o.ownerId })}
+                    className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-100 transition-colors">
                     {o.ownerName} · {o.missed}
-                  </span>
+                  </button>
                 ))}
+                <button onClick={() => setMissedModal({ ownerId: null })}
+                  className="rounded-md bg-red-600 text-white px-2.5 py-1 text-[10px] font-bold hover:bg-red-700 transition-colors">View all →</button>
               </div>
             )}
           </div>
@@ -457,7 +507,17 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         </div>
       )}
 
-      {/* Sent emails not opened after 24h — nudge to follow up. */}
+      {missedModal && (
+        <MissedCommitmentsModal
+          items={(missed && missed.items) || []}
+          byOwner={(missed && missed.byOwner) || []}
+          initialOwnerId={missedModal.ownerId}
+          isAdmin={user.role === 'admin'}
+          onDismiss={async (i) => { try { await api(`/leads/missed-activities/${i.leadId}/dismiss`, { method: 'POST', body: JSON.stringify({ activityId: i.activityId }) }); setMissed((prev) => prev ? { ...prev, items: prev.items.filter((x) => x.activityId !== i.activityId), stillOpen: Math.max(0, prev.stillOpen - 1) } : prev); } catch { /* */ } }}
+          onOpenLead={(leadId) => { setMissedModal(null); onViewToday && onViewToday(leadId); }}
+          onClose={() => setMissedModal(null)}
+        />
+      )}
       {unopened && unopened.items && unopened.items.length > 0 && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-2">📭 Sent but not opened after 24h · {unopened.items.length}</div>
@@ -540,14 +600,25 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         </div>
       </div>
 
-      {/* ROW 5 — Sales trend + leaderboard, 50/50 */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
-            <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
+      {/* ROW 5 — Left: Sales trend + Sales funnel. Right: leaderboard (full height). */}
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-100 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
+              <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
+            </div>
+            <TrendChart trend={data.trend} />
           </div>
-          <TrendChart trend={data.trend} />
+          {data.funnel && (
+            <div className="bg-white rounded-2xl border border-slate-100 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-base font-extrabold text-[#050A1F]">Sales funnel overview</h2>
+                <span className="text-xs text-slate-400">Deals by stage</span>
+              </div>
+              <SalesFunnel funnel={data.funnel} />
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-3">
@@ -1322,6 +1393,71 @@ function LeadPeekModal({ row, onClose, onMore }) {
           <button onClick={onMore} className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>More details</button>
           <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-500">Close</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Full missed-commitments list in a themed popup: filter by agent/manager,
+// paginated. Reads the already-loaded items (calls, tasks, unsubmitted drafts).
+function MissedCommitmentsModal({ items, byOwner, initialOwnerId, isAdmin, onDismiss, onOpenLead, onClose }) {
+  const [ownerId, setOwnerId] = React.useState(initialOwnerId || '');
+  const [page, setPage] = React.useState(1);
+  const perPage = 10;
+  const open = (items || []).filter((i) => !i.resolved);
+  const filtered = ownerId ? open.filter((i) => String(i.ownerId) === String(ownerId)) : open;
+  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+  React.useEffect(() => { setPage(1); }, [ownerId]);
+  const kindIcon = (k) => (k === 'call' ? '📞' : k === 'draft' ? '✍️' : '✅');
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <div className="text-base font-extrabold text-[#050A1F]">⚠️ Missed commitments</div>
+            <div className="text-[11px] text-slate-400">{filtered.length} open · scheduled calls, tasks and unsubmitted drafts past due</div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs font-semibold text-slate-500">Filter by owner</span>
+          <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600">
+            <option value="">All owners</option>
+            {byOwner.map((o) => <option key={o.ownerId} value={o.ownerId}>{o.ownerName} ({o.missed})</option>)}
+          </select>
+        </div>
+
+        <div className="px-5 py-3 overflow-y-auto flex-1">
+          {pageItems.length === 0 && <div className="text-slate-400 text-sm py-10 text-center">Nothing here.</div>}
+          <div className="space-y-1.5">
+            {pageItems.map((i) => (
+              <div key={i.activityId} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 text-xs hover:bg-red-50/40 group">
+                <span className="cursor-pointer" onClick={() => onOpenLead(i.leadId)}>{kindIcon(i.kind)}</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onOpenLead(i.leadId)}>{i.leadName}</span>
+                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onOpenLead(i.leadId)}>{i.title}</span>
+                <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>
+                <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+                {isAdmin && (
+                  <button title="Clear" onClick={() => onDismiss(i)}
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {pages > 1 && (
+          <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0">
+            <span className="text-[11px] text-slate-400">Page {page} of {pages}</span>
+            <div className="flex gap-1.5">
+              <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">Prev</button>
+              <button disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">Next</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

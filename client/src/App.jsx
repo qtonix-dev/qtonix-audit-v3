@@ -1325,6 +1325,9 @@ export default function App() {
       const p = new URLSearchParams(window.location.search);
       if (p.get('leadRun')) return 'new';
       if (p.get('reportId')) return 'progress';
+      // A persisted view (survives refresh). Fall back to legacy params, then
+      // the dashboard.
+      if (p.get('view')) return p.get('view');
       if (p.get('q')) return 'list';
       return 'dashboard';
     } catch { return 'dashboard'; }
@@ -1356,6 +1359,19 @@ export default function App() {
     const t = setInterval(poll, 60000); // refresh every minute
     return () => { alive = false; clearInterval(t); };
   }, [user]);
+
+  // Keep the current top-level view in the URL so a page refresh returns the
+  // user to where they were rather than bouncing to the dashboard.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      // Don't fight the special report/lead-run flows that own the URL.
+      if (p.get('leadRun') || p.get('reportId')) return;
+      if (view && view !== 'dashboard') p.set('view', view); else p.delete('view');
+      const qs = p.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    } catch { /* history API not available */ }
+  }, [view]);
 
   useEffect(() => {
     // Training link: no account needed, so sign in as the synthetic demo user.

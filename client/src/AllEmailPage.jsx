@@ -42,6 +42,7 @@ export default function AllEmailPage({ user }) {
   const [labelMenuFor, setLabelMenuFor] = useState(null); // gmailMessageId
   const [notConnected, setNotConnected] = useState(false);
   const [composer, setComposer] = useState(null); // { mode, to, cc, subject, body, threadId, inReplyTo }
+  const [confirmDel, setConfirmDel] = useState(null); // message pending delete confirmation
 
   const asParam = as ? `&as=${as}` : '';
 
@@ -112,13 +113,17 @@ export default function AllEmailPage({ user }) {
     } catch (e) { setErr(e.message); }
   };
 
-  const deleteMessage = async (msg) => {
+  const deleteMessage = (msg) => {
     if (msg.leadId) return;
-    if (!confirm('Move this email to Trash in Gmail?')) return;
+    setConfirmDel(msg); // open themed confirm modal
+  };
+  const doDeleteMessage = async () => {
+    const msg = confirmDel; if (!msg) return;
     try {
       await api(`/gmail/all/message/${msg.gmailMessageId}?${as ? `as=${as}` : ''}`, { method: 'DELETE' });
       setMessages((prev) => prev.filter((m) => m.gmailMessageId !== msg.gmailMessageId));
     } catch (e) { setErr(e.message); }
+    setConfirmDel(null);
   };
 
   if (notConnected) {
@@ -254,6 +259,30 @@ export default function AllEmailPage({ user }) {
       {openThread && <AllEmailThread threadId={openThread.threadId} subject={openThread.subject} as={as} onClose={() => setOpenThread(null)}
         onReply={(payload) => setComposer(payload)} />}
       {showNewLabel && <NewLabelModal onClose={() => setShowNewLabel(false)} onCreate={createLabel} />}
+
+      {confirmDel && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90] p-4" onClick={() => setConfirmDel(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>
+              </div>
+              <div>
+                <div className="text-base font-extrabold text-[#050A1F]">Move to Trash?</div>
+                <div className="text-xs text-slate-500">This email will be moved to Trash in Gmail.</div>
+              </div>
+            </div>
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 mb-4">
+              <div className="text-xs font-bold text-[#050A1F] truncate">{confirmDel.subject || '(no subject)'}</div>
+              <div className="text-[11px] text-slate-400 truncate">{confirmDel.fromName || confirmDel.fromEmail}</div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmDel(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={doDeleteMessage} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: '#DC2626' }}>Move to Trash</button>
+            </div>
+          </div>
+        </div>
+      )}
       {composer && <AllEmailComposer initial={composer} as={as}
         signature={(mailboxes.find((m) => (m.value === (as || String(user.id))))?.signature) || ''}
         onClose={() => setComposer(null)}
@@ -382,7 +411,15 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
   const [showCc, setShowCc] = useState((initial.cc || []).length > 0);
   const [showBcc, setShowBcc] = useState(false);
   const [subject, setSubject] = useState(initial.subject || '');
-  const [body, setBody] = useState(initial.body || '');
+  // For a reply/forward, initial.body holds the quoted chain. Place the default
+  // signature above it (below where the new message will be typed), like Gmail.
+  const isReplyOrForward = ['reply', 'replyall', 'forward'].includes(initial.mode);
+  const [body, setBody] = useState(() => {
+    if (isReplyOrForward && signature) {
+      return `<br><br>${signature}<br>${initial.body || ''}`;
+    }
+    return initial.body || '';
+  });
   const [attachments, setAttachments] = useState([]); // {filename,mimeType,contentBase64}
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');

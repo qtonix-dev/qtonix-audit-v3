@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { Lead, User, Report, Settings, AuditLog, Op } = require('../models');
+const { Lead, User, Report, Settings, AuditLog, MonthlyTarget, Op } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 const { generateBrief, isStale, CACHE_DAYS } = require('../services/businessBrief');
 
@@ -243,10 +243,9 @@ router.get('/', requireAuth, async (req, res, next) => {
     const where = await visibilityWhere(req.user);
     const { q, status, source, ownerId, country, untouched, stage } = req.query;
     // Converted leads ALWAYS live on their own Converted page and must never
-    // appear in the main Leads list or Call Backs tab — not even when a status
-    // filter is applied. The Call Backs (prospect) tab shows stage=callback
+    // appear in the main Leads list or Call Backs tab — regardless of any
+    // status filter. The Call Backs (prospect) tab shows stage=callback
     // prospects; the main Leads list shows everything else that isn't converted.
-    const notConverted = { [Op.ne]: 'converted' };
     if (stage === 'prospect') {
       // The Call Backs section: cold-calling prospects not yet worked.
       where.status = 'callback';
@@ -1035,12 +1034,32 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       .map((o) => ({ ownerId: o.ownerId, name: o.name, avatar: o.avatar, transfersToday: o.transfersToday, dailyTarget: o.transferDailyTarget, pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null, remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0, transfers: o.transferList || [] }))
       .sort((a, b) => b.transfersToday - a.transfersToday);
 
-    // Company target = sum of managers' effective team targets.
+    // Company target = every manager's effective team target, PLUS the personal
+    // sales targets of agents who report directly to the admin (i.e. not under
+    // any manager). An agent is "under a manager" only if their managerId points
+    // at an actual manager user.
+    const managerIds = new Set(owners.filter((u) => u.role === 'manager').map((u) => u.id));
     const agentSalesByMgr = {};
-    owners.forEach((u) => { if (u.role === 'agent' && u.managerId && u.targets && u.targets.sales && u.targets.sales.enabled) agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0); });
+    owners.forEach((u) => {
+      if (u.role === 'agent' && u.managerId && managerIds.has(u.managerId) && u.targets && u.targets.sales && u.targets.sales.enabled) {
+        agentSalesByMgr[u.managerId] = (agentSalesByMgr[u.managerId] || 0) + Number(u.targets.sales.monthly || 0);
+      }
+    });
     let companyTarget = 0;
-    owners.forEach((u) => { if (u.role === 'manager') { const t = u.targets && u.targets.team; companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0); } });
-    if (companyTarget === 0) owners.forEach((u) => { if (u.role === 'agent' && u.targets && u.targets.sales && u.targets.sales.enabled) companyTarget += Number(u.targets.sales.monthly || 0); });
+    // Managers' team targets (override value, or the auto-sum of their agents).
+    owners.forEach((u) => {
+      if (u.role === 'manager') {
+        const t = u.targets && u.targets.team;
+        companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0);
+      }
+    });
+    // Plus agents reporting directly to the admin (no manager, or manager isn't a
+    // manager user) — their individual sales targets.
+    owners.forEach((u) => {
+      if (u.role === 'agent' && !(u.managerId && managerIds.has(u.managerId)) && u.targets && u.targets.sales && u.targets.sales.enabled) {
+        companyTarget += Number(u.targets.sales.monthly || 0);
+      }
+    });
 
     // The target that applies to THIS viewer's dashboard:
     //  - admin   → whole company
@@ -1062,11 +1081,30 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // themselves on converted clients, since those leads are in their scope).
     const scopeAchieved = salesThisMonthUsd;
 
-    // 6-month trend (collected USD by paid date) within scope.
+    // 6-month trend (collected USD by paid date) within scope. For historical
+    // months we also overlay manually-entered figures from Admin → Monthly
+    // Targets (the source of truth for migrated/past data), summed across the
+    // owners in this dashboard's scope.
+    const trendPeriods = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      trendPeriods.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    const scopedOwnerIds = [...new Set([
+      ...leads.map((l) => l.ownerId).filter(Boolean),
+      ...Object.keys(byOwner).map(Number).filter(Boolean),
+    ])];
+    const mtRows = scopedOwnerIds.length
+      ? await MonthlyTarget.findAll({ where: { period: trendPeriods, userId: scopedOwnerIds } })
+      : [];
+    const mtAchievedByPeriod = {};
+    mtRows.forEach((r) => { mtAchievedByPeriod[r.period] = (mtAchievedByPeriod[r.period] || 0) + Number(r.achievedUsd || 0); });
+
     const trend = [];
     for (let i = 5; i >= 0; i--) {
       const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      const period = `${mStart.getFullYear()}-${String(mStart.getMonth() + 1).padStart(2, '0')}`;
       let sum = 0;
       for (const l of leads) {
         for (const d of (l.deals || [])) {
@@ -1076,8 +1114,47 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           }
         }
       }
-      trend.push({ month: mStart.toLocaleString('en-US', { month: 'short' }), year: mStart.getFullYear(), salesUsd: Math.round(sum), pct: companyTarget > 0 ? Math.round((sum / companyTarget) * 100) : null });
+      // Manual entry for the month takes precedence when present (or when there
+      // is no computed sales at all for that month).
+      const manual = mtAchievedByPeriod[period] || 0;
+      const salesUsd = manual > 0 ? manual : sum;
+      trend.push({ month: mStart.toLocaleString('en-US', { month: 'short' }), year: mStart.getFullYear(), salesUsd: Math.round(salesUsd), pct: companyTarget > 0 ? Math.round((salesUsd / companyTarget) * 100) : null });
     }
+
+    // Sales funnel: value + count of deals per pipeline stage, plus the top-of-
+    // funnel intake (leads assigned + generated this month). The dashboard shows
+    // each stage's amount and how much has been achieved (count) with a %.
+    const settingsForStages = await Settings.findOne({ where: { singleton: 'settings' } });
+    const dealStages = (settingsForStages && settingsForStages.crmConfig && settingsForStages.crmConfig.dealStages) || [];
+    const funnelByStage = {};
+    dealStages.forEach((st) => { funnelByStage[st.id] = { id: st.id, label: st.label, color: st.color, count: 0, amountUsd: 0 }; });
+    let funnelTotalDeals = 0;
+    for (const l of leads) {
+      if (l.status === 'callback') continue;
+      for (const d of (l.deals || [])) {
+        const st = funnelByStage[d.stage];
+        if (!st) continue;
+        st.count++;
+        st.amountUsd += toUsd(d.amount, d.currency);
+        funnelTotalDeals++;
+      }
+    }
+    const funnelStages = dealStages.map((st) => {
+      const f = funnelByStage[st.id];
+      return {
+        id: st.id, label: st.label, color: st.color,
+        count: f.count, amountUsd: Math.round(f.amountUsd),
+        // % of all deals that have reached (are sitting at) this stage.
+        pct: funnelTotalDeals > 0 ? Math.round((f.count / funnelTotalDeals) * 100) : 0,
+      };
+    });
+    const funnel = {
+      leadsAssignedMonth: leadsAssignedMonthTotal,
+      leadsGeneratedMonth: leadsGeneratedMonthTotal,
+      topOfFunnel: leadsAssignedMonthTotal + leadsGeneratedMonthTotal,
+      totalDeals: funnelTotalDeals,
+      stages: funnelStages,
+    };
 
     // Top shift/branch this month.
     const shiftBoard = Object.values(byShift).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) }))
@@ -1208,7 +1285,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         leadGenTarget: ((targetsById[req.user.id] || {}).leadGen && (targetsById[req.user.id] || {}).leadGen.enabled)
           ? Number((targetsById[req.user.id] || {}).leadGen.monthly || 0) : 0,
       } : null,
-      leaderboard, transferBoard, trend, shiftBoard, topShift,
+      leaderboard, transferBoard, trend, funnel, shiftBoard, topShift,
       topPerformer, topPerformerTied,
       awaiting: awaitingList.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 50),
       leadDaily,
