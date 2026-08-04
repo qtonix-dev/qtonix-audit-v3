@@ -523,7 +523,7 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
       const q = leadQuery(lead);
       if (q) {
         try {
-          const msgs = await gmail.searchMessages(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, q, 25);
+          const msgs = await gmail.searchMessages(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, q, 50);
           for (const m of msgs) {
             const [row, created] = await LeadEmail.findOrCreate({
               where: { userId: viewer.id, gmailMessageId: m.gmailMessageId },
@@ -711,17 +711,42 @@ router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
   try {
     const viewer = await User.findByPk(req.user.id);
     const allowed = await visibleUserIds(viewer);
-    // Prefer our stored copies (respecting visibility); fall back to live fetch
-    // from the viewer's mailbox for anything not yet synced.
-    let rows = await LeadEmail.findAll({ where: { threadId: req.params.threadId, userId: { [Op.in]: allowed } }, order: [['sentAt', 'ASC']] });
-    if (rows.length === 0 && viewer.gmailRefreshToken) {
-      const s = await Settings.findOne({ where: { singleton: 'settings' } });
-      try {
-        const msgs = await gmail.getThread(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, req.params.threadId);
-        return res.json({ messages: msgs });
-      } catch (e) { /* fall through */ }
-    }
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+
+    // Live-fetch the COMPLETE thread from the viewer's mailbox so every message
+    // in the conversation shows — not just the subset our background sync has
+    // stored. Gmail returns the whole thread by id, including replies that don't
+    // literally contain the lead's address. Best-effort: on any failure we fall
+    // back to the stored copies below.
+    let liveMsgs = null;
+    if (viewer.gmailRefreshToken) {
+      try {
+        liveMsgs = await gmail.getThread(settings, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, req.params.threadId);
+      } catch (e) { liveMsgs = null; }
+    }
+
+    const rows = await LeadEmail.findAll({ where: { threadId: req.params.threadId, userId: { [Op.in]: allowed } }, order: [['sentAt', 'ASC']] });
+
+    if (liveMsgs && liveMsgs.length) {
+      // Merge: prefer the live message, but carry over the stored row's id and
+      // read-state so the UI's read/star/tracking still work. Dedupe by
+      // gmailMessageId, and include any stored rows Gmail didn't return.
+      const byGid = new Map();
+      for (const r of rows) { const j = r.toJSON(); if (j.gmailMessageId) byGid.set(j.gmailMessageId, j); }
+      const merged = [];
+      const seen = new Set();
+      for (const m of liveMsgs) {
+        const stored = m.gmailMessageId ? byGid.get(m.gmailMessageId) : null;
+        merged.push(stored ? { ...m, _id: stored._id, isRead: stored.isRead, starred: stored.starred } : m);
+        if (m.gmailMessageId) seen.add(m.gmailMessageId);
+      }
+      // Any stored message the live fetch missed (rare) — keep it.
+      for (const r of rows) { const j = r.toJSON(); if (j.gmailMessageId && !seen.has(j.gmailMessageId)) merged.push(j); }
+      merged.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt));
+      return res.json({ messages: merged });
+    }
+
+    // No live fetch available — return the stored copies (hydrated for media).
     const messages = [];
     for (const r of rows) messages.push(await hydrateMedia(r, viewer, settings));
     res.json({ messages });
