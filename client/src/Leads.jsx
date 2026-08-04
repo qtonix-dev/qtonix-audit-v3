@@ -14,8 +14,15 @@ import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, da
 // replaces only the new-message portion above it (keeps context + signature).
 function extractQuotedTail(html) {
   if (!html) return '';
+  // Match every quote/forward style the app produces so an AI re-draft never
+  // drops the chain: the Gmail-style quote block, a forwarded-message header,
+  // the older 2px border quote, and an appended signature table.
   const markers = [
+    html.indexOf('<div class="gmail_quote"'),
+    html.indexOf('class="gmail_quote"'),
+    html.search(/<blockquote[^>]*gmail_quote/i),
     html.indexOf('<div style="border-left:2px solid'),
+    html.search(/<div[^>]*border-left:\s*1px solid/i),
     html.indexOf('---------- Forwarded message'),
     html.search(/<table[^>]*(?:signature|Segoe UI)/i),
   ].filter((i) => i >= 0);
@@ -517,6 +524,27 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
     if (ref.current) onChange(ref.current.innerHTML);
     if (ref.current) ref.current.focus();
   };
+
+  // Paste from Word/Docs drops a pile of mso-* markup that either renders as raw
+  // HTML or loses paragraph spacing. Clean it: strip Office cruft, keep real
+  // paragraph breaks (as spaced <p> blocks), and preserve basic formatting.
+  const onPaste = (e) => {
+    const cb = e.clipboardData || window.clipboardData;
+    if (!cb) return;
+    const html = cb.getData('text/html');
+    e.preventDefault();
+    let cleaned;
+    if (html) {
+      cleaned = cleanWordHtml(html);
+    } else {
+      // Plain text: keep blank lines as paragraph breaks.
+      const text = cb.getData('text/plain') || '';
+      cleaned = text.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`).join('');
+    }
+    document.execCommand('insertHTML', false, cleaned);
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
+
   const Btn = ({ cmd, arg, children, title }) => (
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); exec(cmd, arg); }}
       className="w-7 h-7 rounded text-xs font-bold text-slate-600 hover:bg-slate-200">{children}</button>
@@ -544,6 +572,7 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
           contentEditable
           suppressContentEditableWarning
           onInput={() => onChange(ref.current.innerHTML)}
+          onPaste={onPaste}
           onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
           onFocus={() => setFocused(true)}
           className="px-3 py-2 text-sm outline-none overflow-auto rich-text"
@@ -554,6 +583,58 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
   );
 }
 
+// Turn messy Word/Google-Docs HTML into clean, well-spaced markup: strip Office
+// namespaces and mso-* styles, drop empty <o:p> tags, keep paragraphs/lists/
+// bold/italic/links, and guarantee visible spacing between paragraphs.
+function cleanWordHtml(html) {
+  try {
+    // Keep only the <body> if present.
+    let src = html;
+    const bodyMatch = src.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) src = bodyMatch[1];
+    const doc = new DOMParser().parseFromString(`<div>${src}</div>`, 'text/html');
+    const root = doc.body.firstChild;
+    if (!root) return html;
+
+    // Remove Word conditional comments, style/meta/script, and o:p tags.
+    root.querySelectorAll('style, meta, link, script, xml, o\\:p').forEach((n) => n.remove());
+
+    const ALLOWED = new Set(['P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'A', 'SPAN', 'DIV', 'H1', 'H2', 'H3', 'BLOCKQUOTE']);
+    const walk = (node) => {
+      [...node.childNodes].forEach((child) => {
+        if (child.nodeType === 1) {
+          walk(child);
+          const tag = child.tagName;
+          if (!ALLOWED.has(tag)) {
+            // Unwrap disallowed element, keeping its children.
+            const parent = child.parentNode;
+            while (child.firstChild) parent.insertBefore(child.firstChild, child);
+            parent.removeChild(child);
+            return;
+          }
+          // Strip all attributes except href on links.
+          [...child.attributes].forEach((a) => {
+            if (!(tag === 'A' && a.name === 'href')) child.removeAttribute(a.name);
+          });
+        }
+      });
+    };
+    walk(root);
+
+    let out = root.innerHTML
+      .replace(/<span>\s*<\/span>/gi, '')
+      .replace(/<div>\s*<\/div>/gi, '')
+      .replace(/(&nbsp;|\s)+/g, ' ')
+      .replace(/<p>\s*<\/p>/gi, '')
+      .trim();
+    // Give paragraphs breathing room so pasted text isn't a solid block.
+    out = out.replace(/<p>/gi, '<p style="margin:0 0 10px 0">');
+    return out || html;
+  } catch {
+    return html;
+  }
+}
+
 /**
  * First-reply state for a pre-sales lead: '' (not applicable or done),
  * 'pending' (inside the 24-hour window) or 'overdue' (past it).
@@ -561,6 +642,10 @@ export function RichText({ value, onChange, placeholder, minHeight = 120 }) {
 function draftState(l) {
   if (!/pre-?sales/i.test(String(l.leadSource || ''))) return '';
   if (l.firstReplyDoneAt) return '';
+  // Once the owner has SUBMITTED the first-reply draft, it's no longer "due" on
+  // them — it's waiting on the lead manager to send. So drop the due/overdue
+  // badge as soon as a draft exists.
+  if (l.firstDraftAt || l.firstDraft) return '';
   // Back-dated leads are historical imports and are exempt from the 24-hour
   // first-reply rule, so they never show a "Draft due"/overdue badge.
   if (l.backDated) return '';
@@ -2409,6 +2494,7 @@ function EmailDraftTab({ lead, user, onChange }) {
             doneLabel={`Handled ${lead.firstReplyMode === 'self' ? 'by the owner' : 'via the lead manager'}`} doneAt={lead.firstReplyDoneAt} />
         ) : lead.firstDraft ? (
           <SubmittedDraft subject={lead.firstDraftSubject} body={lead.firstDraft} at={lead.firstDraftAt}
+            submittedBy={lead.ownerName}
             canAck={isLM} ackLabel="Mark as read & sent" busy={busy}
             editHint={canEditFirst ? 'You can still edit this for a short while.' : null}
             onAck={() => save('first-reply', { draftRead: true })} />
@@ -2465,12 +2551,24 @@ function EmailDraftTab({ lead, user, onChange }) {
 }
 
 /** A submitted-but-unacknowledged draft, with the LM's acknowledge button. */
-function SubmittedDraft({ subject, body, at, canAck, ackLabel, onAck, busy, editHint }) {
+function SubmittedDraft({ subject, body, at, canAck, ackLabel, onAck, busy, editHint, submittedBy }) {
+  const [dismissed, setDismissed] = useState(false);
+  // Auto-vanish after 5 minutes so the confirmation doesn't linger forever.
+  useEffect(() => {
+    const t = setTimeout(() => setDismissed(true), 5 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, []);
+  if (dismissed) return null;
   return (
-    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3">
-      <div className="text-xs font-bold text-blue-800 mb-1">📥 Draft submitted · {fmtDate(at)}</div>
+    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 relative">
+      <button onClick={() => setDismissed(true)} title="Dismiss"
+        className="absolute top-2 right-2 text-blue-400 hover:text-blue-700 text-lg leading-none">×</button>
+      <div className="text-xs font-bold text-blue-800 mb-1 pr-6">
+        📥 First-reply draft submitted{submittedBy ? ` by ${submittedBy}` : ''} · {fmtDate(at)}
+      </div>
       {subject && <div className="text-[13px] font-bold text-slate-700">Subject: {subject}</div>}
-      <div className="text-[13px] text-slate-700 mt-1" dangerouslySetInnerHTML={{ __html: body }} />
+      {/* The raw HTML body preview is intentionally NOT shown here — it rendered
+          as messy Word markup. The draft itself is stored and sent by the LM. */}
       {editHint && <div className="text-[11px] text-orange-600 mt-1">{editHint}</div>}
       {canAck ? (
         <button disabled={busy} onClick={onAck}
@@ -2502,17 +2600,24 @@ function DraftModal({ title, onClose, onSubmit, busy, initial }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="text-base font-extrabold text-[#050A1F] mb-1">{isEdit ? `Edit ${title.toLowerCase()} draft` : `${title} draft`}</div>
-        <div className="text-xs text-slate-400 mb-4">Write the email — the lead manager will send it on your behalf.</div>
-        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Subject line</label>
-        <input className="w-full mt-1 mb-3 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-          value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject line" />
-        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Email body</label>
-        <div className="mt-1">
-          <RichText value={body} onChange={setBody} placeholder="Write the email…" minHeight={160} />
+      {/* Fixed overall height with a scrollable body, so the Submit button is
+          always visible even when the draft is long. */}
+      <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="p-6 pb-3 flex-shrink-0">
+          <div className="text-base font-extrabold text-[#050A1F] mb-1">{isEdit ? `Edit ${title.toLowerCase()} draft` : `${title} draft`}</div>
+          <div className="text-xs text-slate-400 mb-4">Write the email — the lead manager will send it on your behalf.</div>
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Subject line</label>
+          <input className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+            value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject line" />
         </div>
-        <div className="flex gap-2 mt-4">
+        {/* Scrollable email-body area (fixed height, internal vertical scroll). */}
+        <div className="px-6 flex-1 min-h-0 overflow-y-auto">
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Email body</label>
+          <div className="mt-1">
+            <RichText value={body} onChange={setBody} placeholder="Write the email…" minHeight={220} />
+          </div>
+        </div>
+        <div className="flex gap-2 p-6 pt-4 flex-shrink-0 border-t border-slate-100">
           <button disabled={busy || !bodyText.trim()} onClick={() => onSubmit(subject, body)}
             className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
             style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
