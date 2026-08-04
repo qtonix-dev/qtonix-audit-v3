@@ -184,8 +184,13 @@ async function scoreAgents(groups, period) {
     };
   });
 
-  // Highest collected sales wins; pipeline breaks a tie.
-  rows.sort((a, b) => (b.salesUsd - a.salesUsd) || (b.pipelineUsd - a.pipelineUsd));
+  // Top performer is the one who achieved the highest PERCENTAGE of their sales
+  // target — not the biggest raw number — so someone who hit 100% of their goal
+  // ranks above someone who booked the same money but only reached 50% of a
+  // bigger target. Agents with no target set (pct null) fall back to raw sales.
+  // Ties break on collected sales, then pipeline.
+  const rank = (x) => (x.pct !== null && x.salesTarget > 0) ? x.pct : -1;
+  rows.sort((a, b) => (rank(b) - rank(a)) || (b.salesUsd - a.salesUsd) || (b.pipelineUsd - a.pipelineUsd));
   if (rows.length && rows[0].salesUsd > 0) rows[0].band = 'top';
   return rows;
 }
@@ -313,7 +318,10 @@ async function scoreManagers(groups, period) {
       pipelineUsd: Math.round(m.pipelineUsd), band,
     };
   });
-  rows.sort((a, b) => (b.salesUsd - a.salesUsd) || (b.pipelineUsd - a.pipelineUsd));
+  // Managers also ranked by % of their team target achieved (raw sales breaks
+  // ties), consistent with how agents are ranked.
+  const rankM = (x) => (x.pct !== null && x.salesTarget > 0) ? x.pct : -1;
+  rows.sort((a, b) => (rankM(b) - rankM(a)) || (b.salesUsd - a.salesUsd) || (b.pipelineUsd - a.pipelineUsd));
   return rows;
 }
 

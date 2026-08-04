@@ -2685,7 +2685,7 @@ function FirstReplyPanel({ lead, user, onChange }) {
         {lead.firstDraft && (
           <details className="w-full mt-1">
             <summary className="text-[11px] font-bold text-green-700 cursor-pointer">View the draft that was submitted</summary>
-            <div className="mt-1.5 rounded-lg bg-white border border-green-100 p-2.5 text-[13px] text-slate-600 whitespace-pre-wrap">{lead.firstDraft}</div>
+            <div className="mt-1.5 rounded-lg bg-white border border-green-100 p-2.5 text-[13px] text-slate-600 rich-text" dangerouslySetInnerHTML={{ __html: lead.firstDraft }} />
           </details>
         )}
       </div>

@@ -14,6 +14,19 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+// Turn draft HTML (often messy Word markup) into readable plain text for
+// previews so tags like <p class="MsoNormal"> never show through.
+function stripHtmlText(s) {
+  return String(s || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function Avatar({ name, src, size = 28, logo }) {
   if (src) return <img src={src} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
   if (logo) return <img src={logo} alt={name} className="rounded-full object-cover bg-white border border-slate-100" style={{ width: size, height: size }} />;
@@ -1154,7 +1167,7 @@ function DraftsReceivedModal({ onClose, onOpen }) {
                       </div>
                     </div>
                     <div className="text-[11px] text-slate-400 mb-1">Owner: {l.ownerName}</div>
-                    <div className="text-[12px] text-slate-600 whitespace-pre-wrap line-clamp-3">{l.firstDraft}</div>
+                    <div className="text-[12px] text-slate-600 line-clamp-3">{stripHtmlText(l.firstDraft)}</div>
                   </div>
                 ))}
               </div>
@@ -1192,11 +1205,11 @@ function SalesCelebration({ latest, others }) {
   return (
     <div className="rounded-2xl overflow-hidden shadow-sm border border-orange-200">
       <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FFF7ED,#FFEDD5)' }}>
-        <div className="text-3xl animate-bounce" style={{ animationDuration: '1.5s' }}>🎉</div>
+        <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>🎉</div>
         {latest.avatar ? (
-          <img src={latest.avatar} alt={latest.ownerName} className="w-12 h-12 rounded-full object-cover border-2 border-white shadow" />
+          <img src={latest.avatar} alt={latest.ownerName} className="w-16 h-16 rounded-full object-cover border-2 border-white shadow" />
         ) : (
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-extrabold shadow border-2 border-white"
+          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-lg font-extrabold shadow border-2 border-white"
             style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{initials(latest.ownerName)}</div>
         )}
         <div className="min-w-0 flex-1">
@@ -1209,11 +1222,16 @@ function SalesCelebration({ latest, others }) {
         </div>
       </div>
       {older.length > 0 && (
-        <div className="bg-white px-5 py-2 flex items-center gap-4 overflow-x-auto">
+        <div className="bg-white px-5 py-2.5 flex items-center gap-4 overflow-x-auto">
           <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 shrink-0">Also today</span>
           {older.map((w) => (
-            <span key={w.id} className="text-[11px] text-slate-500 shrink-0">
-              <b className="text-slate-700">{(w.ownerName || '').split(' ')[0]}</b> {usd(w.amountUsd)} · {ago(w.at)}
+            <span key={w.id} className="flex items-center gap-1.5 text-[11px] text-slate-500 shrink-0">
+              {w.avatar ? (
+                <img src={w.avatar} alt="" className="w-6 h-6 rounded-full object-cover border border-slate-200" />
+              ) : (
+                <span className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{initials(w.ownerName)}</span>
+              )}
+              <span><b className="text-slate-700">{(w.ownerName || '').split(' ')[0]}</b> {usd(w.amountUsd)} · {ago(w.at)}</span>
             </span>
           ))}
         </div>

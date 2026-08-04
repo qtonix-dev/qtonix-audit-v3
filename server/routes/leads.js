@@ -444,7 +444,7 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     const recentDrafts = withDraft.slice(0, 5).map((l) => ({
       _id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim(),
       ownerName: l.ownerName, firstDraftAt: l.firstDraftAt,
-      preview: String(l.firstDraft || '').slice(0, 140),
+      preview: stripHtml(l.firstDraft).slice(0, 140),
     }));
 
     // Block 5: leads assigned to date, grouped by the agent/manager owning them.
