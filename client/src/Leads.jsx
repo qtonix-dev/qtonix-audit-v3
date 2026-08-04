@@ -2635,6 +2635,17 @@ function FirstReplyPanel({ lead, user, onChange }) {
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
+  // The "draft submitted" confirmation auto-vanishes after 5 minutes for the
+  // owner/others (it's just a notice). For the lead manager/admin it's an action
+  // queue (read + send), so it stays until they act — but the × still closes it.
+  const mustAction = ['leadmanager', 'admin'].includes(user.role);
+  useEffect(() => {
+    if (mustAction) return;
+    if (!(lead.firstDraft && !lead.firstReplyDoneAt)) return;
+    const t = setTimeout(() => setDismissed(true), 5 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, [lead.firstDraft, lead.firstReplyDoneAt, mustAction]);
+
   const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
   if (!isPresales) return null;
   // Back-dated leads are historical imports — the first-reply workflow doesn't
@@ -2675,17 +2686,21 @@ function FirstReplyPanel({ lead, user, onChange }) {
   }
 
   // Draft submitted by the owner, but the lead manager hasn't actioned it yet.
-  // This is the lead manager's queue: read the draft, send the email, mark read.
+  // The lead manager still needs the action button (read + send). For the owner
+  // and others it's just a confirmation notice that can be closed. We never show
+  // the raw draft HTML here — it renders as messy Word markup.
   if (lead.firstDraft && !lead.firstReplyDoneAt) {
+    if (dismissed) return null;
     const canRead = ['leadmanager', 'admin'].includes(user.role);
     return (
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 mb-4">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 mb-4 relative">
+        <button type="button" onClick={() => setDismissed(true)} title="Dismiss"
+          className="absolute top-2 right-2 text-blue-400 hover:text-blue-700 text-lg leading-none">×</button>
+        <div className="flex items-center gap-2 flex-wrap pr-6">
           <span className="text-xs font-bold text-blue-800">📥 First-reply draft submitted by {lead.ownerName || 'the owner'}</span>
           <span className="text-[11px] text-blue-600">· {fmtDate(lead.firstDraftAt)}</span>
           {!canRead && <span className="text-[11px] text-blue-500">· waiting on the lead manager to send it</span>}
         </div>
-        <div className="mt-2 rounded-lg bg-white border border-blue-100 p-3 text-[14px] text-slate-700 whitespace-pre-wrap">{lead.firstDraft}</div>
         {canRead && (
           <button type="button" disabled={busy} onClick={() => save({ draftRead: true })}
             className="w-full mt-2 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
@@ -4153,10 +4168,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [payFor, setPayFor] = useState(null); // { lead, deal, inst }
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
+  const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
 
   // Only an admin confirms money received; a manager records that the invoice
   // has gone out, which is their half of the handover.
   const isAdmin = user && user.role === 'admin';
+
+  // When the payment popup opens, default the received date to the installment's
+  // existing paidDate (if editing) or today.
+  const openPay = (lead, deal, inst) => {
+    setPayGateway(''); setPayRef('');
+    setPayDate(inst.paidDate || new Date().toISOString().slice(0, 10));
+    setPayFor({ lead, deal, inst });
+  };
 
   const markInvoiced = async (lead, deal, inst) => {
     setBusy(inst.id);
@@ -4170,15 +4194,15 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   };
 
   // Mark the next outstanding installment as received, straight from the card.
-  const collect = async (lead, deal, inst, gateway, transactionId) => {
+  const collect = async (lead, deal, inst, gateway, transactionId, paidDate) => {
     setBusy(inst.id);
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}) }),
+        body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}), ...(paidDate ? { paidDate } : {}) }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-      setPayFor(null); setPayGateway(''); setPayRef('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate('');
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
@@ -4388,7 +4412,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                   </div>
                                 </div>
                                 {isAdmin ? (
-                                  <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
+                                  <button onClick={(e) => { e.stopPropagation(); openPay(l, deal, inst); }}
                                     disabled={busy === inst.id}
                                     className="rounded-md bg-[#050A1F] text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
                                     {busy === inst.id ? 'Saving…' : 'Mark paid'}
@@ -4440,7 +4464,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                 </div>
                               </div>
                               {isAdmin ? (
-                                <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
+                                <button onClick={(e) => { e.stopPropagation(); openPay(l, deal, inst); }}
                                   disabled={busy === inst.id}
                                   className="rounded-md bg-indigo-500 text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
                                   {busy === inst.id ? 'Saving…' : 'Record'}
@@ -4624,7 +4648,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                   </label>
                                   {isAdmin ? (
                                     <button
-                                      onClick={() => { setPayGateway(''); setPayRef(''); setPayFor({ lead: l, deal: d, inst: it }); }}
+                                      onClick={() => { openPay(l, d, it); }}
                                       disabled={busy === it.id}
                                       className="rounded-md px-3 py-1.5 text-[11px] font-bold text-white inline-flex items-center gap-1 disabled:opacity-50 shrink-0"
                                       style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
@@ -4689,6 +4713,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             </div>
 
             <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment received date</label>
+              <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)}
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              <div className="text-[10px] text-slate-400 mt-1">The sale is counted in the month of this date — set it to when the money actually landed.</div>
+            </div>
+
+            <div className="mt-3">
               <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Transaction ID</label>
               <input value={payRef} onChange={(e) => setPayRef(e.target.value)}
                 placeholder="Reference from PayPal / Stripe / bank"
@@ -4698,7 +4729,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
             <button
               disabled={!payGateway || busy === payFor.inst.id}
-              onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, payGateway, payRef)}
+              onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, payGateway, payRef, payDate)}
               className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
               style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
               {busy === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
