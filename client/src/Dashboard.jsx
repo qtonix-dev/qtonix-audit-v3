@@ -296,27 +296,34 @@ function TrendChart({ trend }) {
 }
 
 function Leaderboard({ board, user, maxSales }) {
+  const roleLabel = (r) => r === 'manager' ? 'Manager' : r === 'admin' ? 'Owner' : null;
   return (
     <div className="space-y-2">
-      {board.map((b, i) => (
-        <div key={b.ownerId} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50">
-          <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
-          <Avatar name={b.name} src={b.avatar} logo={user && user.companyLogo} size={30} />
-          <div className="w-28 shrink-0">
-            <div className="font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
-            <div className="text-[10px] text-slate-400">{b.conversions} conv</div>
-          </div>
-          <div className="flex-1">
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((b.salesUsd / maxSales) * 100))}%`, background: b.hitTarget ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+      {board.map((b, i) => {
+        const rl = roleLabel(b.role);
+        return (
+          <div key={b.ownerId} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50">
+            <div className="w-7 text-center text-base font-extrabold text-slate-400">{medal(i)}</div>
+            <Avatar name={b.name} src={b.avatar} logo={user && user.companyLogo} size={30} />
+            <div className="w-28 shrink-0">
+              <div className="font-bold text-sm text-[#050A1F] truncate">{b.name}{b.ownerId === user.id ? ' (you)' : ''}</div>
+              <div className="text-[10px] text-slate-400">
+                {typeof b.conversions === 'number' ? `${b.conversions} conv` : ''}
+                {rl ? <span className="ml-1 rounded px-1 py-0.5 bg-slate-100 text-slate-500 font-bold">{rl}</span> : ''}
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((b.salesUsd / maxSales) * 100))}%`, background: b.hitTarget ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+              </div>
+            </div>
+            <div className="w-24 text-right">
+              <div className="font-extrabold text-xs text-[#050A1F]">{usd(b.salesUsd)}</div>
+              {b.salesTarget > 0 && b.pct != null && <div className={`text-[10px] font-bold ${b.hitTarget ? 'text-green-600' : 'text-slate-400'}`}>{b.hitTarget ? '✓ hit' : `${b.pct}%`}</div>}
             </div>
           </div>
-          <div className="w-24 text-right">
-            <div className="font-extrabold text-xs text-[#050A1F]">{usd(b.salesUsd)}</div>
-            {b.salesTarget > 0 && <div className={`text-[10px] font-bold ${b.hitTarget ? 'text-green-600' : 'text-slate-400'}`}>{b.hitTarget ? '✓ hit' : `${b.pct}%`}</div>}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -1044,20 +1044,22 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       .sort((a, b) => b.salesUsd - a.salesUsd);
 
     // ------------------------------------------------------------------
-    // Company-wide sales leaderboard. Agents and managers should see EVERY
-    // agent in the company (across all teams/branches) so there's healthy
-    // competition — not just their own team. We therefore compute per-agent
-    // sales-this-month from ALL leads, independent of the viewer's normal lead
-    // visibility. (Admins already see everyone via the scoped board above, but
-    // we build this uniformly and use it for non-admins.)
+    // Sales leaderboard shown on the dashboard. Who appears depends on the
+    // viewer, so everyone gets a fair, motivating comparison:
+    //   • Agent   → every agent in the company.
+    //   • Manager → every agent + the manager's own row.
+    //   • Admin   → everyone who books sales: all agents, all managers, and all
+    //               owners/admins (nothing hidden).
+    // Sales are computed from ALL leads (not the viewer's scoped set) so the
+    // board is company-wide, and count only the first cycle of recurring deals.
     let companyLeaderboard = null;
     try {
-      const allLeads = viewerIsAdmin ? leads : await Lead.findAll({ attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
+      const allLeads = await Lead.findAll({ attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
       const compByOwner = {};
       for (const l of allLeads) {
         if (!l.ownerId) continue;
-        if (roleById[l.ownerId] === 'admin') continue; // house/test accounts off the board
-        const rec = compByOwner[l.ownerId] || (compByOwner[l.ownerId] = { ownerId: l.ownerId, name: l.ownerName, salesUsd: 0 });
+        const rec = compByOwner[l.ownerId] || (compByOwner[l.ownerId] = { ownerId: l.ownerId, name: l.ownerName, salesUsd: 0, conversions: 0 });
+        if (l.status === 'converted') rec.conversions++;
         for (let di = 0; di < (l.deals || []).length; di++) {
           const d = l.deals[di];
           if (d.stage !== 'closed_won') continue;
@@ -1071,20 +1073,42 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           });
         }
       }
+      // Which roles belong on the board for this viewer.
+      const includeRole = (role) => {
+        if (role === 'leadmanager') return false;      // never sell → never on the board
+        if (viewerIsAdmin) return true;                // admin sees agents + managers + admins
+        if (req.user.role === 'manager') return role === 'agent' || false; // + own row appended below
+        return role === 'agent';                       // agents see all agents
+      };
       companyLeaderboard = Object.values(compByOwner)
-        .filter((o) => roleById[o.ownerId] === 'agent') // the board is agents; a manager also sees their own row appended below
-        .map((o) => ({
-          ownerId: o.ownerId, name: o.name, salesUsd: Math.round(o.salesUsd),
-          avatar: avatarById[o.ownerId] || null, role: roleById[o.ownerId] || 'agent',
-          salesTarget: (targetsById[o.ownerId] && targetsById[o.ownerId].sales && targetsById[o.ownerId].sales.enabled) ? Number(targetsById[o.ownerId].sales.monthly || 0) : 0,
-        }))
+        .filter((o) => includeRole(roleById[o.ownerId]))
+        .map((o) => {
+          const tg = targetsById[o.ownerId] || {};
+          const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
+          // pct is null when no target is set; the frontend must treat null as
+          // "no target" (never render "undefined%").
+          const pct = salesTarget > 0 ? Math.min(100, Math.round((o.salesUsd / salesTarget) * 100)) : null;
+          return {
+            ownerId: o.ownerId, name: o.name, salesUsd: Math.round(o.salesUsd),
+            conversions: o.conversions || 0,
+            avatar: avatarById[o.ownerId] || null, role: roleById[o.ownerId] || 'agent',
+            salesTarget, pct, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
+          };
+        })
         .sort((a, b) => b.salesUsd - a.salesUsd);
-      // A manager also wants to see their own sales row alongside the agents.
-      if (req.user.role === 'manager') {
-        const meRow = leaderboard.find((o) => o.ownerId === req.user.id);
-        if (meRow && !companyLeaderboard.some((o) => o.ownerId === req.user.id)) {
-          companyLeaderboard.push({ ownerId: meRow.ownerId, name: meRow.name, salesUsd: meRow.salesUsd, avatar: meRow.avatar, role: 'manager', salesTarget: meRow.salesTarget || 0 });
-        }
+      // A manager also sees their own row alongside the agents.
+      if (req.user.role === 'manager' && !companyLeaderboard.some((o) => o.ownerId === req.user.id)) {
+        const meComp = compByOwner[req.user.id];
+        const tg = targetsById[req.user.id] || {};
+        const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
+        const sUsd = Math.round(meComp ? meComp.salesUsd : 0);
+        companyLeaderboard.push({
+          ownerId: req.user.id, name: req.user.name, salesUsd: sUsd,
+          conversions: meComp ? (meComp.conversions || 0) : 0,
+          avatar: avatarById[req.user.id] || null, role: 'manager',
+          salesTarget, pct: salesTarget > 0 ? Math.min(100, Math.round((sUsd / salesTarget) * 100)) : null,
+          hitTarget: salesTarget > 0 && sUsd >= salesTarget,
+        });
         companyLeaderboard.sort((a, b) => b.salesUsd - a.salesUsd);
       }
     } catch (e) { companyLeaderboard = null; }

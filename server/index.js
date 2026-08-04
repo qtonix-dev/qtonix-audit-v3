@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+// Bump this on every release so /api/health reveals exactly what's deployed —
+// the quickest way to confirm a Railway rebuild actually shipped the new code.
+const APP_VERSION = 'v108';
+
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
 const helmet = require('helmet');
@@ -87,7 +91,7 @@ app.get('/healthz', (req, res) => res.status(200).send('ok'));
 app.get('/api/health', async (req, res) => {
   let db = false;
   try { await sequelize.authenticate(); db = true; } catch { db = false; }
-  res.json({ ok: true, db, dialect: sequelize.getDialect(), time: new Date() });
+  res.json({ ok: true, version: APP_VERSION, db, dialect: sequelize.getDialect(), time: new Date() });
 });
 
 // -- Optionally serve the built React frontend from the same server.
