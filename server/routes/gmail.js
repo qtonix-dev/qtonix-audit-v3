@@ -32,8 +32,26 @@ async function attachTrackingPixel({ body, leadId, userId, toEmail, subject, thr
       subject: subject || '', threadId: threadId || null, sentAt: new Date(),
     });
   } catch (e) { return { body, token: null }; }
+
+  // Rewrite every real link so a click is recorded, then the recipient is
+  // redirected to the original URL. Attachments/download links (identified by
+  // file-like extensions) are flagged as downloads. We skip mailto:, tel:,
+  // anchors, and our own tracking URLs.
+  let out = String(body || '');
+  try {
+    out = out.replace(/<a\s+([^>]*?)href="([^"]+)"([^>]*)>/gi, (m, pre, url, post) => {
+      if (/^(mailto:|tel:|#)/i.test(url)) return m;
+      if (url.includes('/api/track/')) return m;
+      if (!/^https?:\/\//i.test(url)) return m;
+      const isDownload = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|csv|png|jpe?g|gif|txt)(\?|$)/i.test(url);
+      // Use the link text as the label where we can (best-effort, from post).
+      const tracked = `${base}/api/track/click/${token}?u=${encodeURIComponent(url)}${isDownload ? '&d=1' : ''}`;
+      return `<a ${pre}href="${tracked}"${post}>`;
+    });
+  } catch (e) { /* if rewriting fails, fall back to the original body */ out = String(body || ''); }
+
   const pixel = `<img src="${base}/api/track/open/${token}.gif" width="1" height="1" alt="" style="display:none;width:1px;height:1px" />`;
-  return { body: `${body || ''}${pixel}`, token };
+  return { body: `${out}${pixel}`, token };
 }
 
 // --- Admin: Gmail OAuth app keys --------------------------------------------
@@ -497,16 +515,26 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
     const viewer = await User.findByPk(req.user.id);
     const allowed = await visibleUserIds(viewer);
 
-    // Live backfill from the viewer's OWN mailbox on first open.
-    const mine = await LeadEmail.count({ where: { leadId: lead.id, userId: viewer.id } });
-    if (mine === 0 && viewer.gmailRefreshToken && (lead.email || lead.domain)) {
+    // Live check the viewer's mailbox for new messages on EVERY open (not just
+    // the first), so newly received/sent emails show without waiting for the
+    // background sync. Best-effort: any failure falls back to cached rows.
+    if (viewer.gmailRefreshToken && (lead.email || lead.domain)) {
       const s = await Settings.findOne({ where: { singleton: 'settings' } });
       const q = leadQuery(lead);
       if (q) {
         try {
           const msgs = await gmail.searchMessages(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, q, 25);
           for (const m of msgs) {
-            await LeadEmail.findOrCreate({ where: { userId: viewer.id, gmailMessageId: m.gmailMessageId }, defaults: { ...m, leadId: lead.id, userId: viewer.id } }).catch(() => {});
+            const [row, created] = await LeadEmail.findOrCreate({
+              where: { userId: viewer.id, gmailMessageId: m.gmailMessageId },
+              defaults: { ...m, leadId: lead.id, userId: viewer.id },
+            }).catch(() => [null, false]);
+            // Keep an existing row's lead link fresh + pull through read state.
+            if (row && !created && !row.leadId) { row.leadId = lead.id; await row.save().catch(() => {}); }
+            // Log inbound arrivals into the lead timeline once.
+            if (created && m.direction === 'inbound') {
+              await emailTimeline(lead, `📨 Email received from ${m.fromEmail || 'client'}${m.subject ? ` — "${m.subject}"` : ''}`, m.fromName || m.fromEmail || 'Client', { subject: m.subject }).catch(() => {});
+            }
           }
         } catch (e) { /* live fetch is best-effort */ }
       }
@@ -516,7 +544,35 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
       where: { leadId: lead.id, userId: { [Op.in]: allowed } },
       order: [['sentAt', 'DESC']], limit: 200,
     });
-    const emails = rows.map((r) => r.toJSON());
+    // Pull tracking rows for this lead and match them to outbound emails so the
+    // UI can show a read receipt (double tick) and click/download state.
+    const opensRows = await EmailOpen.findAll({ where: { leadId: lead.id }, order: [['sentAt', 'DESC']], limit: 400 });
+    const matchOpen = (e) => {
+      // Best-effort match: same thread + same subject, closest send time.
+      const cands = opensRows.filter((o) =>
+        (e.threadId && o.threadId && o.threadId === e.threadId) ||
+        (o.subject && e.subject && o.subject === e.subject));
+      if (cands.length === 0) return null;
+      // Prefer the one closest in time to the email's sentAt.
+      cands.sort((a, b) => Math.abs(new Date(a.sentAt) - new Date(e.sentAt)) - Math.abs(new Date(b.sentAt) - new Date(e.sentAt)));
+      return cands[0];
+    };
+    const emails = rows.map((r) => {
+      const e = r.toJSON();
+      if (e.direction === 'outbound') {
+        const o = matchOpen(e);
+        if (o) {
+          e.tracking = {
+            opened: !!o.firstOpenAt, firstOpenAt: o.firstOpenAt, opens: o.opens || 0,
+            clicked: !!o.firstClickAt, firstClickAt: o.firstClickAt, clicks: o.clicks || 0,
+            clickLog: Array.isArray(o.clickLog) ? o.clickLog : [],
+          };
+        } else {
+          e.tracking = { opened: false, opens: 0, clicked: false, clicks: 0, clickLog: [] };
+        }
+      }
+      return e;
+    });
     const unread = emails.filter((e) => e.direction === 'inbound' && !e.isRead).length;
 
     // From-address options depend on the viewer's role AND this lead's owner:

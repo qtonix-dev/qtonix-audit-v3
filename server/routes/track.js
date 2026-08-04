@@ -79,4 +79,56 @@ router.get('/open/:token', async (req, res) => {
   return sendPixel(res);
 });
 
+/**
+ * GET /api/track/click/:token — a tracked link/attachment. Records the click on
+ * the matching EmailOpen row, drops a timeline note (first click / download),
+ * then 302-redirects to the real destination. Public (recipient isn't logged
+ * in). Query: u = destination URL (encoded), l = label (e.g. the link text or
+ * file name), d = "1" when it's a download/attachment.
+ */
+router.get('/click/:token', async (req, res) => {
+  const dest = (() => {
+    try { return decodeURIComponent(String(req.query.u || '')); } catch { return ''; }
+  })();
+  const label = String(req.query.l || '').slice(0, 200);
+  const isDownload = String(req.query.d || '') === '1';
+  try {
+    const token = String(req.params.token || '').slice(0, 64);
+    const row = await EmailOpen.findOne({ where: { token } });
+    if (row) {
+      const now = new Date();
+      const firstClick = !row.firstClickAt;
+      row.clicks = (row.clicks || 0) + 1;
+      row.lastClickAt = now;
+      if (firstClick) row.firstClickAt = now;
+      // A click proves the email was opened — backfill the open too.
+      if (!row.firstOpenAt) { row.firstOpenAt = now; row.opens = (row.opens || 0) + 1; row.lastOpenAt = now; }
+      const log = Array.isArray(row.clickLog) ? row.clickLog : [];
+      log.push({ at: now.toISOString(), label: label || dest, url: dest, download: isDownload });
+      row.clickLog = log; row.changed('clickLog', true);
+      await row.save();
+
+      if (row.leadId) {
+        try {
+          const lead = await Lead.findByPk(row.leadId);
+          if (lead) {
+            const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+            const verb = isDownload ? '📎 Recipient downloaded' : '🔗 Recipient clicked';
+            tl.push({
+              type: 'email', direction: isDownload ? 'download' : 'click',
+              text: `${verb} ${label ? `"${label}"` : 'a link'} in "${row.subject || '(no subject)'}"`,
+              time: now.toISOString(), author: 'Recipient',
+            });
+            lead.timeline = tl; lead.changed('timeline', true); lead.lastActivityAt = now;
+            await lead.save();
+          }
+        } catch (e) { /* best-effort */ }
+      }
+    }
+  } catch (e) { /* never fail the redirect */ }
+  // Redirect to the real destination (or a blank page if none/unsafe).
+  if (/^https?:\/\//i.test(dest)) return res.redirect(302, dest);
+  return res.status(204).end();
+});
+
 module.exports = router;

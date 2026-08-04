@@ -1905,12 +1905,29 @@ function EmailInboxTab({ lead, user }) {
           const anyStar = t.messages.some((m) => m.starred);
           const names = [...new Set(t.messages.map((m) => m.direction === 'outbound' ? 'me' : (m.fromName || m.fromEmail).split(' ')[0]))].join(', ');
           const attachCount = (last.attachments || []).length;
+          // Read receipt: look at the latest OUTBOUND message's tracking. Green
+          // double-tick = the recipient opened it; gray = sent but not yet
+          // opened. A single extra dot marks a click/download.
+          const lastOut = [...t.messages].reverse().find((m) => m.direction === 'outbound');
+          const trk = lastOut && lastOut.tracking ? lastOut.tracking : null;
           return (
             <div key={t.key} onClick={() => setOpenThread({ threadId: t.threadId, subject: last.subject, key: t.key })}
               className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:shadow-[inset_0_0_0_9999px_rgba(0,0,0,0.015)] ${hasUnread ? 'bg-white' : 'bg-slate-50/40'}`}>
               <button onClick={(e) => { e.stopPropagation(); toggleStar(last._id, load); }} className="text-slate-300 hover:text-amber-400" title="Star">
                 <svg width="17" height="17" viewBox="0 0 24 24" fill={anyStar ? '#FBBF24' : 'none'} stroke={anyStar ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg>
               </button>
+              {trk && (
+                <span className="flex items-center gap-0.5 flex-shrink-0"
+                  title={trk.opened
+                    ? `Opened${trk.opens > 1 ? ` ${trk.opens}×` : ''}${trk.clicked ? ` · clicked/downloaded ${trk.clicks}×` : ''}`
+                    : 'Sent · not opened yet'}>
+                  {/* Double tick — green when opened, gray when only delivered. */}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={trk.opened ? '#16A34A' : '#CBD5E1'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 13l4 4L15 7" /><path d="M8 13l4 4L23 6" />
+                  </svg>
+                  {trk.clicked && <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#16A34A' }} title="Recipient clicked/downloaded a link" />}
+                </span>
+              )}
               <span className={`w-40 flex-shrink-0 text-sm truncate ${hasUnread ? 'font-bold text-[#050A1F]' : 'text-slate-600'}`}>
                 {names}{t.messages.length > 1 && <span className="text-slate-400 font-normal"> {t.messages.length}</span>}
               </span>

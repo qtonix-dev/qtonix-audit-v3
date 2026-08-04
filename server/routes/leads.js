@@ -1056,6 +1056,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     try {
       const allLeads = await Lead.findAll({ attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
       const compByOwner = {};
+      // Seed every active user who can appear on the board at zero, so a newly
+      // added user (with no sales yet this month) still shows up rather than
+      // being invisible until their first sale.
+      const boardUsers = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'role'] });
+      for (const u of boardUsers) {
+        if (u.role === 'leadmanager') continue; // never on a sales board
+        compByOwner[u.id] = { ownerId: u.id, name: u.name, salesUsd: 0, conversions: 0 };
+      }
       for (const l of allLeads) {
         if (!l.ownerId) continue;
         const rec = compByOwner[l.ownerId] || (compByOwner[l.ownerId] = { ownerId: l.ownerId, name: l.ownerName, salesUsd: 0, conversions: 0 });
@@ -1218,6 +1226,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       for (const d of (l.deals || [])) {
         const st = funnelByStage[d.stage];
         if (!st) continue;
+        // This-month funnel: only count deals created this month (deals without
+        // a createdAt are legacy — fall back to the lead's convertedAt/createdAt
+        // so they aren't silently dropped, but still gate on the month).
+        const dealDate = new Date(d.createdAt || l.convertedAt || l.createdAt || 0);
+        if (Number.isNaN(dealDate.getTime()) || dealDate < startOfMonth) continue;
         st.count++;
         st.amountUsd += toUsd(d.amount, d.currency);
         funnelTotalDeals++;

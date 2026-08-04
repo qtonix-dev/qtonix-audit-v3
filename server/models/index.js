@@ -761,6 +761,13 @@ const EmailOpen = sequelize.define(
     firstOpenAt: { type: DataTypes.DATE, allowNull: true },
     lastOpenAt: { type: DataTypes.DATE, allowNull: true },
     opens: { type: DataTypes.INTEGER, defaultValue: 0 },
+    // Link/attachment click tracking: first + last click, a running count, and
+    // a small JSON log of what was clicked (label + time), so the lead timeline
+    // and the email row can show whether the recipient clicked or downloaded.
+    firstClickAt: { type: DataTypes.DATE, allowNull: true },
+    lastClickAt: { type: DataTypes.DATE, allowNull: true },
+    clicks: { type: DataTypes.INTEGER, defaultValue: 0 },
+    clickLog: { type: DataTypes.JSON, allowNull: true },
     // Whether we've already posted the "not opened in 24h" nudge (timeline +
     // dashboard), so we only notify once.
     unopenedNotifiedAt: { type: DataTypes.DATE, allowNull: true },
