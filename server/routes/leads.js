@@ -1043,6 +1043,52 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       .filter((o) => viewerIsAdmin || o.role === 'agent' || o.ownerId === req.user.id)
       .sort((a, b) => b.salesUsd - a.salesUsd);
 
+    // ------------------------------------------------------------------
+    // Company-wide sales leaderboard. Agents and managers should see EVERY
+    // agent in the company (across all teams/branches) so there's healthy
+    // competition — not just their own team. We therefore compute per-agent
+    // sales-this-month from ALL leads, independent of the viewer's normal lead
+    // visibility. (Admins already see everyone via the scoped board above, but
+    // we build this uniformly and use it for non-admins.)
+    let companyLeaderboard = null;
+    try {
+      const allLeads = viewerIsAdmin ? leads : await Lead.findAll({ attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
+      const compByOwner = {};
+      for (const l of allLeads) {
+        if (!l.ownerId) continue;
+        if (roleById[l.ownerId] === 'admin') continue; // house/test accounts off the board
+        const rec = compByOwner[l.ownerId] || (compByOwner[l.ownerId] = { ownerId: l.ownerId, name: l.ownerName, salesUsd: 0 });
+        for (let di = 0; di < (l.deals || []).length; di++) {
+          const d = l.deals[di];
+          if (d.stage !== 'closed_won') continue;
+          const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+          insts.forEach((it) => {
+            if (!it.paid || !it.paidDate) return;
+            const recurringRepeat = !!it.recurring && Number(it.seq || 0) > 1;
+            if (recurringRepeat) return;
+            const pd = new Date(it.paidAt || it.paidDate);
+            if (pd >= startOfMonth) rec.salesUsd += toUsd(it.amount, d.currency);
+          });
+        }
+      }
+      companyLeaderboard = Object.values(compByOwner)
+        .filter((o) => roleById[o.ownerId] === 'agent') // the board is agents; a manager also sees their own row appended below
+        .map((o) => ({
+          ownerId: o.ownerId, name: o.name, salesUsd: Math.round(o.salesUsd),
+          avatar: avatarById[o.ownerId] || null, role: roleById[o.ownerId] || 'agent',
+          salesTarget: (targetsById[o.ownerId] && targetsById[o.ownerId].sales && targetsById[o.ownerId].sales.enabled) ? Number(targetsById[o.ownerId].sales.monthly || 0) : 0,
+        }))
+        .sort((a, b) => b.salesUsd - a.salesUsd);
+      // A manager also wants to see their own sales row alongside the agents.
+      if (req.user.role === 'manager') {
+        const meRow = leaderboard.find((o) => o.ownerId === req.user.id);
+        if (meRow && !companyLeaderboard.some((o) => o.ownerId === req.user.id)) {
+          companyLeaderboard.push({ ownerId: meRow.ownerId, name: meRow.name, salesUsd: meRow.salesUsd, avatar: meRow.avatar, role: 'manager', salesTarget: meRow.salesTarget || 0 });
+        }
+        companyLeaderboard.sort((a, b) => b.salesUsd - a.salesUsd);
+      }
+    } catch (e) { companyLeaderboard = null; }
+
     const transferBoard = leaderboard
       .filter((o) => o.transferDailyTarget > 0 || o.transfersToday > 0)
       .map((o) => ({ ownerId: o.ownerId, name: o.name, avatar: o.avatar, transfersToday: o.transfersToday, dailyTarget: o.transferDailyTarget, pct: o.transferDailyTarget > 0 ? Math.min(100, Math.round((o.transfersToday / o.transferDailyTarget) * 100)) : null, remaining: o.transferDailyTarget > 0 ? Math.max(0, o.transferDailyTarget - o.transfersToday) : 0, transfers: o.transferList || [] }))
@@ -1299,7 +1345,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         leadGenTarget: ((targetsById[req.user.id] || {}).leadGen && (targetsById[req.user.id] || {}).leadGen.enabled)
           ? Number((targetsById[req.user.id] || {}).leadGen.monthly || 0) : 0,
       } : null,
-      leaderboard, transferBoard, trend, funnel, shiftBoard, topShift,
+      leaderboard, companyLeaderboard, transferBoard, trend, funnel, shiftBoard, topShift,
       topPerformer, topPerformerTied,
       awaiting: awaitingList.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 50),
       leadDaily,
@@ -2515,13 +2561,33 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
         pushTimeline(lead, 'deal', `Invoice sent for installment ${inst.seq} of "${deal.name}" (${deal.currency} ${inst.amount})`, req.user.name);
       }
     }
+    // Edit the received date of an already-paid installment (admin correcting
+    // historical data) — re-anchors paidAt so the sale moves to the right month.
+    if (b.paid === undefined && b.paidDate && inst.paid) {
+      inst.paidDate = b.paidDate;
+      const d = new Date(`${b.paidDate}T12:00:00`);
+      inst.paidAt = Number.isNaN(d.getTime()) ? inst.paidAt : d.toISOString();
+      if (b.gateway !== undefined) inst.gateway = b.gateway;
+      if (b.transactionId !== undefined) inst.transactionId = b.transactionId;
+      pushTimeline(lead, 'deal', `Payment date updated for installment ${inst.seq} of "${deal.name}" → ${b.paidDate}`, req.user.name);
+    }
+
     if (b.paid !== undefined) {
       inst.paid = !!b.paid;
       inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
-      // Hour-precise timestamp so the "recent wins" celebration banner (which
-      // uses a 1-hour window) lights up on everyone's dashboard the moment a
-      // payment is confirmed.
-      inst.paidAt = b.paid ? new Date().toISOString() : null;
+      // paidAt drives the "recent wins" banner (hour precision) AND the sales
+      // month. When an explicit received date is given, anchor paidAt to that
+      // date (noon) so the sale counts in the correct month; otherwise use now.
+      if (b.paid) {
+        if (b.paidDate) {
+          const d = new Date(`${b.paidDate}T12:00:00`);
+          inst.paidAt = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+        } else {
+          inst.paidAt = new Date().toISOString();
+        }
+      } else {
+        inst.paidAt = null;
+      }
       if (!b.paid) inst.gateway = '';
       if (b.paid) {
         pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''})`, req.user.name);

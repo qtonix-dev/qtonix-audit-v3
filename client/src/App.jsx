@@ -1021,7 +1021,7 @@ function EditProfileModal({ user, onClose, onSaved }) {
 
   const initial = (user.name || '?').trim()[0]?.toUpperCase() || '?';
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl p-6 w-full max-w-lg my-8" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
         <h3 className="text-lg font-extrabold text-[#050A1F] mb-4">Edit Profile</h3>
         {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>}
@@ -1635,6 +1635,9 @@ export default function App() {
                 return (
                   <button key={n.id}
                     onClick={() => {
+                      // Leaving a lead-detail page: drop the ?leadId= param so
+                      // the destination view doesn't re-open the lead detail.
+                      try { const p = new URLSearchParams(window.location.search); if (p.get('leadId')) { p.delete('leadId'); const qs = p.toString(); window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`); } } catch { /* */ }
                       if (n.id === 'leads') setLeadsEntry({ view: 'list', nonce: Date.now() });
                       setView(n.id);
                       setActiveReport(null);

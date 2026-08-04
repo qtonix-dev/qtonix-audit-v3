@@ -48,6 +48,7 @@ const fmtDate = (d) => {
 export default function AllEmailPage({ user }) {
   const [mailboxes, setMailboxes] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canSwitch, setCanSwitch] = useState(false);
   const [as, setAs] = useState(''); // selected mailbox userId (admin can switch)
   const [box, setBox] = useState('INBOX');
   const [scheduled, setScheduled] = useState([]);
@@ -71,7 +72,7 @@ export default function AllEmailPage({ user }) {
   const loadMailboxes = useCallback(async () => {
     try {
       const d = await api('/gmail/all/mailboxes');
-      setMailboxes(d.mailboxes || []); setIsAdmin(d.isAdmin);
+      setMailboxes(d.mailboxes || []); setIsAdmin(d.isAdmin); setCanSwitch(!!d.canSwitch);
       if (!d.mailboxes || d.mailboxes.length === 0) setNotConnected(true);
     } catch (e) { setErr(e.message); }
   }, []);
@@ -177,7 +178,7 @@ export default function AllEmailPage({ user }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           Compose
         </button>
-        {isAdmin && mailboxes.length > 0 && (
+        {(isAdmin || canSwitch) && mailboxes.length > 1 && (
           <select value={as} onChange={(e) => { setAs(e.target.value); setMessages([]); }} className="mb-3 rounded-lg border border-slate-300 px-2.5 py-2 text-xs">
             {mailboxes.map((m) => <option key={m.value} value={m.value === String(user.id) ? '' : m.value}>{m.label} ({m.email})</option>)}
           </select>

@@ -364,7 +364,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading dashboard…</div>;
 
   const m = data.metrics;
-  const board = data.leaderboard || [];
+  // Agents and managers see the whole company's agents (for competition);
+  // the backend provides companyLeaderboard for that. Admins keep the scoped
+  // board (which for them is already everyone).
+  const board = (data.companyLeaderboard && data.companyLeaderboard.length ? data.companyLeaderboard : data.leaderboard) || [];
   const transferBoard = data.transferBoard || [];
   const lists = data.lists || {};
   const me = data.me;

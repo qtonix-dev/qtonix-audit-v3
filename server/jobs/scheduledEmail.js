@@ -50,8 +50,11 @@ async function dispatchDue(models) {
           body = `${body || ''}<img src="${base}/api/track/open/${trackToken}.gif" width="1" height="1" alt="" style="display:none;width:1px;height:1px" />`;
         }
       } catch (e) { /* tracking best-effort */ }
+      const dsAliases = Array.isArray(sender.aliases) ? sender.aliases.filter(Boolean) : [];
+      const dsSendName = dsAliases[0] || sender.name;
       const res = await gmail.sendMessage(s, sender.getGmailRefreshToken(), sender.gmailConnectedEmail, {
-        from: sender.gmailConnectedEmail, to: job.toEmail, cc: job.ccEmail, bcc: job.bccEmail,
+        from: dsSendName ? `${JSON.stringify(dsSendName)} <${sender.gmailConnectedEmail}>` : sender.gmailConnectedEmail,
+        to: job.toEmail, cc: job.ccEmail, bcc: job.bccEmail,
         subject: job.subject, bodyHtml: body, threadId: job.threadId, inReplyTo: job.inReplyTo, attachments,
       });
       if (trackToken) { try { await models.EmailOpen.update({ gmailMessageId: res.id, threadId: res.threadId || job.threadId || null }, { where: { token: trackToken } }); } catch (e) { /* */ } }

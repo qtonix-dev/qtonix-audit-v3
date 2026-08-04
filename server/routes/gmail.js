@@ -557,11 +557,25 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
       else if (allSig) o.signature = allSig.bodyHtml || o.signature;
     });
 
+    // Default "From" for the composer. For a manager replying on a lead, prefer
+    // the lead owner's connected mailbox (when the owner reports to the manager
+    // and is connected) so the reply goes out as the owner. Otherwise the
+    // viewer's own mailbox.
+    let defaultFrom = null;
+    const ownerOption = owner ? fromOptions.find((o) => o.userId === owner.id) : null;
+    if (viewer.role === 'manager' && ownerOption && owner.managerId === viewer.id) {
+      defaultFrom = ownerOption.value;
+    } else {
+      const selfOption = fromOptions.find((o) => o.self);
+      defaultFrom = selfOption ? selfOption.value : (fromOptions[0] ? fromOptions[0].value : null);
+    }
+
     res.json({
       connected: !!viewer.gmailRefreshToken || (viewer.role === 'admin' && fromOptions.length > 0),
       email: viewer.gmailConnectedEmail,
       defaultSignature: viewer.emailSignature || '',
       fromOptions,
+      defaultFrom,
       unread,
       emails,
     });
@@ -662,6 +676,13 @@ router.get('/thread/:threadId', requireAuth, async (req, res, next) => {
 // "mailbox:<id>" (or a bare numeric userId for back-compat). Returns a
 // normalized sender { id, email, name, getToken(), signature } or null.
 async function resolveSender(viewer, from) {
+  // The name shown in the "From" header uses the user's alias/sudo name when
+  // set (e.g. "David"), falling back to their real name. This applies only to
+  // outgoing email — the rest of the app shows real names.
+  const sendName = (u) => {
+    const aliases = Array.isArray(u.aliases) ? u.aliases.filter(Boolean) : [];
+    return aliases[0] || u.name;
+  };
   // Back-compat: bare number = userId.
   let kind = 'user', id = viewer.id;
   if (from && /^(user|mailbox):/.test(String(from))) { const [k, i] = String(from).split(':'); kind = k; id = Number(i); }
@@ -676,13 +697,13 @@ async function resolveSender(viewer, from) {
   // user mailbox
   if (id === viewer.id) {
     if (!viewer.gmailRefreshToken) return null;
-    return { id: viewer.id, email: viewer.gmailConnectedEmail, name: viewer.name, getToken: () => viewer.getGmailRefreshToken(), signature: viewer.emailSignature || '', dbUserId: viewer.id };
+    return { id: viewer.id, email: viewer.gmailConnectedEmail, name: sendName(viewer), getToken: () => viewer.getGmailRefreshToken(), signature: viewer.emailSignature || '', dbUserId: viewer.id };
   }
   const allowed = await visibleUserIds(viewer);
   if (!allowed.includes(id)) return null;
   const target = await User.findByPk(id);
   if (!target || !target.gmailRefreshToken) return null;
-  return { id: target.id, email: target.gmailConnectedEmail, name: target.name, getToken: () => target.getGmailRefreshToken(), signature: target.emailSignature || '', dbUserId: target.id };
+  return { id: target.id, email: target.gmailConnectedEmail, name: sendName(target), getToken: () => target.getGmailRefreshToken(), signature: target.emailSignature || '', dbUserId: target.id };
 }
 
 // Turn requested attachments into MIME-ready parts. Supports uploaded files
@@ -751,7 +772,8 @@ router.post('/lead/:leadId/send', requireAuth, async (req, res, next) => {
     // Add an open-tracking pixel (automatic on every send).
     const track = await attachTrackingPixel({ body: b.body, leadId: lead.id, userId: sender.dbUserId, toEmail: to, subject: b.subject, threadId: b.threadId });
     const sent = await gmail.sendMessage(s, sender.getToken(), sender.email, {
-      from: sender.email, to, cc: b.cc, bcc: b.bcc,
+      from: sender.name ? `${JSON.stringify(sender.name)} <${sender.email}>` : sender.email,
+      to, cc: b.cc, bcc: b.bcc,
       subject: b.subject, bodyHtml: track.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
     });
     // Record the Gmail message/thread id on the tracking row.
@@ -1124,9 +1146,14 @@ router.post('/templates/:id/apply', requireAuth, async (req, res, next) => {
 async function resolveBrowseMailbox(viewer, asUserId) {
   const settings = await Settings.findOne({ where: { singleton: 'settings' } });
   let target = viewer;
-  if (asUserId && viewer.role === 'admin') {
+  if (asUserId && String(asUserId) !== String(viewer.id)) {
     const u = await User.findByPk(Number(asUserId));
-    if (u && u.gmailRefreshToken) target = u;
+    // Admin can browse anyone; a manager can browse only their own agents.
+    const allowed = u && u.gmailRefreshToken && (
+      viewer.role === 'admin' ||
+      (viewer.role === 'manager' && u.managerId === viewer.id)
+    );
+    if (allowed) target = u;
   }
   if (!target.gmailRefreshToken) return null;
   return { user: target, token: target.getGmailRefreshToken(), settings };
@@ -1142,8 +1169,13 @@ router.get('/all/mailboxes', requireAuth, async (req, res, next) => {
     if (viewer.role === 'admin') {
       const users = await User.findAll({ where: { gmailRefreshToken: { [Op.ne]: null }, id: { [Op.ne]: viewer.id } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
       users.forEach((u) => list.push({ value: String(u.id), label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
+    } else if (viewer.role === 'manager') {
+      // A manager can browse the connected mailboxes of the agents who report to
+      // them (managerId === viewer.id), just like an admin sees everyone.
+      const team = await User.findAll({ where: { managerId: viewer.id, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
+      team.forEach((u) => list.push({ value: String(u.id), label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
     }
-    res.json({ mailboxes: list, isAdmin: viewer.role === 'admin' });
+    res.json({ mailboxes: list, isAdmin: viewer.role === 'admin', canSwitch: viewer.role === 'admin' || viewer.role === 'manager' });
   } catch (e) { next(e); }
 });
 
@@ -1317,8 +1349,11 @@ router.post('/all/send', requireAuth, async (req, res, next) => {
     }
 
     const track = await attachTrackingPixel({ body: b.body, leadId: linkedLeadId, userId: mb.user.id, toEmail: to, subject: b.subject, threadId: b.threadId });
+    const mbAliases = Array.isArray(mb.user.aliases) ? mb.user.aliases.filter(Boolean) : [];
+    const mbSendName = mbAliases[0] || mb.user.name;
     const sent = await gmail.sendMessage(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
-      from: mb.user.gmailConnectedEmail, to, cc: b.cc, bcc: b.bcc,
+      from: mbSendName ? `${JSON.stringify(mbSendName)} <${mb.user.gmailConnectedEmail}>` : mb.user.gmailConnectedEmail,
+      to, cc: b.cc, bcc: b.bcc,
       subject: b.subject, bodyHtml: track.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
     });
     if (track.token) { try { await EmailOpen.update({ gmailMessageId: sent.id, threadId: sent.threadId || b.threadId || null }, { where: { token: track.token } }); } catch (e) { /* */ } }

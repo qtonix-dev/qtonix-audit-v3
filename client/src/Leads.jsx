@@ -1780,7 +1780,7 @@ function EmailInboxTab({ lead, user }) {
   threads.forEach((t) => t.messages.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt)));
   threads.sort((a, b) => new Date(b.messages[b.messages.length - 1].sentAt) - new Date(a.messages[a.messages.length - 1].sentAt));
 
-  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: data.fromOptions[0]?.value });
+  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: data.defaultFrom || data.fromOptions[0]?.value });
 
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -1840,8 +1840,8 @@ function EmailInboxTab({ lead, user }) {
         })}
       </div>
 
-      {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
-      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); loadScheduled(); }} />}
+      {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} defaultFrom={data.defaultFrom} defaultSignature={data.defaultSignature} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultFrom={data.defaultFrom} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); loadScheduled(); }} />}
       {reschedule && <LeadRescheduleModal row={reschedule} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadScheduled(); }} />}
     </div>
   );
@@ -1864,7 +1864,7 @@ function timeAgo(d) {
 async function toggleStar(id, reload) { try { await api(`/gmail/email/${id}/star`, { method: 'POST' }); reload && reload(); } catch { /* noop */ } }
 
 // The thread popup (Image 1): subject header + message chain + reply actions.
-function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onReload }) {
+function ThreadPopup({ lead, thread, fromOptions, defaultFrom, defaultSignature, onClose, onReload }) {
   const [messages, setMessages] = useState(null);
   const [err, setErr] = useState('');
   const [composer, setComposer] = useState(null);
@@ -1905,14 +1905,14 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
       subject: /^re:/i.test(msg.subject || '') ? msg.subject : `Re: ${msg.subject || ''}`,
       // Include the quoted chain so context isn't lost (was sending fresh before).
       body: quoteBlock(msg), threadId: thread.threadId, inReplyTo: msg.rfcMessageId || undefined,
-      from: fromOptions[0]?.value,
+      from: defaultFrom || fromOptions[0]?.value,
     });
   };
   const forward = (msg) => setComposer({
     mode: 'forward', to: [], cc: [], bcc: [],
     subject: /^fwd:/i.test(msg.subject || '') ? msg.subject : `Fwd: ${msg.subject || ''}`,
     body: `<br><br>---------- Forwarded message ----------<br>From: ${msg.fromName || msg.fromEmail}<br>Date: ${new Date(msg.sentAt).toLocaleString()}<br>Subject: ${msg.subject || ''}<br>To: ${msg.toEmail || ''}<br><br>${msg.bodyHtml || msg.snippet || ''}`,
-    threadId: thread.threadId, from: fromOptions[0]?.value,
+    threadId: thread.threadId, from: defaultFrom || fromOptions[0]?.value,
   });
 
   const latest = messages && messages.length ? messages[messages.length - 1] : null;
@@ -2020,13 +2020,13 @@ function ThreadPopup({ lead, thread, fromOptions, defaultSignature, onClose, onR
         )}
       </div>
 
-      {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} defaultSignature={defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
+      {composer && <Composer lead={lead} initial={composer} fromOptions={fromOptions} defaultFrom={defaultFrom} defaultSignature={defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); onReload && onReload(); }} />}
     </div>
   );
 }
 
-function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignature }) {
-  const [from, setFrom] = useState(initial.from || fromOptions[0]?.value || `user:${fromOptions[0]?.userId}`);
+function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignature, defaultFrom }) {
+  const [from, setFrom] = useState(initial.from || defaultFrom || fromOptions[0]?.value || `user:${fromOptions[0]?.userId}`);
   const [to, setTo] = useState(initial.to || []);
   const [cc, setCc] = useState(initial.cc || []);
   const [bcc, setBcc] = useState(initial.bcc || []);
@@ -3362,12 +3362,16 @@ function DealsTab({ lead, config, user, onChange }) {
   const [payFor, setPayFor] = useState(null); // { deal, inst }
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
+  const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
 
   const togglePaid = async (deal, inst, e) => {
     e.stopPropagation();
     // Un-marking needs no extra detail; marking paid collects gateway + ref.
     if (!inst.paid) {
       setPayGateway(''); setPayRef('');
+      // Default the received date to the installment's existing paidDate (when
+      // editing) or today (when marking fresh).
+      setPayDate(inst.paidDate || new Date().toISOString().slice(0, 10));
       setPayFor({ deal, inst });
       return;
     }
@@ -3387,10 +3391,10 @@ function DealsTab({ lead, config, user, onChange }) {
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paid: true, gateway: payGateway, ...(payRef ? { transactionId: payRef } : {}) }),
+        body: JSON.stringify({ paid: true, gateway: payGateway, paidDate: payDate || undefined, ...(payRef ? { transactionId: payRef } : {}) }),
       });
       onChange(u);
-      setPayFor(null); setPayGateway(''); setPayRef('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate('');
     } catch (err) { alert(err.message); }
     setBusyInst(null);
   };
@@ -3577,6 +3581,13 @@ function DealsTab({ lead, config, user, onChange }) {
                     payGateway === g ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}>{g}</button>
               ))}
+            </div>
+
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment received date</label>
+              <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)}
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              <div className="text-[10px] text-slate-400 mt-1">The sale is counted in the month of this date — set it to when the money actually landed.</div>
             </div>
 
             <div className="mt-3">
@@ -4271,11 +4282,22 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                     {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
                                   </div>
                                 </div>
-                                <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
-                                  disabled={busy === inst.id}
-                                  className="rounded-md bg-[#050A1F] text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
-                                  {busy === inst.id ? 'Saving…' : 'Mark paid'}
-                                </button>
+                                {isAdmin ? (
+                                  <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
+                                    disabled={busy === inst.id}
+                                    className="rounded-md bg-[#050A1F] text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
+                                    {busy === inst.id ? 'Saving…' : 'Mark paid'}
+                                  </button>
+                                ) : inst.invoiceSent ? (
+                                  <span className="rounded-md bg-blue-100 text-blue-700 px-3 py-1.5 text-[10px] font-bold shrink-0">Invoice sent</span>
+                                ) : (
+                                  <button onClick={(e) => { e.stopPropagation(); markInvoiced(l, deal, inst); }}
+                                    disabled={busy === inst.id}
+                                    title="Record that you've sent the invoice. An admin confirms the payment."
+                                    className="rounded-md bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 text-[10px] font-bold hover:bg-blue-100 disabled:opacity-50 shrink-0">
+                                    {busy === inst.id ? 'Saving…' : 'Invoice sent'}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           );
@@ -4312,11 +4334,21 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                                   {inst.dueDate && <span className="font-bold">({daysLeftLabel(inst.dueDate)})</span>}
                                 </div>
                               </div>
-                              <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
-                                disabled={busy === inst.id}
-                                className="rounded-md bg-indigo-500 text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
-                                {busy === inst.id ? 'Saving…' : 'Record'}
-                              </button>
+                              {isAdmin ? (
+                                <button onClick={(e) => { e.stopPropagation(); setPayFor({ lead: l, deal, inst }); }}
+                                  disabled={busy === inst.id}
+                                  className="rounded-md bg-indigo-500 text-white px-3 py-1.5 text-[10px] font-bold hover:opacity-90 disabled:opacity-50 shrink-0">
+                                  {busy === inst.id ? 'Saving…' : 'Record'}
+                                </button>
+                              ) : inst.invoiceSent ? (
+                                <span className="rounded-md bg-blue-100 text-blue-700 px-3 py-1.5 text-[10px] font-bold shrink-0">Invoice sent</span>
+                              ) : (
+                                <button onClick={(e) => { e.stopPropagation(); markInvoiced(l, deal, inst); }}
+                                  disabled={busy === inst.id}
+                                  className="rounded-md bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 text-[10px] font-bold hover:bg-blue-100 disabled:opacity-50 shrink-0">
+                                  {busy === inst.id ? 'Saving…' : 'Invoice sent'}
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}

@@ -1261,34 +1261,54 @@ function Users({ me, say }) {
       {uview === 'list' && <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-            <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
-            <th className="px-4 py-3">Team / Shift</th><th className="px-4 py-3">Reports</th><th className="px-4 py-3">Email</th><th className="px-4 py-3"></th>
+            <th className="px-4 py-3">User</th>
+            <th className="px-4 py-3">Contact</th>
+            <th className="px-4 py-3">Team</th>
+            <th className="px-4 py-3 text-center">Email</th>
+            <th className="px-4 py-3 text-right"></th>
           </tr></thead>
           <tbody>
             {users.map((u) => (
               <tr key={u._id} className={`border-t border-slate-100 ${!u.active ? 'opacity-40' : ''}`}>
+                {/* Photo + name & designation (with sudo/alias name) */}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <AvatarPreview name={u.name} src={u.avatar} size={36} />
+                    <AvatarPreview name={u.name} src={u.avatar} size={38} />
                     <div>
-                      <div className="font-semibold" style={{ color: C.navy }}>{u.name} {(u._id === me.id || u._id === me._id) && <span className="text-[9px] font-bold text-slate-400">(you)</span>}</div>
-                      <div className="text-[11px] text-slate-400">{u.designation}{u.phone ? ' · ' + u.phone : ''}{u.aliases && u.aliases.length ? ' · aka ' + u.aliases.join(', ') : ''}</div>
+                      <div className="font-semibold" style={{ color: C.navy }}>
+                        {u.name}
+                        {u.aliases && u.aliases.length ? <span className="text-[11px] font-normal text-slate-400"> · aka {u.aliases.join(', ')}</span> : ''}
+                        {(u._id === me.id || u._id === me._id) && <span className="ml-1 text-[9px] font-bold text-slate-400">(you)</span>}
+                      </div>
+                      <div className="text-[11px] text-slate-400">{u.designation || (u.role === 'admin' ? 'Administrator' : u.role === 'manager' ? 'Manager' : 'Agent')}</div>
                     </div>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-xs text-slate-500">{u.email}</td>
-                <td className="px-4 py-3"><span className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase" style={u.role === 'admin' ? { background: '#FFF4EC', color: C.orangeDeep } : { background: '#F1F5F9', color: '#64748B' }}>{u.role}</span></td>
-                <td className="px-4 py-3 text-[11px] text-slate-500">{u.team || '—'}<br /><span className="text-slate-400">{u.shift || ''}</span></td>
-                <td className="px-4 py-3 text-xs font-semibold">{u.reportsRun}</td>
-                <td className="px-4 py-3">
-                  {u.gmailConnected
-                    ? <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase bg-green-100 text-green-700" title={u.gmailConnectedEmail || ''}>● Connected</span>
-                    : <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase bg-slate-100 text-slate-400">○ Not connected</span>}
+                {/* Email & phone */}
+                <td className="px-4 py-3 text-xs text-slate-500">
+                  <div>{u.email}</div>
+                  {u.phone && <div className="text-slate-400">{u.phone}</div>}
                 </td>
+                {/* Team */}
+                <td className="px-4 py-3 text-[11px] text-slate-500">{u.team || '—'}{u.shift ? <><br /><span className="text-slate-400">{u.shift}</span></> : null}</td>
+                {/* Email connection: green dot if connected, gray if not */}
+                <td className="px-4 py-3 text-center">
+                  <span title={u.gmailConnected ? (u.gmailConnectedEmail || 'Connected') : 'Not connected'}
+                    className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: u.gmailConnected ? '#22C55E' : '#CBD5E1' }} />
+                </td>
+                {/* Edit + Deactivate icons */}
                 <td className="px-4 py-3 text-right">
-                  <div className="flex gap-1.5 justify-end">
-                    <Btn size="sm" variant="ghost" onClick={() => { setEdit({ ...u, newPassword: '' }); setErr(''); }}>Edit</Btn>
-                    <Btn size="sm" variant="ghost" onClick={() => toggle(u)}>{u.active ? 'Deactivate' : 'Reactivate'}</Btn>
+                  <div className="flex gap-1 justify-end">
+                    <button title="Edit" onClick={() => { setEdit({ ...u, newPassword: '' }); setErr(''); }}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    </button>
+                    <button title={u.active ? 'Deactivate' : 'Reactivate'} onClick={() => toggle(u)}
+                      className={`w-8 h-8 flex items-center justify-center rounded-lg ${u.active ? 'text-slate-400 hover:bg-red-100 hover:text-red-600' : 'text-green-500 hover:bg-green-100'}`}>
+                      {u.active
+                        ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64M12 2v10"/></svg>
+                        : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+                    </button>
                   </div>
                 </td>
               </tr>
