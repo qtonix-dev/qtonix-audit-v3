@@ -1452,30 +1452,40 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     } else if (period === 'thisYear') {
       from = new Date(now.getFullYear(), 0, 1);
     }
-    if (from) {
-      // A lead marked converted before we tracked convertedAt (or via an older
-      // path) may have a null convertedAt. Fall back to createdAt for the date
-      // window, and always include null/undated converted leads so they can't
-      // disappear from the Converted tab entirely.
-      const range = to ? { [Op.gte]: from, [Op.lt]: to } : { [Op.gte]: from };
-      where[Op.and] = [
-        ...(where[Op.and] || []),
-        { [Op.or]: [
-          { convertedAt: range },
-          { convertedAt: null, createdAt: range },
-          { convertedAt: null, createdAt: null },
-        ] },
-      ];
-    }
 
     const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
     const page = Math.max(1, Number(req.query.page) || 1);
-    const { count, rows } = await Lead.findAndCountAll({
-      where,
-      order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']],
-      limit: perPage,
-      offset: (page - 1) * perPage,
-    });
+
+    // The Converted page is driven by WHEN MONEY WAS RECEIVED, not only when a
+    // lead was converted. A payment can land in a later month than the
+    // conversion, so for a period we include a lead if EITHER it was converted
+    // in-window OR any installment was paid in-window. Installments live in a
+    // JSON column, so we filter in JS. (For "all", we page in SQL as before.)
+    const inWindow = (dLike) => {
+      if (!from) return true;
+      const d = new Date(dLike);
+      if (Number.isNaN(d.getTime())) return false;
+      return d >= from && (!to || d < to);
+    };
+    const paidInWindow = (l) => (l.deals || []).some((d) => (d && d.installments || []).some((it) => it.paid && (it.paidAt || it.paidDate) && inWindow(it.paidAt || it.paidDate)));
+    const convertedInWindow = (l) => inWindow(l.convertedAt || l.createdAt);
+
+    let rows, count;
+    if (!from) {
+      const res2 = await Lead.findAndCountAll({
+        where,
+        order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']],
+        limit: perPage, offset: (page - 1) * perPage,
+      });
+      rows = res2.rows; count = res2.count;
+    } else {
+      // Load all converted leads in scope, filter by the payment/conversion
+      // window, then paginate the result set in memory.
+      const all = await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']] });
+      const matched = all.filter((l) => convertedInWindow(l) || paidInWindow(l));
+      count = matched.length;
+      rows = matched.slice((page - 1) * perPage, (page - 1) * perPage + perPage);
+    }
     res.json({
       items: rows.map((l) => {
         const o = l.toJSON();

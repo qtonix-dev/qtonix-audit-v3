@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
+import { APP_BUILD } from './version.js';
 import Leads from './Leads.jsx';
 import { CountryCombobox, PhoneField, Pagination, Icon, MailEditor } from './Leads.jsx';
 import { formatPhone } from './countries.js';
@@ -1595,6 +1596,7 @@ export default function App() {
           <div className="flex items-center gap-8">
             <div className="text-lg font-extrabold text-white tracking-tight">
               Qtonix<span className="text-[#FF6A00]">.</span>
+              <span className="ml-1.5 text-[9px] font-bold text-white/30 align-super" title="App build version">{APP_BUILD}</span>
             </div>
             <nav className="flex gap-0.5">
               {nav.map((n) => {

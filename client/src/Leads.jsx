@@ -2586,7 +2586,14 @@ function DraftRecord({ subject, body, doneLabel, doneAt }) {
     <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
       <div className="text-xs font-bold text-green-800">✓ {doneLabel} · {fmtDate(doneAt)}</div>
       {subject && <div className="text-[13px] font-bold text-slate-700 mt-1">Subject: {subject}</div>}
-      {body && <div className="text-[13px] text-slate-700 mt-0.5" dangerouslySetInnerHTML={{ __html: body }} />}
+      {/* The draft body is kept behind a collapsed toggle so the HTML preview is
+          never dumped inline. */}
+      {body && (
+        <details className="mt-1">
+          <summary className="text-[11px] font-bold text-green-700 cursor-pointer">View the draft that was sent</summary>
+          <div className="mt-1 text-[13px] text-slate-700" dangerouslySetInnerHTML={{ __html: body }} />
+        </details>
+      )}
     </div>
   );
 }
@@ -4229,34 +4236,48 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const fx = config.fxRates || { USD: 1 };
   const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
 
+  // Date window for the selected period, so the "collected" figure counts only
+  // payments actually RECEIVED in that period (by paidDate), matching the
+  // dropdown. `null` bounds mean unbounded (the "all" option).
+  const periodWindow = (() => {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth();
+    if (period === 'thisMonth') return { from: new Date(y, m, 1), to: new Date(y, m + 1, 1) };
+    if (period === 'lastMonth') return { from: new Date(y, m - 1, 1), to: new Date(y, m, 1) };
+    if (period === 'last3') return { from: new Date(y, m - 2, 1), to: new Date(y, m + 1, 1) };
+    if (period === 'thisYear') return { from: new Date(y, 0, 1), to: new Date(y + 1, 0, 1) };
+    return { from: null, to: null };
+  })();
+  // Is a paid installment's received date inside the selected window?
+  const paidInWindow = (it) => {
+    if (!periodWindow.from) return true; // "all"
+    const d = new Date(it.paidAt || it.paidDate || 0);
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= periodWindow.from && (!periodWindow.to || d < periodWindow.to);
+  };
+
   // Per-client money summary across won deals: total booked, collected, due.
   const summarize = (l) => {
     const hasPayment = (d) => (d.installments || []).some((it) => it.paid);
     const won = (l.deals || []).filter((d) => d.stage === 'closed_won' || (d.stage !== 'closed_lost' && hasPayment(d)));
     const open = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost' && !hasPayment(d));
-    let booked = 0, collected = 0, instTotal = 0, instPaid = 0, nextDue = null;
-    // `pending` = money genuinely owed now: unpaid installments of a PART-PAYMENT
-    // (one-time) deal. `recurringUpcoming` = future cycles of a recurring
-    // contract — these are NOT a debt, so they show as upcoming payments inside
-    // the converted box, never in "Awaiting collection".
+    let booked = 0, collected = 0, collectedInPeriod = 0, instTotal = 0, instPaid = 0, nextDue = null;
     const pending = [];
     const recurringUpcoming = [];
     for (const d of won) {
       const isRecurring = d.planType === 'recurring';
-      // One-off sale books its whole value up front. A recurring contract books
-      // only what has actually been collected (future cycles aren't owed).
       if (!isRecurring) booked += toUsd(d.amount, d.currency);
       for (const it of (d.installments || [])) {
         instTotal++;
         if (it.paid) {
           instPaid++;
           collected += toUsd(it.amount, d.currency);
+          // Only count toward the period figure if the money landed in-window.
+          if (paidInWindow(it)) collectedInPeriod += toUsd(it.amount, d.currency);
           if (isRecurring) booked += toUsd(it.amount, d.currency);
         } else if (isRecurring) {
-          // Future recurring cycle — show as an upcoming payment, not as owed.
           recurringUpcoming.push({ deal: d, inst: it });
         } else {
-          // Unpaid part-payment installment — genuinely awaiting collection.
           pending.push({ deal: d, inst: it, recurring: false });
           if (it.dueDate && (!nextDue || it.dueDate < nextDue)) nextDue = it.dueDate;
         }
@@ -4266,6 +4287,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     recurringUpcoming.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
     return {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
+      collectedInPeriod: Math.round(collectedInPeriod),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
       pending, nextInst: pending[0] || null, recurringUpcoming,
     };
@@ -4280,10 +4302,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const openDealLeads = filtered.filter(hasOpen);
   const noOpenDealLeads = filtered.filter((l) => !hasOpen(l));
 
-  // Page totals.
+  // Page totals. When a specific period is selected, "collected" reflects money
+  // RECEIVED in that period (by payment date); for "all" it's everything.
   const totals = filtered.reduce((acc, l) => {
     const s = summarize(l);
-    acc.booked += s.booked; acc.collected += s.collected; acc.due += s.due;
+    acc.booked += s.booked;
+    acc.collected += (period === 'all' ? s.collected : s.collectedInPeriod);
+    acc.due += s.due;
     return acc;
   }, { booked: 0, collected: 0, due: 0 });
 
