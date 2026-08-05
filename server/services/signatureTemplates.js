@@ -21,7 +21,10 @@ const LINE = '#e5e7eb';
 function iconBase() {
   return (process.env.APP_URL || '').replace(/\/+$/, '') + '/api/icons';
 }
-const ICON_NAMES = ['linkedin', 'facebook', 'instagram', 'calendly'];
+// Calendly is intentionally NOT in this list: it's shown as a dedicated
+// "Book a meeting" button, so including it as a social icon too would be a
+// duplicate link.
+const ICON_NAMES = ['linkedin', 'facebook', 'instagram'];
 
 // Render the social icons as a single-row table so email clients (and the
 // contenteditable preview) can never stack them vertically. Each icon is a

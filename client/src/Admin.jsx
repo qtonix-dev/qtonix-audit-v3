@@ -82,8 +82,9 @@ function fileToAvatar(file, size = 128) {
 
 // Small avatar preview with initials fallback.
 function AvatarPreview({ name, src, size = 56 }) {
+  const [broken, setBroken] = useState(false);
   const initials = (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-  if (src) return <img src={src} alt={name} className="rounded-full object-cover border border-slate-200" style={{ width: size, height: size }} />;
+  if (src && !broken) return <img src={src} alt={name} onError={() => setBroken(true)} className="rounded-full object-cover border border-slate-200" style={{ width: size, height: size }} />;
   return <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center" style={{ width: size, height: size, fontSize: size * 0.36 }}>{initials}</div>;
 }
 

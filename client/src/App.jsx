@@ -839,9 +839,7 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 hover:bg-white/5 transition">
         {user.avatar
           ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full object-cover" />
-          : user.companyLogo
-            ? <img src={user.companyLogo} alt={user.name} className="w-9 h-9 rounded-full object-cover bg-white border border-white/10" />
-            : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
+          : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
         <span className="text-right leading-tight">
           <span className="block text-xs font-semibold text-white">{user.name}</span>
           <span className="block text-[10px] text-slate-400">{user.designation}</span>

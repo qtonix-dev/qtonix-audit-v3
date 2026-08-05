@@ -240,12 +240,10 @@ router.get('/signature-templates', requireAuth, async (req, res, next) => {
     const aliases = Array.isArray(u.aliases) ? u.aliases.filter(Boolean) : [];
     const company = (s && s.socialLinks) || {};
     const mine = (u.socialLinks && typeof u.socialLinks === 'object') ? u.socialLinks : {};
-    // Photo: agent avatar first, else the company logo (absolute URL).
-    let photo = u.avatar || '';
-    if (!photo && s && s.logoPath) {
-      const base = (process.env.APP_URL || '').replace(/\/+$/, '');
-      photo = /^https?:/i.test(s.logoPath) ? s.logoPath : `${base}${s.logoPath}`;
-    }
+    // Photo: the agent's own avatar only. If they have none, the signature
+    // template renders their initials — we do NOT substitute the company logo,
+    // which would wrongly put the brand mark where the person's face should be.
+    const photo = u.avatar || '';
     const vals = {
       name: aliases[0] || u.name,
       title: u.designation || 'Sales Manager',

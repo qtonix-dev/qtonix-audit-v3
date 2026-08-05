@@ -5,7 +5,8 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
 function Avatar({ name, src, size = 40 }) {
-  if (src) return <img src={src} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+  const [broken, setBroken] = useState(false);
+  if (src && !broken) return <img src={src} alt={name} onError={() => setBroken(true)} className="rounded-full object-cover" style={{ width: size, height: size }} />;
   return (
     <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center shrink-0"
       style={{ width: size, height: size, fontSize: size * 0.36 }}>{initials(name)}</div>

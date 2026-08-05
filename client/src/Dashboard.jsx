@@ -33,8 +33,13 @@ function stripHtmlText(s) {
 }
 
 function Avatar({ name, src, size = 28, logo }) {
-  if (src) return <img src={src} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
-  if (logo) return <img src={logo} alt={name} className="rounded-full object-cover bg-white border border-slate-100" style={{ width: size, height: size }} />;
+  const [broken, setBroken] = useState(false);
+  // Show the person's photo when we have a usable one; otherwise fall back to
+  // their initials. We intentionally DO NOT fall back to the company logo — a
+  // person without a photo should show initials, not the brand mark.
+  if (src && !broken) {
+    return <img src={src} alt={name} onError={() => setBroken(true)} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+  }
   return (
     <div className="rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center" style={{ width: size, height: size, fontSize: size * 0.38 }}>
       {initials(name)}
