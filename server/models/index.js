@@ -133,6 +133,9 @@ const User = sequelize.define(
     joiningDate: { type: DataTypes.DATEONLY, allowNull: true },
     maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // 'single' | 'married'
     anniversary: { type: DataTypes.DATEONLY, allowNull: true }, // wedding anniversary (if married)
+    // Grants an individual agent access to the Converted-clients tab under Leads,
+    // scoped to their OWN converted clients only (admin-set per user).
+    canViewConverted: { type: DataTypes.BOOLEAN, defaultValue: false },
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },

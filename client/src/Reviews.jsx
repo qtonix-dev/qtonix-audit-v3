@@ -541,6 +541,7 @@ export default function Reviews({ user }) {
   // Admin can split into Sales (existing agents + managers) vs Pre-Sales (the
   // lead-manager view — pre-sales agents only).
   const [division, setDivision] = useState('sales');
+  const [shiftFilter, setShiftFilter] = useState(null); // { team, shift } — click a group chip to filter
 
   const load = () => {
     const divParam = isAdmin ? `&division=${division === 'presales' ? 'presales' : 'sales'}` : '';
@@ -555,7 +556,11 @@ export default function Reviews({ user }) {
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading reviews…</div>;
 
-  const agents = data.agents || [];
+  const allAgents = data.agents || [];
+  // Optional team+shift filter, toggled by clicking a group chip.
+  const agents = shiftFilter
+    ? allAgents.filter((a) => a.team === shiftFilter.team && a.shift === shiftFilter.shift)
+    : allAgents;
   const byBand = (b) => agents.filter((a) => a.band === b);
   const reviewed = agents.filter((a) => a.review && a.review.feedback).length;
   const hrFlagged = agents.filter((a) => a.review && a.review.needsHr).length;
@@ -656,16 +661,29 @@ export default function Reviews({ user }) {
         <ManagerReviews period={period} data={mgrData} onSaved={loadManagers} active={activeMgr} setActive={setActiveMgr} user={user} />
       ) : (
       <>
-      {/* Groups the viewer is responsible for */}
+      {/* Groups the viewer is responsible for. Click one to filter the agent
+          list to that team + shift; click again (or the active one) to clear. */}
       {(data.groups || []).length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {data.groups.map((g) => (
-            <span key={`${g.team}-${g.shift}`}
-              className={`rounded-lg px-3 py-1.5 text-[11px] font-bold border ${g.adminLed ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600'}`}>
-              {g.team} · {g.shift} · {g.agentCount} agent{g.agentCount === 1 ? '' : 's'}
-              {g.adminLed ? ' · admin-led' : ` · ${g.manager.name}`}
-            </span>
-          ))}
+        <div className="flex flex-wrap gap-2 mb-5 items-center">
+          {data.groups.map((g) => {
+            const isActive = shiftFilter && shiftFilter.team === g.team && shiftFilter.shift === g.shift;
+            return (
+              <button key={`${g.team}-${g.shift}`}
+                onClick={() => setShiftFilter(isActive ? null : { team: g.team, shift: g.shift })}
+                title={isActive ? 'Clear filter' : `Show only ${g.team} · ${g.shift}`}
+                className={`rounded-lg px-3 py-1.5 text-[11px] font-bold border transition ${
+                  isActive ? 'border-[#FF6A00] bg-orange-50 text-[#FF4500] ring-1 ring-orange-200'
+                  : g.adminLed ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                {g.team} · {g.shift} · {g.agentCount} agent{g.agentCount === 1 ? '' : 's'}
+                {g.adminLed ? ' · admin-led' : ` · ${g.manager.name}`}
+                {isActive && <span className="ml-1.5">✕</span>}
+              </button>
+            );
+          })}
+          {shiftFilter && (
+            <button onClick={() => setShiftFilter(null)} className="text-[11px] font-bold text-slate-400 hover:text-slate-600 underline">Clear filter</button>
+          )}
         </div>
       )}
 

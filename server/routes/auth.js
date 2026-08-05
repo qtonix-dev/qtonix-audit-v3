@@ -45,6 +45,7 @@ router.post('/login', async (req, res) => {
       avatar: user.avatar || null, birthday: user.birthday || null,
       workAnniversary: user.workAnniversary || null, maritalStatus: user.maritalStatus || null,
       anniversary: user.anniversary || null, gmailConnected: !!user.gmailRefreshToken,
+      canViewConverted: !!user.canViewConverted,
     },
   });
 });
@@ -67,6 +68,7 @@ router.get('/me', requireAuth, async (req, res) => {
     id: u.id, name: u.name, email: u.email, role: u.role, phone: u.phone,
     designation: u.designation, reportsRun: u.reportsRun, avatar: u.avatar || null,
     birthday: u.birthday || null, workAnniversary: u.workAnniversary || null, joiningDate: u.joiningDate || null,
+    canViewConverted: !!u.canViewConverted,
     maritalStatus: u.maritalStatus || null, anniversary: u.anniversary || null,
     calendly: (u.socialLinks && u.socialLinks.calendly) || '',
     gmailConnected: !!u.gmailRefreshToken,

@@ -1085,7 +1085,7 @@ function OrgChart({ users, onReassign, onMoveManager }) {
 }
 
 function Users({ me, say }) {
-  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', birthday: '', workAnniversary: '', joiningDate: '', team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } } };
+  const blank = { name: '', email: '', password: '', role: 'agent', jobType: 'bde', managerId: null, phone: '+91 ', designation: 'Sales Executive', birthday: '', joiningDate: '', maritalStatus: '', anniversary: '', canViewConverted: false, team: 'Bhubaneswar', shift: 'Morning', aliases: '', targets: { transfer: { enabled: false, daily: 0, monthly: 0 }, sales: { enabled: false, monthly: 0 }, team: { enabled: false, monthly: 0 }, leadGen: { enabled: false, monthly: 0 } } };
   const [users, setUsers] = useState([]);
   const [f, setF] = useState(blank);
   const [show, setShow] = useState(false);
@@ -1132,7 +1132,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, workAnniversary: edit.workAnniversary || null, joiningDate: edit.joiningDate || null, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, joiningDate: edit.joiningDate || null, maritalStatus: edit.maritalStatus || null, anniversary: edit.anniversary || null, canViewConverted: !!edit.canViewConverted, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -1172,8 +1172,25 @@ function Users({ me, say }) {
             <Field label="Designation"><input className={inputCls} value={f.designation} onChange={(e) => setF({ ...f, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
             <Field label="Birthday"><input type="date" className={inputCls} value={f.birthday || ''} onChange={(e) => setF({ ...f, birthday: e.target.value })} /></Field>
-            <Field label="Work anniversary"><input type="date" className={inputCls} value={f.workAnniversary || ''} onChange={(e) => setF({ ...f, workAnniversary: e.target.value })} /></Field>
-            <Field label="Joining date"><input type="date" className={inputCls} value={f.joiningDate || ''} onChange={(e) => setF({ ...f, joiningDate: e.target.value })} /></Field>
+            <Field label="Joining date" hint="Drives the work-anniversary celebration"><input type="date" className={inputCls} value={f.joiningDate || ''} onChange={(e) => setF({ ...f, joiningDate: e.target.value })} /></Field>
+            <Field label="Marital status">
+              <select className={inputCls} value={f.maritalStatus || ''} onChange={(e) => setF({ ...f, maritalStatus: e.target.value, anniversary: e.target.value === 'married' ? f.anniversary : '' })}>
+                <option value="">Not specified</option>
+                <option value="single">Single</option>
+                <option value="married">Married</option>
+              </select>
+            </Field>
+            {f.maritalStatus === 'married' && (
+              <Field label="Marriage anniversary"><input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => setF({ ...f, anniversary: e.target.value })} /></Field>
+            )}
+            {(f.role === 'agent' || f.role === 'manager') && (
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" checked={!!f.canViewConverted} onChange={(e) => setF({ ...f, canViewConverted: e.target.checked })} />
+                  Can view Converted clients (their own only)
+                </label>
+              </div>
+            )}
             {/* A lead manager coordinates intake only — no team, shift, alias,
                 designation or targets apply to them. */}
             {f.role !== 'leadmanager' && (
@@ -1217,13 +1234,30 @@ function Users({ me, say }) {
             <Field label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
             <Field label="Birthday"><input type="date" className={inputCls} value={(edit.birthday || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, birthday: e.target.value })} /></Field>
-            <Field label="Work anniversary"><input type="date" className={inputCls} value={(edit.workAnniversary || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, workAnniversary: e.target.value })} /></Field>
-            <Field label="Joining date"><input type="date" className={inputCls} value={(edit.joiningDate || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, joiningDate: e.target.value })} /></Field>
+            <Field label="Joining date" hint="Drives the work-anniversary celebration"><input type="date" className={inputCls} value={(edit.joiningDate || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, joiningDate: e.target.value })} /></Field>
+            <Field label="Marital status">
+              <select className={inputCls} value={edit.maritalStatus || ''} onChange={(e) => setEdit({ ...edit, maritalStatus: e.target.value, anniversary: e.target.value === 'married' ? edit.anniversary : '' })}>
+                <option value="">Not specified</option>
+                <option value="single">Single</option>
+                <option value="married">Married</option>
+              </select>
+            </Field>
+            {edit.maritalStatus === 'married' && (
+              <Field label="Marriage anniversary"><input type="date" className={inputCls} value={(edit.anniversary || '').slice(0, 10)} onChange={(e) => setEdit({ ...edit, anniversary: e.target.value })} /></Field>
+            )}
             {edit.role !== 'leadmanager' && (
               <>
                 <Field label="Team"><select className={inputCls} value={edit.team || 'Bhubaneswar'} onChange={(e) => setEdit({ ...edit, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
                 <Field label="Shift"><select className={inputCls} value={edit.shift || 'Morning'} onChange={(e) => setEdit({ ...edit, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
               </>
+            )}
+            {(edit.role === 'agent' || edit.role === 'manager') && (
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" checked={!!edit.canViewConverted} onChange={(e) => setEdit({ ...edit, canViewConverted: e.target.checked })} />
+                  Can view Converted clients (their own only)
+                </label>
+              </div>
             )}
             {edit.role === 'manager' && (
               <div className="col-span-2">

@@ -1837,6 +1837,8 @@ function EmailInboxTab({ lead, user }) {
   const [err, setErr] = useState('');
   const [openThread, setOpenThread] = useState(null); // { threadId, subject }
   const [composer, setComposer] = useState(null); // { mode, to, cc, bcc, subject, body, threadId, inReplyTo, fromUserId }
+  const [emailPage, setEmailPage] = useState(1); // pagination for the thread list
+  const EMAIL_PER_PAGE = 20;
 
   const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
   const [scheduled, setScheduled] = useState([]);
@@ -1864,6 +1866,11 @@ function EmailInboxTab({ lead, user }) {
   }
   threads.forEach((t) => t.messages.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt)));
   threads.sort((a, b) => new Date(b.messages[b.messages.length - 1].sentAt) - new Date(a.messages[a.messages.length - 1].sentAt));
+
+  // Paginate the thread list at 20 conversations per page.
+  const totalEmailPages = Math.max(1, Math.ceil(threads.length / EMAIL_PER_PAGE));
+  const safePage = Math.min(emailPage, totalEmailPages);
+  const pagedThreads = threads.slice((safePage - 1) * EMAIL_PER_PAGE, safePage * EMAIL_PER_PAGE);
 
   const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: data.defaultFrom || data.fromOptions[0]?.value });
 
@@ -1899,7 +1906,7 @@ function EmailInboxTab({ lead, user }) {
       {/* Gmail-style list */}
       <div className="divide-y divide-slate-100">
         {threads.length === 0 && <div className="text-slate-400 text-sm text-center py-10">No emails found for this lead yet. New messages sync every few minutes.</div>}
-        {threads.map((t) => {
+        {pagedThreads.map((t) => {
           const last = t.messages[t.messages.length - 1];
           const hasUnread = t.messages.some((m) => m.direction === 'inbound' && !m.isRead);
           const anyStar = t.messages.some((m) => m.starred);
@@ -1941,6 +1948,22 @@ function EmailInboxTab({ lead, user }) {
           );
         })}
       </div>
+
+      {/* Pagination — 20 conversations per page. */}
+      {totalEmailPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/50">
+          <span className="text-[11px] text-slate-400">
+            {(safePage - 1) * EMAIL_PER_PAGE + 1}–{Math.min(safePage * EMAIL_PER_PAGE, threads.length)} of {threads.length} conversations
+          </span>
+          <div className="flex items-center gap-1">
+            <button disabled={safePage <= 1} onClick={() => setEmailPage(safePage - 1)}
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">← Prev</button>
+            <span className="text-[11px] font-bold text-slate-500 px-2">Page {safePage} / {totalEmailPages}</span>
+            <button disabled={safePage >= totalEmailPages} onClick={() => setEmailPage(safePage + 1)}
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">Next →</button>
+          </div>
+        </div>
+      )}
 
       {openThread && <ThreadPopup lead={lead} thread={openThread} fromOptions={data.fromOptions} defaultFrom={data.defaultFrom} defaultSignature={data.defaultSignature} onClose={() => { setOpenThread(null); load(); }} onReload={load} />}
       {composer && <Composer lead={lead} initial={composer} fromOptions={data.fromOptions} defaultFrom={data.defaultFrom} defaultSignature={data.defaultSignature} onClose={() => setComposer(null)} onSent={() => { setComposer(null); load(); loadScheduled(); }} />}
@@ -4129,13 +4152,15 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   }, []);
   const clearLeadIdParam = () => { try { const p = new URLSearchParams(window.location.search); p.delete('leadId'); const qs = p.toString(); window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`); } catch { /* */ } };
   const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
+  // An individual agent can be granted access to their OWN converted clients.
+  const canSeeConverted = isManagerOrAdmin || !!user.canViewConverted;
   return (
     <div>
       {(view === 'list' || view === 'pipeline' || view === 'converted') && user.role !== 'leadmanager' && (
         <div className="flex items-center gap-1 mb-5 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 List</button>
           <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>
-          {isManagerOrAdmin && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
+          {canSeeConverted && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
         </div>
       )}
       {/* Lead managers coordinate intake only — the pipeline and converted views
@@ -4145,7 +4170,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
           scoped to callbacks and with the Transfer action enabled. */}
       {view === 'prospects' && <LeadsList user={user} stage="prospect" onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
-      {view === 'converted' && isManagerOrAdmin && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
+      {view === 'converted' && canSeeConverted && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
       {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onOpenLead={(id) => openDetail(id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
       {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
     </div>
@@ -4302,11 +4327,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     }
     pending.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
     recurringUpcoming.sort((a, b) => String(a.inst.dueDate || '9999').localeCompare(String(b.inst.dueDate || '9999')));
+    // Does this client have a recurring (month-to-month) contract? Such deals are
+    // never "paid in full" — they're an ongoing monthly arrangement.
+    const hasRecurring = won.some((d) => d.planType === 'recurring');
     return {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
       collectedInPeriod: Math.round(collectedInPeriod),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
-      pending, nextInst: pending[0] || null, recurringUpcoming,
+      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring,
     };
   };
 
@@ -4620,7 +4648,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                             {isOpen ? <Icon.Minus size={13} /> : <Icon.Plus size={13} />}
                           </button>
                         ) : (
-                          <span className="w-6 h-6 flex items-center justify-center text-green-500" title="Paid in full"><Icon.Check size={13} /></span>
+                          <span className={`w-6 h-6 flex items-center justify-center ${s.hasRecurring ? 'text-indigo-500' : 'text-green-500'}`} title={s.hasRecurring ? 'Recurring monthly contract' : 'Paid in full'}>{s.hasRecurring ? '🔁' : <Icon.Check size={13} />}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -4639,8 +4667,8 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                           <div className="h-full rounded-full" style={{ width: `${Math.max(3, pct)}%`, background: s.due <= 0 ? '#16A34A' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
                         </div>
                       </td>
-                      <td className={`px-4 py-3 text-xs font-bold ${s.due > 0 ? 'text-amber-600' : 'text-green-600'}`}>
-                        {s.due > 0 ? `$${s.due.toLocaleString()}` : 'Paid in full'}
+                      <td className={`px-4 py-3 text-xs font-bold ${s.due > 0 ? 'text-amber-600' : s.hasRecurring ? 'text-indigo-600' : 'text-green-600'}`}>
+                        {s.due > 0 ? `$${s.due.toLocaleString()}` : s.hasRecurring ? '🔁 Recurring' : 'Paid in full'}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">

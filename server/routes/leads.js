@@ -1480,8 +1480,13 @@ router.get('/search', requireAuth, async (req, res, next) => {
 
 router.get('/converted', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-      return res.status(403).json({ error: 'Only managers and admins can view converted leads.' });
+    // Admins and managers always see converted leads (scoped by visibility).
+    // An individual agent/manager may also be granted access to their OWN
+    // converted clients via the canViewConverted flag.
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = req.user.role === 'admin' || req.user.role === 'manager' || (viewer && viewer.canViewConverted);
+    if (!allowed) {
+      return res.status(403).json({ error: 'You do not have access to converted clients.' });
     }
     const where = await visibilityWhere(req.user);
     where.status = 'converted';

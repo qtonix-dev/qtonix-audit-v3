@@ -111,7 +111,15 @@ router.get('/callback', async (req, res) => {
     <p style="color:#64748B">You can close this window.</p>
     <script>try{window.opener&&window.opener.postMessage({gmail:'${ok ? 'connected' : 'error'}'},'*')}catch(e){};setTimeout(()=>window.close(),1500)</script></body>`);
   try {
-    if (error) return done('Connection cancelled.', false);
+    if (error) {
+      // Google blocks personal accounts when the OAuth app is still in "Testing"
+      // mode or pending verification for the restricted Gmail scopes. Give a
+      // clear hint rather than a generic "cancelled".
+      const hint = String(error) === 'access_denied'
+        ? 'Google blocked this account. If this is a personal @gmail.com account, the CRM’s Google app must be published/verified, or the account added as a test user in Google Cloud. Ask your admin.'
+        : 'Connection cancelled.';
+      return done(hint, false);
+    }
     const jwt = require('jsonwebtoken');
     let payload;
     try { payload = jwt.verify(String(state), process.env.JWT_SECRET || 'change-me-in-production'); }

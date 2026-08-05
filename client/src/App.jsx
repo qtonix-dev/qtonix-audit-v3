@@ -1465,6 +1465,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   const [emailMenuOpen, setEmailMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showEmailSettings, setShowEmailSettings] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [view, setView] = useState(() => {
@@ -1618,7 +1619,7 @@ export default function App() {
               Qtonix<span className="text-[#FF6A00]">.</span>
               <span className="ml-1.5 text-[9px] font-bold text-white/30 align-super" title="App build version">{APP_BUILD}</span>
             </div>
-            <nav className="flex gap-0.5">
+            <nav className="hidden md:flex gap-0.5">
               {nav.map((n) => {
                 // Dropdown parent (e.g. Email → All Email / Email Drafts).
                 if (n.children) {
@@ -1683,8 +1684,56 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onTemplates={() => setShowTemplates(true)} onSignOut={signOut} />
+            {/* Hamburger — mobile only. */}
+            <button onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Menu"
+              className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg text-white hover:bg-white/10">
+              {mobileMenuOpen
+                ? <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18" /></svg>}
+            </button>
           </div>
         </div>
+
+        {/* Mobile menu drawer — full-width list under the header. */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-white/10 bg-[#050A1F] px-4 py-3 space-y-1">
+            {nav.map((n) => {
+              if (n.children) {
+                return (
+                  <div key={n.id} className="space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-3 pt-2">{n.label}</div>
+                    {n.children.map((c) => (
+                      <button key={c.id}
+                        onClick={() => { setView(c.id); setActiveReport(null); setMobileMenuOpen(false); }}
+                        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-left ${view === c.id ? 'text-[#FF6A00] bg-white/5' : 'text-slate-300 hover:bg-white/5'}`}>
+                        <NavIcon name={c.icon} className="w-4 h-4" />
+                        <span>{c.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              }
+              const active = view === n.id;
+              return (
+                <button key={n.id}
+                  onClick={() => {
+                    try { const p = new URLSearchParams(window.location.search); if (p.get('leadId')) { p.delete('leadId'); const qs = p.toString(); window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`); } } catch { /* */ }
+                    if (n.id === 'leads') setLeadsEntry({ view: 'list', nonce: Date.now() });
+                    setView(n.id); setActiveReport(null); setMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-left ${active ? 'text-[#FF6A00] bg-white/5' : 'text-slate-300 hover:bg-white/5'}`}>
+                  <NavIcon name={n.icon} className="w-4 h-4" />
+                  <span>{n.label}</span>
+                </button>
+              );
+            })}
+            {isAdmin && (
+              <a href="/admin" className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-slate-300 hover:bg-white/5">
+                <span>Admin</span>
+              </a>
+            )}
+          </div>
+        )}
       </header>
 
       {showProfile && <EditProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => setUser((prev) => ({ ...prev, ...u }))} />}

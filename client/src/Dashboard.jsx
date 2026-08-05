@@ -364,7 +364,16 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   const [missed, setMissed] = useState(null);
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
   const [celebrations, setCelebrations] = useState([]);
-  useEffect(() => { api('/leads/celebrations').then((d) => setCelebrations(d.items || [])).catch(() => {}); }, []);
+  // Refresh celebrations on load, on window focus, and hourly, so date-specific
+  // cards (birthday/anniversary) clear at the day boundary without a reload.
+  useEffect(() => {
+    const loadCel = () => api('/leads/celebrations').then((d) => setCelebrations(d.items || [])).catch(() => {});
+    loadCel();
+    const iv = setInterval(loadCel, 60 * 60 * 1000); // hourly
+    const onFocus = () => loadCel();
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(iv); window.removeEventListener('focus', onFocus); };
+  }, []);
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
   const [unopened, setUnopened] = useState(null); // { items }
@@ -428,9 +437,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
       {/* Prompt to connect email until the user has done so. */}
       <DashboardGmailNotice />
 
-      {/* Sales celebration — the most recent win in the last hour, shown to
-          everyone so the whole floor sees it. Rotates as new sales land. */}
-      {wins && wins.latest && <SalesCelebration latest={wins.latest} others={wins.wins} />}
+      {/* Celebration slider — rotates the latest sales win and today's
+          birthdays / work + wedding anniversaries, 10s per slide. */}
+      <CelebrationSlider wins={wins} celebrations={celebrations} user={user} />
 
       {/* Greeting, with the view switcher on the right. Managers and admins can
           flip between the operational overview and the analytics view; agents
@@ -452,29 +461,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         )}
       </div>
 
-      {/* Celebrations — birthdays, work + wedding anniversaries today. Shown to
-          everyone so the whole team can wish each other. */}
-      {celebrations.length > 0 && (
-        <div className="rounded-2xl border border-pink-200 bg-gradient-to-r from-pink-50 to-orange-50 p-4">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-pink-600 mb-2">🎉 Celebrations today</div>
-          <div className="flex flex-wrap gap-2">
-            {celebrations.map((c, i) => {
-              const msg = c.type === 'birthday' ? '🎂 Happy Birthday'
-                : c.type === 'work' ? `🏆 Happy ${c.yearsLabel ? `${c.yearsLabel} ` : ''}Work Anniversary`
-                : '💍 Happy Anniversary';
-              return (
-                <div key={`${c.id}-${c.type}-${i}`} className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 border border-pink-100 shadow-sm">
-                  <Avatar name={c.name} src={c.avatar} logo={user && user.companyLogo} size={28} />
-                  <div className="leading-tight">
-                    <div className="text-xs font-bold text-[#050A1F]">{c.name}</div>
-                    <div className="text-[10px] text-pink-600 font-semibold">{msg}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Celebrations are now shown in the CelebrationSlider above. */}
+
 
       {/* ROW 1 — Sales vs target + Converted, 50/50 */}
       <div className="grid md:grid-cols-2 gap-4">
@@ -1253,6 +1241,68 @@ function DraftsReceivedModal({ onClose, onOpen }) {
 // someone who just logged in. The banner naturally rotates as newer wins
 // arrive (the parent re-polls every minute).
 // ---------------------------------------------------------------------------
+// A rotating banner that cycles through celebratory "slides" — the latest sales
+// win plus today's birthdays / work anniversaries / wedding anniversaries — one
+// at a time, auto-advancing every 10 seconds. Consolidates what used to be two
+// stacked banners into a single slider.
+function CelebrationSlider({ wins, celebrations, user }) {
+  const slides = [];
+  if (wins && wins.latest) slides.push({ kind: 'sale', key: `sale-${wins.latest.id}`, data: wins });
+  (celebrations || []).forEach((c, i) => slides.push({ kind: 'celebration', key: `${c.id}-${c.type}-${i}`, data: c }));
+
+  const [idx, setIdx] = useState(0);
+  // Auto-advance every 10s. Reset to a valid index if the slide set shrinks.
+  useEffect(() => {
+    if (slides.length <= 1) return;
+    const t = setInterval(() => setIdx((n) => (n + 1) % slides.length), 10000);
+    return () => clearInterval(t);
+  }, [slides.length]);
+  useEffect(() => { if (idx >= slides.length) setIdx(0); }, [slides.length, idx]);
+
+  if (slides.length === 0) return null;
+  const current = slides[Math.min(idx, slides.length - 1)];
+
+  return (
+    <div className="relative">
+      {current.kind === 'sale'
+        ? <SalesCelebration latest={current.data.latest} others={current.data.wins} />
+        : <CelebrationCard c={current.data} user={user} />}
+
+      {/* Dots + manual nav, only when there's more than one slide. */}
+      {slides.length > 1 && (
+        <div className="flex items-center justify-center gap-1.5 mt-2">
+          {slides.map((s, i) => (
+            <button key={s.key} onClick={() => setIdx(i)} aria-label={`Slide ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5 bg-[#FF6A00]' : 'w-1.5 bg-slate-300 hover:bg-slate-400'}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A single celebration slide (birthday / work anniversary / wedding anniversary).
+function CelebrationCard({ c, user }) {
+  const msg = c.type === 'birthday' ? '🎂 Happy Birthday'
+    : c.type === 'work' ? `🏆 Happy ${c.yearsLabel ? `${c.yearsLabel} ` : ''}Work Anniversary`
+    : '💍 Happy Anniversary';
+  const sub = c.type === 'birthday' ? 'Wishing you a wonderful day!'
+    : c.type === 'work' ? `Thank you for ${c.years ? `${c.years} year${c.years === 1 ? '' : 's'} of ` : ''}being with us!`
+    : 'Congratulations on your special day!';
+  return (
+    <div className="rounded-2xl overflow-hidden shadow-sm border border-pink-200">
+      <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FDF2F8,#FFF7ED)' }}>
+        <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>{c.type === 'birthday' ? '🎂' : c.type === 'work' ? '🏆' : '💍'}</div>
+        <Avatar name={c.name} src={c.avatar} logo={user && user.companyLogo} size={56} />
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-extrabold text-[#050A1F]">{msg}, {(c.name || '').split(' ')[0]}!</div>
+          <div className="text-[11px] text-pink-600 font-semibold">{c.name} · {sub}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SalesCelebration({ latest, others }) {
   const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
   const first = (latest.ownerName || 'Someone').split(' ')[0];
