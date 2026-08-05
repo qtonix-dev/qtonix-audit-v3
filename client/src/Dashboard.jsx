@@ -571,10 +571,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 : newItems.slice(0, 12).map((i) => {
                     const overdue = (emailReplies.missed || []).some((x) => x.emailId === i.emailId);
                     return (
-                      <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group">
-                        <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{overdue ? '⚠️' : '✉️'}</span>
-                        <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
-                        <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
+                      <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })}>
+                        <span>{overdue ? '⚠️' : '✉️'}</span>
+                        <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
+                        <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
                         {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
                         <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAge(i.ageMs)}</span>
                         {user.role === 'admin' && overdue && (
@@ -588,7 +588,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               {emailTab === 'notopen' && (notOpenItems.length === 0
                 ? <Empty text="Every sent email has been opened. 🎉" />
                 : notOpenItems.slice(0, 12).map((i) => (
-                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
                       <span>📭</span>
                       <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
                       <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}</span>
@@ -600,7 +600,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               {emailTab === 'open' && (openItems.length === 0
                 ? <Empty text="No opens in the last 24 hours yet." />
                 : openItems.slice(0, 12).map((i) => (
-                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-green-50' : ''}`}>
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-green-50' : ''}`}>
                       <span>{i.clicked ? '🔗' : '📖'}</span>
                       <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
                       <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}</span>

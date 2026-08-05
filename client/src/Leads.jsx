@@ -1466,10 +1466,13 @@ export function NewLead({ user, onCreated, onCancel, isCallback, onOpenLead }) {
 }
 
 // ---- Lead detail (shell; tabs filled in later phases) ----------------------
-export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
+export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, isProspect }) {
   const [lead, setLead] = useState(null);
   const [config, setConfig] = useState({});
   const [tab, setTab] = useState(initialTab || 'timeline');
+  // Bumped to request the Email tab open its composer (from a timeline click).
+  const [composeSignal, setComposeSignal] = useState(0);
+  const goCompose = () => { setTab('email'); setComposeSignal(Date.now()); };
   const [emailUnread, setEmailUnread] = useState(0);
   const [editSection, setEditSection] = useState(null); // 'all' | 'basic' | 'tags' | 'description' | 'other'
   const [draft, setDraft] = useState(null);
@@ -1710,12 +1713,12 @@ export function LeadDetail({ user, leadId, onBack, initialTab, isProspect }) {
             ))}
           </div>
           <div className="p-5 min-h-[300px]">
-            {effTab === 'timeline' && <Timeline lead={lead} />}
+            {effTab === 'timeline' && <Timeline lead={lead} onCompose={goCompose} />}
             {effTab === 'notes' && <NotesTab lead={lead} onChange={setLead} />}
             {effTab === 'activity' && <ActivityTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'deals' && !isCallback && <DealsTab lead={lead} config={config} user={user} onChange={setLead} />}
             {effTab === 'reports' && !isCallback && <ReportsTab lead={lead} onChange={setLead} />}
-            {effTab === 'email' && <EmailTab lead={lead} user={user} onChange={setLead} />}
+            {effTab === 'email' && <EmailTab lead={lead} user={user} onChange={setLead} initialCompose={initialCompose} composeSignal={composeSignal} />}
           </div>
         </div>
       </div>
@@ -1781,7 +1784,7 @@ function Row({ k, v }) {
 // compose. Distinct from the pre-sales "Email draft" workflow.
 // Merged Email tab: switches between the Gmail-style inbox (default), the
 // pre-sales draft workflow, and a templates view (coming soon).
-function EmailTab({ lead, user, onChange }) {
+function EmailTab({ lead, user, onChange, initialCompose, composeSignal }) {
   const isPresales = /pre-?sales/i.test(String(lead.leadSource || ''));
   const [view, setView] = useState('inbox');
   const tabs = [['inbox', 'Email'], ...(isPresales ? [['draft', 'PCF Draft']] : [])];
@@ -1792,7 +1795,7 @@ function EmailTab({ lead, user, onChange }) {
           <button key={id} onClick={() => setView(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${view === id ? 'bg-white text-[#FF4500] shadow-sm' : 'text-slate-500'}`}>{label}</button>
         ))}
       </div>
-      {view === 'inbox' && <EmailInboxTab lead={lead} user={user} />}
+      {view === 'inbox' && <EmailInboxTab lead={lead} user={user} initialCompose={initialCompose} composeSignal={composeSignal} />}
       {view === 'draft' && <EmailDraftTab lead={lead} user={user} onChange={onChange} />}
     </div>
   );
@@ -1832,12 +1835,13 @@ function LeadRescheduleModal({ row, onClose, onSaved }) {
   );
 }
 
-function EmailInboxTab({ lead, user }) {
+function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
   const [data, setData] = useState(null); // { connected, email, fromOptions, unread, emails }
   const [err, setErr] = useState('');
   const [openThread, setOpenThread] = useState(null); // { threadId, subject }
   const [composer, setComposer] = useState(null); // { mode, to, cc, bcc, subject, body, threadId, inReplyTo, fromUserId }
   const [emailPage, setEmailPage] = useState(1); // pagination for the thread list
+  const [autoComposed, setAutoComposed] = useState(false);
   const EMAIL_PER_PAGE = 20;
 
   const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
@@ -1845,6 +1849,23 @@ function EmailInboxTab({ lead, user }) {
   const [reschedule, setReschedule] = useState(null);
   const loadScheduled = () => api(`/gmail/lead/${lead._id || lead.id}/scheduled`).then((r) => setScheduled(Array.isArray(r) ? r : [])).catch(() => {});
   useEffect(() => { load(); loadScheduled(); }, [lead._id, lead.id]);
+
+  const openComposer = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: (data && (data.defaultFrom || (data.fromOptions && data.fromOptions[0]?.value))) });
+
+  // When navigated here from a notification/timeline entry with compose intent,
+  // open the compose popup once the mailbox data (from-addresses) has loaded.
+  useEffect(() => {
+    if (initialCompose && !autoComposed && data && data.connected) {
+      setAutoComposed(true);
+      openComposer();
+    }
+  }, [initialCompose, autoComposed, data, lead.email]);
+
+  // A timeline click (compose signal) opens the composer whenever it fires.
+  useEffect(() => {
+    if (composeSignal && data && data.connected) openComposer();
+    // eslint-disable-next-line
+  }, [composeSignal, data && data.connected]);
 
   if (!data) return <div className="text-slate-400 text-sm py-8 text-center">{err || 'Loading…'}</div>;
   if (!data.connected) {
@@ -1872,7 +1893,7 @@ function EmailInboxTab({ lead, user }) {
   const safePage = Math.min(emailPage, totalEmailPages);
   const pagedThreads = threads.slice((safePage - 1) * EMAIL_PER_PAGE, safePage * EMAIL_PER_PAGE);
 
-  const startCompose = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: data.defaultFrom || data.fromOptions[0]?.value });
+  const startCompose = openComposer;
 
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -3040,7 +3061,7 @@ function AiBriefModal({ lead, onClose }) {
   );
 }
 
-function Timeline({ lead }) {
+function Timeline({ lead, onCompose }) {
   const raw = Array.isArray(lead.timeline) ? lead.timeline : [];
   if (!raw.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
   const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄', email: '✉️' };
@@ -3076,12 +3097,18 @@ function Timeline({ lead }) {
       {tl.map((e, i) => {
         const miss = missState(e);
         const isNote = e.type === 'note';
+        // Email tracking entries (opened / not-opened / clicked / downloaded)
+        // are clickable: they jump to the Email tab and open the composer so
+        // the owner can follow up straight away.
+        const isEmailEvent = e.type === 'email' && ['open', 'unopened', 'click', 'download'].includes(e.direction);
         return (
           <div key={i}
+            onClick={isEmailEvent && onCompose ? () => onCompose() : undefined}
+            title={isEmailEvent ? 'Open the email composer to follow up' : undefined}
             className={`flex gap-3 rounded-lg px-3 py-2 ${
               miss ? 'bg-red-50 border border-red-200' : 'border border-transparent'
-            }`}>
-            <div className="text-lg leading-none mt-0.5">{e.type === 'email' && e.direction === 'open' ? '📖' : e.type === 'email' && e.direction === 'unopened' ? '📭' : (icons[e.type] || '•')}</div>
+            } ${isEmailEvent ? 'cursor-pointer hover:bg-orange-50' : ''}`}>
+            <div className="text-lg leading-none mt-0.5">{e.type === 'email' && e.direction === 'open' ? '📖' : e.type === 'email' && e.direction === 'unopened' ? '📭' : e.type === 'email' && e.direction === 'click' ? '🔗' : e.type === 'email' && e.direction === 'download' ? '📎' : (icons[e.type] || '•')}</div>
             <div className="min-w-0 flex-1">
               {/* Notes show what was actually written, not a generic label. */}
               <div className={`text-sm whitespace-pre-wrap break-words ${miss ? 'text-red-800' : 'text-slate-700'}`}>
@@ -4129,14 +4156,14 @@ function ReportsTab({ lead, onChange }) {
 }
 
 // Top-level Leads view controller — switches between list / new / detail.
-export default function Leads({ user, initialView, initialUntouched, initialLeadId, initialConvertedMonth }) {
+export default function Leads({ user, initialView, initialUntouched, initialLeadId, initialConvertedMonth, initialTab, initialCompose }) {
   const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
   const [activeId, setActiveId] = useState(() => {
     if (initialLeadId) return initialLeadId;
     try { return new URLSearchParams(window.location.search).get('leadId') || null; } catch { return null; }
   });
   const [untouched, setUntouched] = useState(initialUntouched || null);
-  const [detailTab, setDetailTab] = useState(null);
+  const [detailTab, setDetailTab] = useState(initialTab || null);
   // `tab` lets callers deep-link straight to a section (e.g. the Deals tab when
   // a deal is clicked from the pipeline or converted-clients page).
   const openDetail = (id, tab) => {
@@ -4172,7 +4199,7 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && canSeeConverted && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
       {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onOpenLead={(id) => openDetail(id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
-      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
+      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} initialCompose={initialCompose && activeId === initialLeadId} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
     </div>
   );
 }
