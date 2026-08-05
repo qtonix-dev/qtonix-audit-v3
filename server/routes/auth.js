@@ -66,7 +66,7 @@ router.get('/me', requireAuth, async (req, res) => {
   res.json({ user: {
     id: u.id, name: u.name, email: u.email, role: u.role, phone: u.phone,
     designation: u.designation, reportsRun: u.reportsRun, avatar: u.avatar || null,
-    birthday: u.birthday || null, workAnniversary: u.workAnniversary || null,
+    birthday: u.birthday || null, workAnniversary: u.workAnniversary || null, joiningDate: u.joiningDate || null,
     maritalStatus: u.maritalStatus || null, anniversary: u.anniversary || null,
     calendly: (u.socialLinks && u.socialLinks.calendly) || '',
     gmailConnected: !!u.gmailRefreshToken,

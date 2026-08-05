@@ -1264,6 +1264,7 @@ function TemplatesModal({ user, onClose }) {
   const [msg, setMsg] = useState('');
   const [vars, setVars] = useState([]);
   const [showVars, setShowVars] = useState(false);
+  const [showSubjVars, setShowSubjVars] = useState(false);
   const isAdmin = user.role === 'admin';
 
   const load = () => api('/gmail/templates').then(setList).catch(() => {});
@@ -1271,6 +1272,7 @@ function TemplatesModal({ user, onClose }) {
 
   // Insert a {{var}} token at the end of the body (the editor appends it).
   const insertVar = (key) => { setEditing((e) => ({ ...e, bodyHtml: `${e.bodyHtml || ''} {{${key}}}` })); setShowVars(false); };
+  const insertSubjectVar = (key) => { setEditing((e) => ({ ...e, subject: `${e.subject || ''}{{${key}}}` })); setShowSubjVars(false); };
 
   const blank = () => ({ name: '', subject: '', bodyHtml: '', isGlobal: false });
   const save = async () => {
@@ -1321,7 +1323,25 @@ function TemplatesModal({ user, onClose }) {
           <div>
             <div className="grid grid-cols-2 gap-2 mb-2">
               <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="Template name" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-              <input value={editing.subject || ''} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Subject (optional)" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <div className="relative">
+                <input value={editing.subject || ''} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Subject (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-8 text-sm" />
+                <button type="button" onClick={() => setShowSubjVars((v) => !v)} title="Insert variable into subject"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-blue-500 hover:bg-blue-50">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                </button>
+                {showSubjVars && (
+                  <div className="absolute right-0 mt-1 w-56 max-h-64 overflow-auto bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+                    <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase">Lead</div>
+                    {vars.filter((v) => v.key.startsWith('lead.')).map((v) => (
+                      <button key={v.key} onClick={() => insertSubjectVar(v.key)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50">{v.label} <span className="text-slate-300">{`{{${v.key}}}`}</span></button>
+                    ))}
+                    <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase border-t border-slate-100 mt-1">Brief (if available)</div>
+                    {vars.filter((v) => v.key.startsWith('brief.')).map((v) => (
+                      <button key={v.key} onClick={() => insertSubjectVar(v.key)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50">{v.label} <span className="text-slate-300">{`{{${v.key}}}`}</span></button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             {isAdmin && <label className="flex items-center gap-2 text-xs text-slate-600 mb-2"><input type="checkbox" checked={!!editing.isGlobal} onChange={(e) => setEditing({ ...editing, isGlobal: e.target.checked })} /> Make this a global template (visible to everyone)</label>}
             <div className="flex items-center justify-between mb-1.5">

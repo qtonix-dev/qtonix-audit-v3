@@ -1258,6 +1258,30 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       .sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)));
     const topShift = shiftBoard[0] || null;
 
+    // Enrich the winning team with a manager (photo) or, if the team has no
+    // manager, the team members' photos — so the dashboard can show faces just
+    // like the top-performer card. Managers are matched by team; members are
+    // agents on that team/shift.
+    if (topShift) {
+      try {
+        const teamUsers = await User.findAll({
+          where: { active: true, team: topShift.team },
+          attributes: ['id', 'name', 'role', 'avatar', 'shift'],
+        });
+        const mgr = teamUsers.find((u) => u.role === 'manager');
+        if (mgr) {
+          topShift.manager = { id: mgr.id, name: mgr.name, avatar: mgr.avatar || null };
+        } else {
+          // No manager → collect member photos (same shift where set).
+          const members = teamUsers
+            .filter((u) => u.role === 'agent' && (!topShift.shift || !u.shift || u.shift === topShift.shift))
+            .slice(0, 5)
+            .map((u) => ({ id: u.id, name: u.name, avatar: u.avatar || null }));
+          topShift.members = members;
+        }
+      } catch (e) { /* enrichment is best-effort */ }
+    }
+
     // Top performer of the month = highest collected sales; ties broken by who
     // has the larger open pipeline. Managers/admins are excluded from this
     // award since it's an agent recognition.
@@ -1406,16 +1430,27 @@ function targetForToday(targets, kind) {
  *  shown to everyone. Declared before /:id. */
 router.get('/celebrations', requireAuth, async (req, res, next) => {
   try {
-    const users = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'birthday', 'workAnniversary', 'anniversary', 'designation'] });
+    const users = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'birthday', 'workAnniversary', 'joiningDate', 'anniversary', 'designation'] });
     const now = new Date();
     const mmdd = (d) => { if (!d) return null; const x = new Date(d); return `${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
     const today = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    // 1 → "1st", 2 → "2nd", 3 → "3rd", 4 → "4th", … for the anniversary label.
+    const ordinal = (n) => {
+      const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
     const items = [];
     users.forEach((u) => {
       if (mmdd(u.birthday) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'birthday' });
-      if (mmdd(u.workAnniversary) === today) {
-        const years = u.workAnniversary ? (now.getFullYear() - new Date(u.workAnniversary).getFullYear()) : 0;
-        items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'work', years: years > 0 ? years : null });
+      // Work anniversary is driven by the joining date (falling back to the
+      // legacy workAnniversary field). We celebrate on the month+day match and
+      // compute which anniversary it is (1st, 2nd, …).
+      const joinDate = u.joiningDate || u.workAnniversary;
+      if (mmdd(joinDate) === today) {
+        const years = joinDate ? (now.getFullYear() - new Date(joinDate).getFullYear()) : 0;
+        if (years > 0) {
+          items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'work', years, yearsLabel: ordinal(years) });
+        }
       }
       if (mmdd(u.anniversary) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'anniversary' });
     });

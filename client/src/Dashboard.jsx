@@ -460,7 +460,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           <div className="flex flex-wrap gap-2">
             {celebrations.map((c, i) => {
               const msg = c.type === 'birthday' ? '🎂 Happy Birthday'
-                : c.type === 'work' ? `🏆 ${c.years ? `${c.years}-year ` : ''}Work Anniversary`
+                : c.type === 'work' ? `🏆 Happy ${c.yearsLabel ? `${c.yearsLabel} ` : ''}Work Anniversary`
                 : '💍 Happy Anniversary';
               return (
                 <div key={`${c.id}-${c.type}-${i}`} className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 border border-pink-100 shadow-sm">
@@ -689,8 +689,29 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">🏅 Top performing team</div>
           {data.topShift && data.topShift.salesUsd > 0 ? (
             <>
-              <div className="text-xl font-extrabold text-[#050A1F] mt-2">{data.topShift.team} · {data.topShift.shift}</div>
-              <div className="text-sm text-slate-500">{usd(data.topShift.salesUsd)} in collected sales</div>
+              <div className="flex items-center gap-3 mt-2">
+                {/* Manager photo on the LEFT (mirrors the top-performer card). */}
+                {data.topShift.manager && (
+                  <Avatar name={data.topShift.manager.name} src={data.topShift.manager.avatar} logo={user && user.companyLogo} size={40} />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-xl font-extrabold text-[#050A1F]">{data.topShift.team}{data.topShift.shift ? ` · ${data.topShift.shift}` : ''}</div>
+                  <div className="text-sm text-slate-500">
+                    {data.topShift.manager ? <span className="font-semibold text-indigo-700">{data.topShift.manager.name}</span> : ''}
+                    {data.topShift.manager ? ' · ' : ''}{usd(data.topShift.salesUsd)} in collected sales
+                  </div>
+                </div>
+                {/* No manager → show team members' photos on the RIGHT. */}
+                {!data.topShift.manager && data.topShift.members && data.topShift.members.length > 0 && (
+                  <div className="flex -space-x-2 shrink-0">
+                    {data.topShift.members.map((mb) => (
+                      <div key={mb.id} title={mb.name} className="ring-2 ring-white rounded-full">
+                        <Avatar name={mb.name} src={mb.avatar} logo={user && user.companyLogo} size={32} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               {shiftTied && <div className="text-[11px] text-indigo-700 mt-2">Tied on sales — led on pipeline ({usd(data.topShift.pipelineUsd || 0)}).</div>}
             </>
           ) : <div className="text-sm text-slate-400 mt-2">No team sales yet this month.</div>}

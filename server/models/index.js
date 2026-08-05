@@ -128,6 +128,9 @@ const User = sequelize.define(
     socialLinks: { type: DataTypes.JSON, allowNull: true },
     birthday: { type: DataTypes.DATEONLY, allowNull: true },
     workAnniversary: { type: DataTypes.DATEONLY, allowNull: true },
+    // The date the person joined the company. Admin-only to edit. Drives the
+    // work-anniversary celebration and its Nth-year calculation.
+    joiningDate: { type: DataTypes.DATEONLY, allowNull: true },
     maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // 'single' | 'married'
     anniversary: { type: DataTypes.DATEONLY, allowNull: true }, // wedding anniversary (if married)
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the

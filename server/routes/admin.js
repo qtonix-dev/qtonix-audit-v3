@@ -330,7 +330,7 @@ router.post('/monthly-targets', async (req, res, next) => {
 
 router.post('/users', async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes, jobType, managerId, targets, birthday, workAnniversary } = req.body || {};
+    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes, jobType, managerId, targets, birthday, workAnniversary, joiningDate } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -344,7 +344,7 @@ router.post('/users', async (req, res, next) => {
     const user = await User.create({
       name, email: String(email).toLowerCase(), passwordHash: await bcrypt.hash(password, 12),
       role: validRole, phone: phone || '', designation: designation || 'Sales Executive',
-      birthday: birthday || null, workAnniversary: workAnniversary || null,
+      birthday: birthday || null, workAnniversary: workAnniversary || null, joiningDate: joiningDate || null,
       team: outsideStructure ? null : (['Bhubaneswar', 'Kolkata'].includes(team) ? team : 'Bhubaneswar'),
       shift: outsideStructure ? null : (['Morning', 'Night'].includes(shift) ? shift : 'Morning'),
       managerScopes: validRole === 'manager' && Array.isArray(managerScopes) ? managerScopes : [],
@@ -361,7 +361,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, workAnniversary } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, workAnniversary, joiningDate } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -373,6 +373,7 @@ router.put('/users/:id', async (req, res, next) => {
     if (name !== undefined) user.name = name;
     if (birthday !== undefined) user.birthday = birthday || null;
     if (workAnniversary !== undefined) user.workAnniversary = workAnniversary || null;
+    if (joiningDate !== undefined) user.joiningDate = joiningDate || null;
     if (role !== undefined) user.role = ['agent', 'manager', 'admin', 'leadmanager'].includes(role) ? role : 'agent';
     if (phone !== undefined) user.phone = phone;
     if (designation !== undefined) user.designation = designation;
