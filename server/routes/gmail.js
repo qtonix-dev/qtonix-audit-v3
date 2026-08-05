@@ -1485,4 +1485,37 @@ router.get('/unopened', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/gmail/opened-recently — emails the recipient OPENED in the last 24h
+ * (a positive engagement signal). Scoped to the viewer's mailboxes. Old opens
+ * roll off automatically once they pass the 24-hour window.
+ */
+router.get('/opened-recently', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const allowed = await visibleUserIds(viewer);
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rows = await EmailOpen.findAll({
+      where: { userId: { [Op.in]: allowed }, firstOpenAt: { [Op.ne]: null, [Op.gte]: cutoff } },
+      order: [['firstOpenAt', 'DESC']], limit: 100,
+    });
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))];
+    const users = await User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id', 'name'] });
+    const leads = leadIds.length ? await Lead.findAll({ where: { id: { [Op.in]: leadIds } }, attributes: ['id', 'firstName', 'lastName'] }) : [];
+    const uById = new Map(users.map((u) => [u.id, u.name]));
+    const lById = new Map(leads.map((l) => [l.id, `${l.firstName || ''} ${l.lastName || ''}`.trim()]));
+    const now = Date.now();
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id, leadId: r.leadId, leadName: r.leadId ? (lById.get(r.leadId) || 'Lead') : null,
+        ownerName: uById.get(r.userId) || '', toEmail: r.toEmail, subject: r.subject,
+        openedAt: r.firstOpenAt, opens: r.opens || 0,
+        clicked: !!r.firstClickAt, clicks: r.clicks || 0,
+        ageMs: now - new Date(r.firstOpenAt).getTime(),
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

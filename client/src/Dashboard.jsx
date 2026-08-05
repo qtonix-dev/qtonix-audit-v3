@@ -14,6 +14,11 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+// Small empty-state line used inside the email activity tabs.
+function Empty({ text }) {
+  return <div className="text-[11px] text-slate-400 text-center py-6">{text}</div>;
+}
+
 // Turn draft HTML (often messy Word markup) into readable plain text for
 // previews so tags like <p class="MsoNormal"> never show through.
 function stripHtmlText(s) {
@@ -362,9 +367,23 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   useEffect(() => { api('/leads/celebrations').then((d) => setCelebrations(d.items || [])).catch(() => {}); }, []);
   useEffect(() => { api('/leads/missed-activities').then(setMissed).catch(() => {}); }, []);
   const [emailReplies, setEmailReplies] = useState(null); // { awaiting, missed }
-  useEffect(() => { api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null)); }, []);
   const [unopened, setUnopened] = useState(null); // { items }
-  useEffect(() => { api('/gmail/unopened').then(setUnopened).catch(() => setUnopened(null)); }, []);
+  const [openedRecently, setOpenedRecently] = useState(null); // { items } — opened in last 24h
+  const [emailTab, setEmailTab] = useState('new'); // new | notopen | open
+  // Load the three email-activity feeds, and refresh them periodically (and on
+  // window focus) so items past their 24-hour window drop off on their own.
+  useEffect(() => {
+    const loadEmailFeeds = () => {
+      api('/gmail/awaiting-reply').then(setEmailReplies).catch(() => setEmailReplies(null));
+      api('/gmail/unopened').then(setUnopened).catch(() => setUnopened(null));
+      api('/gmail/opened-recently').then(setOpenedRecently).catch(() => setOpenedRecently(null));
+    };
+    loadEmailFeeds();
+    const iv = setInterval(loadEmailFeeds, 10 * 60 * 1000); // every 10 min
+    const onFocus = () => loadEmailFeeds();
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(iv); window.removeEventListener('focus', onFocus); };
+  }, []);
   // Pre-sales leads still waiting on their first reply. For an owner this is a
   // to-do; for a lead manager or admin it's who to chase.
   // Leads where a Lead Manager has asked the owner for a first-reply draft.
@@ -517,45 +536,89 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         </div>
       )}
 
-      {/* Emails past 24h without a reply → treated as missed commitments. */}
-      {emailReplies && emailReplies.missed.length > 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-2">✉️ Missed commitments · Emails awaiting reply over 24h · {emailReplies.missed.length}</div>
-          <div className="space-y-1 max-h-40 overflow-auto">
-            {emailReplies.missed.slice(0, 8).map((i) => (
-              <div key={i.emailId} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-red-50 group">
-                <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>✉️</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
-                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.subject || i.snippet}</span>
-                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                <span className="font-bold text-red-600 shrink-0">{fmtAge(i.ageMs)}</span>
-                {user.role === 'admin' && (
-                  <button title="Remove from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await api(`/gmail/awaiting-reply/${i.emailId}/dismiss`, { method: 'POST' }); setEmailReplies((prev) => prev ? { ...prev, missed: prev.missed.filter((x) => x.emailId !== i.emailId) } : prev); } catch { /* */ } }}
-                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Unified email notifications: New (inbound awaiting reply, incl. >24h
+          missed), Not opened (sent, unopened after 24h), Opened (opened in the
+          last 24h). Each tab shows a live count; data rolls off on its own
+          window so stale items disappear automatically. */}
+      {(() => {
+        const newItems = emailReplies ? [...(emailReplies.missed || []), ...(emailReplies.awaiting || [])] : [];
+        const notOpenItems = (unopened && unopened.items) || [];
+        const openItems = (openedRecently && openedRecently.items) || [];
+        const anythingAtAll = newItems.length + notOpenItems.length + openItems.length > 0;
+        if (!anythingAtAll) return null;
+        const tabs = [
+          { id: 'new', label: 'New email', count: newItems.length, color: '#2563EB', bg: 'bg-blue-50', border: 'border-blue-200', dot: '#2563EB' },
+          { id: 'notopen', label: 'Not opened', count: notOpenItems.length, color: '#D97706', bg: 'bg-amber-50', border: 'border-amber-200', dot: '#D97706' },
+          { id: 'open', label: 'Opened', count: openItems.length, color: '#16A34A', bg: 'bg-green-50', border: 'border-green-200', dot: '#16A34A' },
+        ];
+        const active = tabs.find((t) => t.id === emailTab) || tabs[0];
+        return (
+          <div className={`rounded-2xl border ${active.border} bg-white p-4`}>
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Email activity</span>
+              {tabs.map((t) => {
+                const on = t.id === emailTab;
+                return (
+                  <button key={t.id} onClick={() => setEmailTab(t.id)}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition ${on ? 'text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+                    style={on ? { background: t.color } : {}}>
+                    {t.label}
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full text-[10px] font-extrabold px-1"
+                      style={on ? { background: 'rgba(255,255,255,0.25)', color: '#fff' } : { background: t.dot, color: '#fff' }}>
+                      {t.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
-      {/* New inbound emails still within 24h — awaiting a reply. */}
-      {emailReplies && emailReplies.awaiting.length > 0 && (
-        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-blue-700 mb-2">📥 New emails awaiting reply · {emailReplies.awaiting.length}</div>
-          <div className="space-y-1 max-h-40 overflow-auto">
-            {emailReplies.awaiting.slice(0, 8).map((i) => (
-              <div key={i.emailId} onClick={() => onViewToday && onViewToday(i.leadId)} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] cursor-pointer hover:bg-blue-50">
-                <span>✉️</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
-                <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail}: {i.subject || i.snippet}</span>
-                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                <span className="font-bold text-blue-600 shrink-0">{fmtAge(i.ageMs)}</span>
-              </div>
-            ))}
+            <div className="space-y-1 max-h-52 overflow-auto">
+              {emailTab === 'new' && (newItems.length === 0
+                ? <Empty text="No new emails awaiting a reply." />
+                : newItems.slice(0, 12).map((i) => {
+                    const overdue = (emailReplies.missed || []).some((x) => x.emailId === i.emailId);
+                    return (
+                      <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group">
+                        <span className="cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{overdue ? '⚠️' : '✉️'}</span>
+                        <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.leadName}</span>
+                        <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
+                        {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                        <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAge(i.ageMs)}</span>
+                        {user.role === 'admin' && overdue && (
+                          <button title="Dismiss" onClick={async (e) => { e.stopPropagation(); try { await api(`/gmail/awaiting-reply/${i.emailId}/dismiss`, { method: 'POST' }); setEmailReplies((prev) => prev ? { ...prev, missed: prev.missed.filter((x) => x.emailId !== i.emailId) } : prev); } catch { /* */ } }}
+                            className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                        )}
+                      </div>
+                    );
+                  }))}
+
+              {emailTab === 'notopen' && (notOpenItems.length === 0
+                ? <Empty text="Every sent email has been opened. 🎉" />
+                : notOpenItems.slice(0, 12).map((i) => (
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
+                      <span>📭</span>
+                      <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
+                      <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}</span>
+                      {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                      <span className="font-bold text-amber-600 shrink-0">{fmtAge(i.ageMs)}</span>
+                    </div>
+                  )))}
+
+              {emailTab === 'open' && (openItems.length === 0
+                ? <Empty text="No opens in the last 24 hours yet." />
+                : openItems.slice(0, 12).map((i) => (
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-green-50' : ''}`}>
+                      <span>{i.clicked ? '🔗' : '📖'}</span>
+                      <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
+                      <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}</span>
+                      {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                      <span className="font-bold text-green-600 shrink-0">{fmtAge(i.ageMs)}</span>
+                    </div>
+                  )))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {missedModal && (
         <MissedCommitmentsModal
@@ -567,22 +630,6 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           onOpenLead={(leadId) => { setMissedModal(null); onViewToday && onViewToday(leadId); }}
           onClose={() => setMissedModal(null)}
         />
-      )}
-      {unopened && unopened.items && unopened.items.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-2">📭 Sent but not opened after 24h · {unopened.items.length}</div>
-          <div className="space-y-1 max-h-40 overflow-auto">
-            {unopened.items.slice(0, 8).map((i) => (
-              <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId)} className={`flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
-                <span>📭</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
-                <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}</span>
-                {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                <span className="font-bold text-amber-600 shrink-0">{fmtAge(i.ageMs)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
 
       {/* ROW 2 — Lead generation + sales split + collections */}

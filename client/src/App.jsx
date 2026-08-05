@@ -1632,8 +1632,6 @@ export default function App() {
                   );
                 }
                 const active = view === n.id;
-                // Call Backs carries the due-count badge; everything else is plain.
-                const badge = n.id === 'leads' ? dueCount : 0;
                 return (
                   <button key={n.id}
                     onClick={() => {
@@ -1649,9 +1647,6 @@ export default function App() {
                     }`}>
                     <NavIcon name={n.icon} className="w-4 h-4" />
                     <span>{n.label}</span>
-                    {badge > 0 && (
-                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF4500] text-white text-[10px] font-bold flex items-center justify-center">{badge}</span>
-                    )}
                     {/* Active underline, matching the reference nav. */}
                     {active && (
                       <span className="absolute left-3 right-3 -bottom-[7px] h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
