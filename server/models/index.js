@@ -136,6 +136,9 @@ const User = sequelize.define(
     // Grants an individual agent access to the Converted-clients tab under Leads,
     // scoped to their OWN converted clients only (admin-set per user).
     canViewConverted: { type: DataTypes.BOOLEAN, defaultValue: false },
+    // Per-user UI preference: how many email conversations to show per page in
+    // the lead-detail Email tab (persisted so it follows the user everywhere).
+    emailPerPage: { type: DataTypes.INTEGER, defaultValue: 20 },
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
@@ -444,6 +447,7 @@ const Settings = sequelize.define(
           { id: 'won', label: 'Won', color: '#16A34A' },
           { id: 'converted', label: 'Converted', color: '#059669' },
           { id: 'lost', label: 'Lost', color: '#DC2626' },
+          { id: 'release', label: 'Release', color: '#78716C' },
         ],
         servicesInterested: [
           'One-time Issue Fixing', 'Complete Digital Marketing', 'Website Design', 'Web Development',

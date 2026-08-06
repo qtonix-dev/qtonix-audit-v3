@@ -39,6 +39,25 @@ export function tzShortLabel(tz) {
  * Current wall-clock time in the given timezone.
  * @returns {{ time:string, date:string, hour:number, offsetMin:number }|null}
  */
+/**
+ * Convert a wall-clock date + time *in a given timezone* to a UTC ISO string.
+ * `dateStr` is "YYYY-MM-DD", `timeStr` is "HH:MM". The timezone is an
+ * offset-based label (e.g. "GMT+5:30"); we subtract its offset to get UTC.
+ * This is what scheduling needs: the user picks a time in the lead's zone, and
+ * we must store the correct absolute instant — NOT reinterpret it as browser-local.
+ */
+export function wallClockToUtcISO(dateStr, timeStr, tz) {
+  const off = parseOffsetMinutes(tz);
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  const [hh, mm] = String(timeStr).split(':').map(Number);
+  if (!y || !m || !d || Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  // Build the instant as if the wall-clock were UTC, then subtract the zone
+  // offset so the stored instant corresponds to that wall-clock in the zone.
+  const asUtc = Date.UTC(y, m - 1, d, hh, mm, 0);
+  const offMin = off === null ? 0 : off;
+  return new Date(asUtc - offMin * 60000).toISOString();
+}
+
 export function nowInZone(tz) {
   const off = parseOffsetMinutes(tz);
   if (off === null) return null;

@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v118';
+const APP_VERSION = 'v119';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -218,6 +218,12 @@ connectWithRetry()
         const statuses = Array.isArray(cfg.leadStatuses) ? cfg.leadStatuses : [];
         if (!statuses.some((x) => x.id === 'callback')) {
           cfg.leadStatuses = [{ id: 'callback', label: 'Call back generated', color: '#8B5CF6' }, ...statuses];
+          changed = true;
+        }
+        // "Release" — lets an agent hand a lead back; it leaves their CRM and
+        // waits in the Released tab for an admin/lead-manager to reassign.
+        if (!(cfg.leadStatuses || statuses).some((x) => x.id === 'release')) {
+          cfg.leadStatuses = [...(cfg.leadStatuses || statuses), { id: 'release', label: 'Release', color: '#78716C' }];
           changed = true;
         }
         if (!Array.isArray(cfg.presalesEmails)) { cfg.presalesEmails = []; changed = true; }

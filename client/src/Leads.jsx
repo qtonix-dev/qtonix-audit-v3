@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
-import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, daysUntil, IST_LABEL } from './timezone.js';
+import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, daysUntil, IST_LABEL, wallClockToUtcISO } from './timezone.js';
 
 
 /**
@@ -862,9 +862,8 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
               <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
                 <th className="text-left px-4 py-3">Lead</th>
                 <th className="text-left px-4 py-3">Contact</th>
-                {!isProspect && <th className="text-left px-4 py-3">Source</th>}
-                {!isProspect && <th className="text-left px-4 py-3">Status</th>}
-                {!isProspect && <th className="text-left px-4 py-3">Deals</th>}
+                {!isProspect && <th className="text-left px-4 py-3" style={{ minWidth: 140 }}>Source</th>}
+                {!isProspect && <th className="text-left px-4 py-3" style={{ minWidth: 130 }}>Status</th>}
                 <th className="text-left px-4 py-3">Owner</th>
                 {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
                 {isProspect && <th className="text-left px-4 py-3">Added</th>}
@@ -916,18 +915,8 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                       <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
                       <div className="text-[11px] text-slate-400">{l.mobile || l.phone || ''}</div>
                     </td>
-                    {!isProspect && <td className="px-4 py-3 text-slate-500 text-xs">{l.leadSource || '—'}</td>}
-                    {!isProspect && <td className="px-4 py-3"><span className="rounded-full px-2.5 py-1 text-[10px] font-bold text-white" style={{ background: sm.color }}>{sm.label}</span></td>}
-                    {!isProspect && (
-                    <td className="px-4 py-3">
-                      {deals.length === 0 ? <span className="text-slate-300 text-xs">—</span> : (
-                        <div className="flex items-center gap-1.5">
-                          {openDeals.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{openDeals.length} open</span>}
-                          {wonDeals.length > 0 && <span className="rounded-md bg-green-50 text-green-600 px-1.5 py-0.5 text-[10px] font-bold">{wonDeals.length} won</span>}
-                        </div>
-                      )}
-                    </td>
-                    )}
+                    {!isProspect && <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>}
+                    {!isProspect && <td className="px-4 py-3"><span className="inline-block rounded-full px-2.5 py-1 text-[10px] font-bold text-white whitespace-nowrap" style={{ background: sm.color }}>{sm.label}</span></td>}
                     <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
                     {isProspect && (
                       <td className="px-4 py-3 text-xs whitespace-nowrap">
@@ -1842,7 +1831,15 @@ function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
   const [composer, setComposer] = useState(null); // { mode, to, cc, bcc, subject, body, threadId, inReplyTo, fromUserId }
   const [emailPage, setEmailPage] = useState(1); // pagination for the thread list
   const [autoComposed, setAutoComposed] = useState(false);
-  const EMAIL_PER_PAGE = 20;
+  // Per-page count is a persisted per-user preference (10/20/50).
+  const [perPage, setPerPage] = useState(user.emailPerPage || 20);
+  const EMAIL_PER_PAGE = perPage;
+  const changePerPage = (n) => {
+    setPerPage(n); setEmailPage(1);
+    // Persist so it follows the user across devices; ignore failures (still
+    // applies for this session).
+    api('/auth/me/prefs', { method: 'PUT', body: JSON.stringify({ emailPerPage: n }) }).catch(() => {});
+  };
 
   const load = () => api(`/gmail/lead/${lead._id || lead.id}`).then(setData).catch((e) => setErr(e.message));
   const [scheduled, setScheduled] = useState([]);
@@ -1851,6 +1848,25 @@ function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
   useEffect(() => { load(); loadScheduled(); }, [lead._id, lead.id]);
 
   const openComposer = () => setComposer({ mode: 'new', to: lead.email ? [lead.email] : [], cc: [], bcc: [], subject: '', body: '', from: (data && (data.defaultFrom || (data.fromOptions && data.fromOptions[0]?.value))) });
+
+  // Edit a pending scheduled email: open the composer pre-filled with its
+  // content and time. Saving replaces the original (the composer cancels the
+  // old scheduled row via editingScheduledId).
+  const editScheduled = (r) => {
+    const d = new Date(r.sendAt);
+    const pad = (n) => String(n).padStart(2, '0');
+    setComposer({
+      mode: 'new',
+      to: String(r.to || '').split(',').map((s) => s.trim()).filter(Boolean),
+      cc: String(r.cc || '').split(',').map((s) => s.trim()).filter(Boolean),
+      bcc: String(r.bcc || '').split(',').map((s) => s.trim()).filter(Boolean),
+      subject: r.subject || '', body: r.bodyHtml || r.body || '',
+      from: r.from || (data && data.defaultFrom),
+      editingScheduledId: r.id,
+      schedDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+      schedTime: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    });
+  };
 
   // When navigated here from a notification/timeline entry with compose intent,
   // open the compose popup once the mailbox data (from-addresses) has loaded.
@@ -1917,6 +1933,7 @@ function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
               <span className="flex-1 min-w-0 truncate font-semibold text-[#050A1F]">{r.subject || '(no subject)'}</span>
               <span className="text-[11px] text-slate-500 shrink-0">To: {r.to}</span>
               <span className="text-[11px] font-bold text-[#FF4500] shrink-0">{(() => { try { return new Date(r.sendAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return r.sendAt; } })()}</span>
+              <button onClick={() => editScheduled(r)} className="rounded border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-white shrink-0">Edit</button>
               <button onClick={() => setReschedule(r)} className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-white shrink-0">Reschedule</button>
               <button onClick={async () => { try { await api(`/gmail/scheduled/${r.id}/cancel`, { method: 'POST' }); loadScheduled(); } catch (e) { alert(e.message); } }} className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-bold text-red-600 hover:bg-white shrink-0">Cancel</button>
             </div>
@@ -1970,19 +1987,34 @@ function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
         })}
       </div>
 
-      {/* Pagination — 20 conversations per page. */}
-      {totalEmailPages > 1 && (
+      {/* Per-page selector + pagination. The selector persists per user. */}
+      {threads.length > 0 && (
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/50">
-          <span className="text-[11px] text-slate-400">
-            {(safePage - 1) * EMAIL_PER_PAGE + 1}–{Math.min(safePage * EMAIL_PER_PAGE, threads.length)} of {threads.length} conversations
-          </span>
-          <div className="flex items-center gap-1">
-            <button disabled={safePage <= 1} onClick={() => setEmailPage(safePage - 1)}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">← Prev</button>
-            <span className="text-[11px] font-bold text-slate-500 px-2">Page {safePage} / {totalEmailPages}</span>
-            <button disabled={safePage >= totalEmailPages} onClick={() => setEmailPage(safePage + 1)}
-              className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">Next →</button>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-400">
+              {(safePage - 1) * EMAIL_PER_PAGE + 1}–{Math.min(safePage * EMAIL_PER_PAGE, threads.length)} of {threads.length} conversations
+            </span>
+            <span className="text-[11px] text-slate-300">·</span>
+            <label className="text-[11px] text-slate-400 flex items-center gap-1">
+              Show
+              <select value={perPage} onChange={(e) => changePerPage(parseInt(e.target.value, 10))}
+                className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] font-bold text-slate-600 bg-white">
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+              per page
+            </label>
           </div>
+          {totalEmailPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button disabled={safePage <= 1} onClick={() => setEmailPage(safePage - 1)}
+                className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">← Prev</button>
+              <span className="text-[11px] font-bold text-slate-500 px-2">Page {safePage} / {totalEmailPages}</span>
+              <button disabled={safePage >= totalEmailPages} onClick={() => setEmailPage(safePage + 1)}
+                className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 disabled:opacity-40 hover:bg-white">Next →</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -2192,9 +2224,9 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const [showReports, setShowReports] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [showSchedule, setShowSchedule] = useState(false);
-  const [schedDate, setSchedDate] = useState('');
-  const [schedTime, setSchedTime] = useState('');
+  const [showSchedule, setShowSchedule] = useState(!!initial.editingScheduledId);
+  const [schedDate, setSchedDate] = useState(initial.schedDate || '');
+  const [schedTime, setSchedTime] = useState(initial.schedTime || '');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
   const [showAi, setShowAi] = useState(false);
@@ -2238,10 +2270,19 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
     let sendAt;
     if (scheduled) {
       if (!schedDate || !schedTime) return setErr('Pick a date and time to schedule.');
-      sendAt = new Date(`${schedDate}T${schedTime}:00`).toISOString();
+      // Interpret the chosen date/time in the LEAD's selected timezone (tz),
+      // not the browser's local zone, so scheduling in another zone doesn't
+      // wrongly read as being in the past.
+      sendAt = wallClockToUtcISO(schedDate, schedTime, tz) || new Date(`${schedDate}T${schedTime}:00`).toISOString();
+      if (new Date(sendAt).getTime() < Date.now() - 60000) return setErr('Pick a valid future date and time (in the lead’s timezone).');
     }
     setSending(true);
     try {
+      // If we're editing an existing scheduled email, remove the original first
+      // so we don't end up with duplicates.
+      if (initial.editingScheduledId) {
+        try { await api(`/gmail/scheduled/${initial.editingScheduledId}/cancel`, { method: 'POST' }); } catch { /* proceed anyway */ }
+      }
       await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
         from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
         threadId: initial.threadId, inReplyTo: initial.inReplyTo, attachments,
@@ -4157,7 +4198,7 @@ function ReportsTab({ lead, onChange }) {
 
 // Top-level Leads view controller — switches between list / new / detail.
 export default function Leads({ user, initialView, initialUntouched, initialLeadId, initialConvertedMonth, initialTab, initialCompose }) {
-  const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | new | detail
+  const [view, setView] = useState(initialView || 'list'); // list | pipeline | converted | released | new | detail
   const [activeId, setActiveId] = useState(() => {
     if (initialLeadId) return initialLeadId;
     try { return new URLSearchParams(window.location.search).get('leadId') || null; } catch { return null; }
@@ -4181,13 +4222,16 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   const isManagerOrAdmin = user.role === 'admin' || user.role === 'manager';
   // An individual agent can be granted access to their OWN converted clients.
   const canSeeConverted = isManagerOrAdmin || !!user.canViewConverted;
+  // Released leads are an admin / lead-manager queue.
+  const canSeeReleased = user.role === 'admin' || user.role === 'leadmanager';
   return (
     <div>
-      {(view === 'list' || view === 'pipeline' || view === 'converted') && user.role !== 'leadmanager' && (
+      {(view === 'list' || view === 'pipeline' || view === 'converted' || view === 'released') && (
         <div className="flex items-center gap-1 mb-5 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 List</button>
-          <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>
+          {user.role !== 'leadmanager' && <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>}
           {canSeeConverted && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
+          {canSeeReleased && <button onClick={() => setView('released')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'released' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>♻️ Released leads</button>}
         </div>
       )}
       {/* Lead managers coordinate intake only — the pipeline and converted views
@@ -4198,8 +4242,126 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
       {view === 'prospects' && <LeadsList user={user} stage="prospect" onOpen={(l) => openDetail(l._id)} onNew={() => setView('new')} />}
       {view === 'pipeline' && user.role !== 'leadmanager' && <DealsPipeline user={user} onOpenLead={openDetail} />}
       {view === 'converted' && canSeeConverted && <ConvertedLeads user={user} onOpen={openDetail} thisMonthOnly={initialConvertedMonth} />}
+      {view === 'released' && canSeeReleased && <ReleasedLeads user={user} onOpen={openDetail} />}
       {view === 'new' && <NewLead user={user} isCallback={initialView === 'prospects'} onCreated={(l) => openDetail(l._id)} onOpenLead={(id) => openDetail(id)} onCancel={() => setView(initialView === 'prospects' ? 'prospects' : 'list')} />}
-      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} initialCompose={initialCompose && activeId === initialLeadId} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
+      {view === 'detail' && activeId && <LeadDetail user={user} leadId={activeId} initialTab={detailTab} initialCompose={initialCompose && activeId === initialLeadId} isProspect={initialView === 'prospects'} onBack={() => { clearLeadIdParam(); setView(initialView === 'converted' ? 'converted' : initialView === 'released' ? 'released' : initialView === 'prospects' ? 'prospects' : 'list'); }} />}
+    </div>
+  );
+}
+
+// ---- Released leads (admin / lead manager only) ----------------------------
+// Leads an agent handed back. Admin & lead managers can delete them or reassign
+// them to a new owner, which restores them to an active status and re-enters
+// them into that owner's CRM.
+function ReleasedLeads({ user, onOpen }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [owners, setOwners] = useState([]);
+  const [assign, setAssign] = useState(null); // lead being reassigned
+  const [busy, setBusy] = useState(null);
+
+  const load = () => { setLoading(true); api('/leads/released').then((r) => setItems(r.items || [])).catch((e) => setErr(e.message)).finally(() => setLoading(false)); };
+  useEffect(() => { load(); api('/leads/config').then((r) => setOwners(r.owners || [])).catch(() => {}); }, []);
+
+  const doDelete = async (l) => {
+    if (!confirm(`Delete released lead "${l.firstName || l.email || 'this lead'}" permanently? This cannot be undone.`)) return;
+    setBusy(l._id);
+    try { await api(`/leads/${l._id}`, { method: 'DELETE' }); setItems((xs) => xs.filter((x) => x._id !== l._id)); }
+    catch (e) { alert(e.message); } finally { setBusy(null); }
+  };
+
+  if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading released leads…</div>;
+  if (err) return <div className="text-red-500 text-sm py-6">{err}</div>;
+
+  return (
+    <div>
+      <div className="mb-4">
+        <div className="text-lg font-extrabold text-[#050A1F]">♻️ Released leads</div>
+        <div className="text-xs text-slate-400">Leads handed back by agents. Reassign to put a lead back into someone's CRM, or delete it.</div>
+      </div>
+      {items.length === 0 ? (
+        <div className="text-slate-300 text-sm py-12 text-center">No released leads right now.</div>
+      ) : (
+        <div className="rounded-xl border border-slate-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                <th className="text-left px-4 py-3">Lead</th>
+                <th className="text-left px-4 py-3">Contact</th>
+                <th className="text-left px-4 py-3">Source</th>
+                <th className="text-left px-4 py-3">Released from</th>
+                <th className="text-left px-4 py-3">Released</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((l) => (
+                <tr key={l._id} className="border-t border-slate-50 hover:bg-slate-50/40">
+                  <td className="px-4 py-3">
+                    <button onClick={() => onOpen(l._id)} className="font-bold text-[#050A1F] hover:text-[#FF4500] text-left">{`${l.firstName || ''} ${l.lastName || ''}`.trim() || '—'}</button>
+                    <div className="text-[11px] text-slate-400 truncate">{l.website || '—'}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">
+                    <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
+                    <div className="text-[11px] text-slate-400">{l.mobile || l.phone || ''}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{l.releasedFrom || '—'}</td>
+                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{l.releasedAt ? fmtDate(l.releasedAt) : '—'}</td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <button onClick={() => setAssign(l)} className="rounded border border-blue-200 px-2.5 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 mr-1">Reassign</button>
+                    <button onClick={() => doDelete(l)} disabled={busy === l._id} className="rounded border border-red-200 px-2.5 py-1 text-[10px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {assign && <ReassignModal lead={assign} owners={owners} onClose={() => setAssign(null)} onDone={() => { setAssign(null); load(); }} />}
+    </div>
+  );
+}
+
+// Reassign a released lead to a new owner + active status.
+function ReassignModal({ lead, owners, onClose, onDone }) {
+  const [ownerId, setOwnerId] = useState('');
+  const [status, setStatus] = useState('new');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    if (!ownerId) return setErr('Pick a new owner.');
+    setBusy(true); setErr('');
+    try { await api(`/leads/${lead._id}/reassign`, { method: 'POST', body: JSON.stringify({ ownerId, status }) }); onDone(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[95] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-base font-extrabold text-[#050A1F]">Reassign lead</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="text-xs text-slate-500 mb-3">Reassigning <span className="font-bold">{`${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.email}</span> puts it back into the chosen owner's CRM with an active status.</div>
+        <label className="block text-[11px] font-bold text-slate-500 mb-1">New owner</label>
+        <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3">
+          <option value="">Select owner…</option>
+          {owners.map((o) => <option key={o.id || o._id} value={o.id || o._id}>{o.name}{o.role ? ` · ${o.role}` : ''}</option>)}
+        </select>
+        <label className="block text-[11px] font-bold text-slate-500 mb-1">Restore as status</label>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4">
+          <option value="new">New lead</option>
+          <option value="contacted">Contacted</option>
+          <option value="interested">Interested</option>
+          <option value="hot">Hot</option>
+        </select>
+        {err && <div className="text-xs text-red-600 mb-3">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Reassigning…' : 'Reassign'}</button>
+        </div>
+      </div>
     </div>
   );
 }

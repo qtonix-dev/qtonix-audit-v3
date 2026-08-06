@@ -39,6 +39,9 @@ async function visibilityWhere(user) {
       attributes: ['id'],
     }).then((rows) => rows.map((r) => r.id)).catch(() => []);
     return {
+      // Released leads leave the working CRM entirely — they wait in the
+      // Released tab for an admin/lead-manager to reassign or delete them.
+      status: { [Op.ne]: 'release' },
       [Op.or]: [
         { ownerId: user.id },
         { generatedById: user.id },
@@ -50,7 +53,8 @@ async function visibilityWhere(user) {
   }
   // An agent sees leads they own, plus any prospect they generated and then
   // transferred to someone else (they stay in the loop on their own leads).
-  return { [Op.or]: [{ ownerId: user.id }, { generatedById: user.id }] };
+  // Released leads are excluded — they've left the agent's book.
+  return { status: { [Op.ne]: 'release' }, [Op.or]: [{ ownerId: user.id }, { generatedById: user.id }] };
 }
 
 // Can this user see/edit this specific lead?
@@ -249,14 +253,14 @@ router.get('/', requireAuth, async (req, res, next) => {
     if (stage === 'prospect') {
       // The Call Backs section: cold-calling prospects not yet worked.
       where.status = 'callback';
-    } else if (status && status !== 'converted' && status !== 'callback') {
+    } else if (status && status !== 'converted' && status !== 'callback' && status !== 'release') {
       // A specific status filter on the main list — but still never converted,
-      // and never the reserved 'callback' prospect stage.
+      // the reserved 'callback' prospect stage, or released leads.
       where.status = status;
     } else {
-      // Default main list: everything that is neither converted nor a call-back
-      // prospect.
-      where.status = { [Op.notIn]: ['converted', 'callback'] };
+      // Default main list: everything that is neither converted, a call-back
+      // prospect, nor a released lead (released leads live on their own tab).
+      where.status = { [Op.notIn]: ['converted', 'callback', 'release'] };
     }
     if (source) where.leadSource = source;
     if (ownerId) where.ownerId = ownerId;
@@ -1054,7 +1058,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // board is company-wide, and count only the first cycle of recurring deals.
     let companyLeaderboard = null;
     try {
-      const allLeads = await Lead.findAll({ attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
+      const allLeads = await Lead.findAll({ where: { status: { [Op.ne]: 'release' } }, attributes: ['ownerId', 'ownerName', 'deals', 'status'] });
       const compByOwner = {};
       // Seed every active user who can appear on the board at zero, so a newly
       // added user (with no sales yet this month) still shows up rather than
@@ -1253,8 +1257,40 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       stages: funnelStages,
     };
 
-    // Top shift/branch this month.
-    const shiftBoard = Object.values(byShift).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) }))
+    // Top team this month, computed company-wide (like the leaderboard) so
+    // agents and managers see the same winning team the admin does — not just
+    // their own scope. Tally collected sales this month by the OWNER's team+shift.
+    const companyByShift = {};
+    try {
+      const teamUserById = {};
+      const allTeamUsers = await User.findAll({ where: { active: true }, attributes: ['id', 'team', 'shift', 'role'] });
+      allTeamUsers.forEach((u) => { teamUserById[u.id] = u; });
+      const allLeads2 = await Lead.findAll({ where: { status: { [Op.ne]: 'release' } }, attributes: ['ownerId', 'ownerTeam', 'ownerShift', 'deals'] });
+      for (const l of allLeads2) {
+        const owner = teamUserById[l.ownerId];
+        if (!owner || owner.role === 'admin' || owner.role === 'leadmanager') continue;
+        const team = l.ownerTeam || owner.team;
+        const shift = l.ownerShift || owner.shift;
+        if (!team) continue;
+        const key = `${team}||${shift || ''}`;
+        const rec = companyByShift[key] || (companyByShift[key] = { team, shift, salesUsd: 0, pipelineUsd: 0 });
+        for (const d of (l.deals || [])) {
+          if (d.stage !== 'closed_won') continue;
+          const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+          insts.forEach((it) => {
+            if (!it.paid || !it.paidDate) return;
+            if (it.recurring && Number(it.seq || 0) > 1) return;
+            const pd = new Date(it.paidAt || it.paidDate);
+            if (pd >= startOfMonth) rec.salesUsd += toUsd(it.amount, d.currency);
+          });
+        }
+      }
+    } catch (e) { /* fall back to scoped byShift below */ }
+
+    // Top shift/branch this month. Prefer the company-wide tally; fall back to
+    // the viewer-scoped one if the company tally came back empty.
+    const shiftSource = Object.keys(companyByShift).length ? companyByShift : byShift;
+    const shiftBoard = Object.values(shiftSource).map((s) => ({ ...s, salesUsd: Math.round(s.salesUsd) }))
       .sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)));
     const topShift = shiftBoard[0] || null;
 
@@ -1282,16 +1318,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       } catch (e) { /* enrichment is best-effort */ }
     }
 
-    // Top performer of the month = highest collected sales; ties broken by who
-    // has the larger open pipeline. Managers/admins are excluded from this
-    // award since it's an agent recognition.
-    const performerPool = leaderboard.filter((o) => o.role === 'agent');
-    const topPerformer = performerPool.length
-      ? performerPool.slice().sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)))[0]
+    // Top performer of the month = the highest-selling AGENT across the whole
+    // company (not just the viewer's scope), so agents and managers see the same
+    // leader the admin does. Built from the company-wide sales tally.
+    const companyAgents = (companyLeaderboard || []).filter((o) => o.role === 'agent' && o.salesUsd > 0);
+    const topPerformer = companyAgents.length
+      ? companyAgents.slice().sort((a, b) => (b.salesUsd - a.salesUsd) || ((b.pipelineUsd || 0) - (a.pipelineUsd || 0)))[0]
       : null;
-    // Flag whether the win came down to the pipeline tie-break, so the UI can
-    // explain it rather than looking arbitrary.
-    const topPerformerTied = !!(topPerformer && performerPool.filter((o) => o.salesUsd === topPerformer.salesUsd).length > 1);
+    const topPerformerTied = !!(topPerformer && companyAgents.filter((o) => o.salesUsd === topPerformer.salesUsd).length > 1);
 
     const meRow = leaderboard.find((o) => o.ownerId === req.user.id) || null;
 
@@ -1478,6 +1512,57 @@ router.get('/search', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/leads/released — leads an agent has released back. Admin and lead
+ * managers only. These sit outside the working CRM until reassigned or deleted.
+ */
+router.get('/released', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'leadmanager') {
+      return res.status(403).json({ error: 'Only admins and lead managers can view released leads.' });
+    }
+    const rows = await Lead.findAll({ where: { status: 'release' }, order: [['updatedAt', 'DESC']], limit: 1000 });
+    res.json({
+      items: rows.map((l) => ({
+        _id: l.id, firstName: l.firstName, lastName: l.lastName, email: l.email,
+        website: l.website, mobile: l.mobile, phone: l.phone, country: l.country,
+        leadSource: l.leadSource, releasedFrom: l.ownerName, releasedFromId: l.ownerId,
+        releasedAt: l.updatedAt, createdAt: l.createdAt,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/leads/:id/reassign — hand a released lead to a new owner. The lead
+ * returns to an active status and re-enters that owner's CRM. Admin/LM only.
+ */
+router.post('/:id/reassign', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'leadmanager') {
+      return res.status(403).json({ error: 'Only admins and lead managers can reassign leads.' });
+    }
+    const { ownerId, status } = req.body || {};
+    const newOwner = await User.findByPk(ownerId);
+    if (!newOwner) return res.status(400).json({ error: 'Pick a valid new owner.' });
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    lead.ownerId = newOwner.id;
+    lead.ownerName = newOwner.name;
+    lead.ownerTeam = newOwner.team || null;
+    lead.ownerShift = newOwner.shift || null;
+    // Back to an active status so it shows in the new owner's CRM. Default to
+    // 'new' unless a specific active status was requested.
+    const restore = ['new', 'callback', 'contacted', 'interested', 'hot'].includes(status) ? status : 'new';
+    lead.status = restore;
+    const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
+    tl.push({ type: 'status', text: `Reassigned to ${newOwner.name} (status: ${restore}) by ${req.user.name}`, time: new Date().toISOString(), author: req.user.name });
+    lead.timeline = tl; lead.changed('timeline', true);
+    await lead.save();
+    res.json({ ok: true, ownerId: newOwner.id, ownerName: newOwner.name, status: restore });
+  } catch (e) { next(e); }
+});
+
 router.get('/converted', requireAuth, async (req, res, next) => {
   try {
     // Admins and managers always see converted leads (scoped by visibility).
@@ -1637,10 +1722,12 @@ router.get('/missed-activities', requireAuth, async (req, res, next) => {
 
       // Unsubmitted first-reply draft: a pre-sales lead whose agent hasn't
       // submitted the first draft within 24h of the lead entering the system.
-      // Only for leads that entered on/after go-live.
+      // Cleared once EITHER a draft has been submitted (firstDraftAt) OR the
+      // owner marked the first reply handled themselves (firstReplyDoneAt).
       const isPreSales = /re-?\s*sales|presales/i.test(String(l.leadSource || ''));
       const enteredAt0 = new Date(l.createdAt).getTime();
-      if (isPreSales && !l.firstDraftAt && l.status !== 'converted' && !dismissed.includes(`draft-${l.id}`) && enteredAt0 >= GO_LIVE) {
+      const firstReplyHandled = !!l.firstDraftAt || !!l.firstReplyDoneAt || !!l.firstDraft;
+      if (isPreSales && !firstReplyHandled && l.status !== 'converted' && !dismissed.includes(`draft-${l.id}`) && enteredAt0 >= GO_LIVE) {
         const enteredAt = enteredAt0;
         if (!Number.isNaN(enteredAt) && now > enteredAt + 24 * 60 * 60 * 1000) {
           const dueAt = new Date(enteredAt + 24 * 60 * 60 * 1000).toISOString();
@@ -2255,6 +2342,17 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
       if (newStatus === 'callback' && lead.status !== 'callback') {
         return res.status(400).json({ error: 'A lead can’t be moved back to Call Backs. Use the "Follow up" status instead.' });
       }
+      // A lead can only be released if it's "clean" — not converted and with no
+      // deals attached. Converted clients and any lead carrying a deal (open or
+      // won) must stay in the CRM so revenue and history aren't lost.
+      if (newStatus === 'release') {
+        if (lead.status === 'converted') {
+          return res.status(400).json({ error: 'A converted client can’t be released.' });
+        }
+        if (Array.isArray(lead.deals) && lead.deals.length > 0) {
+          return res.status(400).json({ error: 'This lead has deals attached and can’t be released. Remove the deals first, or keep the lead.' });
+        }
+      }
       pushTimeline(lead, 'status', `Status changed to "${newStatus}"`, author);
       // Keep convertedAt in sync so the lead lands on the Converted tab.
       if (newStatus === 'converted' && lead.status !== 'converted') {
@@ -2294,9 +2392,14 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
 /** DELETE /api/leads/:id — ADMIN ONLY. Managers/agents cannot delete. */
 router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can delete leads.' });
     const lead = await Lead.findByPk(req.params.id);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    // Admins can delete any lead; lead managers may delete RELEASED leads (the
+    // released-leads queue is theirs to clear).
+    const isReleased = lead.status === 'release';
+    if (req.user.role !== 'admin' && !(req.user.role === 'leadmanager' && isReleased)) {
+      return res.status(403).json({ error: 'Only an admin can delete leads.' });
+    }
     // Detach any reports that pointed at this lead so nothing dangles.
     try {
       const { Report } = require('../models');
