@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { Lead, User, Report, Settings, AuditLog, MonthlyTarget, Op } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 const { generateBrief, isStale, CACHE_DAYS } = require('../services/businessBrief');
+const { isRenewalService, defaultTenure, computeRenewalDate, TENURE_MONTHS } = require('../services/renewals');
 
 // ---------------------------------------------------------------------------
 // Visibility model:
@@ -662,7 +663,14 @@ router.get('/config', requireAuth, async (req, res, next) => {
       owners = [{ id: req.user.id, name: req.user.name, role: 'agent' }];
     }
     // generatedBy = configured extras (e.g. "Presales") + the same owner list.
-    res.json({ config: cfg, owners: owners.map((o) => (o.toJSON ? o.toJSON() : o)) });
+    res.json({
+      config: cfg, owners: owners.map((o) => (o.toJSON ? o.toJSON() : o)),
+      // Renewal metadata for the Mark Paid tenure fields + Converted views.
+      renewal: {
+        services: require('../services/renewals').RENEWAL_SERVICES,
+        tenures: require('../services/renewals').TENURE_LABELS,
+      },
+    });
   } catch (e) { next(e); }
 });
 
@@ -1639,6 +1647,25 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         o.openDeal = hasOpenDeal || hasPendingPayment; // Table 1 when true
         o.pendingPayment = hasPendingPayment;
         o.dealCount = deals.length;
+        // Renewal info: the soonest renewal date across the client's deals,
+        // ignoring stopped recurring contracts. Each paid installment may carry
+        // a renewalDate (set at Mark Paid). We surface the earliest upcoming one
+        // (or the earliest overall if all are past) so the Converted views can
+        // show "next renewal" and build the Upcoming Renewals table.
+        const renewDates = [];
+        for (const d of deals) {
+          if (d && d.recurringStopped) continue; // stopped → no active renewal
+          for (const it of (d && d.installments || [])) {
+            if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
+          }
+        }
+        renewDates.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const future = renewDates.find((r) => r.date >= todayStr);
+        const nextRenewal = future || renewDates[0] || null; // prefer upcoming, else most-recent past
+        o.nextRenewalDate = nextRenewal ? nextRenewal.date : null;
+        o.nextRenewalService = nextRenewal ? nextRenewal.service : null;
+        o.hasActiveRenewal = renewDates.length > 0;
         return o;
       }),
       total: count, page, perPage,
@@ -2741,6 +2768,17 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     if (b.transactionId !== undefined) {
       inst.transactionId = String(b.transactionId || '').slice(0, 120);
     }
+    // Renewal tracking: tenure (billing term) + next renewal date. Recorded on
+    // the installment when it's marked paid. "onetime" means no renewal. If the
+    // admin doesn't send a renewalDate we compute it from the payment date + the
+    // tenure. Only admins mark payments, so this is effectively admin-only.
+    const VALID_TENURES = Object.keys(TENURE_MONTHS);
+    if (b.tenure !== undefined) {
+      inst.tenure = VALID_TENURES.includes(String(b.tenure)) ? String(b.tenure) : 'onetime';
+    }
+    if (b.renewalDate !== undefined) {
+      inst.renewalDate = b.renewalDate ? String(b.renewalDate).slice(0, 10) : null;
+    }
     // Managers mark an installment as invoiced; that is their half of the
     // handover, and it tells the admin the money is now expected.
     if (b.invoiceSent !== undefined) {
@@ -2780,7 +2818,16 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
       }
       if (!b.paid) inst.gateway = '';
       if (b.paid) {
-        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''})`, req.user.name);
+        // Resolve the tenure (default by service if none supplied) and, unless
+        // the admin edited the renewal date explicitly, compute it from the
+        // payment received date + tenure. "onetime" clears any renewal date.
+        if (inst.tenure === undefined) inst.tenure = defaultTenure(deal.service || deal.name);
+        if (inst.tenure === 'onetime') {
+          inst.renewalDate = null;
+        } else if (b.renewalDate === undefined || !b.renewalDate) {
+          inst.renewalDate = computeRenewalDate(inst.paidDate, inst.tenure);
+        }
+        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''}${inst.renewalDate ? ' · renews ' + inst.renewalDate : ''})`, req.user.name);
       }
     }
     if (b.dueDate !== undefined) {
@@ -2849,6 +2896,45 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
       }
     }
 
+    lead.deals = list; lead.changed('deals', true);
+    await lead.save();
+    res.json(lead.toJSON());
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/leads/:id/deals/:dealId/recurring — stop or resume a recurring
+ * deal. Admin only. Stopping records a required free-text reason and halts
+ * future renewals; the deal stays converted and cross-sell eligible. Resuming
+ * clears the stop so renewals track again.
+ */
+router.post('/:id/deals/:dealId/recurring', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can stop or resume a recurring contract.' });
+    const lead = await Lead.findByPk(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    const list = Array.isArray(lead.deals) ? lead.deals : [];
+    const deal = list.find((d) => d.id === req.params.dealId);
+    if (!deal) return res.status(404).json({ error: 'Deal not found.' });
+    const b = req.body || {};
+    const action = String(b.action || '');
+    if (action === 'stop') {
+      const reason = String(b.reason || '').trim();
+      if (!reason) return res.status(400).json({ error: 'A reason for discontinuation is required.' });
+      deal.recurringStopped = true;
+      deal.discontinuationReason = reason.slice(0, 1000);
+      deal.stoppedAt = new Date().toISOString();
+      deal.stoppedBy = req.user.name;
+      pushTimeline(lead, 'deal', `Recurring stopped for "${deal.name}" — ${reason}`, req.user.name);
+    } else if (action === 'resume') {
+      deal.recurringStopped = false;
+      deal.discontinuationReason = null;
+      deal.stoppedAt = null;
+      deal.stoppedBy = null;
+      pushTimeline(lead, 'deal', `Recurring resumed for "${deal.name}"`, req.user.name);
+    } else {
+      return res.status(400).json({ error: 'Unknown action.' });
+    }
     lead.deals = list; lead.changed('deals', true);
     await lead.save();
     res.json(lead.toJSON());

@@ -4,6 +4,39 @@ import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
 import { nowInZone, callWindow, toIST, tzShortLabel, dueLabel, daysLeftLabel, daysUntil, IST_LABEL, wallClockToUtcISO } from './timezone.js';
 
+// ---------------------------------------------------------------------------
+// Renewal helpers (mirror server/services/renewals.js). Some services are
+// contracts to re-approach at term end; Mark Paid records a tenure + next
+// renewal date, surfaced on the Converted views.
+// ---------------------------------------------------------------------------
+const RENEWAL_SERVICES = ['seo', 'ai seo', 'google ads campaign', 'meta ads campaign', 'social media promotion', 'complete digital marketing', 'website maintenance', 'ssl', 'ssl + web server'];
+const TENURE_MONTHS = { onetime: 0, monthly: 1, quarterly: 3, '6month': 6, '1year': 12, '2year': 24 };
+const TENURE_OPTS = [['onetime', 'One time'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['6month', '6 months'], ['1year', '1 Year'], ['2year', '2 Year']];
+const TENURE_LABEL = Object.fromEntries(TENURE_OPTS);
+const isRenewalSvc = (svc) => RENEWAL_SERVICES.includes(String(svc || '').trim().toLowerCase());
+const defaultTenureFor = (svc) => (isRenewalSvc(svc) ? 'monthly' : 'onetime');
+function addMonthsStr(dateStr, months) {
+  if (!dateStr || !months) return '';
+  const base = new Date(`${String(dateStr).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return '';
+  const y = base.getUTCFullYear(); const m = base.getUTCMonth(); const d = base.getUTCDate();
+  const target = new Date(Date.UTC(y, m + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+const computeRenewal = (dateStr, tenure) => { const mo = TENURE_MONTHS[tenure]; return mo ? addMonthsStr(dateStr, mo) : ''; };
+// "12 Sep 2026 (7 days left)" / "(overdue)" when past, badge only within 30 days.
+function renewalLabel(dateStr) {
+  if (!dateStr) return { text: '—', tone: 'muted' };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`);
+  const days = Math.round((d - today) / 86400000);
+  const nice = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  if (days < 0) return { text: `${nice} (overdue)`, tone: 'overdue' };
+  if (days <= 30) return { text: `${nice} (${days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} left`})`, tone: 'soon' };
+  return { text: nice, tone: 'ok' };
+}
 
 /**
  * Inline SVG line icons. Defined as plain components (rather than built by a
@@ -3598,6 +3631,9 @@ function DealsTab({ lead, config, user, onChange }) {
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
+  const [payTenure, setPayTenure] = useState('onetime');
+  const [payRenewal, setPayRenewal] = useState(''); // next renewal date (auto, editable)
+  const [renewalEdited, setRenewalEdited] = useState(false);
 
   const togglePaid = async (deal, inst, e) => {
     e.stopPropagation();
@@ -3606,7 +3642,15 @@ function DealsTab({ lead, config, user, onChange }) {
       setPayGateway(''); setPayRef('');
       // Default the received date to the installment's existing paidDate (when
       // editing) or today (when marking fresh).
-      setPayDate(inst.paidDate || new Date().toISOString().slice(0, 10));
+      const pd = inst.paidDate || new Date().toISOString().slice(0, 10);
+      setPayDate(pd);
+      // Tenure: existing value, else smart default by service. Recurring deals
+      // follow their billing interval where present. Renewal date auto-computes.
+      const svc = deal.service || deal.name;
+      let t = inst.tenure || (deal.planType === 'recurring' ? (deal.recurringInterval === 'quarterly' ? 'quarterly' : deal.recurringInterval === 'half-yearly' ? '6month' : deal.recurringInterval === 'yearly' ? '1year' : 'monthly') : defaultTenureFor(svc));
+      setPayTenure(t);
+      setRenewalEdited(false);
+      setPayRenewal(inst.renewalDate || computeRenewal(pd, t));
       setPayFor({ deal, inst });
       return;
     }
@@ -3626,10 +3670,15 @@ function DealsTab({ lead, config, user, onChange }) {
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paid: true, gateway: payGateway, paidDate: payDate || undefined, ...(payRef ? { transactionId: payRef } : {}) }),
+        body: JSON.stringify({
+          paid: true, gateway: payGateway, paidDate: payDate || undefined,
+          ...(payRef ? { transactionId: payRef } : {}),
+          tenure: payTenure,
+          renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
+        }),
       });
       onChange(u);
-      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayTenure('onetime'); setPayRenewal('');
     } catch (err) { alert(err.message); }
     setBusyInst(null);
   };
@@ -3832,6 +3881,26 @@ function DealsTab({ lead, config, user, onChange }) {
                 className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
               <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
             </div>
+
+            {/* Tenure + next renewal date. Defaults by service (renewal services
+                → Monthly). "One time" hides the renewal date. */}
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Tenure</label>
+              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payDate, t)); }}
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
+                {TENURE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              {isRenewalSvc(payFor.deal.service || payFor.deal.name) && <div className="text-[10px] text-emerald-600 mt-1">This is a renewal service — a next renewal date is tracked.</div>}
+            </div>
+
+            {payTenure !== 'onetime' && (
+              <div className="mt-3">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Next renewal date</label>
+                <input type="date" value={payRenewal} onChange={(e) => { setPayRenewal(e.target.value); setRenewalEdited(true); }}
+                  className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the payment date + tenure. Edit if the contract renews on a different day.</div>
+              </div>
+            )}
 
             <button type="button" disabled={!payGateway || busyInst === payFor.inst.id} onClick={confirmPaid}
               className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
@@ -4407,17 +4476,45 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
+  const [payTenure, setPayTenure] = useState('onetime');
+  const [payRenewal, setPayRenewal] = useState('');
+  const [renewalEdited, setRenewalEdited] = useState(false);
+  const [stopFor, setStopFor] = useState(null); // { lead, deal } — stop-recurring reason popup
 
   // Only an admin confirms money received; a manager records that the invoice
   // has gone out, which is their half of the handover.
   const isAdmin = user && user.role === 'admin';
+  // Non-admins (managers, converted-access agents) only ever see the Boxes
+  // section — the Tables section (with renewals + stop/resume) is admin-only.
+  const effViewMode = isAdmin ? viewMode : 'cards';
 
   // When the payment popup opens, default the received date to the installment's
   // existing paidDate (if editing) or today.
   const openPay = (lead, deal, inst) => {
     setPayGateway(''); setPayRef('');
-    setPayDate(inst.paidDate || new Date().toISOString().slice(0, 10));
+    const pd = inst.paidDate || new Date().toISOString().slice(0, 10);
+    setPayDate(pd);
+    const svc = deal.service || deal.name;
+    const t = inst.tenure || (deal.planType === 'recurring' ? (deal.recurringInterval === 'quarterly' ? 'quarterly' : deal.recurringInterval === 'half-yearly' ? '6month' : deal.recurringInterval === 'yearly' ? '1year' : 'monthly') : defaultTenureFor(svc));
+    setPayTenure(t); setRenewalEdited(false);
+    setPayRenewal(inst.renewalDate || computeRenewal(pd, t));
     setPayFor({ lead, deal, inst });
+  };
+
+  // Stop or resume a recurring contract.
+  const stopRecurring = async (lead, deal, reason) => {
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'stop', reason }) });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+      setStopFor(null);
+    } catch (e) { alert(e.message); }
+  };
+  const resumeRecurring = async (lead, deal) => {
+    if (!confirm(`Resume the recurring contract for "${deal.name}"?`)) return;
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'resume' }) });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { alert(e.message); }
   };
 
   const markInvoiced = async (lead, deal, inst) => {
@@ -4437,10 +4534,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}), ...(paidDate ? { paidDate } : {}) }),
+        body: JSON.stringify({
+          paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}), ...(paidDate ? { paidDate } : {}),
+          tenure: payTenure, renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
+        }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayTenure('onetime'); setPayRenewal('');
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
@@ -4519,11 +4619,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     // Does this client have a recurring (month-to-month) contract? Such deals are
     // never "paid in full" — they're an ongoing monthly arrangement.
     const hasRecurring = won.some((d) => d.planType === 'recurring');
+    const recurringDeals = won.filter((d) => d.planType === 'recurring');
     return {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
       collectedInPeriod: Math.round(collectedInPeriod),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
-      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring,
+      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring, recurringDeals,
     };
   };
 
@@ -4568,15 +4669,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           </select>
 
           {/* Cards read well for a handful of clients; the table scans faster
-              once the list grows. Let people pick, and remember the choice. */}
-          <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-            {[['cards', 'Boxes'], ['table', 'Table'], ['both', 'Both']].map(([id, label]) => (
-              <button key={id} type="button" onClick={() => pickView(id)}
-                className={`px-3 py-2 text-xs font-bold transition-colors ${
-                  viewMode === id ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
-                }`}>{label}</button>
-            ))}
-          </div>
+              once the list grows. Let people pick, and remember the choice.
+              Only admins get the Tables section — managers and converted-access
+              agents see the Boxes section alone. */}
+          {isAdmin && (
+            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+              {[['cards', 'Boxes'], ['table', 'Table'], ['both', 'Both']].map(([id, label]) => (
+                <button key={id} type="button" onClick={() => pickView(id)}
+                  className={`px-3 py-2 text-xs font-bold transition-colors ${
+                    viewMode === id ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                  }`}>{label}</button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -4603,7 +4708,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           <div className="text-4xl mb-2">🎉</div>
           No converted clients for this period. A lead converts when one of its deals is marked Closed Won.
         </div>
-      ) : viewMode === 'table' ? null : (
+      ) : effViewMode === 'table' ? null : (
         <>
         {openDealLeads.length > 0 && (
           <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Active — open deal or payment pending · {openDealLeads.length}</div>
@@ -4774,11 +4879,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">
-                  <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Website</th><th className="px-4 py-2.5">Collected</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Converted</th><th className="px-4 py-2.5"></th>
+                  <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Website</th><th className="px-4 py-2.5">Collected</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Converted</th><th className="px-4 py-2.5">Next renewal</th><th className="px-4 py-2.5"></th>
                 </tr></thead>
                 <tbody>
                   {noOpenDealLeads.map((l) => {
                     const s = summarize(l);
+                    const rl = renewalLabel(l.nextRenewalDate);
+                    const rtone = rl.tone === 'overdue' ? 'text-red-600' : rl.tone === 'soon' ? 'text-orange-600' : rl.tone === 'muted' ? 'text-slate-300' : 'text-slate-500';
                     return (
                       <tr key={l._id} onClick={() => onOpen(l._id, 'deals')} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer">
                         <td className="px-4 py-2.5 font-bold text-[#050A1F]">{fullName(l)}</td>
@@ -4786,6 +4893,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                         <td className="px-4 py-2.5 text-slate-600">${s.collected.toLocaleString()}</td>
                         <td className="px-4 py-2.5 text-slate-500">{l.ownerName}</td>
                         <td className="px-4 py-2.5 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
+                        <td className={`px-4 py-2.5 text-xs font-semibold ${rtone}`}>{rl.text}</td>
                         <td className="px-4 py-2.5 text-right"><span className="rounded-md bg-purple-50 text-purple-600 px-2 py-0.5 text-[10px] font-bold whitespace-nowrap">✨ Cross-sell</span></td>
                       </tr>
                     );
@@ -4799,9 +4907,95 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       )}
 
       {/* Full client table — easier to scan than cards once the list grows. */}
-      {filtered.length > 0 && viewMode !== 'cards' && (
-        <div className={viewMode === 'table' ? '' : 'mt-6'}>
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients</div>
+      {/* ---- Tables section (admin only). Order:
+           1) Upcoming & Pending Payments  2) Upcoming Renewals  3) All converted ---- */}
+      {filtered.length > 0 && effViewMode !== 'cards' && (() => {
+        // Build the two focused tables from the same summarize() data.
+        const pendingClients = [];
+        const renewalClients = [];
+        for (const l of filtered) {
+          const s = summarize(l);
+          if (s.pending && s.pending.length > 0) pendingClients.push({ l, s });
+          if (l.nextRenewalDate) renewalClients.push({ l, date: l.nextRenewalDate, service: l.nextRenewalService });
+        }
+        renewalClients.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        return (
+          <div className={effViewMode === 'table' ? '' : 'mt-6'}>
+            {/* 1) Upcoming & Pending Payments */}
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {pendingClients.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-8">No pending payments — everyone's paid up. 🎉</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Owner</th>
+                      <th className="text-left px-4 py-3">Next due</th>
+                      <th className="text-left px-4 py-3">Outstanding</th>
+                      <th className="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingClients.map(({ l, s }) => {
+                      const next = s.nextInst;
+                      return (
+                        <tr key={`pay-${l._id}`} onClick={() => onOpen(l._id, 'deals')} className="border-t border-slate-50 hover:bg-amber-50/40 cursor-pointer">
+                          <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}<div className="text-[11px] text-slate-400 font-normal">{l.website || ''}</div></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
+                          <td className="px-4 py-3 text-xs">{next ? <span className="text-slate-600">{next.dueDate ? fmtDate(next.dueDate) : '—'}</span> : '—'}</td>
+                          <td className="px-4 py-3 text-xs font-bold text-amber-600">${(s.due || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right"><span className="text-[10px] font-bold text-slate-400">{s.pending.length} payment{s.pending.length === 1 ? '' : 's'} →</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 2) Upcoming Renewals */}
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">🔁 Upcoming Renewals · {renewalClients.length}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
+              {renewalClients.length === 0 ? (
+                <div className="text-slate-300 text-sm text-center py-8">No renewals scheduled.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                      <th className="text-left px-4 py-3">Client</th>
+                      <th className="text-left px-4 py-3">Owner</th>
+                      <th className="text-left px-4 py-3">Service</th>
+                      <th className="text-left px-4 py-3">Renewal date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {renewalClients.map(({ l, date, service }) => {
+                      const rl = renewalLabel(date);
+                      const tone = rl.tone === 'overdue' ? 'text-red-600' : rl.tone === 'soon' ? 'text-orange-600' : 'text-slate-600';
+                      return (
+                        <tr key={`ren-${l._id}`} onClick={() => onOpen(l._id, 'deals')} className="border-t border-slate-50 hover:bg-indigo-50/40 cursor-pointer">
+                          <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}<div className="text-[11px] text-slate-400 font-normal">{l.website || ''}</div></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{service || '—'}</td>
+                          <td className={`px-4 py-3 text-xs font-bold ${tone}`}>{rl.text}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 3) All converted clients */}
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients</div>
+          </div>
+        );
+      })()}
+
+      {filtered.length > 0 && effViewMode !== 'cards' && (
+        <div className={effViewMode === 'table' ? '' : ''}>
           <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
             <table className="w-full text-sm">
               <thead>
@@ -4825,12 +5019,13 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                     <React.Fragment key={`row-${l._id}`}>
                     <tr onClick={() => onOpen(l._id, 'deals')}
                       className="border-t border-slate-50 hover:bg-green-50/30 cursor-pointer transition-colors">
-                      {/* Expander — opens the pending payments panel in place. */}
+                      {/* Expander — opens the pending payments + recurring
+                          contract controls panel in place. */}
                       <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
-                        {s.pending.length > 0 ? (
+                        {(s.pending.length > 0 || s.recurringDeals.length > 0) ? (
                           <button
                             onClick={() => toggleRow(l._id)}
-                            title={isOpen ? 'Hide pending payments' : `Show ${s.pending.length} pending payment${s.pending.length === 1 ? '' : 's'}`}
+                            title={isOpen ? 'Hide details' : 'Show payments / recurring contracts'}
                             className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
                               isOpen ? 'border-orange-300 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50'
                             }`}>
@@ -4868,14 +5063,45 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
                     </tr>
 
-                    {/* Pending payments, editable in place — no need to open the
-                        lead just to move a date or record a payment. */}
-                    {isOpen && s.pending.length > 0 && (
+                    {/* Pending payments + recurring-contract controls, editable
+                        in place — no need to open the lead. */}
+                    {isOpen && (s.pending.length > 0 || s.recurringDeals.length > 0) && (
                       <tr className="bg-amber-50/30">
                         <td colSpan={8} className="px-4 py-3">
+                          {/* Recurring contracts: stop (with reason) / resume. */}
+                          {s.recurringDeals.length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-600 mb-2">🔁 Recurring contracts · {s.recurringDeals.length}</div>
+                              <div className="space-y-1.5">
+                                {s.recurringDeals.map((d) => {
+                                  const nextRen = (d.installments || []).filter((it) => it.renewalDate).map((it) => it.renewalDate).sort()[0];
+                                  return (
+                                    <div key={d.id} className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
+                                      <span className="text-xs font-bold text-[#050A1F] truncate max-w-[200px]" title={d.name}>{d.name}</span>
+                                      <span className="text-[10px] text-slate-400">{d.service || ''}</span>
+                                      {d.recurringStopped ? (
+                                        <span className="rounded bg-red-50 text-red-600 px-2 py-0.5 text-[10px] font-bold" title={d.discontinuationReason || ''}>Stopped: {d.discontinuationReason ? (d.discontinuationReason.length > 40 ? d.discontinuationReason.slice(0, 40) + '…' : d.discontinuationReason) : 'discontinued'}</span>
+                                      ) : (
+                                        nextRen && <span className="rounded bg-indigo-50 text-indigo-600 px-2 py-0.5 text-[10px] font-bold">Renews {renewalLabel(nextRen).text}</span>
+                                      )}
+                                      <div className="ml-auto">
+                                        {d.recurringStopped ? (
+                                          <button onClick={() => resumeRecurring(l, d)} className="rounded-md border border-green-200 bg-green-50 px-3 py-1 text-[10px] font-bold text-green-700 hover:bg-green-100">Resume</button>
+                                        ) : (
+                                          <button onClick={() => setStopFor({ lead: l, deal: d })} className="rounded-md border border-red-200 bg-red-50 px-3 py-1 text-[10px] font-bold text-red-600 hover:bg-red-100">Stop recurring</button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {s.pending.length > 0 && (
                           <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600 mb-2">
                             Upcoming &amp; pending payments · {s.pending.length}
                           </div>
+                          )}
                           <div className="space-y-1.5">
                             {s.pending.map(({ deal: d, inst: it, recurring }) => {
                               const overdue = it.dueDate && it.dueDate < new Date().toISOString().slice(0, 10);
@@ -4973,7 +5199,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
             <div className="mt-3">
               <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment received date</label>
-              <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)}
+              <input type="date" value={payDate} onChange={(e) => { setPayDate(e.target.value); if (!renewalEdited && payTenure !== 'onetime') setPayRenewal(computeRenewal(e.target.value, payTenure)); }}
                 className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
               <div className="text-[10px] text-slate-400 mt-1">The sale is counted in the month of this date — set it to when the money actually landed.</div>
             </div>
@@ -4985,6 +5211,25 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                 className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
               <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
             </div>
+
+            {/* Tenure + next renewal date. */}
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Tenure</label>
+              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payDate, t)); }}
+                className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
+                {TENURE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              {isRenewalSvc(payFor.deal.service || payFor.deal.name) && <div className="text-[10px] text-emerald-600 mt-1">This is a renewal service — a next renewal date is tracked.</div>}
+            </div>
+
+            {payTenure !== 'onetime' && (
+              <div className="mt-3">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Next renewal date</label>
+                <input type="date" value={payRenewal} onChange={(e) => { setPayRenewal(e.target.value); setRenewalEdited(true); }}
+                  className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the payment date + tenure. Edit if the contract renews on a different day.</div>
+              </div>
+            )}
 
             <button
               disabled={!payGateway || busy === payFor.inst.id}
@@ -5000,6 +5245,32 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           </div>
         </div>
       )}
+
+      {/* Stop-recurring reason popup (admin, Tables section). */}
+      {stopFor && <StopRecurringModal deal={stopFor.deal} onClose={() => setStopFor(null)} onStop={(reason) => stopRecurring(stopFor.lead, stopFor.deal, reason)} />}
+    </div>
+  );
+}
+
+// Ask for a required free-text reason before stopping a recurring contract.
+function StopRecurringModal({ deal, onClose, onStop }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[95] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }} onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-extrabold text-[#050A1F] mb-1">Stop recurring contract</div>
+        <div className="text-xs text-slate-500 mb-3">"{deal.name}" will stop generating renewals. It stays a converted client (cross-sell eligible). You can resume it later.</div>
+        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Reason for discontinuation *</label>
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
+          placeholder="e.g. Customer didn't pay this cycle / requested to pause"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+          <button disabled={!reason.trim() || busy} onClick={() => { setBusy(true); onStop(reason.trim()); }}
+            className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Stopping…' : 'Stop recurring'}</button>
+        </div>
+      </div>
     </div>
   );
 }
