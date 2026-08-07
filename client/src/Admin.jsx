@@ -442,6 +442,73 @@ function targetStatus(target, achieved) {
   return { label: `At risk · ${pct}%`, cls: 'bg-red-100 text-red-700', pct };
 }
 
+// Wraps the monthly targets table + the incentive settings under one tab with
+// a Targets / Incentive sub-nav.
+function TargetsAndIncentive({ say, settings, setSettings }) {
+  const [sub, setSub] = useState('targets');
+  return (
+    <div>
+      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
+        <button onClick={() => setSub('targets')}
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'targets' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Targets</button>
+        <button onClick={() => setSub('incentive')}
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'incentive' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>💰 Incentive</button>
+      </div>
+      {sub === 'targets' ? <MonthlyTargets say={say} /> : <IncentiveSettings say={say} />}
+    </div>
+  );
+}
+
+// Incentive settings — the rule percentages + USD→INR rate, saved into crmConfig.
+function IncentiveSettings({ say }) {
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { api('/admin/settings').then((s) => setCfg(s.crmConfig || {})).catch((e) => say(e.message, true)); }, []);
+  if (!cfg) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+  const inc = { eligibilityPct: 90, agentBasePct: 1.5, agentOverPct: 5, managerOverPct: 5, usdToInr: 83, ...(cfg.incentives || {}) };
+  const set = (k, v) => setCfg({ ...cfg, incentives: { ...inc, [k]: Number(v) || 0 } });
+  const save = async () => {
+    setSaving(true);
+    try { await api('/admin/settings', { method: 'PUT', body: JSON.stringify({ crmConfig: cfg }) }); say('Incentive settings saved.'); }
+    catch (e) { say(e.message, true); }
+    setSaving(false);
+  };
+  const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div>
+      <h2 className="text-lg font-extrabold mb-1" style={{ color: C.navy }}>Incentive settings</h2>
+      <p className="text-sm text-slate-500 mb-4">These rules drive the Incentives table under Team review (admin-only). Incentives are computed in USD, then converted to INR with the rate below.</p>
+      <div className="bg-white rounded-2xl border border-slate-100 p-5 max-w-2xl">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <Field label="Eligibility threshold %" hint="Agent qualifies at ≥ this % of target">
+            <input type="number" min="0" step="0.1" className={numCls} value={inc.eligibilityPct} onChange={(e) => set('eligibilityPct', e.target.value)} />
+          </Field>
+          <Field label="Agent base %" hint="% of achieved (capped at target)">
+            <input type="number" min="0" step="0.1" className={numCls} value={inc.agentBasePct} onChange={(e) => set('agentBasePct', e.target.value)} />
+          </Field>
+          <Field label="Agent over-achievement %" hint="% of amount above target">
+            <input type="number" min="0" step="0.1" className={numCls} value={inc.agentOverPct} onChange={(e) => set('agentOverPct', e.target.value)} />
+          </Field>
+          <Field label="Manager over-achievement %" hint="% of team amount above team target">
+            <input type="number" min="0" step="0.1" className={numCls} value={inc.managerOverPct} onChange={(e) => set('managerOverPct', e.target.value)} />
+          </Field>
+          <Field label="USD → INR rate" hint="e.g. 83 means $1 = ₹83">
+            <input type="number" min="0" step="0.01" className={numCls} value={inc.usdToInr} onChange={(e) => set('usdToInr', e.target.value)} />
+          </Field>
+        </div>
+        <div className="mt-5 rounded-xl bg-slate-50 border border-slate-100 p-4 text-xs text-slate-500 leading-relaxed">
+          <b className="text-slate-600">How it's calculated</b><br />
+          <b>Agent</b> (own target vs achieved): eligible if achieved ≥ {inc.eligibilityPct}% of target. Incentive 1 = {inc.agentBasePct}% of achieved (capped at target). Incentive 2 = {inc.agentOverPct}% of the amount over target.<br />
+          <b>Manager</b> (team target vs team achieved): {inc.managerOverPct}% of the team's over-achievement. Team target = agents' targets + manager's own. A manager with no team falls under the agent rules.
+        </div>
+        <div className="flex justify-end mt-4">
+          <Btn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save incentive settings'}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MonthlyTargets({ say }) {
   const months = monthChoices(12);
   const [period, setPeriod] = useState(months[1] ? months[1].key : months[0].key);
@@ -1449,8 +1516,6 @@ function CrmFields({ say }) {
 
       <FxRatesEditor rates={cfg.fxRates || { USD: 1 }} currencies={cfg.dealCurrencies || ['USD']} onChange={(r) => setList('fxRates', r)} />
 
-      <IncentivesEditor value={cfg.incentives || {}} onChange={(v) => setList('incentives', v)} />
-
       <div className="flex justify-end sticky bottom-4">
         <button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{saving ? 'Saving…' : 'Save CRM fields'}</button>
       </div>
@@ -1818,7 +1883,7 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Monthly Targets'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
+  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'imagekit' && tab !== 'email';
 
@@ -1852,7 +1917,7 @@ export default function Admin() {
         {tab === 'email' && <EmailPanel say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
-        {tab === 'targets' && <MonthlyTargets say={say} />}
+        {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}
         {tab === 'tv' && <MotivatorTvSettings say={say} />}
         {tab === 'demo' && <DemoModeSettings say={say} />}
         {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}

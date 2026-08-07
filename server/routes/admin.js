@@ -249,15 +249,47 @@ router.get('/monthly-targets', async (req, res, next) => {
     const byUser = {};
     stored.forEach((s) => { byUser[s.userId] = s.toJSON(); });
 
+    // Live CRM collected sales for the month, per user — used to pre-fill the
+    // Achieved column when there's no saved override. Mirrors the sales math
+    // used elsewhere: first paid installment of each closed-won deal (recurring
+    // counts only its first cycle), converted to USD, dated by paidDate.
+    const [py, pm] = period.split('-').map(Number);
+    const mStart = new Date(py, pm - 1, 1);
+    const mEnd = new Date(py, pm, 1);
+    const settings = await Settings.findOne();
+    const fx = (settings && settings.crmConfig && settings.crmConfig.fxRates) || { USD: 1 };
+    const toUsd = (amt, cur) => (Number(amt) || 0) / (fx[cur || 'USD'] || 1);
+    const liveByUser = {};
+    const scopedIds = scoped.map((u) => u.id);
+    if (scopedIds.length) {
+      const leads = await Lead.findAll({ where: { ownerId: { [Op.in]: scopedIds } }, attributes: ['ownerId', 'deals'] });
+      for (const l of leads) {
+        for (const d of (l.deals || [])) {
+          if (d.stage !== 'closed_won') continue;
+          for (const it of (d.installments || [])) {
+            if (it.recurring && Number(it.seq || 0) > 1) continue;
+            if (it.paid && it.paidDate) {
+              const pd = new Date(it.paidDate);
+              if (pd >= mStart && pd < mEnd) liveByUser[l.ownerId] = (liveByUser[l.ownerId] || 0) + toUsd(it.amount, d.currency);
+            }
+          }
+        }
+      }
+    }
+
     const rows = scoped.map((u) => {
       const t = u.targets || {};
       const currentTarget = (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0;
       const rec = byUser[u.id];
+      const liveAchieved = Math.round(liveByUser[u.id] || 0);
       return {
         userId: u.id, name: u.name, role: u.role, team: u.team, shift: u.shift,
         managerId: u.managerId, archived: !!u.archived,
+        // Saved row wins; otherwise pre-fill target from the user config and
+        // achieved from live CRM sales (admin can overwrite before saving).
         targetUsd: rec ? rec.targetUsd : currentTarget,
-        achievedUsd: rec ? rec.achievedUsd : 0,
+        achievedUsd: rec ? rec.achievedUsd : liveAchieved,
+        liveAchievedUsd: liveAchieved, // always the live figure, for reference
         hasRecord: !!rec,
       };
     });

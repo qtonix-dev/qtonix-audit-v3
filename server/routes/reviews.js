@@ -109,17 +109,19 @@ async function scoreAgents(groups, period) {
     }
   }
 
-  // Historical fallback: for months the live data can't speak to (e.g. a newly
-  // joined agent's past months, before any leads existed here), use the admin-
-  // entered target + achieved. Live-computed sales win when present.
+  // Admin-entered Monthly Target rows always win when present: the admin has
+  // explicitly recorded the numbers for this month, so they override the live
+  // figures (for both target and achieved). Without a saved row, live CRM sales
+  // are used. This covers past months (before go-live) AND deliberate overrides.
   const storedRows = await MonthlyTarget.findAll({ where: { period, userId: Object.keys(stats).map(Number).concat(-1) } });
   const storedByUser = {};
   storedRows.forEach((r) => { storedByUser[r.userId] = r.toJSON(); });
   for (const s of Object.values(stats)) {
     const rec = storedByUser[s.agentId];
     if (rec) {
-      if (rec.targetUsd > 0) s.salesTarget = rec.targetUsd;         // stored target overrides config
-      if (s.salesUsd <= 0 && rec.achievedUsd > 0) { s.salesUsd = rec.achievedUsd; s.achievedFromHistory = true; }
+      if (rec.targetUsd > 0) s.salesTarget = rec.targetUsd;         // saved target overrides config
+      s.salesUsd = rec.achievedUsd;                                  // saved achieved always wins
+      s.achievedFromHistory = true;
     }
   }
 
@@ -244,11 +246,15 @@ async function scoreManagers(groups, period) {
   }
 
   const allAgentIds = Object.values(byManager).flatMap((m) => m.agentIds);
-  const leads = allAgentIds.length ? await Lead.findAll({ where: { ownerId: allAgentIds } }) : [];
+  // Also fetch the managers' own leads so their personal sales count toward the
+  // team achieved (team achieved = agents' + manager's own).
+  const mgrOwnIds = Object.values(byManager).map((m) => m.managerId);
+  const ownerLookupIds = Array.from(new Set([...allAgentIds, ...mgrOwnIds]));
+  const leads = ownerLookupIds.length ? await Lead.findAll({ where: { ownerId: ownerLookupIds } }) : [];
   const ownerToManager = {};
-  for (const m of Object.values(byManager)) for (const id of m.agentIds) ownerToManager[id] = m.managerId;
+  for (const m of Object.values(byManager)) { for (const id of m.agentIds) ownerToManager[id] = m.managerId; ownerToManager[m.managerId] = m.managerId; }
 
-  for (const m of Object.values(byManager)) { m.salesUsd = 0; m.leadsGenerated = 0; m.conversions = 0; m.pipelineUsd = 0; }
+  for (const m of Object.values(byManager)) { m.salesUsd = 0; m.leadsGenerated = 0; m.conversions = 0; m.pipelineUsd = 0; m.liveByUser = {}; }
   for (const l of leads) {
     const mid = ownerToManager[l.ownerId];
     const m = mid && byManager[mid];
@@ -261,7 +267,12 @@ async function scoreManagers(groups, period) {
       if (d.stage !== 'closed_won') continue;
       for (const it of (d.installments || [])) {
         if (it.recurring && Number(it.seq || 0) > 1) continue;
-        if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= start && pd < end) m.salesUsd += toUsd(it.amount, d.currency); }
+        if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= start && pd < end) {
+          const amt = toUsd(it.amount, d.currency);
+          m.salesUsd += amt;
+          // Track live sales per owner so admin overrides can be applied per user.
+          m.liveByUser[l.ownerId] = (m.liveByUser[l.ownerId] || 0) + amt;
+        } }
       }
     }
   }
@@ -278,29 +289,30 @@ async function scoreManagers(groups, period) {
   storedRows.forEach((r) => { storedByUser[r.userId] = r.toJSON(); });
 
   for (const m of Object.values(byManager)) {
-    // Agents' combined target: stored value per agent when present, else the
-    // config-derived amount already summed into agentsTarget is used as a base.
-    let agentsTarget = 0; let storedAgentsAchieved = 0; let anyStored = false;
+    // TEAM TARGET = agents' targets + manager's own increment. A saved row's
+    // target overrides the configured value, per user.
+    let agentsTarget = 0; let anyStoredTarget = false;
     for (const aid of m.agentIds) {
       const rec = storedByUser[aid];
-      if (rec) {
-        anyStored = true;
-        agentsTarget += rec.targetUsd > 0 ? rec.targetUsd : 0;
-        storedAgentsAchieved += rec.achievedUsd || 0;
-      }
+      if (rec && rec.targetUsd > 0) { anyStoredTarget = true; agentsTarget += rec.targetUsd; }
+      else if (rec) { anyStoredTarget = true; /* saved row with 0 target */ }
     }
-    // If no agent had a stored row, keep the configured agents' target.
-    const agentsTargetFinal = anyStored ? agentsTarget : m.agentsTarget;
-    // Manager increment: stored overrides config.
+    const agentsTargetFinal = anyStoredTarget ? agentsTarget : m.agentsTarget;
     const mgrRec = storedByUser[m.managerId];
     const managerTargetFinal = (mgrRec && mgrRec.targetUsd > 0) ? mgrRec.targetUsd : m.managerTarget;
     m.salesTarget = agentsTargetFinal + managerTargetFinal;
-    // Achieved fallback: only when there's no live sales for the team.
-    if (m.salesUsd <= 0) {
-      const mgrAchieved = mgrRec ? (mgrRec.achievedUsd || 0) : 0;
-      const histAchieved = storedAgentsAchieved + mgrAchieved;
-      if (histAchieved > 0) { m.salesUsd = histAchieved; m.achievedFromHistory = true; }
+
+    // TEAM ACHIEVED = per-user: admin-saved achieved wins, else live CRM sales.
+    let teamAchieved = 0;
+    for (const aid of m.agentIds) {
+      const rec = storedByUser[aid];
+      teamAchieved += rec ? (rec.achievedUsd || 0) : (m.liveByUser[aid] || 0);
     }
+    // Manager's own achieved: saved row wins, else the manager's own live sales.
+    const mgrLiveOwn = m.liveByUser[m.managerId] || 0;
+    teamAchieved += mgrRec ? (mgrRec.achievedUsd || 0) : mgrLiveOwn;
+    m.salesUsd = teamAchieved;
+    m.achievedFromHistory = !!(mgrRec || m.agentIds.some((aid) => storedByUser[aid]));
   }
 
   const rows = Object.values(byManager).map((m) => {

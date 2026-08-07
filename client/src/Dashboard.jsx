@@ -111,8 +111,31 @@ function PlainStat({ label, value, sub, accent, onClick, cta }) {
   );
 }
 
+// Compact "how long ago" label for a timestamp.
+function agoLabel(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? '1 month ago' : `${months} months ago`;
+}
+
+function isTodayIso(iso) {
+  if (!iso) return false;
+  const d = new Date(iso); const n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+}
+
 // Mini lead table for the today/untouched boxes.
-function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner }) {
+function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAll, seeAllLabel, breakdown, showOwner, showAge, emptyHint }) {
   return (
     <div className="rounded-2xl border p-5" style={{ borderColor: accent + '33', background: '#fff' }}>
       <div className="flex items-center justify-between mb-3">
@@ -138,10 +161,13 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
         <div className="text-slate-300 text-sm py-6 text-center">Nothing here yet.</div>
       ) : (
         <div className="divide-y divide-slate-50 overflow-auto" style={{ minHeight: 250, maxHeight: 250 }}>
-          {items.map((l) => (
+          {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-1">{emptyHint}</div>}
+          {items.map((l) => {
+            const today = isTodayIso(l.at);
+            return (
             <div key={`${l.kind || 'x'}-${l._id}`} onClick={() => onOpenLead(l._id)} className="flex items-center justify-between py-2 cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                {l.kind && <span title={l.kind === 'generated' ? 'Generated today' : 'Assigned today'} className="text-xs shrink-0">{l.kind === 'generated' ? '✨' : '📥'}</span>}
+                {l.kind && <span title={l.kind === 'generated' ? 'Generated' : 'Assigned'} className="text-xs shrink-0">{l.kind === 'generated' ? '✨' : '📥'}</span>}
                 <div className="min-w-0">
                   <div className="font-semibold text-sm text-[#050A1F] truncate">{l.name}</div>
                   <div className="text-[11px] text-slate-400 truncate">
@@ -151,9 +177,17 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
                   </div>
                 </div>
               </div>
-              <span className="text-slate-300 text-xs shrink-0">→</span>
+              <div className="flex items-center gap-2 shrink-0">
+                {(showAge && l.at) && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${today ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
+                    {today ? 'today' : agoLabel(l.at)}
+                  </span>
+                )}
+                <span className="text-slate-300 text-xs">→</span>
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -644,16 +678,27 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* ROW 3 — Today's leads + untouched, 50/50, sized for 5 rows */}
       <div className="grid md:grid-cols-2 gap-4">
-        <LeadMiniList
-          title="Today's leads"
-          count={m.generatedToday + m.assignedToday}
-          breakdown={[
-            { icon: '✨', label: 'generated', value: m.generatedToday, color: '#7C3AED' },
-            { icon: '📥', label: 'assigned', value: m.assignedToday, color: '#0891B2' },
-          ]}
-          items={lists.recentlyAdded || [...(lists.generatedToday || []), ...(lists.assignedToday || [])]}
-          showOwner={isAdmin || isManager}
-          accent="#7C3AED" onOpenLead={(id) => onViewToday(id)} onSeeAll={onGoLeads} seeAllLabel="All leads" />
+        {(() => {
+          const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
+          const hasToday = todayItems.length > 0;
+          // Show today's leads when there are any; otherwise fall back to the
+          // most recently added leads, clearly tagged with how long ago.
+          const items = hasToday ? todayItems : (lists.recentlyAdded || []);
+          return (
+            <LeadMiniList
+              title="Today's leads"
+              count={m.generatedToday + m.assignedToday}
+              breakdown={[
+                { icon: '✨', label: 'generated', value: m.generatedToday, color: '#7C3AED' },
+                { icon: '📥', label: 'assigned', value: m.assignedToday, color: '#0891B2' },
+              ]}
+              items={items}
+              showAge={!hasToday}
+              emptyHint={!hasToday ? 'No leads assigned or generated today — showing the most recent.' : null}
+              showOwner={isAdmin || isManager}
+              accent="#7C3AED" onOpenLead={(id) => onViewToday(id)} onSeeAll={onGoLeads} seeAllLabel="All leads" />
+          );
+        })()}
         <LeadMiniList title="Untouched 3+ days" count={m.untouched} items={lists.untouched || []}
           showOwner={isAdmin || isManager}
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />

@@ -26,6 +26,21 @@ function addMonthsStr(dateStr, months) {
   return target.toISOString().slice(0, 10);
 }
 const computeRenewal = (dateStr, tenure) => { const mo = TENURE_MONTHS[tenure]; return mo ? addMonthsStr(dateStr, mo) : ''; };
+// The payment received date for a converted client = the earliest paid
+// installment's paidDate across their won deals (the first money in). Used on
+// the Converted table in place of the record's converted timestamp.
+function firstPaymentDate(lead) {
+  let earliest = null;
+  for (const d of (lead.deals || [])) {
+    if (d.stage !== 'closed_won') continue;
+    for (const it of (d.installments || [])) {
+      if (it.paid && it.paidDate) {
+        if (!earliest || String(it.paidDate) < String(earliest)) earliest = it.paidDate;
+      }
+    }
+  }
+  return earliest;
+}
 // "12 Sep 2026 (7 days left)" / "(overdue)" when past, badge only within 30 days.
 function renewalLabel(dateStr) {
   if (!dateStr) return { text: '—', tone: 'muted' };
@@ -5032,7 +5047,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                   <th className="text-left px-4 py-3">Collected / booked</th>
                   <th className="text-left px-4 py-3">Outstanding</th>
                   <th className="text-left px-4 py-3">Deals</th>
-                  <th className="text-left px-4 py-3">Converted</th>
+                  <th className="text-left px-4 py-3">Payment received</th>
                 </tr>
               </thead>
               <tbody>
@@ -5085,7 +5100,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                           {s.open.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{s.open.length} open</span>}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">{fmtDate(l.convertedAt)}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{(() => { const pd = firstPaymentDate(l); return pd ? new Date(`${String(pd).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; })()}</td>
                     </tr>
 
                     {/* Pending payments + recurring-contract controls, editable

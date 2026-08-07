@@ -903,11 +903,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       if (isGenerated && genWhen && genWhen >= startOfDay) {
         generatedToday++;
         if (byOwner[l.ownerId]) byOwner[l.ownerId].leadsGeneratedToday++;
-        if (genTodayList.length < 12) genTodayList.push({ ...leadBrief(l), kind: 'generated' });
+        if (genTodayList.length < 12) genTodayList.push({ ...leadBrief(l), kind: 'generated', at: (genWhen || created).toISOString() });
       }
       if (isAssigned && assignedAt && assignedAt >= startOfDay) {
         assignedToday++;
-        if (assignedTodayList.length < 12) assignedTodayList.push({ ...leadBrief(l), kind: 'assigned' });
+        if (assignedTodayList.length < 12) assignedTodayList.push({ ...leadBrief(l), kind: 'assigned', at: (assignedAt || created).toISOString() });
       }
       if (isAssigned && assignedAt && assignedAt >= startOfMonth) leadsAssignedMonthTotal++;
 
