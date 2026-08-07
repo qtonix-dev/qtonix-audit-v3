@@ -847,7 +847,12 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
   const teamAgents = role === 'manager' && myId
     ? allUsers.filter((u) => u.role === 'agent' && u.active !== false && u.managerId === myId)
     : [];
-  const teamSum = teamAgents.reduce((s, a) => s + Number((a.targets && a.targets.sales && a.targets.sales.monthly) || 0), 0);
+  const agentsSum = teamAgents.reduce((s, a) => s + Number((a.targets && a.targets.sales && a.targets.sales.monthly) || 0), 0);
+  // The team target = agents' monthly sales targets + the manager's OWN monthly
+  // sales target. The manager's own figure lives on this form's live state (t),
+  // so the sum updates immediately as it's typed.
+  const managerOwn = Number((t.sales && t.sales.monthly) || 0);
+  const teamSum = agentsSum + managerOwn;
 
   return (
     <div className="col-span-2 rounded-lg bg-slate-50 border border-slate-100 p-4 space-y-4">
@@ -889,14 +894,36 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
                       <td className="px-3 py-1.5 text-slate-500">${Number((a.targets && a.targets.sales && a.targets.sales.monthly) || 0).toLocaleString()}</td>
                     </tr>
                   ))}
+                  <tr className="border-t border-slate-100 bg-orange-50/40">
+                    <td className="px-3 py-1.5 font-semibold text-slate-700">{state.name || 'This manager'} <span className="text-[10px] text-orange-500 font-bold">(own)</span></td>
+                    <td className="px-3 py-1.5 text-slate-500">Manager</td>
+                    <td className="px-3 py-1.5 text-slate-500">—</td>
+                    <td className="px-3 py-1.5 text-slate-500">${managerOwn.toLocaleString()}</td>
+                  </tr>
                   <tr className="border-t border-slate-200 bg-slate-50 font-bold">
-                    <td className="px-3 py-1.5" colSpan={3}>Team total</td>
+                    <td className="px-3 py-1.5" colSpan={3}>Team total (agents + manager)</td>
                     <td className="px-3 py-1.5">${teamSum.toLocaleString()}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
-          ) : <div className="text-[11px] text-slate-300 italic">No agents report to this manager yet.</div>}
+          ) : (
+            <div className="rounded-lg border border-slate-100 overflow-hidden">
+              <table className="w-full text-xs">
+                <tbody>
+                  <tr className="bg-orange-50/40">
+                    <td className="px-3 py-1.5 font-semibold text-slate-700">{state.name || 'This manager'} <span className="text-[10px] text-orange-500 font-bold">(own)</span></td>
+                    <td className="px-3 py-1.5 text-slate-500 text-right">${managerOwn.toLocaleString()}</td>
+                  </tr>
+                  <tr className="border-t border-slate-200 bg-slate-50 font-bold">
+                    <td className="px-3 py-1.5">Team total</td>
+                    <td className="px-3 py-1.5 text-right">${teamSum.toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="text-[11px] text-slate-300 italic px-3 py-1.5">No agents report to this manager yet — the team target is just the manager's own target.</div>
+            </div>
+          )}
 
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!t.team.override} onChange={(e) => setT({ team: { ...t.team, enabled: true, override: e.target.checked, monthly: e.target.checked ? (t.team.monthly || teamSum) : teamSum } })} />
@@ -908,11 +935,18 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
           </label>
           <p className="text-[11px] text-slate-400">Without an override, the team target auto-updates as agents join, leave, or change their sales targets.</p>
 
-          {/* Manager's OWN monthly sales target — counts toward the team target
-              for incentive calculations (team target = agents' targets + this). */}
+          {/* Manager's OWN monthly sales target — added to the team target
+              (team target = agents' targets + this). When the team target isn't
+              manually overridden, editing this immediately re-sums the team. */}
           <div className="pt-2 border-t border-slate-100">
-            <Field label="Manager's own monthly sales target (USD)" hint="Included in the team target for incentives">
-              <input type="number" min="0" className={numCls} value={t.sales.monthly || ''} onChange={(e) => setT({ sales: { ...t.sales, enabled: true, monthly: Number(e.target.value) || 0 } })} placeholder="e.g. 2000" />
+            <Field label="Manager's own monthly sales target (USD)" hint="Added to the team monthly sales target">
+              <input type="number" min="0" className={numCls} value={t.sales.monthly || ''} onChange={(e) => {
+                const own = Number(e.target.value) || 0;
+                const nextSales = { ...t.sales, enabled: true, monthly: own };
+                // Keep the (non-overridden) team target in sync = agents + own.
+                const nextTeam = t.team.override ? t.team : { ...t.team, enabled: true, monthly: agentsSum + own };
+                setT({ sales: nextSales, team: nextTeam });
+              }} placeholder="e.g. 2000" />
             </Field>
           </div>
         </div>
