@@ -911,7 +911,16 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
       if (isAssigned && assignedAt && assignedAt >= startOfMonth) leadsAssignedMonthTotal++;
 
-      if (isConverted && l.convertedAt && new Date(l.convertedAt) >= startOfMonth) { convertedThisMonth++; byOwner[l.ownerId].conversions++; }
+      // Converted THIS MONTH only — guard against leads with a missing or
+      // malformed convertedAt (old imports) so the count reflects the current
+      // calendar month, not the all-time total.
+      if (isConverted && l.convertedAt) {
+        const cAt = new Date(l.convertedAt);
+        if (!Number.isNaN(cAt.getTime()) && cAt >= startOfMonth) {
+          convertedThisMonth++;
+          if (byOwner[l.ownerId]) byOwner[l.ownerId].conversions++;
+        }
+      }
 
       // Sales = installments actually collected (paid) this month. First paid
       // installment of a lead's first deal = new sale; everything else = cross.

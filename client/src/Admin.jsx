@@ -907,6 +907,14 @@ function TargetsAndReporting({ state, patch, managers, allUsers = [] }) {
               onChange={(e) => setT({ team: { ...t.team, enabled: true, monthly: Number(e.target.value) || 0 } })} />
           </label>
           <p className="text-[11px] text-slate-400">Without an override, the team target auto-updates as agents join, leave, or change their sales targets.</p>
+
+          {/* Manager's OWN monthly sales target — counts toward the team target
+              for incentive calculations (team target = agents' targets + this). */}
+          <div className="pt-2 border-t border-slate-100">
+            <Field label="Manager's own monthly sales target (USD)" hint="Included in the team target for incentives">
+              <input type="number" min="0" className={numCls} value={t.sales.monthly || ''} onChange={(e) => setT({ sales: { ...t.sales, enabled: true, monthly: Number(e.target.value) || 0 } })} placeholder="e.g. 2000" />
+            </Field>
+          </div>
         </div>
       )}
 
@@ -1407,6 +1415,8 @@ function CrmFields({ say }) {
 
       <FxRatesEditor rates={cfg.fxRates || { USD: 1 }} currencies={cfg.dealCurrencies || ['USD']} onChange={(r) => setList('fxRates', r)} />
 
+      <IncentivesEditor value={cfg.incentives || {}} onChange={(v) => setList('incentives', v)} />
+
       <div className="flex justify-end sticky bottom-4">
         <button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{saving ? 'Saving…' : 'Save CRM fields'}</button>
       </div>
@@ -1484,6 +1494,37 @@ function PresalesTeamEditor({ items, onChange }) {
         <input type="number" min="0" value={target} onChange={(e) => setTarget(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Target"
           className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
         <button onClick={add} className="rounded-lg bg-[#050A1F] px-4 py-2 text-sm font-bold text-white">Add</button>
+      </div>
+    </div>
+  );
+}
+
+// Incentive rules: percentages + USD→INR rate used to compute agent/manager
+// incentives on the (admin-only) Team review Incentives table.
+function IncentivesEditor({ value, onChange }) {
+  const v = { eligibilityPct: 90, agentBasePct: 1.5, agentOverPct: 5, managerOverPct: 5, usdToInr: 83, ...value };
+  const set = (k, val) => onChange({ ...v, [k]: Number(val) || 0 });
+  const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Incentive rules</div>
+      <p className="text-[11px] text-slate-400 mb-3">Drives the Incentives table under Team review (admin-only). Amounts are computed in USD, then converted to INR with the rate below.</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Field label="Eligibility threshold %" hint="Agent qualifies at ≥ this % of target">
+          <input type="number" min="0" step="0.1" className={numCls} value={v.eligibilityPct} onChange={(e) => set('eligibilityPct', e.target.value)} />
+        </Field>
+        <Field label="Agent base %" hint="% of achieved (capped at target)">
+          <input type="number" min="0" step="0.1" className={numCls} value={v.agentBasePct} onChange={(e) => set('agentBasePct', e.target.value)} />
+        </Field>
+        <Field label="Agent over-achievement %" hint="% of amount above target">
+          <input type="number" min="0" step="0.1" className={numCls} value={v.agentOverPct} onChange={(e) => set('agentOverPct', e.target.value)} />
+        </Field>
+        <Field label="Manager over-achievement %" hint="% of team amount above team target">
+          <input type="number" min="0" step="0.1" className={numCls} value={v.managerOverPct} onChange={(e) => set('managerOverPct', e.target.value)} />
+        </Field>
+        <Field label="USD → INR rate" hint="e.g. 83 means $1 = ₹83">
+          <input type="number" min="0" step="0.01" className={numCls} value={v.usdToInr} onChange={(e) => set('usdToInr', e.target.value)} />
+        </Field>
       </div>
     </div>
   );

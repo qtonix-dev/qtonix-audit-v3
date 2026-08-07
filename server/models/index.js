@@ -471,6 +471,14 @@ const Settings = sequelize.define(
         // amounts in other currencies are divided by their rate to get USD for
         // target/leaderboard maths. USD is always 1.
         fxRates: { USD: 1, INR: 83, EUR: 0.92, GBP: 0.79, AUD: 1.52 },
+        // Incentive rules (admin-editable). Percentages are whole numbers.
+        incentives: {
+          eligibilityPct: 90, // agent must reach ≥ this % of target to qualify
+          agentBasePct: 1.5, // % of achieved (capped at target)
+          agentOverPct: 5, // % of the amount achieved over target
+          managerOverPct: 5, // % of team's over-achievement
+          usdToInr: 83, // conversion used to pay incentives in INR
+        },
       },
     },
 

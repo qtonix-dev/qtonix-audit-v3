@@ -477,6 +477,99 @@ router.post('/managers', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/reviews/incentives?period=YYYY-MM — per-person incentive amounts in
+ * INR for the month. ADMIN ONLY (not managers or lead managers).
+ *
+ * Agents: eligible at ≥ eligibility% of target; base% of achieved (capped at
+ * target) + over% of the amount over target. Managers: over% of the team's
+ * over-achievement (team target = agents' targets + manager's own). A manager
+ * with no team falls back to the agent structure on their own numbers.
+ */
+router.get('/incentives', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only an admin can view incentives.' });
+    }
+    const period = String(req.query.period || periodKey());
+    const users = (await User.findAll({ attributes: { exclude: ['passwordHash'] } })).map((u) => u.toJSON());
+    const groups = buildGroups(users);
+    const agentRows = await scoreAgents(groups, period);
+    const managerRows = await scoreManagers(groups, period);
+
+    // Incentive rules from settings (with safe fallbacks).
+    const settings = await Settings.findOne();
+    const inc = (settings && settings.crmConfig && settings.crmConfig.incentives) || {};
+    const eligibilityPct = Number(inc.eligibilityPct != null ? inc.eligibilityPct : 90);
+    const agentBasePct = Number(inc.agentBasePct != null ? inc.agentBasePct : 1.5);
+    const agentOverPct = Number(inc.agentOverPct != null ? inc.agentOverPct : 5);
+    const managerOverPct = Number(inc.managerOverPct != null ? inc.managerOverPct : 5);
+    const usdToInr = Number(inc.usdToInr != null ? inc.usdToInr : 83);
+
+    // Agent formula → { base, over, total } in USD.
+    const agentIncentive = (achieved, target) => {
+      if (!target || target <= 0) return { base: 0, over: 0, total: 0, eligible: false };
+      const eligible = achieved >= (eligibilityPct / 100) * target;
+      if (!eligible) return { base: 0, over: 0, total: 0, eligible: false };
+      const base = (agentBasePct / 100) * Math.min(achieved, target);
+      const over = achieved > target ? (agentOverPct / 100) * (achieved - target) : 0;
+      return { base, over, total: base + over, eligible: true };
+    };
+
+    const toInr = (usd) => Math.round(usd * usdToInr);
+    const items = [];
+
+    // Which managers actually have team members (agentCount > 0)?
+    const mgrById = new Map(managerRows.map((m) => [m.managerId, m]));
+
+    // Agents.
+    for (const a of agentRows) {
+      const calc = agentIncentive(a.salesUsd, a.salesTarget);
+      items.push({
+        userId: a.agentId, name: a.name, role: 'agent', avatar: a.avatar || null,
+        targetUsd: Math.round(a.salesTarget), achievedUsd: Math.round(a.salesUsd),
+        pct: a.pct, eligible: calc.eligible,
+        baseUsd: Math.round(calc.base), overUsd: Math.round(calc.over), totalUsd: Math.round(calc.total),
+        baseInr: toInr(calc.base), overInr: toInr(calc.over), totalInr: toInr(calc.total),
+        basis: 'agent',
+      });
+    }
+
+    // Managers.
+    for (const m of managerRows) {
+      let calc; let basis;
+      if (m.agentCount > 0) {
+        // Team-based: over% of team over-achievement (no base component).
+        const over = m.salesUsd > m.salesTarget ? (managerOverPct / 100) * (m.salesUsd - m.salesTarget) : 0;
+        calc = { base: 0, over, total: over, eligible: over > 0 };
+        basis = 'manager-team';
+      } else {
+        // No team → agent structure on their own numbers.
+        calc = agentIncentive(m.salesUsd, m.salesTarget);
+        basis = 'manager-solo';
+      }
+      items.push({
+        userId: m.managerId, name: m.name, role: 'manager', avatar: m.avatar || null,
+        targetUsd: Math.round(m.salesTarget), achievedUsd: Math.round(m.salesUsd),
+        pct: m.pct, agentCount: m.agentCount, eligible: calc.eligible,
+        baseUsd: Math.round(calc.base), overUsd: Math.round(calc.over), totalUsd: Math.round(calc.total),
+        baseInr: toInr(calc.base), overInr: toInr(calc.over), totalInr: toInr(calc.total),
+        basis,
+      });
+    }
+
+    // Sort: managers first, then agents, each by incentive desc.
+    items.sort((a, b) => (a.role === b.role ? b.totalInr - a.totalInr : a.role === 'manager' ? -1 : 1));
+
+    res.json({
+      period,
+      rules: { eligibilityPct, agentBasePct, agentOverPct, managerOverPct, usdToInr },
+      totalInr: items.reduce((s, i) => s + i.totalInr, 0),
+      items,
+    });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/reviews/history/:agentId — every review recorded for one agent. */
 router.get('/history/:agentId', requireAuth, async (req, res, next) => {
   try {

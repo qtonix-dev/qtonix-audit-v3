@@ -4480,6 +4480,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [payRenewal, setPayRenewal] = useState('');
   const [renewalEdited, setRenewalEdited] = useState(false);
   const [stopFor, setStopFor] = useState(null); // { lead, deal } — stop-recurring reason popup
+  const [renewalFor, setRenewalFor] = useState(null); // { lead, deal } — backfill renewal on old deal
 
   // Only an admin confirms money received; a manager records that the invoice
   // has gone out, which is their half of the handover.
@@ -4514,6 +4515,22 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'resume' }) });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+    } catch (e) { alert(e.message); }
+  };
+
+  // Backfill tenure + renewal date onto the latest paid installment of an old
+  // deal (recorded before renewals existed).
+  const saveRenewal = async (lead, deal, tenure, renewalDate) => {
+    const paidInsts = (deal.installments || []).filter((it) => it.paid)
+      .sort((a, b) => String(b.paidDate || '').localeCompare(String(a.paidDate || '')));
+    const target = paidInsts[0];
+    if (!target) { alert('No paid installment to attach a renewal to.'); return; }
+    try {
+      const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${target.id}`, {
+        method: 'PATCH', body: JSON.stringify({ tenure, renewalDate: tenure === 'onetime' ? null : (renewalDate || undefined) }),
+      });
+      setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
+      setRenewalFor(null);
     } catch (e) { alert(e.message); }
   };
 
@@ -4620,11 +4637,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     // never "paid in full" — they're an ongoing monthly arrangement.
     const hasRecurring = won.some((d) => d.planType === 'recurring');
     const recurringDeals = won.filter((d) => d.planType === 'recurring');
+    // Paid deals that have no renewal info recorded yet (old data from before
+    // the renewal feature) — admin can backfill tenure + next renewal date.
+    const dealsMissingRenewal = won.filter((d) => {
+      const paidInsts = (d.installments || []).filter((it) => it.paid);
+      if (paidInsts.length === 0) return false;
+      // Missing if NO paid installment carries a tenure/renewalDate.
+      return !paidInsts.some((it) => it.tenure || it.renewalDate);
+    });
     return {
       won, open, booked: Math.round(booked), collected: Math.round(collected),
       collectedInPeriod: Math.round(collectedInPeriod),
       due: Math.round(booked - collected), instTotal, instPaid, nextDue,
-      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring, recurringDeals,
+      pending, nextInst: pending[0] || null, recurringUpcoming, hasRecurring, recurringDeals, dealsMissingRenewal,
     };
   };
 
@@ -5022,7 +5047,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                       {/* Expander — opens the pending payments + recurring
                           contract controls panel in place. */}
                       <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
-                        {(s.pending.length > 0 || s.recurringDeals.length > 0) ? (
+                        {(s.pending.length > 0 || s.recurringDeals.length > 0 || s.dealsMissingRenewal.length > 0) ? (
                           <button
                             onClick={() => toggleRow(l._id)}
                             title={isOpen ? 'Hide details' : 'Show payments / recurring contracts'}
@@ -5065,9 +5090,26 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
                     {/* Pending payments + recurring-contract controls, editable
                         in place — no need to open the lead. */}
-                    {isOpen && (s.pending.length > 0 || s.recurringDeals.length > 0) && (
+                    {isOpen && (s.pending.length > 0 || s.recurringDeals.length > 0 || s.dealsMissingRenewal.length > 0) && (
                       <tr className="bg-amber-50/30">
                         <td colSpan={8} className="px-4 py-3">
+                          {/* Old paid deals with no renewal recorded — admin can
+                              backfill tenure + next renewal date. */}
+                          {s.dealsMissingRenewal.length > 0 && (
+                            <div className="mb-3">
+                              <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2">📌 Set renewal on existing deals · {s.dealsMissingRenewal.length}</div>
+                              <div className="space-y-1.5">
+                                {s.dealsMissingRenewal.map((d) => (
+                                  <div key={d.id} className="flex items-center gap-3 flex-wrap bg-white rounded-lg border border-slate-100 px-3 py-2">
+                                    <span className="text-xs font-bold text-[#050A1F] truncate max-w-[200px]" title={d.name}>{d.name}</span>
+                                    <span className="text-[10px] text-slate-400">{d.service || ''}</span>
+                                    {isRenewalSvc(d.service || d.name) && <span className="rounded bg-emerald-50 text-emerald-600 px-1.5 py-0.5 text-[9px] font-bold">Renewal service</span>}
+                                    <button onClick={() => setRenewalFor({ lead: l, deal: d })} className="ml-auto rounded-md border border-orange-200 bg-orange-50 px-3 py-1 text-[10px] font-bold text-[#FF4500] hover:bg-orange-100">Set renewal</button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           {/* Recurring contracts: stop (with reason) / resume. */}
                           {s.recurringDeals.length > 0 && (
                             <div className="mb-3">
@@ -5248,6 +5290,43 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
       {/* Stop-recurring reason popup (admin, Tables section). */}
       {stopFor && <StopRecurringModal deal={stopFor.deal} onClose={() => setStopFor(null)} onStop={(reason) => stopRecurring(stopFor.lead, stopFor.deal, reason)} />}
+      {/* Backfill renewal on an old paid deal. */}
+      {renewalFor && <SetRenewalModal deal={renewalFor.deal} onClose={() => setRenewalFor(null)} onSave={(tenure, date) => saveRenewal(renewalFor.lead, renewalFor.deal, tenure, date)} />}
+    </div>
+  );
+}
+
+// Backfill tenure + next renewal date on an old paid deal.
+function SetRenewalModal({ deal, onClose, onSave }) {
+  const paidInsts = (deal.installments || []).filter((it) => it.paid)
+    .sort((a, b) => String(b.paidDate || '').localeCompare(String(a.paidDate || '')));
+  const lastPaidDate = (paidInsts[0] && paidInsts[0].paidDate) || new Date().toISOString().slice(0, 10);
+  const [tenure, setTenure] = useState(defaultTenureFor(deal.service || deal.name));
+  const [renewal, setRenewal] = useState(computeRenewal(lastPaidDate, defaultTenureFor(deal.service || deal.name)));
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[95] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }} onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-extrabold text-[#050A1F] mb-1">Set renewal</div>
+        <div className="text-xs text-slate-500 mb-3">"{deal.name}"{deal.service ? ` · ${deal.service}` : ''}. Renewal is calculated from the last payment date ({lastPaidDate}).</div>
+        <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Tenure</label>
+        <select value={tenure} onChange={(e) => { const t = e.target.value; setTenure(t); setRenewal(t === 'onetime' ? '' : computeRenewal(lastPaidDate, t)); }}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3">
+          {TENURE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        {tenure !== 'onetime' && (
+          <>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Next renewal date</label>
+            <input type="date" value={renewal} onChange={(e) => setRenewal(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-4" />
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+          <button disabled={busy} onClick={() => { setBusy(true); onSave(tenure, renewal); }}
+            className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save renewal'}</button>
+        </div>
+      </div>
     </div>
   );
 }

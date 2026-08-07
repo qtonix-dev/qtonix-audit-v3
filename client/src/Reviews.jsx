@@ -529,6 +529,101 @@ function ManagerReviewModal({ manager, period, onClose, onSaved }) {
   );
 }
 
+// Admin-only Incentives table: per-person incentive for the month, in INR.
+function IncentivesTable({ period }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    setData(null); setErr('');
+    api(`/reviews/incentives?period=${period}`).then(setData).catch((e) => setErr(e.message));
+  }, [period]);
+
+  if (err) return <div className="text-red-500 text-sm py-6">{err}</div>;
+  if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Calculating incentives…</div>;
+
+  const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
+  const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
+  const r = data.rules || {};
+  const managers = data.items.filter((i) => i.role === 'manager');
+  const agents = data.items.filter((i) => i.role === 'agent');
+
+  const Row = ({ i }) => (
+    <tr className="border-t border-slate-50 hover:bg-slate-50/50">
+      <td className="px-4 py-3">
+        <div className="font-bold text-[#050A1F]">{i.name}</div>
+        <div className="text-[11px] text-slate-400">
+          {i.role === 'manager' ? (i.basis === 'manager-solo' ? 'Manager (no team → agent rules)' : `Manager · ${i.agentCount} agent${i.agentCount === 1 ? '' : 's'}`) : 'Agent'}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.targetUsd)}</td>
+      <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.achievedUsd)}</td>
+      <td className="px-4 py-3 text-xs">
+        {i.pct == null ? '—' : <span className={`font-bold ${i.pct >= 100 ? 'text-green-600' : i.pct >= (r.eligibilityPct || 90) ? 'text-amber-600' : 'text-slate-400'}`}>{i.pct}%</span>}
+      </td>
+      <td className="px-4 py-3 text-xs">
+        {i.eligible ? <span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[10px] font-bold">Eligible</span>
+          : <span className="rounded-full bg-slate-100 text-slate-400 px-2 py-0.5 text-[10px] font-bold">Not eligible</span>}
+      </td>
+      <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.baseInr)}</td>
+      <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.overInr)}</td>
+      <td className="px-4 py-3 font-extrabold text-[#050A1F] text-sm">{inr(i.totalInr)}</td>
+    </tr>
+  );
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <div className="text-lg font-extrabold text-[#050A1F]">💰 Incentives</div>
+          <div className="text-xs text-slate-400">
+            Agent: {r.agentBasePct}% of achieved (to target) + {r.agentOverPct}% over target, if ≥ {r.eligibilityPct}% of target.
+            Manager: {r.managerOverPct}% of team over-achievement. Paid in INR at $1 = ₹{r.usdToInr}.
+          </div>
+        </div>
+        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-2 text-right">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-green-600">Total incentive</div>
+          <div className="text-lg font-extrabold text-green-700">{inr(data.totalInr)}</div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+              <th className="text-left px-4 py-3">Name</th>
+              <th className="text-left px-4 py-3">Target</th>
+              <th className="text-left px-4 py-3">Achieved</th>
+              <th className="text-left px-4 py-3">% of target</th>
+              <th className="text-left px-4 py-3">Status</th>
+              <th className="text-left px-4 py-3">Incentive 1</th>
+              <th className="text-left px-4 py-3">Incentive 2</th>
+              <th className="text-left px-4 py-3">Total (INR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {managers.length > 0 && (
+              <>
+                <tr className="bg-indigo-50/40"><td colSpan={8} className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-500">Managers</td></tr>
+                {managers.map((i) => <Row key={`m-${i.userId}`} i={i} />)}
+              </>
+            )}
+            {agents.length > 0 && (
+              <>
+                <tr className="bg-slate-50/60"><td colSpan={8} className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Agents</td></tr>
+                {agents.map((i) => <Row key={`a-${i.userId}`} i={i} />)}
+              </>
+            )}
+            {data.items.length === 0 && (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">No agents or managers to compute incentives for this month.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="text-[11px] text-slate-400 mt-2">Incentive 1 = base (% of achieved up to target). Incentive 2 = over-achievement (% of amount above target). Both shown in INR.</div>
+    </div>
+  );
+}
+
 export default function Reviews({ user }) {
   const [period, setPeriod] = useState(monthOptions()[0].key);
   const [data, setData] = useState(null);
@@ -650,6 +745,8 @@ export default function Reviews({ user }) {
                 className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'agents' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Agent reviews</button>
               <button onClick={() => setTab('managers')}
                 className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'managers' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Manager reviews</button>
+              <button onClick={() => setTab('incentives')}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'incentives' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>💰 Incentives</button>
             </div>
           )}
           {division === 'presales' && (
@@ -658,7 +755,9 @@ export default function Reviews({ user }) {
         </div>
       )}
 
-      {isAdmin && division === 'sales' && tab === 'managers' ? (
+      {isAdmin && division === 'sales' && tab === 'incentives' ? (
+        <IncentivesTable period={period} />
+      ) : isAdmin && division === 'sales' && tab === 'managers' ? (
         <ManagerReviews period={period} data={mgrData} onSaved={loadManagers} active={activeMgr} setActive={setActiveMgr} user={user} />
       ) : (
       <>
