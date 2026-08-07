@@ -133,6 +133,19 @@ const DEFAULT_PRICING = {
 // ---------------------------------------------------------------------------
 // Pricing editor
 // ---------------------------------------------------------------------------
+// Report settings groups the report Pricing and Limits together, since both
+// govern how audit reports are generated and rate-limited.
+function ReportSettings({ settings, setSettings, say }) {
+  return (
+    <div className="space-y-8">
+      <PricingEditor settings={settings} setSettings={setSettings} say={say} />
+      <div className="border-t border-slate-200 pt-6">
+        <Limits settings={settings} setSettings={setSettings} />
+      </div>
+    </div>
+  );
+}
+
 function PricingEditor({ settings, setSettings, say }) {
   const p = settings.pricing || DEFAULT_PRICING;
   const upd = (patch) => setSettings({ ...settings, pricing: { ...p, ...patch } });
@@ -1836,23 +1849,71 @@ function Limits({ settings, setSettings }) {
 // Activity log (persisted, from MySQL)
 // ---------------------------------------------------------------------------
 function ActivityLog() {
-  const [logs, setLogs] = useState([]);
-  const [open, setOpen] = useState(false);
-  useEffect(() => { if (open) api('/admin/logs').then(setLogs).catch(() => {}); }, [open]);
+  const [logs, setLogs] = useState(null);
+  const [redOnly, setRedOnly] = useState(false);
+  const load = () => api('/admin/logs?limit=300').then(setLogs).catch(() => setLogs([]));
+  useEffect(() => { load(); }, []);
+
+  // A log is "red" when it's a flagged copy-abuse event.
+  const isRed = (l) => l.action === 'copy.flagged' || l.severity === 'alert';
+  const rows = (logs || []).filter((l) => (redOnly ? isRed(l) : true));
+
   return (
-    <details className="bg-white rounded-xl border border-slate-200 mt-6" onToggle={(e) => setOpen(e.target.open)}>
-      <summary className="px-4 py-2.5 text-xs font-bold cursor-pointer select-none" style={{ color: C.navy }}>Activity log <span className="text-slate-400 font-normal">(latest 100)</span></summary>
-      <div className="px-4 pb-4 max-h-96 overflow-auto">
-        {!logs.length && <p className="text-xs text-slate-400 py-2">No activity recorded yet.</p>}
-        {logs.map((l) => (
-          <div key={l.id} className="flex items-start gap-3 py-1.5 border-t border-slate-50 text-xs">
-            <span className="text-slate-400 shrink-0 w-32">{dt(l.createdAt)}</span>
-            <span className="font-semibold text-slate-600 shrink-0">{l.userName || '—'}</span>
-            <span className="text-slate-500">{l.action}{l.target ? ` · ${l.target}` : ''}</span>
-          </div>
-        ))}
+    <div>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <h2 className="text-lg font-extrabold" style={{ color: C.navy }}>Activity log</h2>
+          <p className="text-sm text-slate-500">All admin and security activity. Excessive copying (3+ copies within 30 seconds) is flagged in red with the user's IP.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={redOnly} onChange={(e) => setRedOnly(e.target.checked)} /> Flagged only
+          </label>
+          <Btn onClick={load} size="sm" variant="ghost">Refresh</Btn>
+        </div>
       </div>
-    </details>
+
+      {logs === null ? (
+        <div className="text-slate-400 text-sm py-8">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-slate-400 text-sm py-8">No activity recorded{redOnly ? ' matching this filter' : ''} yet.</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+                <th className="text-left px-4 py-2.5">When</th>
+                <th className="text-left px-4 py-2.5">User</th>
+                <th className="text-left px-4 py-2.5">Action</th>
+                <th className="text-left px-4 py-2.5">Details</th>
+                <th className="text-left px-4 py-2.5">IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((l) => {
+                const red = isRed(l);
+                return (
+                  <tr key={l.id} className={`border-t border-slate-50 ${red ? 'bg-red-50/70' : ''}`}>
+                    <td className={`px-4 py-2.5 text-xs whitespace-nowrap ${red ? 'text-red-500' : 'text-slate-400'}`}>{dt(l.createdAt)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className={`font-bold ${red ? 'text-red-700' : 'text-slate-600'}`}>{l.userName || '—'}</div>
+                      {(red && (l.userRole || l.userEmail)) && <div className="text-[10px] text-red-400">{[l.userRole, l.userEmail].filter(Boolean).join(' · ')}</div>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {red
+                        ? <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-bold">⚠ {l.action}</span>
+                        : <span className="text-slate-500 text-xs">{l.action}</span>}
+                    </td>
+                    <td className={`px-4 py-2.5 text-xs ${red ? 'text-red-600' : 'text-slate-500'}`}>{l.target || '—'}</td>
+                    <td className={`px-4 py-2.5 text-xs font-mono ${red ? 'text-red-600' : 'text-slate-400'}`}>{l.ip || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1860,7 +1921,7 @@ function ActivityLog() {
 // Admin shell
 // ---------------------------------------------------------------------------
 export default function Admin() {
-  const [tab, setTab] = useState('pricing');
+  const [tab, setTab] = useState('report');
   const [settings, setSettings] = useState(null);
   const [me, setMe] = useState({});
   const [msg, setMsg] = useState(null);
@@ -1883,9 +1944,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['pricing', 'Pricing'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['limits', 'Limits']];
+  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'imagekit' && tab !== 'email';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'imagekit' && tab !== 'email' && tab !== 'log' && tab !== 'targets';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -1910,7 +1971,7 @@ export default function Admin() {
           {showSave && <Btn onClick={save} disabled={saving} size="sm">{saving ? 'Saving…' : 'Save changes'}</Btn>}
         </div>
 
-        {tab === 'pricing' && <PricingEditor settings={settings} setSettings={setSettings} say={say} />}
+        {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'branding' && <Branding settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'imagekit' && <ImageKitPanel say={say} />}
@@ -1920,9 +1981,7 @@ export default function Admin() {
         {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}
         {tab === 'tv' && <MotivatorTvSettings say={say} />}
         {tab === 'demo' && <DemoModeSettings say={say} />}
-        {tab === 'limits' && <Limits settings={settings} setSettings={setSettings} />}
-
-        <ActivityLog />
+        {tab === 'log' && <ActivityLog />}
       </main>
     </div>
   );

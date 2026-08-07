@@ -103,6 +103,29 @@ router.put('/me/profile', requireAuth, async (req, res, next) => {
 });
 
 /**
+ * POST /api/auth/security/copy-flag — the client reports when a user has copied
+ * content 3+ times within 30 seconds. We record ONE flagged (red) audit entry
+ * per burst, capturing the user's identity and IP for review on the Log page.
+ */
+router.post('/security/copy-flag', requireAuth, async (req, res, next) => {
+  try {
+    const { count, windowMs, path } = req.body || {};
+    const u = await User.findByPk(req.user.id);
+    await AuditLog.create({
+      userId: req.user.id,
+      userName: req.user.name || (u && u.name) || '—',
+      userRole: (u && u.role) || req.user.role || null,
+      userEmail: (u && u.email) || null,
+      action: 'copy.flagged',
+      target: `${count || 3}+ copies in ${Math.round((windowMs || 30000) / 1000)}s${path ? ` on ${String(path).slice(0, 120)}` : ''}`,
+      ip: req.ip,
+      severity: 'alert',
+    });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/**
  * PUT /api/auth/me/prefs — persist lightweight per-user UI preferences.
  * Currently: emailPerPage (10 or 20) for the lead-detail Email tab.
  */

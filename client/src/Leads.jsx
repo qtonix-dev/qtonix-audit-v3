@@ -41,6 +41,21 @@ function firstPaymentDate(lead) {
   }
   return earliest;
 }
+// The latest/most recent payment received across a client's paid installments —
+// shown on the Converted table so it reflects their most recent payment, not a
+// year-old first payment.
+function lastPaymentDate(lead) {
+  let latest = null;
+  for (const d of (lead.deals || [])) {
+    if (d.stage !== 'closed_won') continue;
+    for (const it of (d.installments || [])) {
+      if (it.paid && it.paidDate) {
+        if (!latest || String(it.paidDate) > String(latest)) latest = it.paidDate;
+      }
+    }
+  }
+  return latest;
+}
 // "12 Sep 2026 (7 days left)" / "(overdue)" when past, badge only within 30 days.
 function renewalLabel(dateStr) {
   if (!dateStr) return { text: '—', tone: 'muted' };
@@ -5100,7 +5115,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                           {s.open.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{s.open.length} open</span>}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">{(() => { const pd = firstPaymentDate(l); return pd ? new Date(`${String(pd).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; })()}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{(() => { const pd = lastPaymentDate(l); return pd ? new Date(`${String(pd).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; })()}</td>
                     </tr>
 
                     {/* Pending payments + recurring-contract controls, editable

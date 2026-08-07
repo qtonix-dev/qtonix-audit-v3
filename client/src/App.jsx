@@ -1536,6 +1536,58 @@ export default function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  // Security: track rapid copying and auto-logout on inactivity. Only active
+  // once a real user is signed in (skipped for the demo/training user).
+  useEffect(() => {
+    if (!user || IS_DEMO) return;
+
+    // --- Copy-abuse detection: 3 copies within 30s → report one flagged event.
+    let copyTimes = [];
+    let lastFlagAt = 0;
+    const onCopy = () => {
+      const now = Date.now();
+      copyTimes = copyTimes.filter((t) => now - t < 30000);
+      copyTimes.push(now);
+      if (copyTimes.length >= 3 && now - lastFlagAt > 30000) {
+        lastFlagAt = now;
+        copyTimes = [];
+        api('/auth/security/copy-flag', {
+          method: 'POST',
+          body: JSON.stringify({ count: 3, windowMs: 30000, path: window.location.pathname }),
+        }).catch(() => {});
+      }
+    };
+    document.addEventListener('copy', onCopy);
+
+    // --- Inactivity auto-logout: no interaction for 10 minutes → sign out.
+    const IDLE_MS = 10 * 60 * 1000;
+    let idleTimer = null;
+    const doLogout = () => {
+      localStorage.removeItem('qtx_token');
+      // Full reload back to the login screen so all in-memory state is cleared.
+      window.location.href = '/';
+    };
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(doLogout, IDLE_MS);
+    };
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    // Throttle resets so constant mouse movement isn't setting timers every ms.
+    let lastReset = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastReset > 5000) { lastReset = now; resetIdle(); }
+    };
+    activityEvents.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    resetIdle();
+
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      activityEvents.forEach((e) => window.removeEventListener(e, onActivity));
+      if (idleTimer) clearTimeout(idleTimer);
+    };
+  }, [user]);
+
   if (booting) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
   }

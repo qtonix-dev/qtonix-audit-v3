@@ -620,6 +620,10 @@ const AuditLog = sequelize.define(
     target: DataTypes.STRING(190),
     meta: { type: DataTypes.JSON, defaultValue: {} },
     ip: DataTypes.STRING(60),
+    // Security/context fields — populated for flagged events (e.g. copy abuse).
+    userRole: DataTypes.STRING(40),
+    userEmail: DataTypes.STRING(190),
+    severity: { type: DataTypes.STRING(20), defaultValue: 'info' }, // 'info' | 'alert'
   },
   { tableName: 'audit_logs', indexes: [{ name: 'idx_audit_user', fields: ['userId'] }] }
 );

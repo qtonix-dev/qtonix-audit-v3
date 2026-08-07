@@ -525,7 +525,8 @@ router.post('/settings/pricing/reset', async (req, res, next) => {
 });
 
 router.get('/logs', async (req, res) => {
-  const logs = await AuditLog.findAll({ order: [['createdAt', 'DESC']], limit: 100 });
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 100));
+  const logs = await AuditLog.findAll({ order: [['createdAt', 'DESC']], limit });
   res.json(logs);
 });
 
