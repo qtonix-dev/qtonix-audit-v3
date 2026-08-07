@@ -74,7 +74,12 @@ router.get('/:token', async (req, res, next) => {
       if (created && created >= startOfMonth) {
         leadsTotal++;
         byGroup[gk].leads++;
-        if (s) s.leadsGenerated++;
+        // "Leads generated" must credit whoever GENERATED the lead, not the
+        // owner it's assigned to. Fall back to the owner only when there's no
+        // recorded generator (e.g. self-sourced).
+        const generatorId = l.generatedById || l.enteredById || l.ownerId;
+        const gen = stats[generatorId];
+        if (gen) gen.leadsGenerated++;
         const src = `${l.leadSource || ''} ${l.generatedBy || ''}`;
         if (/pre[\s-]?sales/i.test(src)) leadsPresales++;
         else if (/cold[\s-]?call/i.test(src)) leadsCold++;
@@ -109,7 +114,10 @@ router.get('/:token', async (req, res, next) => {
       if (byGroup[gk]) { byGroup[gk].target += a.salesTarget; byGroup[gk].agents++; }
     });
 
-    // Company target = sum of managers' effective team targets, else agents'.
+    // Company target = sum of each manager's team target. A team target is the
+    // manager's agents' monthly sales targets PLUS the manager's own monthly
+    // sales target (or the manual override when set). Mirrors the incentive/
+    // review definition so the TV and reviews agree.
     const agentTargetByMgr = {};
     users.forEach((u) => {
       if (u.role === 'agent' && u.managerId && u.targets && u.targets.sales && u.targets.sales.enabled) {
@@ -120,7 +128,10 @@ router.get('/:token', async (req, res, next) => {
     users.forEach((u) => {
       if (u.role === 'manager') {
         const t = u.targets && u.targets.team;
-        companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentTargetByMgr[u.id] || 0);
+        if (t && t.override) { companyTarget += Number(t.monthly || 0); return; }
+        const agentsPart = agentTargetByMgr[u.id] || 0;
+        const ownPart = (u.targets && u.targets.sales && u.targets.sales.enabled) ? Number(u.targets.sales.monthly || 0) : 0;
+        companyTarget += agentsPart + ownPart;
       }
     });
     if (companyTarget === 0) companyTarget = agentsArr.reduce((s, a) => s + a.salesTarget, 0);
@@ -136,6 +147,11 @@ router.get('/:token', async (req, res, next) => {
     const ranked = agentsArr.map(withPct);
 
     const bySales = ranked.filter((a) => a.salesUsd > 0).sort((x, y) => y.salesUsd - x.salesUsd);
+    // SALES vs TARGET slide: show every agent who has a target, INCLUDING those
+    // still at zero (so nobody is hidden). Ordered by sales desc, then by who
+    // has the most ground to cover.
+    const salesVsTarget = ranked.filter((a) => a.salesTarget > 0)
+      .sort((x, y) => (y.salesUsd - x.salesUsd) || (y.salesTarget - x.salesTarget));
     const byLeads = ranked.filter((a) => a.leadsGenerated > 0).sort((x, y) => y.leadsGenerated - x.leadsGenerated);
     const byPipeline = ranked.filter((a) => a.pipelineUsd > 0).sort((x, y) => y.pipelineUsd - x.pipelineUsd);
     const withTarget = ranked.filter((a) => a.salesTarget > 0);
@@ -180,7 +196,7 @@ router.get('/:token', async (req, res, next) => {
       leads: { total: leadsTotal, presales: leadsPresales, cold: leadsCold, other: Math.max(0, leadsTotal - leadsPresales - leadsCold) },
       branches,
       teamBoard,
-      bySales, byLeads, byPipeline,
+      bySales, byLeads, byPipeline, salesVsTarget,
       nearTarget, achieved,
       top3: bySales.slice(0, 3),
       announcements: Array.isArray(settings.tvAnnouncements) ? settings.tvAnnouncements.filter(Boolean) : [],

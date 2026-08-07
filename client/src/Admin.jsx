@@ -133,15 +133,18 @@ const DEFAULT_PRICING = {
 // ---------------------------------------------------------------------------
 // Pricing editor
 // ---------------------------------------------------------------------------
-// Report settings groups the report Pricing and Limits together, since both
-// govern how audit reports are generated and rate-limited.
+// Report settings groups report Pricing and Report limits under a sub-nav.
 function ReportSettings({ settings, setSettings, say }) {
+  const [sub, setSub] = useState('pricing');
   return (
-    <div className="space-y-8">
-      <PricingEditor settings={settings} setSettings={setSettings} say={say} />
-      <div className="border-t border-slate-200 pt-6">
-        <Limits settings={settings} setSettings={setSettings} />
+    <div>
+      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
+        <button onClick={() => setSub('pricing')}
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'pricing' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Pricing</button>
+        <button onClick={() => setSub('limits')}
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'limits' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Report limits</button>
       </div>
+      {sub === 'pricing' ? <PricingEditor settings={settings} setSettings={setSettings} say={say} /> : <Limits settings={settings} setSettings={setSettings} />}
     </div>
   );
 }

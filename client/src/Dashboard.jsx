@@ -385,6 +385,41 @@ function Leaderboard({ board, user, maxSales }) {
   );
 }
 
+// Non-dismissable modal reminding a manager to review last month's agents.
+// Stays until every agent under them has a saved review for last month.
+function ManagerReviewReminder({ info, onGoReviews }) {
+  const monthLabel = (() => {
+    try { const [y, m] = info.period.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); } catch { return 'last month'; }
+  })();
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+        <div className="text-2xl mb-1">📋</div>
+        <div className="text-lg font-extrabold text-[#050A1F]">Time to review your team</div>
+        <p className="text-sm text-slate-500 mt-1">
+          It's review time for <b>{monthLabel}</b>. Please complete a review for each of your agents. This reminder stays until all are done.
+        </p>
+        <div className="mt-3 rounded-xl bg-slate-50 border border-slate-100 p-3">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+            {info.reviewedCount}/{info.totalAgents} done · {info.pending.length} remaining
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {info.pending.map((a) => (
+              <span key={a.id} className="rounded-full bg-white border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{a.name}</span>
+            ))}
+          </div>
+        </div>
+        <button onClick={onGoReviews}
+          className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white"
+          style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+          Start reviewing →
+        </button>
+        <p className="text-[11px] text-slate-400 text-center mt-2">This can't be dismissed until all reviews are complete.</p>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard(props) {
   // Lead managers coordinate leads rather than sell, so they get an entirely
   // different home screen. Split at the top level (not inside one component)
@@ -393,8 +428,14 @@ export default function Dashboard(props) {
   return <SalesDashboard {...props} />;
 }
 
-function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, mode = 'overview', onModeChange }) {
+function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, onGoReviews, mode = 'overview', onModeChange }) {
   const [data, setData] = useState(null);
+  // Non-dismissable last-month review reminder for managers (from the 5th).
+  const [reviewDue, setReviewDue] = useState(null);
+  useEffect(() => {
+    if (user.role !== 'manager') return;
+    api('/reviews/pending-last-month').then((r) => { if (r && r.due) setReviewDue(r); else setReviewDue(null); }).catch(() => {});
+  }, [user.role]);
   const [err, setErr] = useState('');
   const [showAwaiting, setShowAwaiting] = useState(false);
   useEffect(() => { api('/leads/dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
@@ -473,6 +514,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
   return (
     <div className="space-y-5">
+      {/* Non-dismissable last-month agent-review reminder (managers, from 5th). */}
+      {reviewDue && <ManagerReviewReminder info={reviewDue} onGoReviews={onGoReviews} />}
+
       {/* Prompt to connect email until the user has done so. */}
       <DashboardGmailNotice />
 

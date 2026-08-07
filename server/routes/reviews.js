@@ -582,6 +582,31 @@ router.get('/incentives', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/reviews/pending-last-month — for the logged-in manager, list the
+ * agents under them who don't yet have a review saved for LAST month. Drives the
+ * non-dismissable "do your reviews" popup shown on the manager dashboard from
+ * the 5th of the month until every agent is reviewed.
+ */
+router.get('/pending-last-month', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'manager') return res.json({ due: false, period: null, pending: [] });
+    // Last month as YYYY-MM.
+    const now = new Date();
+    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const period = `${lm.getFullYear()}-${String(lm.getMonth() + 1).padStart(2, '0')}`;
+    // The manager's active agents (their direct reports).
+    const agents = await User.findAll({ where: { role: 'agent', active: true, managerId: req.user.id }, attributes: ['id', 'name'] });
+    if (agents.length === 0) return res.json({ due: false, period, pending: [] });
+    const reviewed = await Review.findAll({ where: { period, kind: 'agent', reviewerId: req.user.id }, attributes: ['agentId'] });
+    const reviewedIds = new Set(reviewed.map((r) => r.agentId));
+    const pending = agents.filter((a) => !reviewedIds.has(a.id)).map((a) => ({ id: a.id, name: a.name }));
+    // Only "due" from the 5th of the month onward, and only if any remain.
+    const due = now.getDate() >= 5 && pending.length > 0;
+    res.json({ due, period, pending, totalAgents: agents.length, reviewedCount: agents.length - pending.length });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/reviews/history/:agentId — every review recorded for one agent. */
 router.get('/history/:agentId', requireAuth, async (req, res, next) => {
   try {

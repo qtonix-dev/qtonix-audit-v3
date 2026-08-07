@@ -725,6 +725,9 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   // Sort mode for the Call Backs list: by the scheduled callback time (default)
   // or by the date the callback was added.
   const [callbackSort, setCallbackSort] = useState('callbackTime');
+  // Last-activity sort direction for the main leads list: 'desc' (newest first,
+  // default) or 'asc'. null means unsorted (server order).
+  const [activitySort, setActivitySort] = useState('desc');
   const [config, setConfig] = useState({ leadStatuses: [], leadSources: [] });
   const [owners, setOwners] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -797,7 +800,17 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
   // date the callback was added when the user flips the toggle. Other lists keep
   // the server order.
   const displayItems = React.useMemo(() => {
-    if (!isProspect) return items;
+    if (!isProspect) {
+      // Main list: sort by last activity when a direction is chosen.
+      if (!activitySort) return items;
+      const arr = [...items];
+      arr.sort((a, b) => {
+        const ta = new Date(a.lastActivityAt || a.updatedAt || 0).getTime();
+        const tb = new Date(b.lastActivityAt || b.updatedAt || 0).getTime();
+        return activitySort === 'asc' ? ta - tb : tb - ta;
+      });
+      return arr;
+    }
     const arr = [...items];
     if (callbackSort === 'addedDate') {
       arr.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -810,7 +823,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       });
     }
     return arr;
-  }, [items, isProspect, callbackSort]);
+  }, [items, isProspect, callbackSort, activitySort]);
 
   return (
     <div>
@@ -930,7 +943,16 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                 <th className="text-left px-4 py-3">Owner</th>
                 {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
                 {isProspect && <th className="text-left px-4 py-3">Added</th>}
-                <th className="text-left px-4 py-3">Last activity</th>
+                <th className="text-left px-4 py-3">
+                  <button onClick={() => setActivitySort((s) => (s === 'desc' ? 'asc' : 'desc'))}
+                    className="inline-flex items-center gap-1 font-bold uppercase tracking-wider text-[10px] text-slate-400 hover:text-slate-600">
+                    Last activity
+                    <span className="flex flex-col leading-none text-[8px]">
+                      <span className={activitySort === 'asc' ? 'text-[#FF4500]' : 'text-slate-300'}>▲</span>
+                      <span className={activitySort === 'desc' ? 'text-[#FF4500]' : 'text-slate-300'}>▼</span>
+                    </span>
+                  </button>
+                </th>
                 {isProspect && <th className="px-4 py-3 text-right">Action</th>}
                 {user.role === 'leadmanager' && !isProspect && <th className="px-4 py-3 text-right">Draft</th>}
                 {user.role === 'admin' && <th className="px-4 py-3"></th>}
@@ -4326,11 +4348,17 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   return (
     <div>
       {(view === 'list' || view === 'pipeline' || view === 'converted' || view === 'released') && (
-        <div className="flex items-center gap-1 mb-5 bg-slate-100 rounded-lg p-1 w-fit">
-          <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 List</button>
-          {user.role !== 'leadmanager' && <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>}
-          {canSeeConverted && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
-          {canSeeReleased && <button onClick={() => setView('released')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'released' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>♻️ Released leads</button>}
+        <div className="flex items-center justify-between mb-5 w-full flex-wrap gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+            <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 All leads</button>
+            {user.role !== 'leadmanager' && <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>}
+            {canSeeConverted && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
+          </div>
+          {canSeeReleased && (
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+              <button onClick={() => setView('released')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'released' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>♻️ Released leads</button>
+            </div>
+          )}
         </div>
       )}
       {/* Lead managers coordinate intake only — the pipeline and converted views
@@ -4479,7 +4507,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   // Cards, table, or both. Remembered per user, since it's a lasting
   // preference rather than something to re-pick on every visit.
   const [viewMode, setViewMode] = useState(() => {
-    try { return localStorage.getItem('qtx_converted_view') || 'both'; } catch { return 'both'; }
+    try { const v = localStorage.getItem('qtx_converted_view'); return (v === 'cards' || v === 'table') ? v : 'cards'; } catch { return 'cards'; }
   });
   const pickView = (v) => {
     setViewMode(v);
@@ -4692,13 +4720,25 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const openDealLeads = filtered.filter(hasOpen);
   const noOpenDealLeads = filtered.filter((l) => !hasOpen(l));
 
-  // Page totals. When a specific period is selected, "collected" reflects money
-  // RECEIVED in that period (by payment date); for "all" it's everything.
+  // Is this client's conversion inside the selected window? Used so period
+  // totals ("Total booked") reflect only clients CONVERTED in that period —
+  // otherwise an old client with a payment landing this month would drag their
+  // whole lifetime booked value into this month's figure.
+  const convertedInWindow = (l) => {
+    if (!periodWindow.from) return true; // "all"
+    const d = new Date(l.convertedAt || 0);
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= periodWindow.from && (!periodWindow.to || d < periodWindow.to);
+  };
+
+  // Page totals. When a specific period is selected, "Total booked" counts only
+  // deals from clients CONVERTED in that period; "collected" reflects money
+  // RECEIVED in that period (by payment date). For "all" it's everything.
   const totals = filtered.reduce((acc, l) => {
     const s = summarize(l);
-    acc.booked += s.booked;
+    if (period === 'all' || convertedInWindow(l)) acc.booked += s.booked;
     acc.collected += (period === 'all' ? s.collected : s.collectedInPeriod);
-    acc.due += s.due;
+    if (period === 'all' || convertedInWindow(l)) acc.due += s.due;
     return acc;
   }, { booked: 0, collected: 0, due: 0 });
 
@@ -4729,7 +4769,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
               agents see the Boxes section alone. */}
           {isAdmin && (
             <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-              {[['cards', 'Boxes'], ['table', 'Table'], ['both', 'Both']].map(([id, label]) => (
+              {[['cards', 'Boxes'], ['table', 'Table']].map(([id, label]) => (
                 <button key={id} type="button" onClick={() => pickView(id)}
                   className={`px-3 py-2 text-xs font-bold transition-colors ${
                     viewMode === id ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'

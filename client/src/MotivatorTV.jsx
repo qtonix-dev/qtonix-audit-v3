@@ -82,30 +82,53 @@ function Countdown({ monthEndIso }) {
 
 /** Two-column ranked list of people, as in the reference boards. */
 function PeopleGrid({ rows, valueOf, subOf }) {
-  const shown = rows.slice(0, 6);
+  const shown = (rows || []).slice(0, 6);
+  const Person = ({ r, rank }) => (
+    <div className="flex items-center gap-5">
+      <Avatar name={r.name} src={r.avatar} size={92} rank={rank} />
+      <div className="min-w-0">
+        <div className="font-semibold truncate" style={{ color: C.blueLink, fontSize: '1.25vw', letterSpacing: '0.02em' }}>
+          {r.name.toUpperCase()}
+        </div>
+        <div className="font-bold text-slate-800 leading-tight" style={{ fontSize: '2.6vw' }}>{valueOf(r)}</div>
+        {subOf && <div className="text-slate-500" style={{ fontSize: '0.85vw' }}>{subOf(r)}</div>}
+      </div>
+    </div>
+  );
+
+  // Minimal data reads best centered rather than stretched across two columns.
+  if (shown.length === 0) {
+    return <div className="h-full flex items-center justify-center text-slate-400" style={{ fontSize: '1.6vw' }}>No data yet</div>;
+  }
+  if (shown.length === 1) {
+    return <div className="h-full flex items-center justify-center px-14">{<Person r={shown[0]} rank={1} />}</div>;
+  }
+  if (shown.length === 2) {
+    // One centered row, both side by side.
+    return (
+      <div className="h-full flex items-center justify-center gap-24 px-14">
+        {shown.map((r, i) => <Person key={r.id} r={r} rank={i + 1} />)}
+      </div>
+    );
+  }
+  if (shown.length <= 4) {
+    // A single centered column keeps rows aligned and avoids an empty gap.
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-10 px-14">
+        {shown.map((r, i) => <Person key={r.id} r={r} rank={i + 1} />)}
+      </div>
+    );
+  }
+  // 5–6 people: two balanced columns.
   const left = shown.filter((_, i) => i % 2 === 0);
   const right = shown.filter((_, i) => i % 2 === 1);
   const Col = ({ items, offset }) => (
-    <div className="flex-1 flex flex-col justify-around">
-      {items.map((r, i) => {
-        const rank = offset + i * 2 + 1;
-        return (
-          <div key={r.id} className="flex items-center gap-5">
-            <Avatar name={r.name} src={r.avatar} size={92} rank={rank} />
-            <div className="min-w-0">
-              <div className="font-semibold truncate" style={{ color: C.blueLink, fontSize: '1.25vw', letterSpacing: '0.02em' }}>
-                {r.name.toUpperCase()}
-              </div>
-              <div className="font-bold text-slate-800 leading-tight" style={{ fontSize: '2.6vw' }}>{valueOf(r)}</div>
-              {subOf && <div className="text-slate-500" style={{ fontSize: '0.85vw' }}>{subOf(r)}</div>}
-            </div>
-          </div>
-        );
-      })}
+    <div className="flex-1 flex flex-col justify-around gap-6">
+      {items.map((r, i) => <Person key={r.id} r={r} rank={offset + i * 2 + 1} />)}
     </div>
   );
   return (
-    <div className="flex gap-10 h-full px-14 py-8">
+    <div className="flex gap-10 h-full px-14 py-8 items-center">
       <Col items={left} offset={0} />
       <Col items={right} offset={1} />
     </div>
@@ -163,10 +186,9 @@ export default function MotivatorTV() {
     s.push({ id: 'welcome', title: '', dwell: 10 });
     s.push({ id: 'company', title: 'COMPANY TARGET', dwell: 14 });
     if ((data.branches || []).length) s.push({ id: 'branches', title: 'BRANCH PERFORMANCE', dwell: 8 + (data.branches.length * 4) });
-    if ((data.teamBoard || []).length > 1) s.push({ id: 'teams', title: 'TEAM LEADERBOARD', dwell: 8 + (data.teamBoard.length * 3) });
     if (data.leads && data.leads.total > 0) s.push({ id: 'leadmix', title: 'LEADS GENERATED', dwell: 13 });
     if ((data.byLeads || []).length) s.push({ id: 'topleads', title: 'MOST LEADS GENERATED', dwell: 10 + Math.min(6, data.byLeads.length) * 2 });
-    if ((data.bySales || []).length) s.push({ id: 'sales', title: 'SALES vs TARGET', dwell: 10 + Math.min(6, data.bySales.length) * 2 });
+    if ((data.salesVsTarget || []).length) s.push({ id: 'sales', title: 'SALES vs TARGET', dwell: 10 + Math.min(8, data.salesVsTarget.length) * 2 });
     if ((data.byPipeline || []).length) s.push({ id: 'pipeline', title: 'DEALS IN PIPELINE', dwell: 10 + Math.min(6, data.byPipeline.length) * 2 });
     if ((data.nearTarget || []).length) s.push({ id: 'near', title: 'ALMOST THERE', dwell: 10 + Math.min(6, data.nearTarget.length) * 2 });
     if ((data.achieved || []).length) s.push({ id: 'achieved', title: 'TARGET ACHIEVED — RUNNING FOR INCENTIVES', dwell: 10 + Math.min(6, data.achieved.length) * 2 });
@@ -262,27 +284,6 @@ export default function MotivatorTV() {
           </div>
         );
 
-      case 'teams':
-        return (
-          <div className="h-full flex flex-col justify-center px-20 gap-5">
-            {data.teamBoard.slice(0, 6).map((t, i) => (
-              <div key={`${t.team}-${t.shift}`} className="flex items-center gap-6">
-                <div className="rounded-full text-white font-bold flex items-center justify-center shrink-0"
-                  style={{ width: '3.4vw', height: '3.4vw', background: i === 0 ? C.orange : '#9AA6B2', fontSize: '1.5vw' }}>
-                  {i + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-bold text-slate-800" style={{ fontSize: '1.8vw' }}>{t.team} · {t.shift}</span>
-                    <span className="font-bold text-slate-800" style={{ fontSize: '1.8vw' }}>{usd(t.salesUsd)}</span>
-                  </div>
-                  <Bar pct={t.pct} height={16} />
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-
       case 'leadmix': {
         const l = data.leads;
         const Box = ({ label, value, color, icon }) => (
@@ -310,8 +311,8 @@ export default function MotivatorTV() {
           subOf={(r) => (r.leadGenTarget > 0 ? `of ${r.leadGenTarget} target` : 'leads this month')} />;
 
       case 'sales':
-        return <PeopleGrid rows={data.bySales} valueOf={(r) => usd(r.salesUsd)}
-          subOf={(r) => (r.salesTarget > 0 ? `of ${usd(r.salesTarget)} · ${r.pct}%` : 'collected this month')} />;
+        return <PeopleGrid rows={data.salesVsTarget} valueOf={(r) => usd(r.salesUsd)}
+          subOf={(r) => (r.salesTarget > 0 ? `of ${usd(r.salesTarget)} · ${r.pct || 0}%` : 'collected this month')} />;
 
       case 'pipeline':
         return <PeopleGrid rows={data.byPipeline} valueOf={(r) => usd(r.pipelineUsd)} subOf={() => 'in open deals'} />;
@@ -356,9 +357,13 @@ export default function MotivatorTV() {
       {/* Header: brand · title · countdown */}
       <div className="flex shrink-0" style={{ height: '11vh' }}>
         <div className="flex items-center px-8" style={{ background: C.navy, width: '18%' }}>
-          <span className="text-white/70 font-semibold" style={{ fontSize: '0.85vw', letterSpacing: '0.16em' }}>
-            {(co.name || 'QTONIX').toUpperCase()} TV
-          </span>
+          {co.logo ? (
+            <img src={co.logo} alt={co.name || 'Company'} className="object-contain" style={{ maxHeight: '7vh', maxWidth: '100%' }} />
+          ) : (
+            <span className="text-white font-extrabold" style={{ fontSize: '1.4vw', letterSpacing: '0.04em' }}>
+              {(co.name || 'QTONIX').toUpperCase()}
+            </span>
+          )}
         </div>
         <div className="flex-1 flex items-center justify-center" style={{ background: C.navy }}>
           <span className="text-white font-bold" style={{ fontSize: '2.2vw', letterSpacing: '0.04em' }}>{slide.title}</span>

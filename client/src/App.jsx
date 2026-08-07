@@ -1799,7 +1799,8 @@ export default function App() {
           onGoLeads={() => { setLeadsEntry({ view: 'list' }); setView('leads'); }}
           onViewUntouched={(days) => { setLeadsEntry({ view: 'list', untouched: days }); setView('leads'); }}
           onViewConverted={() => { setLeadsEntry({ view: 'converted', convertedMonth: true }); setView('leads'); }}
-          onViewToday={(leadId, opts) => { setLeadsEntry({ view: 'detail', leadId, tab: (opts && opts.tab) || undefined, compose: !!(opts && opts.compose) }); setView('leads'); }} />}
+          onViewToday={(leadId, opts) => { setLeadsEntry({ view: 'detail', leadId, tab: (opts && opts.tab) || undefined, compose: !!(opts && opts.compose) }); setView('leads'); }}
+          onGoReviews={() => setView('reviews')} />}
         {view === 'reviews' && (isManagerOrAdmin || isLeadManager) && <Reviews user={user} />}
         {view === 'leads' && <Leads key={JSON.stringify(leadsEntry)} user={user} initialView={leadsEntry.view} initialUntouched={leadsEntry.untouched} initialLeadId={leadsEntry.leadId} initialConvertedMonth={leadsEntry.convertedMonth} initialTab={leadsEntry.tab} initialCompose={leadsEntry.compose} />}
         {/* Prospects reuses Leads but opens on the call-back-generated list and
