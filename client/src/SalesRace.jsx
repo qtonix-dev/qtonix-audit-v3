@@ -114,11 +114,17 @@ export default function SalesRace({ onClose }) {
 
   return (
     <div className="fixed inset-0 z-[9998] flex flex-col" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <style>{`
+        @keyframes qtx-smoke {
+          0% { opacity: 0.55; transform: translateY(-50%) scale(0.6); }
+          100% { opacity: 0; transform: translateY(-50%) translateX(-26px) scale(1.6); }
+        }
+      `}</style>
       {/* Header strip */}
       <div className="shrink-0 px-8 py-5 flex items-center justify-between" style={{ background: 'linear-gradient(90deg,#7CB518,#5C8A00)' }}>
         <div>
-          <div className="text-white font-black tracking-tight leading-none" style={{ fontSize: 'clamp(28px,4vw,52px)', textShadow: '0 2px 0 rgba(0,0,0,0.15)' }}>
-            DAILY <span style={{ color: '#EAF7C9' }}>SALES</span>
+          <div className="text-white font-black tracking-tight leading-none" style={{ fontSize: 'clamp(24px,3.4vw,46px)', textShadow: '0 2px 0 rgba(0,0,0,0.15)' }}>
+            MONTHLY <span style={{ color: '#EAF7C9' }}>SALES LEADERBOARD</span>
           </div>
           <div className="text-white/90 font-bold uppercase tracking-widest mt-1" style={{ fontSize: 'clamp(10px,1.1vw,15px)' }}>
             Who can make the most sales this month?
@@ -149,38 +155,58 @@ export default function SalesRace({ onClose }) {
             {/* Lanes */}
             {racers.map((r, i) => {
               const color = CAR_COLORS[i % CAR_COLORS.length];
+              const moving = launched && (r.pct || 0) > 0;
               return (
                 <div key={r.id} className="relative flex items-center" style={{ height: LANE_H }}>
                   {/* lane divider */}
                   <div className="absolute left-0 right-0 border-b border-white/10" style={{ bottom: 0 }} />
 
-                  {/* name + photo label */}
-                  <div className="absolute z-10 flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 shadow-lg" style={{ left: 12 }}>
-                    <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
-                      {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
-                    </div>
-                    <div className="leading-tight">
-                      <div className="flex items-center gap-1.5"><RankBadge rank={r.rank} /></div>
-                      <div className="text-[13px] font-extrabold text-[#050A1F] -mt-0.5">{r.name}</div>
-                    </div>
-                  </div>
+                  {/* start line marker (left) */}
+                  <div className="absolute top-0 bottom-0" style={{ left: TRACK_LEFT, width: 4, background: 'rgba(255,255,255,0.55)' }} />
 
-                  {/* the car — positioned along the track by % */}
-                  <div className="absolute" style={{
+                  {/* Car + label move together. At 0% the car sits BEFORE the
+                      start line; as % rises it advances toward the finish. The
+                      whole group (photo label + car) slides as one. */}
+                  <div className="absolute z-10" style={{
                     left: `calc(${TRACK_LEFT}px + ${posPct(r)}/112 * (95% - ${TRACK_LEFT}px))`,
-                    transition: 'left 2.6s cubic-bezier(0.22,1,0.36,1)',
+                    transition: 'left 5.5s cubic-bezier(0.33,0.02,0.30,1)',
                     top: '50%', transform: 'translateY(-50%)',
                   }}>
-                    <div className="relative">
-                      <Car color={color} />
-                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-extrabold text-white">
-                        {r.hasTarget ? `${r.pct ?? 0}%` : 'no target'} · <span className="text-[#FFD27A]">{usd(r.achievedUsd)}</span>
+                    <div className="flex items-center gap-2" style={{ transform: 'translateX(-100%)', paddingRight: 6 }}>
+                      {/* tyre-burn smoke, puffing behind the car while it moves */}
+                      {moving && (
+                        <div className="absolute" style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}>
+                          {[0, 1, 2].map((k) => (
+                            <span key={k} className="absolute rounded-full" style={{
+                              width: 16 + k * 6, height: 16 + k * 6,
+                              background: 'radial-gradient(circle, rgba(220,220,220,0.55), rgba(200,200,200,0))',
+                              right: k * 14, top: -(8 + k * 3),
+                              animation: `qtx-smoke 1.1s ease-out ${k * 0.18}s infinite`,
+                            }} />
+                          ))}
+                        </div>
+                      )}
+
+                      {/* name + photo label (now travels with the car) */}
+                      <div className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 shadow-lg shrink-0">
+                        <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+                          {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
+                        </div>
+                        <div className="leading-tight">
+                          <div className="flex items-center gap-1.5"><RankBadge rank={r.rank} /></div>
+                          <div className="text-[13px] font-extrabold text-[#050A1F] -mt-0.5">{r.name}</div>
+                        </div>
+                      </div>
+
+                      {/* the car itself */}
+                      <div className="relative shrink-0">
+                        <Car color={color} />
+                        <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-extrabold text-white">
+                          {r.hasTarget ? `${r.pct ?? 0}%` : 'no target'} · <span className="text-[#FFD27A]">{usd(r.achievedUsd)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {/* start line marker (left) */}
-                  <div className="absolute top-0 bottom-0" style={{ left: TRACK_LEFT, width: 4, background: 'rgba(255,255,255,0.55)' }} />
                 </div>
               );
             })}
