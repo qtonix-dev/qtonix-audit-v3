@@ -20,95 +20,39 @@ const CAR_COLORS = ['#FF4500', '#7C3AED', '#2563EB', '#0891B2', '#DB2777', '#E54
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const initials = (name) => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 
-// A GT-style racing car in side profile (original art — no branding), tinted
-// per lane. Faces right (toward the finish). Wheels spin while `moving`.
+// The original simple F1-style car (original art), tinted per lane. Faces right
+// (toward the finish). Wheels spin while `moving`.
 function Car({ color, moving }) {
-  const uid = color.replace('#', '');
-  const wheel = (cx) => (
-    <g>
-      {/* tyre */}
-      <circle cx={cx} cy="92" r="26" fill="#111" />
-      <circle cx={cx} cy="92" r="26" fill="none" stroke="#000" strokeWidth="3" />
-      {/* rim + split spokes, spinning while moving */}
-      <g style={moving ? { animation: 'qtx-wheel 0.4s linear infinite', transformOrigin: `${cx}px 92px` } : undefined}>
-        <circle cx={cx} cy="92" r="15" fill="#c9ced6" />
-        <circle cx={cx} cy="92" r="15" fill="none" stroke="#9aa0aa" strokeWidth="1.5" />
-        {Array.from({ length: 10 }).map((_, k) => (
-          <rect key={k} x={cx - 1} y="79" width="2" height="13" fill="#7b818b" transform={`rotate(${k * 36} ${cx} 92)`} />
-        ))}
-        <circle cx={cx} cy="92" r="4.5" fill="#4b5059" />
-      </g>
-    </g>
-  );
   return (
-    <svg viewBox="0 0 300 130" width="168" height="73" style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,0.35))', overflow: 'visible' }}>
-      <defs>
-        <linearGradient id={`body-${uid}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#fff" stopOpacity="0.55" />
-          <stop offset="22%" stopColor="#fff" stopOpacity="0.18" />
-          <stop offset="48%" stopColor={color} stopOpacity="1" />
-          <stop offset="100%" stopColor={color} stopOpacity="1" />
-        </linearGradient>
-        <linearGradient id={`glass-${uid}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#5b6577" />
-          <stop offset="100%" stopColor="#20283a" />
-        </linearGradient>
-      </defs>
-
-      {/* ground shadow */}
-      <ellipse cx="150" cy="118" rx="140" ry="8" fill="rgba(0,0,0,0.18)" />
-
-      {/* rear wing (back / left) */}
-      <path d="M2 40 L52 40 L52 47 L8 47 Z" fill={color} />
-      <path d="M2 40 L52 40 L50 44 L4 44 Z" fill="rgba(0,0,0,0.25)" />
-      <rect x="10" y="44" width="6" height="26" rx="2" fill={color} />
-      <rect x="40" y="46" width="6" height="24" rx="2" fill={color} />
-
-      {/* lower side skirt / splitter */}
-      <path d="M28 96 L280 96 L272 104 L40 104 Z" fill="rgba(0,0,0,0.5)" />
-
-      {/* main body — long low GT profile, nose tapering to the right */}
-      <path d="M10 84
-               C 14 74, 26 70, 46 69
-               L 70 68
-               C 84 60, 96 52, 116 47
-               C 140 41, 176 40, 206 45
-               C 236 50, 262 60, 286 74
-               C 292 78, 292 86, 284 89
-               C 250 92, 60 92, 30 92
-               C 16 92, 8 90, 10 84 Z"
-            fill={`url(#body-${uid})`} stroke="rgba(0,0,0,0.28)" strokeWidth="1.5" />
-
-      {/* cabin / greenhouse — raked windscreen like the references */}
-      <path d="M96 50
-               C 112 42, 132 38, 156 39
-               C 176 40, 196 44, 210 52
-               C 196 55, 180 56, 156 56
-               C 132 56, 112 55, 96 50 Z"
-            fill={`url(#glass-${uid})`} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
-      {/* A-pillar + door line */}
-      <path d="M150 40 L150 56" stroke="rgba(0,0,0,0.25)" strokeWidth="1.5" />
-      {/* window glare */}
-      <path d="M104 49 C 120 43, 140 41, 158 42 L 170 45 C 146 46, 122 48, 104 49 Z" fill="rgba(255,255,255,0.22)" />
-
-      {/* side livery stripe in a lighter tint */}
-      <path d="M40 80 L276 80 L276 86 L40 86 Z" fill="rgba(255,255,255,0.55)" />
-      <path d="M40 86 L276 86 L276 89 L40 89 Z" fill="rgba(0,0,0,0.18)" />
-
-      {/* door racing number */}
-      <circle cx="150" cy="72" r="12" fill="#fff" opacity="0.95" />
-      <text x="150" y="77" textAnchor="middle" fontSize="15" fontWeight="900" fill={color}>1</text>
-
-      {/* headlight (front/right) + taillight (rear/left) */}
-      <path d="M278 70 L288 73 L286 78 L276 76 Z" fill="rgba(255,255,255,0.85)" />
-      <rect x="20" y="72" width="7" height="5" rx="1" fill="#ffd27a" opacity="0.9" />
-
-      {/* wheel arches (dark cutouts) */}
-      <path d="M46 92 a26 26 0 0 1 52 0 Z" fill="rgba(0,0,0,0.35)" />
-      <path d="M202 92 a26 26 0 0 1 52 0 Z" fill="rgba(0,0,0,0.35)" />
-
-      {wheel(72)}
-      {wheel(228)}
+    <svg viewBox="0 0 120 50" width="120" height="50" style={{ filter: 'drop-shadow(0 3px 4px rgba(0,0,0,0.35))', overflow: 'visible' }}>
+      {/* rear wing */}
+      <rect x="2" y="12" width="10" height="26" rx="2" fill={color} />
+      {/* body */}
+      <path d="M12 22 L40 20 L74 14 L96 18 L112 24 L112 28 L96 32 L74 36 L40 30 L12 28 Z" fill={color} />
+      <path d="M60 19 L84 16 L98 20 L98 22 L74 24 Z" fill="rgba(255,255,255,0.25)" />
+      {/* cockpit */}
+      <ellipse cx="70" cy="22" rx="9" ry="6" fill="#0B1533" />
+      {/* nose cone */}
+      <path d="M112 24 L120 25 L112 28 Z" fill={color} />
+      {/* front wing */}
+      <rect x="104" y="12" width="6" height="26" rx="2" fill={color} />
+      {/* tyres — spin while moving */}
+      <g>
+        <circle cx="36" cy="38" r="9" fill="#111" />
+        <g style={moving ? { animation: 'qtx-wheel 0.4s linear infinite', transformOrigin: '36px 38px' } : undefined}>
+          <circle cx="36" cy="38" r="3.5" fill="#444" />
+          {[0, 60, 120].map((a) => <rect key={a} x="35.4" y="30" width="1.2" height="16" fill="#333" transform={`rotate(${a} 36 38)`} />)}
+        </g>
+      </g>
+      <g>
+        <circle cx="92" cy="38" r="9" fill="#111" />
+        <g style={moving ? { animation: 'qtx-wheel 0.4s linear infinite', transformOrigin: '92px 38px' } : undefined}>
+          <circle cx="92" cy="38" r="3.5" fill="#444" />
+          {[0, 60, 120].map((a) => <rect key={a} x="91.4" y="30" width="1.2" height="16" fill="#333" transform={`rotate(${a} 92 38)`} />)}
+        </g>
+      </g>
+      <circle cx="36" cy="12" r="8" fill="#111" /><circle cx="36" cy="12" r="3" fill="#444" />
+      <circle cx="92" cy="12" r="8" fill="#111" /><circle cx="92" cy="12" r="3" fill="#444" />
     </svg>
   );
 }
