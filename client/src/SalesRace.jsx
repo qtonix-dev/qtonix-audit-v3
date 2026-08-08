@@ -12,7 +12,7 @@ import { api } from './App.jsx';
 // reopen to replay. While open we poll so a fresh sale nudges a car forward.
 // ---------------------------------------------------------------------------
 
-const LANE_H = 92;      // px per lane
+const LANE_H = 104;      // px per lane
 const VISIBLE_LANES = 6; // how many cars fill the screen at the start line
 const POLL_MS = 30000;
 
@@ -20,74 +20,95 @@ const CAR_COLORS = ['#FF4500', '#7C3AED', '#2563EB', '#0891B2', '#DB2777', '#E54
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const initials = (name) => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 
-// A GT / Le-Mans-style racing car in side profile (original art), tinted per
-// lane. Faces right (toward the finish). Wheels spin while `moving`.
+// A GT-style racing car in side profile (original art — no branding), tinted
+// per lane. Faces right (toward the finish). Wheels spin while `moving`.
 function Car({ color, moving }) {
-  // A darker shade of the lane color for the lower body / shadow.
+  const uid = color.replace('#', '');
+  const wheel = (cx) => (
+    <g>
+      {/* tyre */}
+      <circle cx={cx} cy="92" r="26" fill="#111" />
+      <circle cx={cx} cy="92" r="26" fill="none" stroke="#000" strokeWidth="3" />
+      {/* rim + split spokes, spinning while moving */}
+      <g style={moving ? { animation: 'qtx-wheel 0.4s linear infinite', transformOrigin: `${cx}px 92px` } : undefined}>
+        <circle cx={cx} cy="92" r="15" fill="#c9ced6" />
+        <circle cx={cx} cy="92" r="15" fill="none" stroke="#9aa0aa" strokeWidth="1.5" />
+        {Array.from({ length: 10 }).map((_, k) => (
+          <rect key={k} x={cx - 1} y="79" width="2" height="13" fill="#7b818b" transform={`rotate(${k * 36} ${cx} 92)`} />
+        ))}
+        <circle cx={cx} cy="92" r="4.5" fill="#4b5059" />
+      </g>
+    </g>
+  );
   return (
-    <svg viewBox="0 0 260 108" width="150" height="62" style={{ filter: 'drop-shadow(0 5px 6px rgba(0,0,0,0.4))', overflow: 'visible' }}>
+    <svg viewBox="0 0 300 130" width="168" height="73" style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,0.35))', overflow: 'visible' }}>
       <defs>
-        <linearGradient id={`body-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#fff" stopOpacity="0.35" />
-          <stop offset="35%" stopColor={color} stopOpacity="1" />
+        <linearGradient id={`body-${uid}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.55" />
+          <stop offset="22%" stopColor="#fff" stopOpacity="0.18" />
+          <stop offset="48%" stopColor={color} stopOpacity="1" />
           <stop offset="100%" stopColor={color} stopOpacity="1" />
+        </linearGradient>
+        <linearGradient id={`glass-${uid}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#5b6577" />
+          <stop offset="100%" stopColor="#20283a" />
         </linearGradient>
       </defs>
 
-      {/* rear wing (left/back) */}
-      <path d="M6 34 L44 34 L44 40 L10 40 Z" fill={color} />
-      <rect x="8" y="34" width="5" height="30" rx="2" fill={color} />
-      <rect x="40" y="36" width="5" height="26" rx="2" fill={color} />
+      {/* ground shadow */}
+      <ellipse cx="150" cy="118" rx="140" ry="8" fill="rgba(0,0,0,0.18)" />
 
-      {/* lower splitter / floor */}
-      <path d="M20 74 L244 74 L236 84 L30 84 Z" fill="rgba(0,0,0,0.45)" />
+      {/* rear wing (back / left) */}
+      <path d="M2 40 L52 40 L52 47 L8 47 Z" fill={color} />
+      <path d="M2 40 L52 40 L50 44 L4 44 Z" fill="rgba(0,0,0,0.25)" />
+      <rect x="10" y="44" width="6" height="26" rx="2" fill={color} />
+      <rect x="40" y="46" width="6" height="24" rx="2" fill={color} />
 
-      {/* main body — low sleek GT silhouette, nose to the right */}
-      <path d="M14 66
-               C 40 66, 60 64, 78 58
-               C 96 40, 130 32, 168 34
-               C 200 36, 226 46, 248 60
-               C 252 62, 252 70, 246 72
-               L 20 72
-               C 14 72, 12 68, 14 66 Z"
-            fill={`url(#body-${color.replace('#', '')})`} stroke="rgba(0,0,0,0.25)" strokeWidth="1.5" />
+      {/* lower side skirt / splitter */}
+      <path d="M28 96 L280 96 L272 104 L40 104 Z" fill="rgba(0,0,0,0.5)" />
 
-      {/* cabin / greenhouse */}
-      <path d="M92 52 C 108 40, 134 36, 160 38 C 172 39, 182 43, 190 49 C 172 52, 120 52, 92 52 Z"
-            fill="#12172B" opacity="0.92" />
-      {/* window highlight */}
-      <path d="M104 49 C 120 42, 142 40, 160 42 L 178 48 C 150 48, 122 49, 104 49 Z" fill="rgba(255,255,255,0.22)" />
+      {/* main body — long low GT profile, nose tapering to the right */}
+      <path d="M10 84
+               C 14 74, 26 70, 46 69
+               L 70 68
+               C 84 60, 96 52, 116 47
+               C 140 41, 176 40, 206 45
+               C 236 50, 262 60, 286 74
+               C 292 78, 292 86, 284 89
+               C 250 92, 60 92, 30 92
+               C 16 92, 8 90, 10 84 Z"
+            fill={`url(#body-${uid})`} stroke="rgba(0,0,0,0.28)" strokeWidth="1.5" />
 
-      {/* racing number roundel */}
-      <circle cx="132" cy="60" r="11" fill="#fff" opacity="0.95" />
-      <text x="132" y="65" textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>1</text>
+      {/* cabin / greenhouse — raked windscreen like the references */}
+      <path d="M96 50
+               C 112 42, 132 38, 156 39
+               C 176 40, 196 44, 210 52
+               C 196 55, 180 56, 156 56
+               C 132 56, 112 55, 96 50 Z"
+            fill={`url(#glass-${uid})`} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
+      {/* A-pillar + door line */}
+      <path d="M150 40 L150 56" stroke="rgba(0,0,0,0.25)" strokeWidth="1.5" />
+      {/* window glare */}
+      <path d="M104 49 C 120 43, 140 41, 158 42 L 170 45 C 146 46, 122 48, 104 49 Z" fill="rgba(255,255,255,0.22)" />
 
-      {/* accent stripe */}
-      <path d="M198 52 L228 60 L226 66 L196 60 Z" fill="rgba(255,255,255,0.5)" />
+      {/* side livery stripe in a lighter tint */}
+      <path d="M40 80 L276 80 L276 86 L40 86 Z" fill="rgba(255,255,255,0.55)" />
+      <path d="M40 86 L276 86 L276 89 L40 89 Z" fill="rgba(0,0,0,0.18)" />
 
-      {/* wheels — spin while moving */}
-      <g>
-        <circle cx="66" cy="80" r="22" fill="#0c0c0c" />
-        <circle cx="66" cy="80" r="22" fill="none" stroke="#333" strokeWidth="2" />
-        <g style={moving ? { animation: 'qtx-wheel 0.45s linear infinite', transformOrigin: '66px 80px' } : undefined}>
-          <circle cx="66" cy="80" r="10" fill="#8a8f98" />
-          {[0, 45, 90, 135].map((a) => (
-            <rect key={a} x="64.5" y="70" width="3" height="20" rx="1" fill="#5b616b" transform={`rotate(${a} 66 80)`} />
-          ))}
-          <circle cx="66" cy="80" r="3.5" fill="#2b2f36" />
-        </g>
-      </g>
-      <g>
-        <circle cx="198" cy="80" r="22" fill="#0c0c0c" />
-        <circle cx="198" cy="80" r="22" fill="none" stroke="#333" strokeWidth="2" />
-        <g style={moving ? { animation: 'qtx-wheel 0.45s linear infinite', transformOrigin: '198px 80px' } : undefined}>
-          <circle cx="198" cy="80" r="10" fill="#8a8f98" />
-          {[0, 45, 90, 135].map((a) => (
-            <rect key={a} x="196.5" y="70" width="3" height="20" rx="1" fill="#5b616b" transform={`rotate(${a} 198 80)`} />
-          ))}
-          <circle cx="198" cy="80" r="3.5" fill="#2b2f36" />
-        </g>
-      </g>
+      {/* door racing number */}
+      <circle cx="150" cy="72" r="12" fill="#fff" opacity="0.95" />
+      <text x="150" y="77" textAnchor="middle" fontSize="15" fontWeight="900" fill={color}>1</text>
+
+      {/* headlight (front/right) + taillight (rear/left) */}
+      <path d="M278 70 L288 73 L286 78 L276 76 Z" fill="rgba(255,255,255,0.85)" />
+      <rect x="20" y="72" width="7" height="5" rx="1" fill="#ffd27a" opacity="0.9" />
+
+      {/* wheel arches (dark cutouts) */}
+      <path d="M46 92 a26 26 0 0 1 52 0 Z" fill="rgba(0,0,0,0.35)" />
+      <path d="M202 92 a26 26 0 0 1 52 0 Z" fill="rgba(0,0,0,0.35)" />
+
+      {wheel(72)}
+      {wheel(228)}
     </svg>
   );
 }
@@ -244,21 +265,19 @@ export default function SalesRace({ onClose }) {
                         </div>
                       )}
 
-                      {/* name + photo label (travels with the car) — now also
-                          holds the % and amount, and the rank once it has moved. */}
-                      <div className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 shadow-lg shrink-0">
-                        <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+                      {/* Agent card — travels with the car. Photo on the left;
+                          on the right: rank (once moved), name, then % + amount.
+                          A roomy card so nothing feels cramped. */}
+                      <div className="flex items-center gap-3 bg-white rounded-2xl pl-2 pr-4 py-2 shadow-lg shrink-0" style={{ minWidth: 190 }}>
+                        <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-slate-100 flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
                           {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
                         </div>
-                        <div className="leading-tight">
-                          <div className="flex items-center gap-1.5">
-                            {/* rank only shows once the car has left the start line */}
-                            {moved && <RankBadge rank={r.rank} />}
-                            <span className="text-[13px] font-extrabold text-[#050A1F]">{r.name}</span>
-                          </div>
-                          <div className="text-[11px] font-bold text-slate-500 -mt-0.5">
+                        <div className="leading-tight min-w-0">
+                          {moved && <div className="mb-0.5"><RankBadge rank={r.rank} /></div>}
+                          <div className="text-[14px] font-extrabold text-[#050A1F] truncate">{r.name}</div>
+                          <div className="text-[12px] font-bold mt-0.5">
                             {r.hasTarget
-                              ? <><span style={{ color }}>{r.pct ?? 0}%</span> · {usd(r.achievedUsd)}</>
+                              ? <><span style={{ color }}>{r.pct ?? 0}%</span> <span className="text-slate-400">·</span> <span className="text-slate-600">{usd(r.achievedUsd)}</span></>
                               : <span className="text-slate-400">no target · {usd(r.achievedUsd)}</span>}
                           </div>
                         </div>
