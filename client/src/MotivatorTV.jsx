@@ -157,26 +157,99 @@ function remarkFor(pct) {
   return '☀️ Fresh month, clean slate. The first win is waiting for someone.';
 }
 
+// Full-screen sale celebration for the TV wall — same look as the in-app popup
+// (rotating white rays behind the agent's photo), sized big for a display. No
+// click-to-dismiss; it holds for its 2-minute turn.
+function TvCelebration({ win, logo }) {
+  const initials = (win.ownerName || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+  return (
+    <div className="w-screen h-screen flex flex-col items-center justify-center overflow-hidden"
+      style={{ background: 'radial-gradient(circle at center, #0B1533 0%, #050A1F 72%)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <style>{`
+        @keyframes tv-ray-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes tv-cele-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+      `}</style>
+      <div className="relative flex items-center justify-center" style={{ animation: 'tv-cele-in 0.6s ease-out' }}>
+        <div className="absolute rounded-full" style={{
+          width: '58vh', height: '58vh',
+          animation: 'tv-ray-spin 12s linear infinite',
+          background: 'repeating-conic-gradient(from 0deg, rgba(255,255,255,0.18) 0deg 5deg, rgba(255,255,255,0) 5deg 13deg)',
+          maskImage: 'radial-gradient(circle, transparent 27%, black 31%, black 70%, transparent 74%)',
+          WebkitMaskImage: 'radial-gradient(circle, transparent 27%, black 31%, black 70%, transparent 74%)',
+        }} />
+        <div className="absolute rounded-full" style={{ width: '26vh', height: '26vh', boxShadow: '0 0 100px 24px rgba(255,106,0,0.4)' }} />
+        <div className="relative rounded-full overflow-hidden border-4 border-white shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#FF6A00] to-[#FF4500]"
+          style={{ width: '24vh', height: '24vh' }}>
+          {win.avatar
+            ? <img src={win.avatar} alt={win.ownerName} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            : <span className="text-white font-extrabold" style={{ fontSize: '7vh' }}>{initials}</span>}
+        </div>
+      </div>
+      <div className="text-center mt-12 px-10">
+        <div className="text-white font-extrabold leading-tight" style={{ fontSize: '6vh' }}>{win.ownerName}</div>
+        <div className="text-white/80 font-semibold mt-3" style={{ fontSize: '3.2vh' }}>
+          just closed a deal worth <span className="text-[#FF8A3D] font-extrabold">${Number(win.amountUsd || 0).toLocaleString()}</span>
+        </div>
+      </div>
+      {logo ? <img src={logo} alt="" className="absolute bottom-8 object-contain" style={{ maxHeight: '6vh' }} /> : null}
+    </div>
+  );
+}
+
 export default function MotivatorTV() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [idx, setIdx] = useState(0);
+  const [celebration, setCelebration] = useState(null); // current takeover win
+  const celebQueue = useRef([]);
+  const seenWins = useRef(new Set());
   const token = useRef((typeof window !== 'undefined' ? window.location.pathname.split('/tv/')[1] : '') || '');
 
   // Poll for fresh figures; the loop keeps running off the last good payload.
+  // Poll fairly often so a new sale's celebration fires promptly.
   useEffect(() => {
     let alive = true;
+    let first = true;
     const fetchData = () => {
       fetch(`${API_BASE}/api/tv/${token.current}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Board not available'))))
-        .then((d) => { if (alive) { setData(d); setErr(''); TV_COMPANY_LOGO = (d && d.company && d.company.logo) || ''; } })
+        .then((d) => {
+          if (!alive) return;
+          setData(d); setErr(''); TV_COMPANY_LOGO = (d && d.company && d.company.logo) || '';
+          // Queue any newly-seen wins for the celebration takeover. On the very
+          // first load we just record existing wins as seen (don't replay history).
+          for (const w of (d.recentWins || [])) {
+            if (seenWins.current.has(w.id)) continue;
+            seenWins.current.add(w.id);
+            if (!first) celebQueue.current.push(w);
+          }
+          first = false;
+        })
         .catch((e) => { if (alive && !data) setErr(e.message); });
     };
     fetchData();
-    const t = setInterval(fetchData, 120000);
+    const t = setInterval(fetchData, 30000);
     return () => { alive = false; clearInterval(t); };
     // eslint-disable-next-line
   }, []);
+
+  // Play queued celebrations one at a time, 2 minutes each.
+  useEffect(() => {
+    if (celebration) return;
+    const tick = setInterval(() => {
+      if (!celebration && celebQueue.current.length) {
+        const next = celebQueue.current.shift();
+        setCelebration(next);
+      }
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [celebration]);
+
+  useEffect(() => {
+    if (!celebration) return;
+    const t = setTimeout(() => setCelebration(null), 120000); // 2 minutes
+    return () => clearTimeout(t);
+  }, [celebration]);
 
   // Build the slide list, skipping any with nothing to show.
   const slides = React.useMemo(() => {
@@ -351,6 +424,11 @@ export default function MotivatorTV() {
         return null;
     }
   };
+
+  // A live sale takes over the whole board for 2 minutes.
+  if (celebration) {
+    return <TvCelebration win={celebration} logo={(data && data.company && data.company.logo) || ''} />;
+  }
 
   return (
     <div className="w-screen h-screen flex flex-col overflow-hidden" style={{ background: C.navyDark, fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>

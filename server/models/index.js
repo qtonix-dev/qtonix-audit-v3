@@ -139,6 +139,9 @@ const User = sequelize.define(
     // Per-user UI preference: how many email conversations to show per page in
     // the lead-detail Email tab (persisted so it follows the user everywhere).
     emailPerPage: { type: DataTypes.INTEGER, defaultValue: 20 },
+    // Sale-celebration IDs this user has already seen (so the full-screen "just
+    // closed a deal" popup shows once per user, catching up on next login).
+    celebrationsSeen: { type: DataTypes.JSON, defaultValue: [] },
     // Gmail (per-user OAuth). Refresh token is encrypted at rest via the
     // model hook below. connectedEmail is the Workspace address they linked.
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },

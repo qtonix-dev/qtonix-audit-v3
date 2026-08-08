@@ -61,6 +61,7 @@ router.get('/:token', async (req, res, next) => {
     users.filter((u) => u.role === 'agent' && u.active !== false).forEach(ensure);
 
     let companySales = 0, companyPipeline = 0;
+    const tvRecentWins = []; // sales in the last ~5 min → celebration takeover
     let leadsPresales = 0, leadsCold = 0, leadsTotal = 0;
     const byGroup = {}; // `${team}·${shift}` → { salesUsd, pipelineUsd, leads, target }
 
@@ -103,6 +104,17 @@ router.get('/:token', async (req, res, next) => {
           companySales += v;
           byGroup[gk].salesUsd += v;
           if (s) s.salesUsd += v;
+          // Recent wins (last ~5 min by paidAt) drive the TV celebration takeover.
+          const when = it.paidAt ? new Date(it.paidAt).getTime() : pd.getTime();
+          if (when >= Date.now() - 5 * 60 * 1000) {
+            tvRecentWins.push({
+              id: `${l.id}_${d.id}_${it.id}`,
+              ownerName: l.ownerName || (s && s.name) || 'Someone',
+              avatar: (s && s.avatar) || null,
+              amountUsd: Math.round(v),
+              at: new Date(when).toISOString(),
+            });
+          }
         }
       }
     }
@@ -197,6 +209,9 @@ router.get('/:token', async (req, res, next) => {
       branches,
       teamBoard,
       bySales, byLeads, byPipeline, salesVsTarget,
+      // Sales in the last few minutes — the board plays a 2-min celebration
+      // takeover for each, queued newest-last.
+      recentWins: tvRecentWins.sort((a, b) => new Date(a.at) - new Date(b.at)).slice(-10),
       nearTarget, achieved,
       top3: bySales.slice(0, 3),
       announcements: Array.isArray(settings.tvAnnouncements) ? settings.tvAnnouncements.filter(Boolean) : [],

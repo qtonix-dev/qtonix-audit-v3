@@ -209,6 +209,9 @@ function buildInstallments(total, count, startDate) {
  * Months between billings for each recurring interval.
  */
 const RECURRING_MONTHS = { monthly: 1, quarterly: 3, 'half-yearly': 6, yearly: 12 };
+// Company go-live cutoff — used to avoid celebrating/counting historical or
+// seed data created before the CRM went live.
+const GO_LIVE_TS = new Date('2026-08-03T00:00:00Z').getTime();
 
 /**
  * Build the next `count` billing cycles for a recurring deal. Unlike
@@ -399,6 +402,81 @@ router.get('/recent-wins', requireAuth, async (req, res, next) => {
     }
     wins.sort((a, b) => new Date(b.at) - new Date(a.at));
     res.json({ wins: wins.slice(0, 10), latest: wins[0] || null });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/leads/pending-celebrations — qualifying sale wins this user hasn't
+ * seen yet, for the full-screen celebration popup. Unbounded in time (a user
+ * logging in hours later still catches up), but capped so a long absence doesn't
+ * trap them behind dozens; older un-shown ones are considered seen implicitly.
+ */
+router.get('/pending-celebrations', requireAuth, async (req, res, next) => {
+  try {
+    const users = await User.findAll({ attributes: ['id', 'name', 'role', 'avatar'] });
+    const roleById = {}; const userById = {};
+    for (const u of users) { roleById[u.id] = u.role; userById[u.id] = u; }
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const fx = (s && s.crmConfig && s.crmConfig.fxRates) || { USD: 1 };
+    const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
+
+    const me = await User.findByPk(req.user.id);
+    const seen = new Set(Array.isArray(me.celebrationsSeen) ? me.celebrationsSeen : []);
+    const viewerIsAdmin = req.user.role === 'admin';
+
+    // Only look back a bounded number of days so this stays cheap; within that,
+    // "unbounded catch-up" is achieved because unseen ones keep showing until
+    // acknowledged. GO_LIVE guards against celebrating historical/seed data.
+    const lookback = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const leads = await Lead.findAll({ where: { status: 'converted' }, limit: 3000 });
+    const wins = [];
+    for (const l of leads) {
+      if (roleById[l.ownerId] === 'admin') continue; // admin runs demo/test sales
+      for (const d of (l.deals || [])) {
+        if (d.stage !== 'closed_won') continue;
+        for (const it of (d.installments || [])) {
+          if (!it.paid) continue;
+          if (it.recurring && Number(it.seq || 0) > 1) { /* still a win — counts toward sales */ }
+          const when = it.paidAt ? new Date(it.paidAt).getTime()
+            : (d.wonAt ? new Date(d.wonAt).getTime() : (it.paidDate ? new Date(it.paidDate).getTime() : 0));
+          if (!when || when < lookback || when < GO_LIVE_TS) continue;
+          const id = `${l.id}_${d.id}_${it.id}`;
+          if (seen.has(id)) continue;
+          const owner = userById[l.ownerId];
+          wins.push({
+            id, ownerId: l.ownerId, ownerName: l.ownerName || (owner && owner.name) || 'Someone',
+            avatar: owner && owner.avatar ? owner.avatar : null,
+            amountUsd: Math.round(toUsd(it.amount, d.currency)),
+            at: new Date(when).toISOString(),
+          });
+        }
+      }
+    }
+    wins.sort((a, b) => new Date(a.at) - new Date(b.at)); // oldest first, play in order
+    // Cap the backlog: if there are more than 20 unseen, mark the oldest excess
+    // as seen so the user isn't stuck, and only surface the newest 20.
+    let toShow = wins;
+    if (wins.length > 20) {
+      const excess = wins.slice(0, wins.length - 20);
+      const newSeen = Array.from(new Set([...(me.celebrationsSeen || []), ...excess.map((w) => w.id)]));
+      me.celebrationsSeen = newSeen.slice(-500); me.changed('celebrationsSeen', true); await me.save();
+      toShow = wins.slice(-20);
+    }
+    res.json({ celebrations: toShow });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/leads/celebrations/seen — mark celebration IDs as seen by this user. */
+router.post('/celebrations/seen', requireAuth, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : [];
+    if (!ids.length) return res.json({ ok: true });
+    const me = await User.findByPk(req.user.id);
+    const merged = Array.from(new Set([...(Array.isArray(me.celebrationsSeen) ? me.celebrationsSeen : []), ...ids]));
+    me.celebrationsSeen = merged.slice(-500); // keep the list bounded
+    me.changed('celebrationsSeen', true);
+    await me.save();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
