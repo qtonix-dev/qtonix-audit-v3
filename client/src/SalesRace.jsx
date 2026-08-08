@@ -209,23 +209,35 @@ export default function SalesRace({ onClose }) {
                         </div>
                       )}
 
-                      {/* Agent card — travels with the car. Photo on the left;
-                          on the right: rank (once moved), name, then % + amount.
-                          A roomy card so nothing feels cramped. */}
-                      <div className="flex items-center gap-3 bg-white rounded-2xl pl-2 pr-4 py-2 shadow-lg shrink-0" style={{ minWidth: 190 }}>
-                        <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-slate-100 flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
-                          {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
-                        </div>
-                        <div className="leading-tight min-w-0">
-                          {moved && <div className="mb-0.5"><RankBadge rank={r.rank} /></div>}
-                          <div className="text-[14px] font-extrabold text-[#050A1F] truncate">{r.name}</div>
-                          <div className="text-[12px] font-bold mt-0.5">
-                            {r.hasTarget
-                              ? <><span style={{ color }}>{r.pct ?? 0}%</span> <span className="text-slate-400">·</span> <span className="text-slate-600">{usd(r.achievedUsd)}</span></>
-                              : <span className="text-slate-400">no target · {usd(r.achievedUsd)}</span>}
+                      {/* Before the race starts, each car just shows the agent's
+                          photo with their name underneath. Once the race starts
+                          (launched), it switches to the detailed card: photo on
+                          the left; rank, name, then % + amount on the right. */}
+                      {!launched ? (
+                        <div className="flex flex-col items-center shrink-0" style={{ width: 96 }}>
+                          <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-white flex items-center justify-center text-white text-sm font-bold shadow-lg" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+                            {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
+                          </div>
+                          <div className="mt-1 px-2 py-0.5 rounded-md bg-white/90 text-[12px] font-extrabold text-[#050A1F] shadow max-w-[110px] truncate text-center">
+                            {r.name}
                           </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-3 bg-white rounded-2xl pl-2 pr-4 py-2 shadow-lg shrink-0" style={{ minWidth: 190 }}>
+                          <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-slate-100 flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+                            {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
+                          </div>
+                          <div className="leading-tight min-w-0">
+                            {moved && <div className="mb-0.5"><RankBadge rank={r.rank} /></div>}
+                            <div className="text-[14px] font-extrabold text-[#050A1F] truncate">{r.name}</div>
+                            <div className="text-[12px] font-bold mt-0.5">
+                              {r.hasTarget
+                                ? <><span style={{ color }}>{r.pct ?? 0}%</span> <span className="text-slate-400">·</span> <span className="text-slate-600">{usd(r.achievedUsd)}</span></>
+                                : <span className="text-slate-400">no target · {usd(r.achievedUsd)}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* the car itself — gentle idle/drive bob */}
                       <div className="relative shrink-0" style={{ animation: moving ? 'qtx-bob 0.5s ease-in-out infinite' : (launched ? 'qtx-idle 2.4s ease-in-out infinite' : undefined) }}>
