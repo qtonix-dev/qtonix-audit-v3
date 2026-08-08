@@ -209,11 +209,13 @@ export default function SalesRace({ onClose }) {
                         </div>
                       )}
 
-                      {/* Before the race starts, each car just shows the agent's
-                          photo with their name underneath. Once the race starts
-                          (launched), it switches to the detailed card: photo on
-                          the left; rank, name, then % + amount on the right. */}
-                      {!launched ? (
+                      {/* A car that hasn't crossed the start line shows just the
+                          agent's photo with their name underneath. Once a car has
+                          moved forward it switches to the detailed card: photo on
+                          the left; rank, name, then % + amount on the right. This
+                          is per-car, so cars still at 0% keep the simple label
+                          even after the race has started. */}
+                      {!moved ? (
                         <div className="flex flex-col items-center shrink-0" style={{ width: 96 }}>
                           <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-white flex items-center justify-center text-white text-sm font-bold shadow-lg" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
                             {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
