@@ -105,8 +105,20 @@ class SERanking {
    * SE Ranking exposes this on the research-API balance endpoint; shape varies
    * a little between plans so the caller normalises defensively.
    */
-  getBalance() {
-    return this.request('/balance', {});
+  async getBalance() {
+    const candidates = ['/balance', '/account/subscription', '/account/balance', '/research/balance'];
+    let lastErr = null;
+    for (const path of candidates) {
+      try {
+        const body = await this.request(path);
+        if (body && typeof body === 'object') return body;
+      } catch (e) {
+        lastErr = e;
+        // 401/403/404 on one path → try the next candidate.
+      }
+    }
+    if (lastErr) throw lastErr;
+    return null;
   }
 
   /** Domain overview for one regional DB. Cost: 100 credits. */

@@ -838,7 +838,11 @@ function MotivatorTvSettings({ say }) {
 function ApiKeys({ settings, setSettings, say }) {
   const [tests, setTests] = useState({});
   const [credits, setCredits] = useState(null);
+  const [usage, setUsage] = useState(null); // self-tracked calls (anthropic/openai)
+  const [ikUsage, setIkUsage] = useState(null);
   useEffect(() => { api('/admin/seranking-credits').then(setCredits).catch(() => setCredits(null)); }, []);
+  useEffect(() => { api('/admin/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({})); }, []);
+  useEffect(() => { api('/admin/imagekit-usage').then(setIkUsage).catch(() => setIkUsage(null)); }, []);
   const RULES = {
     seranking: { label: 'SE Ranking', required: true, hint: 'Rankings, backlinks, competitors, AI Overview data' },
     anthropic: { label: 'Claude (Anthropic)', required: true, hint: 'AI visibility test, cover tagline, executive summary' },
@@ -881,30 +885,50 @@ function ApiKeys({ settings, setSettings, say }) {
             <p className="text-[11px] text-slate-400 mt-1">{r.hint}</p>
             {id === 'seranking' && credits && (
               <div className="mt-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                {credits.error ? (
-                  <div className="text-[11px] text-amber-600">Couldn’t read balance: {credits.error}</div>
-                ) : (
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div>
-                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Credits left</div>
-                      <div className="text-base font-extrabold text-[#050A1F]">{credits.remaining != null ? Number(credits.remaining).toLocaleString() : '—'}</div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used this month</div>
-                      <div className="text-base font-extrabold text-[#FF4500]">{Number(credits.usedMonth || 0).toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used all time</div>
-                      <div className="text-base font-extrabold text-slate-500">{Number(credits.usedTotal || 0).toLocaleString()}</div>
-                    </div>
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Credits left</div>
+                    <div className="text-base font-extrabold text-[#050A1F]">{credits.remaining != null ? Number(credits.remaining).toLocaleString() : '—'}</div>
                   </div>
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used this month</div>
+                    <div className="text-base font-extrabold text-[#FF4500]">{Number(credits.usedMonth || 0).toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Used all time</div>
+                    <div className="text-base font-extrabold text-slate-500">{Number(credits.usedTotal || 0).toLocaleString()}</div>
+                  </div>
+                </div>
+                {credits.remaining == null && (
+                  <div className="text-[10px] text-slate-400 mt-1.5">Live balance unavailable from SE Ranking{credits.error ? ` (${credits.error})` : ''} — "used" figures are tracked from reports you've run.</div>
                 )}
+              </div>
+            )}
+            {(id === 'anthropic' || id === 'openai') && usage && (
+              <div className="mt-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Calls this month</div>
+                    <div className="text-base font-extrabold text-[#FF4500]">{Number((usage[id] && usage[id].month) || 0).toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Calls all time</div>
+                    <div className="text-base font-extrabold text-slate-500">{Number((usage[id] && usage[id].total) || 0).toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-1.5">{RULES[id].label} doesn't expose a billable balance — this counts calls the CRM made. Check your provider console for spend.</div>
               </div>
             )}
             {t && !t.testing && <div className={`mt-2 text-[11px] font-medium ${t.ok ? 'text-green-600' : 'text-red-600'}`}>{t.ok ? '✓ ' : '✗ '}{t.msg}</div>}
           </div>
         );
       })}
+
+      {/* ImageKit lives here too, so all external services are on one page. */}
+      <div className="pt-2 border-t border-slate-200">
+        <div className="text-sm font-bold text-[#050A1F] mb-2">ImageKit (image hosting)</div>
+        <ImageKitPanel say={say} usage={ikUsage} />
+      </div>
     </div>
   );
 }
@@ -1702,7 +1726,7 @@ function LabelListEditor({ title, items, onChange }) {
 
 // ImageKit connection panel — same keys the HR portal uses. Agent avatars in
 // Site Analysis upload here instead of being stored as base64 in MySQL.
-function ImageKitPanel({ say }) {
+function ImageKitPanel({ say, usage }) {
   const [cfg, setCfg] = useState({ publicKey: '', urlEndpoint: '', hasPrivateKey: false, configured: false });
   const [privateKey, setPrivateKey] = useState('');
   const [status, setStatus] = useState(null);
@@ -1718,6 +1742,15 @@ function ImageKitPanel({ say }) {
       setStatus(res); setPrivateKey(''); load();
     } catch (e) { setStatus({ ok: false, message: e.message }); } finally { setBusy(false); }
   };
+  // Pull the bandwidth figure out of ImageKit's usage payload (bytes → readable).
+  const fmtBytes = (n) => {
+    const b = Number(n || 0);
+    if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`;
+    if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
+    if (b >= 1e3) return `${(b / 1e3).toFixed(0)} KB`;
+    return `${b} B`;
+  };
+  const u = usage && usage.data;
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
       <div className="flex items-center justify-between mb-2">
@@ -1730,6 +1763,26 @@ function ImageKitPanel({ say }) {
         <Field label="URL endpoint"><input className={inputCls} value={cfg.urlEndpoint} onChange={(e) => setCfg({ ...cfg, urlEndpoint: e.target.value })} placeholder="https://ik.imagekit.io/your_id" /></Field>
         <Field label="Private key"><input type="password" className={inputCls} value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} placeholder={cfg.hasPrivateKey ? '••••••••' : 'private_xxxxxxxx'} /></Field>
       </div>
+
+      {/* Usage this month (bandwidth is the free-tier limiter). */}
+      {usage && usage.configured && (
+        <div className="mt-4 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+          <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400 mb-1">Usage this month{usage.period ? ` · ${usage.period}` : ''}</div>
+          {usage.error ? (
+            <div className="text-[11px] text-slate-400">Couldn't read usage ({usage.error}).</div>
+          ) : u ? (
+            <div className="flex items-center gap-5 flex-wrap">
+              <div><div className="text-[9px] text-slate-400 font-bold uppercase">Bandwidth</div><div className="text-sm font-extrabold text-[#FF4500]">{fmtBytes(u.bandwidthBytes ?? u.bandwidth)}</div></div>
+              <div><div className="text-[9px] text-slate-400 font-bold uppercase">Storage</div><div className="text-sm font-extrabold text-slate-600">{fmtBytes(u.mediaLibraryStorageBytes ?? u.storage)}</div></div>
+              {(u.requests != null || u.extensionUnitsUsed != null) && <div><div className="text-[9px] text-slate-400 font-bold uppercase">Requests</div><div className="text-sm font-extrabold text-slate-600">{Number(u.requests ?? u.extensionUnitsUsed ?? 0).toLocaleString()}</div></div>}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-400">Usage data unavailable.</div>
+          )}
+          <div className="text-[10px] text-slate-400 mt-1.5">Free tier is limited mainly by monthly bandwidth.</div>
+        </div>
+      )}
+
       {status && <div className={`mt-3 rounded-lg px-3 py-2.5 text-sm ${status.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{status.message}</div>}
       <div className="flex justify-end mt-4"><Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save & test connection'}</Btn></div>
     </div>
@@ -1947,9 +2000,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['imagekit', 'ImageKit'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'imagekit' && tab !== 'email' && tab !== 'log' && tab !== 'targets';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'email' && tab !== 'log' && tab !== 'targets';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -1977,7 +2030,6 @@ export default function Admin() {
         {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'branding' && <Branding settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
-        {tab === 'imagekit' && <ImageKitPanel say={say} />}
         {tab === 'email' && <EmailPanel say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}

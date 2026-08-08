@@ -17,6 +17,7 @@
  * what it can actually verify.
  */
 
+let recordApiCall; try { ({ recordApiCall } = require('../models')); } catch { recordApiCall = () => {}; }
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
 
@@ -25,6 +26,7 @@ async function callClaude(apiKey, { system, messages, maxTokens = 1500, tools })
   if (system) body.system = system;
   if (tools) body.tools = tools;
 
+  try { recordApiCall && recordApiCall('anthropic'); } catch {}
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
     headers: {

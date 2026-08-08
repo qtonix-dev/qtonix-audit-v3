@@ -21,6 +21,7 @@
 const cheerio = require('cheerio');
 const { crawlHomepage, normaliseUrl, getPageSpeed } = require('./crawler');
 
+let recordApiCall; try { ({ recordApiCall } = require('../models')); } catch { recordApiCall = () => {}; }
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
 
@@ -28,6 +29,7 @@ const MODEL = 'claude-sonnet-4-6';
 const CACHE_DAYS = 7;
 
 async function callClaude(apiKey, { system, messages, maxTokens = 2000 }) {
+  try { recordApiCall && recordApiCall('anthropic'); } catch {}
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
     headers: {

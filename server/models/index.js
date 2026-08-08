@@ -628,6 +628,31 @@ const AuditLog = sequelize.define(
   { tableName: 'audit_logs', indexes: [{ name: 'idx_audit_user', fields: ['userId'] }] }
 );
 
+// Self-tracked outbound API usage — one row per provider per calendar month, so
+// the admin can see how many calls the CRM made to paid APIs (Anthropic, OpenAI)
+// that don't expose a billable balance. `count` increments on each call.
+const ApiUsage = sequelize.define(
+  'ApiUsage',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    provider: { type: DataTypes.STRING(40), allowNull: false }, // 'anthropic' | 'openai' | ...
+    period: { type: DataTypes.STRING(7), allowNull: false },     // 'YYYY-MM'
+    count: { type: DataTypes.INTEGER, defaultValue: 0 },
+  },
+  { tableName: 'api_usage', indexes: [{ name: 'idx_apiusage_provider_period', unique: true, fields: ['provider', 'period'] }] }
+);
+
+// Increment the usage counter for a provider in the current month. Best-effort:
+// never throws into the calling path (usage tracking must not break a feature).
+async function recordApiCall(provider, n = 1) {
+  try {
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [row, created] = await ApiUsage.findOrCreate({ where: { provider, period }, defaults: { provider, period, count: 0 } });
+    await row.increment('count', { by: n });
+  } catch { /* swallow — usage tracking is non-critical */ }
+}
+
 // Synced Gmail messages, linked to a lead + the user whose mailbox they came
 // from. Populated by the background Gmail sync; read by the lead detail page.
 const LeadEmail = sequelize.define(
@@ -1180,7 +1205,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

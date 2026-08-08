@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const fs = require('fs');
 const crypto = require('crypto');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BusinessBrief, Report, Settings, Op } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BusinessBrief, Report, Settings, Op, recordApiCall } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -336,6 +336,7 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
         b.subject ? `Current subject (optional): ${b.subject}` : '',
         `TASK:\n${prompt}`,
       ].filter(Boolean).join('\n');
+      try { recordApiCall && recordApiCall('openai'); } catch {}
       const resp0 = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -401,6 +402,7 @@ router.post('/ai-draft', requireAuth, async (req, res, next) => {
       `\nTASK:\n${modeInstruction}`,
     ].filter(Boolean).join('\n');
 
+    try { recordApiCall && recordApiCall('openai'); } catch {}
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },

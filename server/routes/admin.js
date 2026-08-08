@@ -531,6 +531,55 @@ router.get('/logs', async (req, res) => {
 });
 
 /**
+ * GET /api/admin/imagekit-usage — ImageKit account usage for the current month
+ * (bandwidth + storage + requests). Uses the stored private key via Basic auth.
+ * Works on the free tier; returns { configured:false } if no key.
+ */
+router.get('/imagekit-usage', async (req, res) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = imagekit.getConfig(s);
+    if (!cfg.privateKey) return res.json({ configured: false });
+    const now = new Date();
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const end = now.toISOString().slice(0, 10);
+    const auth = Buffer.from(`${cfg.privateKey}:`).toString('base64');
+    const url = `https://api.imagekit.io/v1/accounts/usage?startDate=${start}&endDate=${end}`;
+    let data = null, error = null;
+    try {
+      const r = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
+      const txt = await r.text();
+      if (!r.ok) { error = `HTTP ${r.status}`; }
+      else { try { data = JSON.parse(txt); } catch { data = null; } }
+    } catch (e) { error = e.message; }
+    res.json({ configured: true, period: start.slice(0, 7), start, end, data, error });
+  } catch (e) {
+    res.json({ configured: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/admin/api-usage — self-tracked call counts for paid APIs that don't
+ * expose a billable balance (Anthropic, OpenAI). Returns this month + all time.
+ */
+router.get('/api-usage', async (req, res, next) => {
+  try {
+    const { ApiUsage } = require('../models');
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const rows = await ApiUsage.findAll();
+    const out = {};
+    for (const r of rows) {
+      const p = r.provider;
+      out[p] = out[p] || { month: 0, total: 0 };
+      out[p].total += r.count;
+      if (r.period === period) out[p].month += r.count;
+    }
+    res.json({ period, usage: out });
+  } catch (e) { next(e); }
+});
+
+/**
  * GET /api/admin/seranking-credits — remaining balance from SE Ranking plus the
  * credits we've consumed through this app (summed from report runs).
  */
@@ -557,10 +606,19 @@ router.get('/seranking-credits', async (req, res) => {
       const { SERanking } = require('../services/seranking');
       const client = new SERanking(key);
       raw = await client.getBalance();
-      // Shape varies by plan — pick the first numeric that looks like a balance.
-      const cand = raw && (raw.balance ?? raw.credits ?? raw.available ?? (raw.data && (raw.data.balance ?? raw.data.credits)));
-      remaining = Number.isFinite(Number(cand)) ? Number(cand) : null;
+      // Shape varies by plan/endpoint — pick the first numeric that looks like a
+      // remaining balance across the known field names.
+      const dig = (o) => {
+        if (!o || typeof o !== 'object') return null;
+        const cand = o.balance ?? o.credits ?? o.available ?? o.remaining
+          ?? o.credits_left ?? o.credit_limit ?? (o.subscription && (o.subscription.balance ?? o.subscription.credits))
+          ?? (o.data && dig(o.data));
+        return Number.isFinite(Number(cand)) ? Number(cand) : null;
+      };
+      remaining = dig(raw);
     } catch (e) {
+      // Balance is a nice-to-have; our self-tracked usage below is the reliable
+      // figure, so a read failure is a soft note rather than a hard error.
       error = e.message;
     }
     res.json({ configured: true, remaining, usedTotal, usedMonth, error });
