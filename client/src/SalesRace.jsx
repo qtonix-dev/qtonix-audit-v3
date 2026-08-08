@@ -20,26 +20,74 @@ const CAR_COLORS = ['#FF4500', '#7C3AED', '#2563EB', '#0891B2', '#DB2777', '#E54
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const initials = (name) => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 
-// A small stylised F1-style car (original art), tinted per lane.
-function Car({ color }) {
+// A GT / Le-Mans-style racing car in side profile (original art), tinted per
+// lane. Faces right (toward the finish). Wheels spin while `moving`.
+function Car({ color, moving }) {
+  // A darker shade of the lane color for the lower body / shadow.
   return (
-    <svg viewBox="0 0 120 50" width="108" height="45" style={{ filter: 'drop-shadow(0 3px 4px rgba(0,0,0,0.35))' }}>
-      {/* rear wing */}
-      <rect x="2" y="12" width="10" height="26" rx="2" fill={color} />
-      {/* body */}
-      <path d="M12 22 L40 20 L74 14 L96 18 L112 24 L112 28 L96 32 L74 36 L40 30 L12 28 Z" fill={color} />
-      <path d="M60 19 L84 16 L98 20 L98 22 L74 24 Z" fill="rgba(255,255,255,0.25)" />
-      {/* cockpit */}
-      <ellipse cx="70" cy="22" rx="9" ry="6" fill="#0B1533" />
-      {/* nose cone */}
-      <path d="M112 24 L120 25 L112 28 Z" fill={color} />
-      {/* front wing */}
-      <rect x="104" y="12" width="6" height="26" rx="2" fill={color} />
-      {/* tyres */}
-      <circle cx="36" cy="38" r="9" fill="#111" /><circle cx="36" cy="38" r="3.5" fill="#444" />
-      <circle cx="92" cy="38" r="9" fill="#111" /><circle cx="92" cy="38" r="3.5" fill="#444" />
-      <circle cx="36" cy="12" r="8" fill="#111" /><circle cx="36" cy="12" r="3" fill="#444" />
-      <circle cx="92" cy="12" r="8" fill="#111" /><circle cx="92" cy="12" r="3" fill="#444" />
+    <svg viewBox="0 0 260 108" width="150" height="62" style={{ filter: 'drop-shadow(0 5px 6px rgba(0,0,0,0.4))', overflow: 'visible' }}>
+      <defs>
+        <linearGradient id={`body-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.35" />
+          <stop offset="35%" stopColor={color} stopOpacity="1" />
+          <stop offset="100%" stopColor={color} stopOpacity="1" />
+        </linearGradient>
+      </defs>
+
+      {/* rear wing (left/back) */}
+      <path d="M6 34 L44 34 L44 40 L10 40 Z" fill={color} />
+      <rect x="8" y="34" width="5" height="30" rx="2" fill={color} />
+      <rect x="40" y="36" width="5" height="26" rx="2" fill={color} />
+
+      {/* lower splitter / floor */}
+      <path d="M20 74 L244 74 L236 84 L30 84 Z" fill="rgba(0,0,0,0.45)" />
+
+      {/* main body — low sleek GT silhouette, nose to the right */}
+      <path d="M14 66
+               C 40 66, 60 64, 78 58
+               C 96 40, 130 32, 168 34
+               C 200 36, 226 46, 248 60
+               C 252 62, 252 70, 246 72
+               L 20 72
+               C 14 72, 12 68, 14 66 Z"
+            fill={`url(#body-${color.replace('#', '')})`} stroke="rgba(0,0,0,0.25)" strokeWidth="1.5" />
+
+      {/* cabin / greenhouse */}
+      <path d="M92 52 C 108 40, 134 36, 160 38 C 172 39, 182 43, 190 49 C 172 52, 120 52, 92 52 Z"
+            fill="#12172B" opacity="0.92" />
+      {/* window highlight */}
+      <path d="M104 49 C 120 42, 142 40, 160 42 L 178 48 C 150 48, 122 49, 104 49 Z" fill="rgba(255,255,255,0.22)" />
+
+      {/* racing number roundel */}
+      <circle cx="132" cy="60" r="11" fill="#fff" opacity="0.95" />
+      <text x="132" y="65" textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>1</text>
+
+      {/* accent stripe */}
+      <path d="M198 52 L228 60 L226 66 L196 60 Z" fill="rgba(255,255,255,0.5)" />
+
+      {/* wheels — spin while moving */}
+      <g>
+        <circle cx="66" cy="80" r="22" fill="#0c0c0c" />
+        <circle cx="66" cy="80" r="22" fill="none" stroke="#333" strokeWidth="2" />
+        <g style={moving ? { animation: 'qtx-wheel 0.45s linear infinite', transformOrigin: '66px 80px' } : undefined}>
+          <circle cx="66" cy="80" r="10" fill="#8a8f98" />
+          {[0, 45, 90, 135].map((a) => (
+            <rect key={a} x="64.5" y="70" width="3" height="20" rx="1" fill="#5b616b" transform={`rotate(${a} 66 80)`} />
+          ))}
+          <circle cx="66" cy="80" r="3.5" fill="#2b2f36" />
+        </g>
+      </g>
+      <g>
+        <circle cx="198" cy="80" r="22" fill="#0c0c0c" />
+        <circle cx="198" cy="80" r="22" fill="none" stroke="#333" strokeWidth="2" />
+        <g style={moving ? { animation: 'qtx-wheel 0.45s linear infinite', transformOrigin: '198px 80px' } : undefined}>
+          <circle cx="198" cy="80" r="10" fill="#8a8f98" />
+          {[0, 45, 90, 135].map((a) => (
+            <rect key={a} x="196.5" y="70" width="3" height="20" rx="1" fill="#5b616b" transform={`rotate(${a} 198 80)`} />
+          ))}
+          <circle cx="198" cy="80" r="3.5" fill="#2b2f36" />
+        </g>
+      </g>
     </svg>
   );
 }
@@ -116,8 +164,17 @@ export default function SalesRace({ onClose }) {
     <div className="fixed inset-0 z-[9998] flex flex-col" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <style>{`
         @keyframes qtx-smoke {
-          0% { opacity: 0.55; transform: translateY(-50%) scale(0.6); }
-          100% { opacity: 0; transform: translateY(-50%) translateX(-26px) scale(1.6); }
+          0% { opacity: 0.6; transform: translateY(-50%) scale(0.5); }
+          100% { opacity: 0; transform: translateY(-50%) translateX(-40px) scale(1.9); }
+        }
+        @keyframes qtx-wheel { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes qtx-bob {
+          0%,100% { transform: translateY(0) rotate(-0.4deg); }
+          50% { transform: translateY(-2px) rotate(0.4deg); }
+        }
+        @keyframes qtx-idle {
+          0%,100% { transform: translateY(0); }
+          50% { transform: translateY(-1px); }
         }
       `}</style>
       {/* Header strip */}
@@ -156,6 +213,7 @@ export default function SalesRace({ onClose }) {
             {racers.map((r, i) => {
               const color = CAR_COLORS[i % CAR_COLORS.length];
               const moving = launched && (r.pct || 0) > 0;
+              const moved = launched && (r.pct || 0) > 0; // has left the start line
               return (
                 <div key={r.id} className="relative flex items-center" style={{ height: LANE_H }}>
                   {/* lane divider */}
@@ -165,45 +223,50 @@ export default function SalesRace({ onClose }) {
                   <div className="absolute top-0 bottom-0" style={{ left: TRACK_LEFT, width: 4, background: 'rgba(255,255,255,0.55)' }} />
 
                   {/* Car + label move together. At 0% the car sits BEFORE the
-                      start line; as % rises it advances toward the finish. The
-                      whole group (photo label + car) slides as one. */}
+                      start line; as % rises it advances toward the finish. */}
                   <div className="absolute z-10" style={{
                     left: `calc(${TRACK_LEFT}px + ${posPct(r)}/112 * (95% - ${TRACK_LEFT}px))`,
                     transition: 'left 5.5s cubic-bezier(0.33,0.02,0.30,1)',
                     top: '50%', transform: 'translateY(-50%)',
                   }}>
                     <div className="flex items-center gap-2" style={{ transform: 'translateX(-100%)', paddingRight: 6 }}>
-                      {/* tyre-burn smoke, puffing behind the car while it moves */}
+                      {/* tyre-burn smoke — denser trail while moving */}
                       {moving && (
-                        <div className="absolute" style={{ right: -10, top: '50%', transform: 'translateY(-50%)' }}>
-                          {[0, 1, 2].map((k) => (
+                        <div className="absolute" style={{ right: -6, top: '58%' }}>
+                          {[0, 1, 2, 3, 4, 5].map((k) => (
                             <span key={k} className="absolute rounded-full" style={{
-                              width: 16 + k * 6, height: 16 + k * 6,
-                              background: 'radial-gradient(circle, rgba(220,220,220,0.55), rgba(200,200,200,0))',
-                              right: k * 14, top: -(8 + k * 3),
-                              animation: `qtx-smoke 1.1s ease-out ${k * 0.18}s infinite`,
+                              width: 18 + k * 7, height: 18 + k * 7,
+                              background: 'radial-gradient(circle, rgba(210,210,210,0.6), rgba(190,190,190,0))',
+                              right: k * 16, top: -(9 + k * 4),
+                              animation: `qtx-smoke 1.2s ease-out ${k * 0.12}s infinite`,
                             }} />
                           ))}
                         </div>
                       )}
 
-                      {/* name + photo label (now travels with the car) */}
+                      {/* name + photo label (travels with the car) — now also
+                          holds the % and amount, and the rank once it has moved. */}
                       <div className="flex items-center gap-2 bg-white rounded-full pl-1 pr-3 py-1 shadow-lg shrink-0">
-                        <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+                        <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
                           {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} /> : initials(r.name)}
                         </div>
                         <div className="leading-tight">
-                          <div className="flex items-center gap-1.5"><RankBadge rank={r.rank} /></div>
-                          <div className="text-[13px] font-extrabold text-[#050A1F] -mt-0.5">{r.name}</div>
+                          <div className="flex items-center gap-1.5">
+                            {/* rank only shows once the car has left the start line */}
+                            {moved && <RankBadge rank={r.rank} />}
+                            <span className="text-[13px] font-extrabold text-[#050A1F]">{r.name}</span>
+                          </div>
+                          <div className="text-[11px] font-bold text-slate-500 -mt-0.5">
+                            {r.hasTarget
+                              ? <><span style={{ color }}>{r.pct ?? 0}%</span> · {usd(r.achievedUsd)}</>
+                              : <span className="text-slate-400">no target · {usd(r.achievedUsd)}</span>}
+                          </div>
                         </div>
                       </div>
 
-                      {/* the car itself */}
-                      <div className="relative shrink-0">
-                        <Car color={color} />
-                        <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] font-extrabold text-white">
-                          {r.hasTarget ? `${r.pct ?? 0}%` : 'no target'} · <span className="text-[#FFD27A]">{usd(r.achievedUsd)}</span>
-                        </div>
+                      {/* the car itself — gentle idle/drive bob */}
+                      <div className="relative shrink-0" style={{ animation: moving ? 'qtx-bob 0.5s ease-in-out infinite' : (launched ? 'qtx-idle 2.4s ease-in-out infinite' : undefined) }}>
+                        <Car color={color} moving={moving} />
                       </div>
                     </div>
                   </div>
