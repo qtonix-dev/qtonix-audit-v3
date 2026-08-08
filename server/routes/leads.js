@@ -481,6 +481,88 @@ router.post('/celebrations/seen', requireAuth, async (req, res, next) => {
 });
 
 /**
+ * GET /api/leads/sales-race — every active agent company-wide with their sales
+ * achieved vs monthly target for the current month, as a % (for the racing-track
+ * gamification popup). Admin-saved MonthlyTarget achieved overrides live sales;
+ * otherwise live CRM sales are used. Admin-owned data is excluded.
+ */
+router.get('/sales-race', requireAuth, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const fx = (s && s.crmConfig && s.crmConfig.fxRates) || { USD: 1 };
+    const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    // Every active agent (not admins/managers) — the race is all agents.
+    const agents = await User.findAll({ where: { role: 'agent', active: true }, attributes: ['id', 'name', 'avatar', 'team', 'shift', 'targets'] });
+    const byId = {};
+    agents.forEach((a) => {
+      const t = a.targets || {};
+      byId[a.id] = {
+        id: a.id, name: a.name, avatar: a.avatar || null, team: a.team || '', shift: a.shift || '',
+        targetUsd: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
+        achievedUsd: 0,
+      };
+    });
+
+    // Live sales this month per agent (first paid installment of each closed-won
+    // deal; recurring counts only its first cycle), in USD.
+    const agentIds = agents.map((a) => a.id);
+    if (agentIds.length) {
+      const leads = await Lead.findAll({ where: { ownerId: { [Op.in]: agentIds } }, attributes: ['ownerId', 'deals'] });
+      for (const l of leads) {
+        const rec = byId[l.ownerId];
+        if (!rec) continue;
+        for (const d of (l.deals || [])) {
+          if (d.stage !== 'closed_won') continue;
+          for (const it of (d.installments || [])) {
+            if (it.recurring && Number(it.seq || 0) > 1) continue;
+            if (it.paid && it.paidDate) {
+              const pd = new Date(it.paidDate);
+              if (pd >= startOfMonth) rec.achievedUsd += toUsd(it.amount, d.currency);
+            }
+          }
+        }
+      }
+    }
+
+    // Admin-saved MonthlyTarget rows override both target and achieved per user.
+    const stored = await MonthlyTarget.findAll({ where: { period, userId: { [Op.in]: agentIds.concat(-1) } } });
+    stored.forEach((r) => {
+      const rec = byId[r.userId];
+      if (!rec) return;
+      if (r.targetUsd > 0) rec.targetUsd = r.targetUsd;
+      rec.achievedUsd = r.achievedUsd || 0; // admin value wins
+    });
+
+    const racers = Object.values(byId).map((r) => {
+      const achieved = Math.round(r.achievedUsd);
+      const pct = r.targetUsd > 0 ? (achieved / r.targetUsd) * 100 : null;
+      return {
+        id: r.id, name: r.name, avatar: r.avatar, team: r.team, shift: r.shift,
+        targetUsd: Math.round(r.targetUsd), achievedUsd: achieved,
+        pct: pct == null ? null : Math.round(pct * 10) / 10,
+        hasTarget: r.targetUsd > 0,
+      };
+    });
+
+    // Rank by % (no-target agents sort last, then by achieved $).
+    racers.sort((a, b) => {
+      const pa = a.pct == null ? -1 : a.pct;
+      const pb = b.pct == null ? -1 : b.pct;
+      if (pb !== pa) return pb - pa;
+      return b.achievedUsd - a.achievedUsd;
+    });
+    racers.forEach((r, i) => { r.rank = i + 1; });
+
+    res.json({ period, racers });
+  } catch (e) { next(e); }
+});
+
+/**
  * GET /api/leads/lm-dashboard — the lead manager's home screen.
  *
  * A lead manager coordinates rather than sells, so their dashboard is about

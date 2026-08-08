@@ -170,12 +170,11 @@ function TvCelebration({ win, logo }) {
         @keyframes tv-cele-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
       `}</style>
       <div className="relative flex items-center justify-center" style={{ animation: 'tv-cele-in 0.6s ease-out' }}>
-        <div className="absolute rounded-full" style={{
-          width: '58vh', height: '58vh',
-          animation: 'tv-ray-spin 12s linear infinite',
-          background: 'repeating-conic-gradient(from 0deg, rgba(255,255,255,0.18) 0deg 5deg, rgba(255,255,255,0) 5deg 13deg)',
-          maskImage: 'radial-gradient(circle, transparent 27%, black 31%, black 70%, transparent 74%)',
-          WebkitMaskImage: 'radial-gradient(circle, transparent 27%, black 31%, black 70%, transparent 74%)',
+        <div className="fixed inset-0 pointer-events-none" style={{
+          animation: 'tv-ray-spin 16s linear infinite',
+          background: 'repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.12) 0deg 4deg, rgba(255,255,255,0) 4deg 12deg)',
+          maskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 88%)',
+          WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 88%)',
         }} />
         <div className="absolute rounded-full" style={{ width: '26vh', height: '26vh', boxShadow: '0 0 100px 24px rgba(255,106,0,0.4)' }} />
         <div className="relative rounded-full overflow-hidden border-4 border-white shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#FF6A00] to-[#FF4500]"

@@ -14,6 +14,13 @@ import { api } from './App.jsx';
 const DISPLAY_MS = 10000;
 const POLL_MS = 20000;
 
+// Lets other parts of the app (e.g. clicking the dashboard win banner) open the
+// same full-screen celebration on demand. Set by the mounted component.
+let externalTrigger = null;
+export function showCelebration(win) {
+  if (externalTrigger && win) externalTrigger(win);
+}
+
 function initials(name) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 }
@@ -22,8 +29,22 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 export default function SaleCelebration() {
   const [queue, setQueue] = useState([]); // unseen celebrations to play
   const [current, setCurrent] = useState(null);
+  const [manual, setManual] = useState(null); // externally-triggered replay
   const timerRef = useRef(null);
   const seenRef = useRef(new Set()); // ids already queued this session (dedupe)
+
+  // Register the imperative trigger so clicking a win banner replays it here.
+  useEffect(() => {
+    externalTrigger = (win) => setManual(win);
+    return () => { externalTrigger = null; };
+  }, []);
+
+  // Manual replays get their own 10s timer and don't touch seen-tracking.
+  useEffect(() => {
+    if (!manual) return;
+    const t = setTimeout(() => setManual(null), DISPLAY_MS);
+    return () => clearTimeout(t);
+  }, [manual]);
 
   // Poll the server for unseen celebrations and append new ones to the queue.
   useEffect(() => {
@@ -60,11 +81,15 @@ export default function SaleCelebration() {
     return () => clearTimeout(timerRef.current);
   }, [current]);
 
-  if (!current) return null;
+  const shown = manual || current;
+  if (!shown) return null;
 
   // Click anywhere dismisses immediately and advances to the next (so people
   // aren't blocked from working when several fire at once).
-  const dismiss = () => { clearTimeout(timerRef.current); setCurrent(null); };
+  const dismiss = () => {
+    clearTimeout(timerRef.current);
+    if (manual) setManual(null); else setCurrent(null);
+  };
 
   return (
     <div onClick={dismiss}
@@ -77,13 +102,12 @@ export default function SaleCelebration() {
       `}</style>
 
       <div className="relative flex items-center justify-center" style={{ animation: 'qtx-cele-in 0.5s ease-out' }}>
-        {/* Rotating white rays behind the photo */}
-        <div className="absolute rounded-full" style={{
-          width: '46vw', height: '46vw', maxWidth: 640, maxHeight: 640,
-          animation: 'qtx-ray-spin 12s linear infinite',
-          background: 'repeating-conic-gradient(from 0deg, rgba(255,255,255,0.16) 0deg 6deg, rgba(255,255,255,0) 6deg 14deg)',
-          maskImage: 'radial-gradient(circle, transparent 26%, black 30%, black 70%, transparent 74%)',
-          WebkitMaskImage: 'radial-gradient(circle, transparent 26%, black 30%, black 70%, transparent 74%)',
+        {/* Rotating white rays — full screen, radiating from centre */}
+        <div className="fixed inset-0 pointer-events-none" style={{
+          animation: 'qtx-ray-spin 16s linear infinite',
+          background: 'repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.10) 0deg 5deg, rgba(255,255,255,0) 5deg 13deg)',
+          maskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 85%)',
+          WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 85%)',
         }} />
         {/* Soft glow ring */}
         <div className="absolute rounded-full" style={{
@@ -93,18 +117,18 @@ export default function SaleCelebration() {
         {/* Agent photo / initials */}
         <div className="relative rounded-full overflow-hidden border-4 border-white shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#FF6A00] to-[#FF4500]"
           style={{ width: '18vw', height: '18vw', maxWidth: 230, maxHeight: 230, minWidth: 140, minHeight: 140 }}>
-          {current.avatar
-            ? <img src={current.avatar} alt={current.ownerName} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-            : <span className="text-white font-extrabold" style={{ fontSize: '5vw' }}>{initials(current.ownerName)}</span>}
+          {shown.avatar
+            ? <img src={shown.avatar} alt={shown.ownerName} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            : <span className="text-white font-extrabold" style={{ fontSize: '5vw' }}>{initials(shown.ownerName)}</span>}
         </div>
       </div>
 
       <div className="text-center mt-10 px-6" style={{ animation: 'qtx-pop-in 0.6s ease-out 0.2s both' }}>
         <div className="text-white font-extrabold leading-tight" style={{ fontSize: 'clamp(28px, 5vw, 64px)' }}>
-          {current.ownerName}
+          {shown.ownerName}
         </div>
         <div className="text-white/80 font-semibold mt-2" style={{ fontSize: 'clamp(16px, 2.4vw, 34px)' }}>
-          just closed a deal worth <span className="text-[#FF8A3D] font-extrabold">{usd(current.amountUsd)}</span>
+          just closed a deal worth <span className="text-[#FF8A3D] font-extrabold">{usd(shown.amountUsd)}</span>
         </div>
       </div>
 

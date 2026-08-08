@@ -9,6 +9,8 @@ function fmtAge(ms) {
   return `${Math.floor(h / 24)}d`;
 }
 import { Pagination } from './Leads.jsx';
+import { showCelebration } from './SaleCelebration.jsx';
+import SalesRace from './SalesRace.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
@@ -430,6 +432,7 @@ export default function Dashboard(props) {
 
 function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, onGoReviews, mode = 'overview', onModeChange }) {
   const [data, setData] = useState(null);
+  const [showRace, setShowRace] = useState(false);
   // Non-dismissable last-month review reminder for managers (from the 5th).
   const [reviewDue, setReviewDue] = useState(null);
   useEffect(() => {
@@ -514,6 +517,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
   return (
     <div className="space-y-5">
+      {/* Full-screen sales race (gamified leaderboard). */}
+      {showRace && <SalesRace onClose={() => setShowRace(false)} />}
+
       {/* Non-dismissable last-month agent-review reminder (managers, from 5th). */}
       {reviewDue && <ManagerReviewReminder info={reviewDue} onGoReviews={onGoReviews} />}
 
@@ -823,7 +829,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         <div className="bg-white rounded-2xl border border-slate-100 p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-base font-extrabold text-[#050A1F]">Sales leaderboard</h2>
-            <span className="text-xs text-slate-400">Collected · USD</span>
+            <button onClick={() => setShowRace(true)} className="text-xs font-bold text-[#FF4500] hover:underline flex items-center gap-1">🏁 Race view</button>
           </div>
           {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No agents yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
         </div>
@@ -1416,7 +1422,9 @@ function SalesCelebration({ latest, others }) {
 
   return (
     <div className="rounded-2xl overflow-hidden shadow-sm border border-orange-200">
-      <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FFF7ED,#FFEDD5)' }}>
+      <div onClick={() => showCelebration({ id: latest.id, ownerName: latest.ownerName, avatar: latest.avatar, amountUsd: latest.amountUsd })}
+        title="Click to celebrate 🎉"
+        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:brightness-[0.98] transition" style={{ background: 'linear-gradient(90deg,#FFF7ED,#FFEDD5)' }}>
         <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>🎉</div>
         {latest.avatar ? (
           <img src={latest.avatar} alt={latest.ownerName} className="w-16 h-16 rounded-full object-cover border-2 border-white shadow" />
