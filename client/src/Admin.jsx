@@ -1598,6 +1598,9 @@ function CrmFields({ say }) {
 
       <FxRatesEditor rates={cfg.fxRates || { USD: 1 }} currencies={cfg.dealCurrencies || ['USD']} onChange={(r) => setList('fxRates', r)} />
 
+      <LabelListEditor title="CallHippo numbers (manual)"
+        items={cfg.callHippoNumbers || []} onChange={(l) => setList('callHippoNumbers', l)} />
+
       <div className="flex justify-end sticky bottom-4">
         <button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{saving ? 'Saving…' : 'Save CRM fields'}</button>
       </div>

@@ -1705,8 +1705,14 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
             <SectionHead title="Basic info" section="basic" />
             <div className="space-y-2 text-sm text-slate-700">
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Mail size={14} /></span>{lead.email || <span className="text-slate-300">—</span>}</div>
-              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.mobile || <span className="text-slate-300">—</span>}</div>
-              <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Phone size={14} /></span>{lead.phone || <span className="text-slate-300">—</span>}</div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400"><Icon.Phone size={14} /></span>
+                {lead.mobile ? <>{lead.mobile}<CallButton lead={lead} number={lead.mobile} onLogged={setLead} /></> : <span className="text-slate-300">—</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400"><Icon.Phone size={14} /></span>
+                {lead.phone ? <>{lead.phone}<CallButton lead={lead} number={lead.phone} onLogged={setLead} /></> : <span className="text-slate-300">—</span>}
+              </div>
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Globe size={14} /></span>
                 {lead.website ? (
@@ -3184,6 +3190,160 @@ function AiBriefModal({ lead, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ---- Click-to-call (CallHippo) --------------------------------------------
+// A phone icon shown next to a lead's number. Clicking opens a small panel to
+// pick the "from" number and start the call. Two paths:
+//  - Option B: server-initiated dial (works only if CallHippo enabled the
+//    telephony API for the account) — gives us an in-app "calling…" + Cancel.
+//  - Option A: Chrome extension — we hand the number to CallHippo's dialer.
+// After the call, the agent submits notes, saved as a completed call activity.
+function CallButton({ lead, number, onLogged }) {
+  const [open, setOpen] = useState(false);
+  const [numbers, setNumbers] = useState(null);
+  const [fromNumber, setFromNumber] = useState('');
+  const [method, setMethod] = useState('extension'); // 'extension' | 'server'
+  const [phase, setPhase] = useState('setup'); // setup | calling | notes
+  const [notes, setNotes] = useState('');
+  const [durationMin, setDurationMin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState('');
+
+  useEffect(() => {
+    if (!open || numbers) return;
+    api('/callhippo/numbers').then((r) => {
+      setNumbers(r.numbers || []);
+      if ((r.numbers || []).length) setFromNumber(r.numbers[0].number);
+    }).catch(() => setNumbers([]));
+  }, [open]);
+
+  const startCall = async () => {
+    setBusy(true); setInfo('');
+    try {
+      if (method === 'server') {
+        const r = await api('/callhippo/call', { method: 'POST', body: JSON.stringify({ toNumber: number, fromNumber }) });
+        if (r.ok) { setPhase('calling'); setInfo('Call started via CallHippo.'); }
+        else {
+          // Fall back to the extension path.
+          triggerExtension();
+          setPhase('calling');
+          setInfo(r.reason ? `Server dial unavailable (${r.reason}) — used the CallHippo extension instead.` : 'Used the CallHippo extension.');
+        }
+      } else {
+        triggerExtension();
+        setPhase('calling');
+      }
+    } catch (e) { setInfo(e.message); } finally { setBusy(false); }
+  };
+
+  // Hand the number to the CallHippo Chrome extension. The extension listens for
+  // clicks on tel: links / elements carrying the number, so we create a hidden
+  // tel: anchor and click it. If the extension isn't installed, this opens the
+  // OS handler (harmless).
+  const triggerExtension = () => {
+    const tel = `tel:${String(number).replace(/[^\d+]/g, '')}`;
+    const a = document.createElement('a');
+    a.href = tel; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => document.body.removeChild(a), 500);
+  };
+
+  const cancel = () => { setPhase('setup'); setInfo(''); };
+
+  const finishToNotes = () => setPhase('notes');
+
+  const submitNotes = async () => {
+    setBusy(true);
+    try {
+      const updated = await api(`/leads/${lead._id}/activities`, {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'call', mode: 'done',
+          agenda: notes.trim() || `Call to ${number}`,
+          durationMin: durationMin ? Number(durationMin) : undefined,
+          date: new Date().toISOString().slice(0, 10),
+          time: new Date().toTimeString().slice(0, 5),
+        }),
+      });
+      if (onLogged) onLogged(updated);
+      setOpen(false); setPhase('setup'); setNotes(''); setDurationMin(''); setInfo('');
+    } catch (e) { setInfo(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <span className="relative inline-flex">
+      <button onClick={() => setOpen((o) => !o)} title={`Call ${number}`}
+        className="ml-1 inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-500 hover:bg-green-600 text-white shrink-0">
+        <Icon.Phone size={12} />
+      </button>
+
+      {open && (
+        <div className="absolute z-30 left-0 top-8 w-72 bg-white rounded-xl border border-slate-200 shadow-xl p-3 text-left" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-bold text-[#050A1F]">Call {number}</div>
+            <button onClick={() => { setOpen(false); setPhase('setup'); }} className="text-slate-400 hover:text-slate-600 text-sm">✕</button>
+          </div>
+
+          {phase === 'setup' && (
+            <>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Call from</label>
+              {numbers === null ? (
+                <div className="text-xs text-slate-400 py-2">Loading numbers…</div>
+              ) : numbers.length === 0 ? (
+                <div className="text-[11px] text-amber-600 mb-2">No CallHippo numbers found. Add them in Admin → CRM Fields, or check the API token.</div>
+              ) : (
+                <select className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm mb-2" value={fromNumber} onChange={(e) => setFromNumber(e.target.value)}>
+                  {numbers.map((n, i) => <option key={i} value={n.number}>{n.label ? `${n.label} — ${n.number}` : n.number}</option>)}
+                </select>
+              )}
+
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Method</label>
+              <div className="flex gap-1.5 mb-3">
+                <button onClick={() => setMethod('extension')} className={`flex-1 text-[11px] font-bold rounded-md px-2 py-1.5 ${method === 'extension' ? 'bg-[#050A1F] text-white' : 'bg-slate-100 text-slate-500'}`}>Chrome extension</button>
+                <button onClick={() => setMethod('server')} className={`flex-1 text-[11px] font-bold rounded-md px-2 py-1.5 ${method === 'server' ? 'bg-[#050A1F] text-white' : 'bg-slate-100 text-slate-500'}`}>In-app dial</button>
+              </div>
+
+              <button onClick={startCall} disabled={busy}
+                className="w-full rounded-lg px-3 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>
+                {busy ? 'Starting…' : '📞 Start call'}
+              </button>
+              {info && <div className="text-[11px] text-slate-500 mt-2">{info}</div>}
+            </>
+          )}
+
+          {phase === 'calling' && (
+            <div className="text-center py-2">
+              <div className="text-3xl mb-1 animate-pulse">📞</div>
+              <div className="text-sm font-bold text-[#050A1F]">Calling {number}…</div>
+              {info && <div className="text-[11px] text-slate-500 mt-1">{info}</div>}
+              <div className="text-[11px] text-slate-400 mt-1">Manage the live call in the CallHippo dialer.</div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={cancel} className="flex-1 rounded-lg px-3 py-2 text-sm font-bold bg-red-50 text-red-600 border border-red-200">Cancel</button>
+                <button onClick={finishToNotes} className="flex-1 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Call finished →</button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'notes' && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Call notes</label>
+              <textarea className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm h-24 resize-none" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What was discussed, next steps…" autoFocus />
+              <div className="flex items-center gap-2 mt-2">
+                <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Duration (min)</label>
+                <input type="number" min="0" className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm" value={durationMin} onChange={(e) => setDurationMin(e.target.value)} />
+              </div>
+              <button onClick={submitNotes} disabled={busy}
+                className="w-full mt-3 rounded-lg px-3 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>
+                {busy ? 'Saving…' : 'Save call notes'}
+              </button>
+              {info && <div className="text-[11px] text-red-500 mt-2">{info}</div>}
+            </div>
+          )}
+        </div>
+      )}
+    </span>
   );
 }
 

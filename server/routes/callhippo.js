@@ -161,4 +161,94 @@ router.get('/logs', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/callhippo/numbers — the "from" numbers an agent can call out on.
+ * Merges numbers fetched live from CallHippo (using the stored API token) with
+ * any numbers added manually in CRM Fields. Live fetch is best-effort; the
+ * manual list always works even if the API call fails or the token is unset.
+ */
+router.get('/numbers', requireAuth, async (req, res, next) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = settings && settings.getKey ? settings.getKey('callHippoToken') : null;
+    const manual = ((settings && settings.crmConfig && settings.crmConfig.callHippoNumbers) || [])
+      .map((n) => ({ label: n.label || n.value || '', number: n.value || n.number || '', source: 'manual' }))
+      .filter((n) => n.number);
+
+    let live = [];
+    let liveError = null;
+    if (token) {
+      // Try the documented number-list endpoints; shapes vary, so dig defensively.
+      const endpoints = ['https://web.callhippo.com/v1/number/list', 'https://web.callhippo.com/v1/numbers', 'https://web.callhippo.com/v1/user/numbers'];
+      for (const url of endpoints) {
+        try {
+          const r = await fetch(url, { headers: { apitoken: token, accept: 'application/json' } });
+          if (!r.ok) { liveError = `HTTP ${r.status}`; continue; }
+          const data = await r.json();
+          const arr = Array.isArray(data) ? data : (data.data || data.numbers || data.result || []);
+          if (Array.isArray(arr) && arr.length) {
+            live = arr.map((x) => ({
+              label: x.name || x.label || x.numberName || x.country || x.friendlyName || x.number || x.phoneNumber || '',
+              number: x.number || x.phoneNumber || x.phone || x.did || '',
+              source: 'callhippo',
+            })).filter((n) => n.number);
+            liveError = null;
+            break;
+          }
+        } catch (e) { liveError = e.message; }
+      }
+    }
+
+    // Merge, de-duplicating by number (live wins on label).
+    const byNumber = {};
+    for (const n of [...manual, ...live]) {
+      const key = String(n.number).replace(/\D/g, '');
+      byNumber[key] = { ...(byNumber[key] || {}), ...n, number: n.number };
+    }
+    res.json({ numbers: Object.values(byNumber), liveError, hasToken: !!token });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/callhippo/call — Option B (server-initiated dial) when CallHippo has
+ * enabled the telephony API for the account. Attempts the documented call
+ * endpoint(s); returns { ok, callId } on success or { ok:false, needsExtension }
+ * so the client can fall back to the Chrome-extension path (Option A).
+ */
+router.post('/call', requireAuth, async (req, res, next) => {
+  try {
+    const { toNumber, fromNumber } = req.body || {};
+    if (!toNumber) return res.status(400).json({ error: 'toNumber is required.' });
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = settings && settings.getKey ? settings.getKey('callHippoToken') : null;
+    if (!token) return res.json({ ok: false, needsExtension: true, reason: 'No API token configured.' });
+
+    // Include the agent's CallHippo email so CallHippo rings the right agent.
+    const me = await User.findByPk(req.user.id);
+    const agentEmail = (me && (me.callHippoEmail || me.email)) || undefined;
+
+    const endpoints = ['https://web.callhippo.com/v1/call', 'https://web.callhippo.com/v1/call/create', 'https://web.callhippo.com/v1/dialer/call'];
+    const payload = { to: toNumber, toNumber, from: fromNumber || undefined, fromNumber: fromNumber || undefined, email: agentEmail };
+    let lastErr = null;
+    for (const url of endpoints) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { apitoken: token, 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const txt = await r.text();
+        if (r.ok) {
+          let data = {}; try { data = JSON.parse(txt); } catch { /* non-JSON ok */ }
+          return res.json({ ok: true, callId: data.callSid || data.callId || data.id || null, raw: data });
+        }
+        lastErr = `HTTP ${r.status}`;
+        // 404/501 → this endpoint isn't enabled; try the next.
+      } catch (e) { lastErr = e.message; }
+    }
+    // Server dial not available on this account → tell client to use extension.
+    res.json({ ok: false, needsExtension: true, reason: lastErr || 'Telephony API not enabled.' });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
