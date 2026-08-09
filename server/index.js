@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v134';
+const APP_VERSION = 'v135';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -75,6 +75,7 @@ app.use('/api/tv', tv);
 app.use('/api/hr', hr);
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/track', require('./routes/track'));
+app.use('/api/callhippo', require('./routes/callhippo'));
 app.use('/api/icons', require('./routes/icons'));
 
 // Public demo page. Only reachable when DEMO_MODE=true; the API routes behind

@@ -147,6 +147,10 @@ const User = sequelize.define(
     gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
     gmailConnectedEmail: { type: DataTypes.STRING, allowNull: true },
     emailSignature: { type: DataTypes.TEXT, allowNull: true }, // user default signature (HTML)
+    // The agent's CallHippo login email, used to credit inbound/outbound calls
+    // reported by the CallHippo webhook to the right agent (may differ from the
+    // QHub login email).
+    callHippoEmail: { type: DataTypes.STRING(190), allowNull: true },
     gmailConnectedAt: { type: DataTypes.DATE, allowNull: true },
     gmailHistoryId: { type: DataTypes.STRING, allowNull: true }, // last synced marker
   },
@@ -643,6 +647,36 @@ const ApiUsage = sequelize.define(
     count: { type: DataTypes.INTEGER, defaultValue: 0 },
   },
   { tableName: 'api_usage', indexes: [{ name: 'idx_apiusage_provider_period', unique: true, fields: ['provider', 'period'] }] }
+);
+
+// CallHippo call logs, one row per call event received via their webhook. Linked
+// to a lead (by matching the customer number) and the agent (by CallHippo email)
+// where we can resolve them. `callSid` is unique so repeated webhook deliveries
+// for the same call are idempotent.
+const CallLog = sequelize.define(
+  'CallLog',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    callSid: { type: DataTypes.STRING(120), allowNull: true },
+    direction: DataTypes.STRING(20),   // 'incoming' | 'outgoing'
+    status: DataTypes.STRING(40),      // Completed, Missed, Rejected, No Answer, Voicemail, ...
+    fromNumber: DataTypes.STRING(40),
+    toNumber: DataTypes.STRING(40),
+    customerNumber: DataTypes.STRING(40), // the lead's number (to for outgoing, from for incoming)
+    agentEmail: DataTypes.STRING(190),
+    agentId: DataTypes.INTEGER,
+    leadId: DataTypes.INTEGER,
+    durationSeconds: { type: DataTypes.INTEGER, defaultValue: 0 },
+    startTime: DataTypes.DATE,
+    recordingUrl: { type: DataTypes.TEXT, allowNull: true },
+    countryName: DataTypes.STRING(80),
+    raw: { type: DataTypes.JSON, defaultValue: {} },
+  },
+  { tableName: 'call_logs', indexes: [
+    { name: 'idx_calllog_sid', fields: ['callSid'] },
+    { name: 'idx_calllog_lead', fields: ['leadId'] },
+    { name: 'idx_calllog_agent', fields: ['agentId'] },
+  ] }
 );
 
 // Increment the usage counter for a provider in the current month. Best-effort:
@@ -1208,7 +1242,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

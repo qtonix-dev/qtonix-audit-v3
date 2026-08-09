@@ -929,6 +929,46 @@ function ApiKeys({ settings, setSettings, say }) {
         <div className="text-sm font-bold text-[#050A1F] mb-2">ImageKit (image hosting)</div>
         <ImageKitPanel say={say} usage={ikUsage} />
       </div>
+
+      {/* CallHippo telephony — API token + the webhook URL to paste into CallHippo. */}
+      <div className="pt-2 border-t border-slate-200">
+        <div className="text-sm font-bold text-[#050A1F] mb-2">CallHippo (calls)</div>
+        <CallHippoPanel settings={settings} setSettings={setSettings} say={say} />
+      </div>
+    </div>
+  );
+}
+
+// CallHippo integration panel: stores the API token (encrypted, saved with the
+// main Save button via settings.apiKeys) and shows the webhook URL to paste into
+// CallHippo's Integrations → REST API → Webhook → Calling Activity.
+function CallHippoPanel({ settings, setSettings, say }) {
+  const [cfg, setCfg] = useState(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { api('/admin/callhippo').then(setCfg).catch(() => setCfg(null)); }, []);
+  const tokenVal = (settings.apiKeys && settings.apiKeys.callHippoToken) || '';
+  const copy = () => {
+    if (!cfg || !cfg.webhookUrl) return;
+    navigator.clipboard.writeText(cfg.webhookUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+  };
+  return (
+    <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
+      <p className="text-xs text-slate-500 mb-4">Logs every inbound and outbound call onto the matching lead's timeline. Paste the webhook URL below into CallHippo → Integrations → REST API → Webhook, enable <b>Calling Activity</b>, and save. Set each agent's CallHippo email on their user profile so calls are credited correctly.</p>
+
+      <Field label="CallHippo API token" hint="Stored encrypted. Regenerate in CallHippo if it's ever exposed.">
+        <input className={inputCls} type="password" value={tokenVal}
+          onChange={(e) => setSettings({ ...settings, apiKeys: { ...(settings.apiKeys || {}), callHippoToken: e.target.value } })}
+          placeholder="Paste API token" />
+      </Field>
+
+      <div className="mt-4">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Webhook URL (paste into CallHippo)</div>
+        <div className="flex items-center gap-2">
+          <input readOnly className={`${inputCls} font-mono text-xs bg-slate-50`} value={cfg ? cfg.webhookUrl : 'Loading…'} onFocus={(e) => e.target.select()} />
+          <Btn onClick={copy} disabled={!cfg}>{copied ? 'Copied' : 'Copy'}</Btn>
+        </div>
+        {cfg && <div className="text-[11px] text-slate-400 mt-1.5">Token status: {cfg.hasToken ? '✓ saved' : 'not saved yet'} · SMS is intentionally not logged.</div>}
+      </div>
     </div>
   );
 }
@@ -1273,7 +1313,7 @@ function Users({ me, say }) {
     if (!f.name.trim() || !f.email.trim() || !f.password) return setErr('Name, email and password are all required.');
     if (f.password.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      await api('/admin/users', { method: 'POST', body: JSON.stringify({ ...f, aliases: f.aliases.split(',').map((a) => a.trim()).filter(Boolean) }) });
+      await api('/admin/users', { method: 'POST', body: JSON.stringify({ ...f, callHippoEmail: f.callHippoEmail || null, aliases: f.aliases.split(',').map((a) => a.trim()).filter(Boolean) }) });
       setF(blank); setShow(false); load(); say && say(`User created: ${f.name}`, 'good');
     } catch (e) { setErr(e.message); }
   };
@@ -1282,7 +1322,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, joiningDate: edit.joiningDate || null, maritalStatus: edit.maritalStatus || null, anniversary: edit.anniversary || null, canViewConverted: !!edit.canViewConverted, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, joiningDate: edit.joiningDate || null, maritalStatus: edit.maritalStatus || null, anniversary: edit.anniversary || null, canViewConverted: !!edit.canViewConverted, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], callHippoEmail: edit.callHippoEmail || null, aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -1348,6 +1388,7 @@ function Users({ me, say }) {
                 <Field label="Team"><select className={inputCls} value={f.team} onChange={(e) => setF({ ...f, team: e.target.value })}>{TEAMS.map((t) => <option key={t}>{t}</option>)}</select></Field>
                 <Field label="Shift"><select className={inputCls} value={f.shift} onChange={(e) => setF({ ...f, shift: e.target.value })}>{SHIFTS.map((s) => <option key={s}>{s}</option>)}</select></Field>
                 <div className="col-span-2"><Field label="Alias names" hint="Pseudonyms used with clients — comma-separated (e.g. Nina, Nicky)"><input className={inputCls} value={f.aliases} onChange={(e) => setF({ ...f, aliases: e.target.value })} placeholder="Nina, Nicky" /></Field></div>
+                <div className="col-span-2"><Field label="CallHippo email" hint="Their CallHippo login email — used to credit calls to this agent (leave blank if same as login email)"><input className={inputCls} value={f.callHippoEmail || ''} onChange={(e) => setF({ ...f, callHippoEmail: e.target.value })} placeholder="agent@company.com" /></Field></div>
                 <TargetsAndReporting state={f} patch={(p) => setF({ ...f, ...p })} managers={managers} allUsers={users} />
               </>
             )}
@@ -1431,6 +1472,7 @@ function Users({ me, say }) {
             {edit.role !== 'leadmanager' && (
               <>
                 <div className="col-span-2"><Field label="Alias names" hint="Comma-separated"><input className={inputCls} value={Array.isArray(edit.aliases) ? edit.aliases.join(', ') : (edit.aliases || '')} onChange={(e) => setEdit({ ...edit, aliases: e.target.value })} /></Field></div>
+                <div className="col-span-2"><Field label="CallHippo email" hint="Their CallHippo login email — used to credit calls to this agent"><input className={inputCls} value={edit.callHippoEmail || ''} onChange={(e) => setEdit({ ...edit, callHippoEmail: e.target.value })} placeholder="agent@company.com" /></Field></div>
                 <TargetsAndReporting state={edit} patch={(p) => setEdit({ ...edit, ...p })} managers={managers.filter((m) => (m.id || m._id) !== (edit.id || edit._id))} allUsers={users} />
               </>
             )}

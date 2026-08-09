@@ -74,6 +74,30 @@ router.get('/imagekit/auth', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/admin/callhippo — the CallHippo integration status for the settings
+ * page: whether the API token is set, and the exact webhook URL to paste into
+ * CallHippo (with a per-install secret path token that we generate once).
+ */
+router.get('/callhippo', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    // Generate the webhook secret on first access so the URL is stable.
+    let secret = s.getKey('callHippoWebhookSecret');
+    if (!secret) {
+      secret = require('crypto').randomBytes(18).toString('hex');
+      s.apiKeys = { ...s.apiKeys, callHippoWebhookSecret: require('../models').encrypt(secret) };
+      s.changed('apiKeys', true);
+      await s.save();
+    }
+    const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    res.json({
+      hasToken: !!s.getKey('callHippoToken'),
+      webhookUrl: `${base}/api/callhippo/webhook/${secret}`,
+    });
+  } catch (e) { next(e); }
+});
+
 router.put('/settings', async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
@@ -362,7 +386,7 @@ router.post('/monthly-targets', async (req, res, next) => {
 
 router.post('/users', async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes, jobType, managerId, targets, birthday, joiningDate, maritalStatus, anniversary, canViewConverted } = req.body || {};
+    const { name, email, password, role, phone, designation, team, shift, aliases, managerScopes, jobType, managerId, targets, birthday, joiningDate, maritalStatus, anniversary, canViewConverted, callHippoEmail } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -389,6 +413,7 @@ router.post('/users', async (req, res, next) => {
       managerId: validRole === 'agent' && managerId ? Number(managerId) : null,
       targets: targets && typeof targets === 'object' ? targets : undefined,
       aliases: Array.isArray(aliases) ? aliases : (aliases ? String(aliases).split(',').map((a) => a.trim()).filter(Boolean) : []),
+      callHippoEmail: callHippoEmail ? String(callHippoEmail).toLowerCase().trim() : null,
     });
     await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.create', target: user.email, ip: req.ip });
     const out = user.toJSON(); delete out.passwordHash;
@@ -398,7 +423,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, joiningDate, maritalStatus, anniversary, canViewConverted } = req.body || {};
+    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, joiningDate, maritalStatus, anniversary, canViewConverted, callHippoEmail } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -437,6 +462,7 @@ router.put('/users/:id', async (req, res, next) => {
       user.managerId = null;
     }
     if (aliases !== undefined) user.aliases = Array.isArray(aliases) ? aliases : String(aliases).split(',').map((a) => a.trim()).filter(Boolean);
+    if (callHippoEmail !== undefined) user.callHippoEmail = callHippoEmail ? String(callHippoEmail).toLowerCase().trim() : null;
     if (active !== undefined) user.active = !!active;
     // Avatar as a data URL (base64). Guard size (~200KB of base64) to keep the
     // row small; the client downscales before upload.

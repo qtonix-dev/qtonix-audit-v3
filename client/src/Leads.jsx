@@ -3245,6 +3245,13 @@ function Timeline({ lead, onCompose }) {
               {!isNote && e.body && plainText(e.body) && (
                 <div className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-wrap">{plainText(e.body)}</div>
               )}
+              {/* CallHippo recording, when present. */}
+              {e.recordingUrl && (
+                <a href={e.recordingUrl} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#FF4500] hover:underline mt-0.5">
+                  ▶ Listen to recording
+                </a>
+              )}
               <div className={`text-[11px] mt-0.5 ${miss ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
                 {e.author || '—'} · {fmtDate(e.time)}
                 {miss && miss.overdue && ` · MISSED — ${miss.hours}h past the agreed time, still not completed`}
