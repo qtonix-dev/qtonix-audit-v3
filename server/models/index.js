@@ -860,6 +860,34 @@ const EmailOpen = sequelize.define(
 );
 EmailOpen.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Bulk email campaigns — a single "send to N leads" action. Groups the per-lead
+// sends so the history page can show sent date/time, template, counts, and a
+// per-recipient read/unread table. Recipients are stored inline (each carries
+// the lead ref, resolved email, subject/preview, the tracking token, and the
+// send status), which keeps the read/unread rollup a single-row read.
+const BulkCampaign = sequelize.define(
+  'BulkCampaign',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // agent who sent it
+    userName: { type: DataTypes.STRING(160), allowNull: true },
+    templateId: { type: DataTypes.INTEGER, allowNull: true },
+    templateName: { type: DataTypes.STRING(200), allowNull: true },
+    subject: { type: DataTypes.TEXT, allowNull: true }, // subject as edited before send
+    total: { type: DataTypes.INTEGER, defaultValue: 0 },
+    sentCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+    failedCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+    status: { type: DataTypes.STRING(20), defaultValue: 'sending' }, // sending | scheduled | sent | failed
+    scheduledFor: { type: DataTypes.DATE, allowNull: true }, // set when scheduled
+    // Per-recipient rows: [{ leadId, leadName, domain, email, subject, preview,
+    //   token, status:'sent'|'failed'|'pending', error, sentAt }]. Read/unread is
+    //   derived by joining token → EmailOpen at read time.
+    recipients: { type: DataTypes.JSON, defaultValue: [] },
+  },
+  { tableName: 'bulk_campaigns', indexes: [{ name: 'idx_bulk_user', fields: ['userId'] }, { name: 'idx_bulk_status', fields: ['status'] }] }
+);
+BulkCampaign.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
 
@@ -1242,7 +1270,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

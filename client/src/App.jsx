@@ -11,6 +11,7 @@ import SaleCelebration from './SaleCelebration.jsx';
 import MotivatorTV from './MotivatorTV.jsx';
 import AiBriefPage from './AiBriefPage.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
+import BulkEmailPage from './BulkEmailPage.jsx';
 
 /**
  * Qtonix Site Analysis — agent portal.
@@ -1634,11 +1635,17 @@ export default function App() {
     ...(user.role === 'admin'
       ? [{ id: 'email', label: 'Email', icon: 'mail', children: [
           { id: 'allemail', label: 'All Email', icon: 'mail' },
+          { id: 'bulkemail', label: 'Bulk email', icon: 'mail' },
           { id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' },
         ] }]
       : []),
-    // Manager / agent keep All Email as a top-level item (no dropdown).
-    ...((user.role === 'manager' || user.role === 'agent') ? [{ id: 'allemail', label: 'All Email', icon: 'mail' }] : []),
+    // Manager / agent get an Email dropdown with All Email + Bulk email.
+    ...((user.role === 'manager' || user.role === 'agent')
+      ? [{ id: 'email', label: 'Email', icon: 'mail', children: [
+          { id: 'allemail', label: 'All Email', icon: 'mail' },
+          { id: 'bulkemail', label: 'Bulk email', icon: 'mail' },
+        ] }]
+      : []),
     // Lead manager keeps Email Drafts (top-level, no All Email).
     ...(isLeadManager ? [{ id: 'emaildrafts', label: 'Email Drafts', icon: 'mail' }] : []),
   ];
@@ -1812,6 +1819,7 @@ export default function App() {
         {view === 'prospects' && <Leads key="prospects" user={user} initialView="prospects" />}
         {view === 'aibrief' && <AiBriefPage user={user} />}
         {view === 'allemail' && <AllEmailPage user={user} />}
+        {view === 'bulkemail' && <BulkEmailPage user={user} />}
         {view === 'emaildrafts' && (user.role === 'leadmanager' || user.role === 'admin') && (
           <EmailDraftsPage user={user}
             onOpenLead={(leadId) => { setLeadsEntry({ view: 'detail', leadId }); setView('leads'); }} />

@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const fs = require('fs');
 const crypto = require('crypto');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BusinessBrief, Report, Settings, Op, recordApiCall } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BulkCampaign, BusinessBrief, Report, Settings, Op, recordApiCall } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -1222,6 +1222,162 @@ router.post('/templates/:id/apply', requireAuth, async (req, res, next) => {
     if (!lead) return res.status(400).json({ error: 'Lead not found.' });
     const vars = await templateVars(lead);
     res.json({ subject: applyVars(tpl.subject, vars), body: applyVars(tpl.bodyHtml, vars) });
+  } catch (e) { next(e); }
+});
+
+// --- Bulk email (Mailchimp-style) -------------------------------------------
+
+// How many individual bulk emails an agent may send per calendar day.
+const BULK_DAILY_LIMIT = 50;
+
+// Count the individual bulk emails this user has already committed today (sent
+// now or scheduled). One campaign of N leads counts as N toward the cap.
+async function bulkUsedToday(userId) {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const campaigns = await BulkCampaign.findAll({
+    where: { userId, createdAt: { [Op.gte]: start } },
+  });
+  let used = 0;
+  for (const c of campaigns) used += Array.isArray(c.recipients) ? c.recipients.length : (c.total || 0);
+  return used;
+}
+
+/** GET /api/gmail/bulk/quota — remaining bulk-send allowance for today. */
+router.get('/bulk/quota', requireAuth, async (req, res, next) => {
+  try {
+    const used = await bulkUsedToday(req.user.id);
+    res.json({ limit: BULK_DAILY_LIMIT, used, remaining: Math.max(0, BULK_DAILY_LIMIT - used) });
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/gmail/bulk — send (or schedule) a bulk campaign.
+ * Body: { leadIds:[], templateId, subject, bodyHtml, sendAt?, timezone? }.
+ * Sends through the agent's connected Gmail, personalising per lead and
+ * embedding the open-tracking pixel. Enforces the 50/day cap.
+ */
+router.post('/bulk', requireAuth, async (req, res, next) => {
+  try {
+    const { leadIds, templateId, subject, bodyHtml, sendAt, timezone } = req.body || {};
+    if (!Array.isArray(leadIds) || leadIds.length === 0) return res.status(400).json({ error: 'Select at least one lead.' });
+    if (!bodyHtml || !String(bodyHtml).trim()) return res.status(400).json({ error: 'Email body is empty.' });
+
+    // Sender must have Gmail connected.
+    const me = await User.findByPk(req.user.id);
+    if (!me.gmailRefreshToken || !me.gmailConnectedEmail) return res.status(400).json({ error: 'Connect your Gmail before sending bulk email.' });
+
+    // Enforce the daily cap.
+    const used = await bulkUsedToday(req.user.id);
+    if (used + leadIds.length > BULK_DAILY_LIMIT) {
+      return res.status(400).json({ error: `Daily bulk limit is ${BULK_DAILY_LIMIT}. You've used ${used} today, so you can send to at most ${Math.max(0, BULK_DAILY_LIMIT - used)} more.` });
+    }
+
+    // Load the leads (only the agent's own, unless manager/admin).
+    const where = { id: { [Op.in]: leadIds } };
+    if (!['admin', 'manager', 'leadmanager'].includes(me.role)) where.ownerId = me.id;
+    const leads = await Lead.findAll({ where });
+    if (leads.length === 0) return res.status(400).json({ error: 'No matching leads found.' });
+
+    const tpl = templateId ? await EmailTemplate.findByPk(templateId) : null;
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const refreshToken = me.getGmailRefreshToken();
+    const isScheduled = !!sendAt;
+    const when = isScheduled ? new Date(sendAt) : null;
+
+    const recipients = [];
+    let sentCount = 0, failedCount = 0;
+
+    for (const lead of leads) {
+      const to = lead.email;
+      const vars = await templateVars(lead);
+      const subj = applyVars(subject || (tpl && tpl.subject) || '', vars);
+      const personalized = applyVars(bodyHtml, vars);
+      const preview = String(personalized).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      const base = { leadId: lead.id, leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || '(no name)', domain: lead.domain || lead.website || '', email: to || '', subject: subj, preview };
+
+      if (!to) { recipients.push({ ...base, status: 'failed', error: 'No email address', token: null }); failedCount++; continue; }
+
+      try {
+        // Tracking pixel + click rewriting, exactly like a normal send.
+        const { body: trackedBody, token } = await attachTrackingPixel({ body: personalized, leadId: lead.id, userId: me.id, toEmail: to, subject: subj });
+        if (isScheduled) {
+          // Defer: create a ScheduledEmail the existing scheduler will pick up.
+          await ScheduledEmail.create({
+            leadId: lead.id, userId: me.id, fromEmail: me.gmailConnectedEmail,
+            toEmail: to, subject: subj, bodyHtml: trackedBody,
+            timezone: safeTimezone(timezone), sendAt: when, status: 'pending',
+          });
+          recipients.push({ ...base, status: 'scheduled', token });
+          sentCount++;
+        } else {
+          await gmail.sendMessage(settings, refreshToken, me.gmailConnectedEmail, { from: me.gmailConnectedEmail, to, subject: subj, html: trackedBody });
+          recipients.push({ ...base, status: 'sent', token, sentAt: new Date().toISOString() });
+          sentCount++;
+        }
+      } catch (e) {
+        recipients.push({ ...base, status: 'failed', error: e.message, token: null });
+        failedCount++;
+      }
+    }
+
+    const campaign = await BulkCampaign.create({
+      userId: me.id, userName: me.name,
+      templateId: tpl ? tpl.id : null, templateName: tpl ? tpl.name : '(custom)',
+      subject: subject || (tpl && tpl.subject) || '',
+      total: leads.length, sentCount, failedCount,
+      status: isScheduled ? 'scheduled' : (failedCount === leads.length ? 'failed' : 'sent'),
+      scheduledFor: when, recipients,
+    });
+    res.json({ ok: true, campaign: campaign.toJSON(), sentCount, failedCount });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/bulk — list campaigns. Agents see their own; managers/admins
+ *  see all. Returns lightweight rows (no per-recipient detail). */
+router.get('/bulk', requireAuth, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const where = ['admin', 'manager', 'leadmanager'].includes(me.role) ? {} : { userId: me.id };
+    const rows = await BulkCampaign.findAll({ where, order: [['createdAt', 'DESC']], limit: 200 });
+    // Compute read counts per campaign from the recipient tokens.
+    const out = [];
+    for (const c of rows) {
+      const tokens = (c.recipients || []).map((r) => r.token).filter(Boolean);
+      let read = 0;
+      if (tokens.length) read = await EmailOpen.count({ where: { token: { [Op.in]: tokens }, opens: { [Op.gt]: 0 } } });
+      out.push({ _id: c.id, userName: c.userName, templateName: c.templateName, subject: c.subject, total: c.total, sentCount: c.sentCount, failedCount: c.failedCount, status: c.status, scheduledFor: c.scheduledFor, createdAt: c.createdAt, readCount: read, unreadCount: Math.max(0, c.sentCount - read) });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/bulk/:id — one campaign with the per-recipient table and live
+ *  read/unread status resolved from the tracking tokens. */
+router.get('/bulk/:id', requireAuth, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const c = await BulkCampaign.findByPk(req.params.id);
+    if (!c) return res.status(404).json({ error: 'Campaign not found.' });
+    if (!['admin', 'manager', 'leadmanager'].includes(me.role) && c.userId !== me.id) return res.status(403).json({ error: 'Not allowed.' });
+
+    const tokens = (c.recipients || []).map((r) => r.token).filter(Boolean);
+    const opens = tokens.length ? await EmailOpen.findAll({ where: { token: { [Op.in]: tokens } } }) : [];
+    const openByToken = {};
+    for (const o of opens) openByToken[o.token] = o;
+
+    let readCount = 0;
+    const recipients = (c.recipients || []).map((r) => {
+      const o = r.token ? openByToken[r.token] : null;
+      const read = !!(o && o.opens > 0);
+      if (read) readCount++;
+      return { leadId: r.leadId, leadName: r.leadName, domain: r.domain, email: r.email, subject: r.subject, preview: r.preview, status: r.status, error: r.error, read, firstOpenAt: o ? o.firstOpenAt : null };
+    });
+    res.json({
+      _id: c.id, userName: c.userName, templateName: c.templateName, subject: c.subject,
+      total: c.total, sentCount: c.sentCount, failedCount: c.failedCount, status: c.status,
+      scheduledFor: c.scheduledFor, createdAt: c.createdAt,
+      readCount, unreadCount: Math.max(0, c.sentCount - readCount), recipients,
+    });
   } catch (e) { next(e); }
 });
 
