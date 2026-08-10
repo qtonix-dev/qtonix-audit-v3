@@ -1132,11 +1132,30 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
   const [quota, setQuota] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [signature, setSignature] = useState('');
+  const [preview, setPreview] = useState(null); // { subject, bodyHtml, leadName, email }
+
+  const firstLead = leads.find((l) => l.email) || leads[0];
 
   useEffect(() => {
     api('/gmail/templates').then(setTemplates).catch(() => {});
     api('/gmail/bulk/quota').then(setQuota).catch(() => {});
+    // Pull the agent's default signature so we can show/append it.
+    api('/gmail/mailboxes').then((r) => setSignature((r && r.defaultSignature) || '')).catch(() => {});
   }, []);
+
+  // Live preview: whenever the subject/body/first lead changes, ask the server to
+  // render it with that lead's variables (+ signature). Debounced so typing in
+  // the editor doesn't spam the endpoint.
+  useEffect(() => {
+    if (!firstLead) { setPreview(null); return; }
+    const id = firstLead._id || firstLead.id;
+    const t = setTimeout(() => {
+      api('/gmail/bulk/preview', { method: 'POST', body: JSON.stringify({ leadId: id, subject, bodyHtml: body }) })
+        .then(setPreview).catch(() => setPreview(null));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [subject, body, firstLead && (firstLead._id || firstLead.id)]);
 
   const pickTemplate = (id) => {
     setTplId(id);
@@ -1204,6 +1223,27 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Body</label>
             <MailEditor value={body} onChange={setBody} placeholder="Email body — you can edit the template here before sending." minHeight={200} maxHeight={340} />
+            {signature ? <div className="text-[11px] text-slate-400 mt-1">Your signature will be appended automatically.</div>
+              : <div className="text-[11px] text-amber-500 mt-1">No signature set — add one under Email settings if you want it appended.</div>}
+          </div>
+
+          {/* Live preview rendered with the first selected lead's data, so the
+              agent can confirm the {{variables}} resolve before sending. */}
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+              Live preview {firstLead ? `— as ${preview ? preview.leadName : (firstLead.firstName || 'first lead')}` : ''}
+            </label>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              {preview ? (
+                <>
+                  <div className="text-[11px] text-slate-400 mb-1">To: {preview.email || '(no email)'}</div>
+                  <div className="text-sm font-bold text-[#050A1F] mb-2">{preview.subject || '(no subject)'}</div>
+                  <div className="text-sm text-slate-700 rich-text bg-white rounded-lg p-3 border border-slate-100 max-h-56 overflow-y-auto" dangerouslySetInnerHTML={{ __html: preview.bodyHtml || '<span class=\"text-slate-300\">Nothing to preview yet.</span>' }} />
+                </>
+              ) : (
+                <div className="text-xs text-slate-400">Pick a template or type a body to see the preview.</div>
+              )}
+            </div>
           </div>
 
           <div>

@@ -1250,6 +1250,27 @@ router.get('/bulk/quota', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** POST /api/gmail/bulk/preview — render subject/body with a lead's variables +
+ *  the agent's signature, so the composer can show a live preview. Body:
+ *  { leadId, subject, bodyHtml }. Does not send anything. */
+router.post('/bulk/preview', requireAuth, async (req, res, next) => {
+  try {
+    const { leadId, subject, bodyHtml } = req.body || {};
+    const lead = leadId ? await Lead.findByPk(leadId) : null;
+    if (!lead) return res.status(400).json({ error: 'Lead not found.' });
+    const me = await User.findByPk(req.user.id);
+    const vars = await templateVars(lead);
+    const signature = me.emailSignature || '';
+    const bodyWithSig = signature ? `${bodyHtml || ''}<br><br>${signature}` : (bodyHtml || '');
+    res.json({
+      subject: applyVars(subject || '', vars),
+      bodyHtml: applyVars(bodyWithSig, vars),
+      leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || '(no name)',
+      email: lead.email || '',
+    });
+  } catch (e) { next(e); }
+});
+
 /**
  * POST /api/gmail/bulk — send (or schedule) a bulk campaign.
  * Body: { leadIds:[], templateId, subject, bodyHtml, sendAt?, timezone? }.
@@ -1284,6 +1305,10 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
     const isScheduled = !!sendAt;
     const when = isScheduled ? new Date(sendAt) : null;
 
+    // The agent's default signature, appended to each email (personalised too, so
+    // a signature can reference {{...}} vars if desired).
+    const signature = me.emailSignature || '';
+
     const recipients = [];
     let sentCount = 0, failedCount = 0;
 
@@ -1291,7 +1316,8 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
       const to = lead.email;
       const vars = await templateVars(lead);
       const subj = applyVars(subject || (tpl && tpl.subject) || '', vars);
-      const personalized = applyVars(bodyHtml, vars);
+      const bodyWithSig = signature ? `${bodyHtml}<br><br>${signature}` : bodyHtml;
+      const personalized = applyVars(bodyWithSig, vars);
       const preview = String(personalized).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
       const base = { leadId: lead.id, leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || '(no name)', domain: lead.domain || lead.website || '', email: to || '', subject: subj, preview };
 
