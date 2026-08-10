@@ -218,6 +218,21 @@ router.post('/settings/test-key', async (req, res) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
       return res.json({ ok: true, detail: 'Key is valid. (Ensure "Places API (New)" is enabled.)' });
     }
+    if (service === 'callHippoToken') {
+      // Validate the CallHippo API token via a cheap read (user list). If that
+      // path 404s on the account, try the numbers list before giving up.
+      const probes = ['https://web.callhippo.com/v1/user/list', 'https://web.callhippo.com/v1/number/list'];
+      let lastErr = null;
+      for (const url of probes) {
+        try {
+          const r = await fetch(url, { headers: { apitoken: useKey, accept: 'application/json' } });
+          if (r.ok) return res.json({ ok: true, detail: 'Token is valid.' });
+          lastErr = `HTTP ${r.status}`;
+          if (r.status === 401 || r.status === 403) throw new Error(`HTTP ${r.status}: token rejected`);
+        } catch (e) { lastErr = e.message; }
+      }
+      throw new Error(lastErr || 'Could not validate token.');
+    }
     if (service === 'openai') {
       // Listing models is a cheap, read-only way to validate the key.
       const r = await fetch('https://api.openai.com/v1/models', {

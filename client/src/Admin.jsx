@@ -945,11 +945,27 @@ function ApiKeys({ settings, setSettings, say }) {
 function CallHippoPanel({ settings, setSettings, say }) {
   const [cfg, setCfg] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [test, setTest] = useState(null);
+  const [numbers, setNumbers] = useState(null);
   useEffect(() => { api('/admin/callhippo').then(setCfg).catch(() => setCfg(null)); }, []);
   const tokenVal = (settings.apiKeys && settings.apiKeys.callHippoToken) || '';
   const copy = () => {
     if (!cfg || !cfg.webhookUrl) return;
     navigator.clipboard.writeText(cfg.webhookUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+  };
+  const testToken = async () => {
+    setTest({ testing: true });
+    try {
+      const r = await api('/admin/settings/test-key', { method: 'POST', body: JSON.stringify({ service: 'callHippoToken', key: tokenVal }) });
+      setTest({ ok: !!r.ok, msg: r.ok ? (r.detail || 'Token is valid.') : (r.error || 'Failed') });
+    } catch (e) { setTest({ ok: false, msg: e.message }); }
+  };
+  const verifyNumbers = async () => {
+    setNumbers({ loading: true });
+    try {
+      const r = await api('/callhippo/numbers');
+      setNumbers({ list: r.numbers || [], liveError: r.liveError, hasToken: r.hasToken });
+    } catch (e) { setNumbers({ error: e.message }); }
   };
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
@@ -960,6 +976,10 @@ function CallHippoPanel({ settings, setSettings, say }) {
           onChange={(e) => setSettings({ ...settings, apiKeys: { ...(settings.apiKeys || {}), callHippoToken: e.target.value } })}
           placeholder="Paste API token" />
       </Field>
+      <div className="flex items-center gap-2 mt-2">
+        <Btn onClick={testToken} disabled={!tokenVal || (test && test.testing)}>{test && test.testing ? 'Testing…' : 'Test token'}</Btn>
+        {test && !test.testing && <span className={`text-[11px] font-medium ${test.ok ? 'text-green-600' : 'text-red-600'}`}>{test.ok ? '✓ ' : '✗ '}{test.msg}</span>}
+      </div>
 
       <div className="mt-4">
         <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Webhook URL (paste into CallHippo)</div>
@@ -968,6 +988,35 @@ function CallHippoPanel({ settings, setSettings, say }) {
           <Btn onClick={copy} disabled={!cfg}>{copied ? 'Copied' : 'Copy'}</Btn>
         </div>
         {cfg && <div className="text-[11px] text-slate-400 mt-1.5">Token status: {cfg.hasToken ? '✓ saved' : 'not saved yet'} · SMS is intentionally not logged.</div>}
+      </div>
+
+      {/* Verify the numbers agents will see (live from CallHippo + manual list). */}
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Outbound numbers</div>
+          <Btn onClick={verifyNumbers} disabled={numbers && numbers.loading}>{numbers && numbers.loading ? 'Checking…' : 'Verify numbers'}</Btn>
+        </div>
+        {numbers && !numbers.loading && (
+          <div className="mt-2 text-xs">
+            {numbers.error ? <span className="text-red-500">{numbers.error}</span> : (
+              <>
+                {(numbers.list || []).length === 0
+                  ? <span className="text-amber-600">No numbers found. Add them under CRM Fields → CallHippo numbers, and/or ensure the token has telephony access.</span>
+                  : (
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-2 space-y-1">
+                      {numbers.list.map((n, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-slate-600">{n.label ? `${n.label} — ` : ''}<span className="font-mono">{n.number}</span></span>
+                          <span className="text-[10px] text-slate-400">{n.source === 'callhippo' ? 'live' : 'manual'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                {numbers.liveError && <div className="text-[11px] text-slate-400 mt-1">Live fetch note: {numbers.liveError} (manual numbers still work).</div>}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1598,7 +1647,7 @@ function CrmFields({ say }) {
 
       <FxRatesEditor rates={cfg.fxRates || { USD: 1 }} currencies={cfg.dealCurrencies || ['USD']} onChange={(r) => setList('fxRates', r)} />
 
-      <LabelListEditor title="CallHippo numbers (manual)"
+      <CallHippoNumbersEditor
         items={cfg.callHippoNumbers || []} onChange={(l) => setList('callHippoNumbers', l)} />
 
       <div className="flex justify-end sticky bottom-4">
@@ -1737,6 +1786,73 @@ function FxRatesEditor({ rates, currencies, onChange }) {
 }
 
 // Editor for a list of { id, label, color } — statuses and deal stages.
+// Dedicated editor for CallHippo "from" numbers: each has a country, a label,
+// and the phone number WITH country code. Includes a "verify" that checks each
+// number is in a sane international format (so a missing country code is caught
+// before it's used to place a call).
+function CallHippoNumbersEditor({ items, onChange }) {
+  const COUNTRIES = [
+    { code: 'US', name: 'USA', dial: '+1' },
+    { code: 'GB', name: 'UK', dial: '+44' },
+    { code: 'CA', name: 'CA', dial: '+1' },
+    { code: 'AU', name: 'AU', dial: '+61' },
+    { code: 'IN', name: 'India', dial: '+91' },
+    { code: 'OT', name: 'Other', dial: '' },
+  ];
+  const [country, setCountry] = useState('US');
+  const [label, setLabel] = useState('');
+  const [number, setNumber] = useState('');
+
+  const add = () => {
+    const c = COUNTRIES.find((x) => x.code === country);
+    let num = number.trim();
+    if (!num) return;
+    // If they didn't type a +, prefix the country's dial code.
+    if (!num.startsWith('+') && c && c.dial) num = `${c.dial}${num.replace(/^0+/, '')}`;
+    onChange([...items, { id: `n_${Date.now()}`, country: c ? c.name : country, label: label.trim() || (c ? c.name : ''), value: num }]);
+    setLabel(''); setNumber('');
+  };
+  const update = (i, patch) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const remove = (i) => onChange(items.filter((_, j) => j !== i));
+
+  // A number "looks valid" if it starts with + and has 8–15 digits (E.164).
+  const isValid = (v) => /^\+\d{8,15}$/.test(String(v || '').replace(/[\s()-]/g, ''));
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">CallHippo numbers (manual)</div>
+      <p className="text-xs text-slate-500 mb-3">Your CallHippo outbound numbers per country. Enter each WITH its country code (e.g. +1 for USA, +44 for UK). These appear in the agent's "call from" picker alongside any numbers fetched live from CallHippo.</p>
+
+      <div className="space-y-2 mb-3">
+        {items.map((it, i) => {
+          const valid = isValid(it.value);
+          return (
+            <div key={it.id || i} className="flex items-center gap-2">
+              <input value={it.country || ''} onChange={(e) => update(i, { country: e.target.value })} placeholder="Country" className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input value={it.label || ''} onChange={(e) => update(i, { label: e.target.value })} placeholder="Label" className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input value={it.value || ''} onChange={(e) => update(i, { value: e.target.value })} placeholder="+1..." className={`w-40 rounded-lg border px-2 py-1.5 text-sm font-mono ${valid ? 'border-slate-300' : 'border-red-300 bg-red-50'}`} />
+              <span title={valid ? 'Looks valid' : 'Missing country code or invalid'} className={`text-sm ${valid ? 'text-green-500' : 'text-red-500'}`}>{valid ? '✓' : '⚠'}</span>
+              <button onClick={() => remove(i)} className="text-slate-400 hover:text-red-500 text-sm">✕</button>
+            </div>
+          );
+        })}
+        {items.length === 0 && <span className="text-xs text-slate-300 italic">No numbers yet.</span>}
+      </div>
+
+      <div className="flex gap-2 items-center flex-wrap">
+        <select value={country} onChange={(e) => setCountry(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm">
+          {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}{c.dial ? ` (${c.dial})` : ''}</option>)}
+        </select>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" className="w-32 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <input value={number} onChange={(e) => setNumber(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Number e.g. +1 555 123 4567"
+          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <button onClick={add} className="rounded-lg bg-[#050A1F] px-4 py-2 text-sm font-bold text-white">Add</button>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-2">⚠ marks a number that's missing a country code or isn't a valid international format — fix it before calling. Remember to click <b>Save CRM fields</b> below.</p>
+    </div>
+  );
+}
+
 function LabelListEditor({ title, items, onChange }) {
   const [label, setLabel] = useState('');
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
