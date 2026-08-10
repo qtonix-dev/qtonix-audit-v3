@@ -1255,18 +1255,27 @@ router.get('/bulk/quota', requireAuth, async (req, res, next) => {
  *  { leadId, subject, bodyHtml }. Does not send anything. */
 router.post('/bulk/preview', requireAuth, async (req, res, next) => {
   try {
-    const { leadId, subject, bodyHtml } = req.body || {};
+    const { leadId, subject, bodyHtml, signatureId } = req.body || {};
     const lead = leadId ? await Lead.findByPk(leadId) : null;
     if (!lead) return res.status(400).json({ error: 'Lead not found.' });
     const me = await User.findByPk(req.user.id);
     const vars = await templateVars(lead);
-    const signature = me.emailSignature || '';
+    let signature = '';
+    if (signatureId) {
+      const sRow = await Signature.findOne({ where: { id: signatureId, userId: me.id } });
+      if (sRow) signature = sRow.bodyHtml || '';
+    }
+    if (!signature) {
+      const def = await Signature.findOne({ where: { userId: me.id, isDefault: true } });
+      signature = (def && def.bodyHtml) || me.emailSignature || '';
+    }
     const bodyWithSig = signature ? `${bodyHtml || ''}<br><br>${signature}` : (bodyHtml || '');
     res.json({
       subject: applyVars(subject || '', vars),
       bodyHtml: applyVars(bodyWithSig, vars),
       leadName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || '(no name)',
       email: lead.email || '',
+      hasSignature: !!signature,
     });
   } catch (e) { next(e); }
 });
@@ -1279,7 +1288,7 @@ router.post('/bulk/preview', requireAuth, async (req, res, next) => {
  */
 router.post('/bulk', requireAuth, async (req, res, next) => {
   try {
-    const { leadIds, templateId, subject, bodyHtml, sendAt, timezone } = req.body || {};
+    const { leadIds, templateId, subject, bodyHtml, sendAt, timezone, signatureId } = req.body || {};
     if (!Array.isArray(leadIds) || leadIds.length === 0) return res.status(400).json({ error: 'Select at least one lead.' });
     if (!bodyHtml || !String(bodyHtml).trim()) return res.status(400).json({ error: 'Email body is empty.' });
 
@@ -1305,9 +1314,18 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
     const isScheduled = !!sendAt;
     const when = isScheduled ? new Date(sendAt) : null;
 
-    // The agent's default signature, appended to each email (personalised too, so
-    // a signature can reference {{...}} vars if desired).
-    const signature = me.emailSignature || '';
+    // The agent's signature to append. Prefer an explicitly chosen signature
+    // (signatureId), else their default Signature row, else the legacy
+    // user.emailSignature. Empty string when they have none.
+    let signature = '';
+    if (signatureId) {
+      const sRow = await Signature.findOne({ where: { id: signatureId, userId: me.id } });
+      if (sRow) signature = sRow.bodyHtml || '';
+    }
+    if (!signature) {
+      const def = await Signature.findOne({ where: { userId: me.id, isDefault: true } });
+      signature = (def && def.bodyHtml) || me.emailSignature || '';
+    }
 
     const recipients = [];
     let sentCount = 0, failedCount = 0;

@@ -1132,30 +1132,34 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
   const [quota, setQuota] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [signature, setSignature] = useState('');
-  const [preview, setPreview] = useState(null); // { subject, bodyHtml, leadName, email }
+  const [signatures, setSignatures] = useState([]);
+  const [signatureId, setSignatureId] = useState(''); // '' = default, 'none' = skip
+  const [preview, setPreview] = useState(null); // { subject, bodyHtml, leadName, email, hasSignature }
 
   const firstLead = leads.find((l) => l.email) || leads[0];
 
   useEffect(() => {
     api('/gmail/templates').then(setTemplates).catch(() => {});
     api('/gmail/bulk/quota').then(setQuota).catch(() => {});
-    // Pull the agent's default signature so we can show/append it.
-    api('/gmail/mailboxes').then((r) => setSignature((r && r.defaultSignature) || '')).catch(() => {});
+    // Signatures (same list the compose/reply popups use). Preselect the default.
+    api('/gmail/signatures').then((rows) => {
+      setSignatures(rows || []);
+      const def = (rows || []).find((r) => r.isDefault);
+      if (def) setSignatureId(String(def._id));
+    }).catch(() => {});
   }, []);
 
-  // Live preview: whenever the subject/body/first lead changes, ask the server to
-  // render it with that lead's variables (+ signature). Debounced so typing in
-  // the editor doesn't spam the endpoint.
+  // Live preview: whenever the subject/body/signature/first lead changes, ask the
+  // server to render it with that lead's variables (+ chosen signature).
   useEffect(() => {
     if (!firstLead) { setPreview(null); return; }
     const id = firstLead._id || firstLead.id;
     const t = setTimeout(() => {
-      api('/gmail/bulk/preview', { method: 'POST', body: JSON.stringify({ leadId: id, subject, bodyHtml: body }) })
+      api('/gmail/bulk/preview', { method: 'POST', body: JSON.stringify({ leadId: id, subject, bodyHtml: body, signatureId: signatureId === 'none' ? null : (signatureId || null) }) })
         .then(setPreview).catch(() => setPreview(null));
     }, 500);
     return () => clearTimeout(t);
-  }, [subject, body, firstLead && (firstLead._id || firstLead.id)]);
+  }, [subject, body, signatureId, firstLead && (firstLead._id || firstLead.id)]);
 
   const pickTemplate = (id) => {
     setTplId(id);
@@ -1176,6 +1180,7 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
         leadIds: leads.map((l) => l._id || l.id),
         templateId: tplId || null,
         subject, bodyHtml: body,
+        signatureId: signatureId === 'none' ? null : (signatureId || null),
         sendAt: mode === 'schedule' ? new Date(when).toISOString() : null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       };
@@ -1223,8 +1228,16 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Body</label>
             <MailEditor value={body} onChange={setBody} placeholder="Email body — you can edit the template here before sending." minHeight={200} maxHeight={340} />
-            {signature ? <div className="text-[11px] text-slate-400 mt-1">Your signature will be appended automatically.</div>
-              : <div className="text-[11px] text-amber-500 mt-1">No signature set — add one under Email settings if you want it appended.</div>}
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Signature</label>
+            <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={signatureId} onChange={(e) => setSignatureId(e.target.value)}>
+              {signatures.length === 0 && <option value="">(no signatures saved)</option>}
+              {signatures.map((s) => <option key={s._id} value={s._id}>{s.name}{s.isDefault ? ' (default)' : ''}</option>)}
+              <option value="none">— Don't append a signature —</option>
+            </select>
+            <div className="text-[11px] text-slate-400 mt-1">The chosen signature is appended to every email. Manage signatures in the compose/reply window.</div>
           </div>
 
           {/* Live preview rendered with the first selected lead's data, so the
@@ -2868,7 +2881,7 @@ function EmailDraftTab({ lead, user, onChange }) {
             </div>
           )}
           {canEditFirst && (
-            <button onClick={() => setModal({ kind: 'first', edit: { subject: lead.firstDraftSubject, body: lead.firstDraft } })}
+            <button onClick={() => setModal({ kind: 'first', edit: { subject: lead.firstDraftSubject, body: lead.firstDraft, attachments: lead.firstDraftAttachments || [] } })}
               className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-[#FF4500] hover:bg-orange-100">
               Edit draft
             </button>
@@ -2927,8 +2940,8 @@ function EmailDraftTab({ lead, user, onChange }) {
           busy={busy}
           initial={modal.edit || null}
           onClose={() => setModal(null)}
-          onSubmit={async (subject, body) => {
-            await save(modal.kind === 'first' ? 'first-reply' : 'reminder-draft', { draft: body, subject });
+          onSubmit={async (subject, body, attachments) => {
+            await save(modal.kind === 'first' ? 'first-reply' : 'reminder-draft', { draft: body, subject, attachments });
             setModal(null);
           }} />
       )}
@@ -2988,13 +3001,26 @@ function DraftRecord({ subject, body, doneLabel, doneAt }) {
 function DraftModal({ title, onClose, onSubmit, busy, initial }) {
   const [subject, setSubject] = useState(initial ? (initial.subject || '') : '');
   const [body, setBody] = useState(initial ? (initial.body || '') : '');
+  const [attachments, setAttachments] = useState(initial && Array.isArray(initial.attachments) ? initial.attachments : []);
+  const [uploading, setUploading] = useState(false);
   const bodyText = plainText(body);
   const isEdit = !!initial;
 
+  const onFiles = async (files) => {
+    if (!files || !files.length) return;
+    setUploading(true);
+    try {
+      const uploaded = [];
+      for (const file of Array.from(files)) {
+        const url = await uploadDraftFile(file);
+        uploaded.push({ name: file.name, url, size: file.size });
+      }
+      setAttachments((a) => [...a, ...uploaded]);
+    } catch (e) { alert(e.message || 'Upload failed.'); } finally { setUploading(false); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      {/* Fixed overall height with a scrollable body, so the Submit button is
-          always visible even when the draft is long. */}
       <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 pb-3 flex-shrink-0">
           <div className="text-base font-extrabold text-[#050A1F] mb-1">{isEdit ? `Edit ${title.toLowerCase()} draft` : `${title} draft`}</div>
@@ -3003,15 +3029,32 @@ function DraftModal({ title, onClose, onSubmit, busy, initial }) {
           <input className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
             value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject line" />
         </div>
-        {/* Scrollable email-body area (fixed height, internal vertical scroll). */}
         <div className="px-6 flex-1 min-h-0 overflow-y-auto">
           <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Email body</label>
           <div className="mt-1">
             <RichText value={body} onChange={setBody} placeholder="Write the email…" minHeight={220} />
           </div>
+
+          {/* Attachments the lead manager should send with the email. */}
+          <div className="mt-3">
+            <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Attachments</label>
+            <div className="mt-1 space-y-1">
+              {attachments.map((a, i) => (
+                <div key={i} className="flex items-center justify-between rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs">
+                  <span className="truncate text-slate-600">📎 {a.name}</span>
+                  <button onClick={() => setAttachments((list) => list.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500 ml-2">✕</button>
+                </div>
+              ))}
+            </div>
+            <label className="inline-flex items-center gap-1.5 mt-2 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 cursor-pointer hover:border-orange-400">
+              {uploading ? 'Uploading…' : '+ Attach files'}
+              <input type="file" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} disabled={uploading} />
+            </label>
+            <div className="text-[11px] text-slate-400 mt-1">The lead manager can download these to attach when sending.</div>
+          </div>
         </div>
         <div className="flex gap-2 p-6 pt-4 flex-shrink-0 border-t border-slate-100">
-          <button disabled={busy || !bodyText.trim()} onClick={() => onSubmit(subject, body)}
+          <button disabled={busy || uploading || !bodyText.trim()} onClick={() => onSubmit(subject, body, attachments)}
             className="flex-1 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
             style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
             {busy ? 'Submitting…' : isEdit ? 'Update draft' : 'Submit to lead manager'}
@@ -3021,6 +3064,27 @@ function DraftModal({ title, onClose, onSubmit, busy, initial }) {
       </div>
     </div>
   );
+}
+
+// Upload a draft attachment to ImageKit via server-issued auth; returns the URL.
+async function uploadDraftFile(file) {
+  let ik = null;
+  try { ik = await api('/auth/imagekit'); } catch { ik = null; }
+  if (!ik || !ik.configured) throw new Error('File uploads need ImageKit connected (Admin → API keys).');
+  const auth = await api('/auth/imagekit/auth');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('fileName', file.name);
+  form.append('folder', '/qtonix-crm/draft-attachments');
+  form.append('publicKey', auth.publicKey);
+  form.append('signature', auth.signature);
+  form.append('expire', auth.expire);
+  form.append('token', auth.token);
+  form.append('useUniqueFileName', 'true');
+  const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Upload failed.');
+  return data.url;
 }
 
 function FirstReplyPanel({ lead, user, onChange }) {

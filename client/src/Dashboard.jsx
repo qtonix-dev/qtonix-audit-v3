@@ -1623,6 +1623,21 @@ export function EmailDraftsPage({ user, onOpenLead }) {
                           <td colSpan={9} className="px-4 py-3">
                             {r.subject && <div className="text-[13px] font-bold text-slate-700 mb-1">Subject: {r.subject}</div>}
                             <div className="text-[13px] text-slate-600" dangerouslySetInnerHTML={{ __html: r.body }} />
+                            {Array.isArray(r.attachments) && r.attachments.length > 0 && (
+                              <div className="mt-3">
+                                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Attachments from the agent</div>
+                                <div className="space-y-1">
+                                  {r.attachments.map((a, i) => (
+                                    <a key={i} href={a.url} target="_blank" rel="noreferrer" download
+                                      className="flex items-center gap-2 rounded-lg bg-white border border-slate-200 px-2.5 py-1.5 text-xs text-blue-600 hover:bg-blue-50 max-w-md">
+                                      <span>📎</span>
+                                      <span className="truncate flex-1">{a.name}</span>
+                                      <span className="text-slate-400 font-bold">Download</span>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             {done && <div className="text-[11px] text-green-600 font-semibold mt-2">Completed {fmt(tab === 'first' ? r.readAt : r.receivedAt)}</div>}
                           </td>
                         </tr>

@@ -947,6 +947,7 @@ function CallHippoPanel({ settings, setSettings, say }) {
   const [copied, setCopied] = useState(false);
   const [test, setTest] = useState(null);
   const [numbers, setNumbers] = useState(null);
+  const [imp, setImp] = useState(null);
   useEffect(() => { api('/admin/callhippo').then(setCfg).catch(() => setCfg(null)); }, []);
   const tokenVal = (settings.apiKeys && settings.apiKeys.callHippoToken) || '';
   const copy = () => {
@@ -966,6 +967,13 @@ function CallHippoPanel({ settings, setSettings, say }) {
       const r = await api('/callhippo/numbers');
       setNumbers({ list: r.numbers || [], liveError: r.liveError, hasToken: r.hasToken, savedManualCount: r.savedManualCount, manualWithNumber: r.manualWithNumber });
     } catch (e) { setNumbers({ error: e.message }); }
+  };
+  const importContacts = async () => {
+    setImp({ loading: true });
+    try {
+      const r = await api('/callhippo/import-contacts', { method: 'POST', body: JSON.stringify({}) });
+      setImp({ imported: r.imported || 0, failed: r.failed || 0, total: r.total || 0, error: r.error });
+    } catch (e) { setImp({ error: e.message }); }
   };
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
@@ -1023,6 +1031,23 @@ function CallHippoPanel({ settings, setSettings, say }) {
                 {numbers.liveError && <div className="text-[11px] text-slate-400 mt-1">Live fetch note: {numbers.liveError} (manual numbers still work).</div>}
               </>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Import CRM leads into CallHippo as contacts, so inbound calls show the
+          lead's name in the agent's dialer. */}
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Contacts</div>
+            <div className="text-[11px] text-slate-400">Push leads (with a phone number) to CallHippo so inbound calls show the lead name.</div>
+          </div>
+          <Btn onClick={importContacts} disabled={imp && imp.loading}>{imp && imp.loading ? 'Importing…' : 'Import leads'}</Btn>
+        </div>
+        {imp && !imp.loading && (
+          <div className={`mt-2 text-xs ${imp.error ? 'text-red-500' : 'text-green-600'}`}>
+            {imp.error ? imp.error : `Imported ${imp.imported} of ${imp.total} lead(s)${imp.failed ? `, ${imp.failed} failed` : ''}.`}
           </div>
         )}
       </div>

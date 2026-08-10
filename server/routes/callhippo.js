@@ -110,6 +110,13 @@ router.post('/webhook/:secret', express.json({ limit: '256kb' }), async (req, re
     if (logRow) { await logRow.update(payload); }
     else { logRow = await CallLog.create(payload); }
 
+    // If this is a completed call credited to an agent on a known lead, flag it
+    // so the agent gets prompted to add a remark (unless one already exists).
+    const isCompleted = /complete|answered|success/i.test(String(status));
+    if (isCompleted && agent && lead && !logRow.remark) {
+      await logRow.update({ needsRemark: true });
+    }
+
     // Write / refresh a timeline entry on the lead (idempotent by callSid).
     if (lead) {
       const timeline = Array.isArray(lead.timeline) ? lead.timeline : [];
@@ -211,6 +218,45 @@ router.get('/numbers', requireAuth, async (req, res, next) => {
 });
 
 /**
+ * POST /api/callhippo/import-contacts — push CRM leads to CallHippo as contacts
+ * so inbound calls show the lead's name in the agent's dialer. Best-effort:
+ * tries the documented contact endpoint; reports how many succeeded/failed.
+ * Body: { leadIds?:[] } — omit to import all leads with a phone number.
+ */
+router.post('/import-contacts', requireAuth, async (req, res, next) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = settings && settings.getKey ? settings.getKey('callHippoToken') : null;
+    if (!token) return res.status(400).json({ error: 'No CallHippo API token configured.' });
+
+    const { leadIds } = req.body || {};
+    const where = {};
+    if (Array.isArray(leadIds) && leadIds.length) where.id = { [Op.in]: leadIds };
+    const leads = await Lead.findAll({ where, limit: 2000 });
+    const withNumber = leads.filter((l) => l.phone || l.mobile);
+    if (withNumber.length === 0) return res.json({ ok: true, imported: 0, failed: 0, total: 0, note: 'No leads with a phone number.' });
+
+    const endpoints = ['https://web.callhippo.com/v1/contact/add', 'https://web.callhippo.com/v1/contact/create', 'https://web.callhippo.com/v1/contacts'];
+    let imported = 0, failed = 0, lastErr = null;
+    for (const lead of withNumber) {
+      const name = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.website || 'Lead';
+      const number = String(lead.mobile || lead.phone).replace(/[^\d+]/g, '');
+      const payload = { name, firstName: lead.firstName || name, lastName: lead.lastName || '', number, phoneNumber: number, email: lead.email || undefined, company: lead.website || undefined };
+      let done = false;
+      for (const url of endpoints) {
+        try {
+          const r = await fetch(url, { method: 'POST', headers: { apitoken: token, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(payload) });
+          if (r.ok) { done = true; break; }
+          lastErr = `HTTP ${r.status}`;
+        } catch (e) { lastErr = e.message; }
+      }
+      if (done) imported++; else failed++;
+    }
+    res.json({ ok: imported > 0, imported, failed, total: withNumber.length, error: imported === 0 ? (lastErr || 'Contact import not available on this account.') : undefined });
+  } catch (e) { next(e); }
+});
+
+/**
  * POST /api/callhippo/call — Option B (server-initiated dial) when CallHippo has
  * enabled the telephony API for the account. Attempts the documented call
  * endpoint(s); returns { ok, callId } on success or { ok:false, needsExtension }
@@ -249,6 +295,79 @@ router.post('/call', requireAuth, async (req, res, next) => {
     }
     // Server dial not available on this account → tell client to use extension.
     res.json({ ok: false, needsExtension: true, reason: lastErr || 'Telephony API not enabled.' });
+  } catch (e) { next(e); }
+});
+
+/**
+ * GET /api/callhippo/pending-remarks — completed calls credited to the current
+ * agent that still need a remark. The client polls this and pops a remark form.
+ */
+router.get('/pending-remarks', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await CallLog.findAll({
+      where: { agentId: req.user.id, needsRemark: true },
+      order: [['createdAt', 'DESC']], limit: 5,
+    });
+    const out = [];
+    for (const r of rows) {
+      let leadName = '';
+      if (r.leadId) { const l = await Lead.findByPk(r.leadId); leadName = l ? (`${l.firstName || ''} ${l.lastName || ''}`.trim() || l.website || '') : ''; }
+      out.push({ id: r.id, leadId: r.leadId, leadName, direction: r.direction, customerNumber: r.customerNumber, durationSeconds: r.durationSeconds, recordingUrl: r.recordingUrl, at: r.startTime || r.createdAt });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+/**
+ * POST /api/callhippo/logs/:id/remark — the agent submits a remark for a
+ * completed call. Saves it on the call log, appends a note to the lead timeline,
+ * and adds a "Call Completed" activity (kind:call, mode:done) on the lead.
+ */
+router.post('/logs/:id/remark', requireAuth, async (req, res, next) => {
+  try {
+    const log = await CallLog.findByPk(req.params.id);
+    if (!log) return res.status(404).json({ error: 'Call not found.' });
+    if (log.agentId && log.agentId !== req.user.id && !['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Not your call.' });
+    }
+    const remark = String((req.body && req.body.remark) || '').trim();
+    await log.update({ remark, needsRemark: false });
+
+    if (log.leadId) {
+      const lead = await Lead.findByPk(log.leadId);
+      if (lead) {
+        const me = await User.findByPk(req.user.id);
+        const mins = Math.floor((log.durationSeconds || 0) / 60);
+        const secs = (log.durationSeconds || 0) % 60;
+        const durText = log.durationSeconds > 0 ? `${mins}m ${secs}s` : '';
+
+        // Timeline note with the remark.
+        const timeline = Array.isArray(lead.timeline) ? lead.timeline : [];
+        timeline.push({
+          type: 'call', source: 'callhippo-remark',
+          text: `Call completed${durText ? ` (${durText})` : ''}${remark ? ` — ${remark}` : ''}`,
+          author: me ? me.name : 'Agent', time: new Date().toISOString(),
+        });
+        lead.timeline = timeline; lead.changed('timeline', true);
+
+        // "Call Completed" activity (done call).
+        const activities = Array.isArray(lead.activities) ? lead.activities : [];
+        activities.push({
+          id: `call_${log.id}_${Date.now()}`,
+          kind: 'call', mode: 'done', status: 'done',
+          agenda: remark || 'Call completed',
+          title: 'Call Completed',
+          durationMin: Math.round((log.durationSeconds || 0) / 60),
+          date: new Date().toISOString().slice(0, 10),
+          time: new Date().toTimeString().slice(0, 5),
+          source: 'callhippo',
+        });
+        lead.activities = activities; lead.changed('activities', true);
+        if (lead.lastActivityAt !== undefined) lead.lastActivityAt = new Date();
+        await lead.save();
+      }
+    }
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

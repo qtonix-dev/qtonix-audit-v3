@@ -716,6 +716,7 @@ router.get('/email-drafts', requireAuth, async (req, res, next) => {
       email: l.email || '', generatedFromEmail: l.generatedFromEmail || '',
       leadCreatedAt: l.createdAt,
       subject: l.firstDraftSubject || '', body: l.firstDraft || '',
+      attachments: Array.isArray(l.firstDraftAttachments) ? l.firstDraftAttachments : [],
       submittedAt: l.firstDraftAt, read: !!l.firstDraftRead, readAt: l.firstDraftReadAt,
     }));
     const reminders = remRows.map((l) => ({
@@ -2132,6 +2133,13 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
       const isEdit = !!lead.firstDraft;
       lead.firstDraft = draft;
       lead.firstDraftSubject = String(b.subject || '').slice(0, 300);
+      // Attachments the agent wants the lead manager to send with the email.
+      if (Array.isArray(b.attachments)) {
+        lead.firstDraftAttachments = b.attachments
+          .filter((a) => a && a.url)
+          .slice(0, 10)
+          .map((a) => ({ name: String(a.name || 'file').slice(0, 200), url: String(a.url), size: Number(a.size) || 0 }));
+      }
       if (!isEdit) lead.firstDraftAt = new Date();
       // Submitting a draft stops the 24-hour clock (the owner has done their
       // part) but does NOT close the item — the lead manager still has to read

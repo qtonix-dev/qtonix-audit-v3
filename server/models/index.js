@@ -349,6 +349,9 @@ const Lead = sequelize.define(
     firstDraftSubject: { type: DataTypes.STRING(300), defaultValue: '' },
     firstDraft: { type: DataTypes.TEXT },
     firstDraftAt: { type: DataTypes.DATE },
+    // Files the agent attached to the first-reply draft for the lead manager to
+    // send with the email. Each: { name, url, size }. Stored on ImageKit.
+    firstDraftAttachments: { type: DataTypes.JSON, defaultValue: [] },
     // Whether the lead manager has read the submitted draft and sent the real
     // email. A draft can be submitted (clock stopped) but not yet read.
     firstDraftRead: { type: DataTypes.BOOLEAN, defaultValue: false },
@@ -670,6 +673,10 @@ const CallLog = sequelize.define(
     startTime: DataTypes.DATE,
     recordingUrl: { type: DataTypes.TEXT, allowNull: true },
     countryName: DataTypes.STRING(80),
+    // When a call completes and is credited to an agent, we flag it so the agent
+    // is prompted to add a remark; cleared once they submit one.
+    needsRemark: { type: DataTypes.BOOLEAN, defaultValue: false },
+    remark: { type: DataTypes.TEXT, allowNull: true },
     raw: { type: DataTypes.JSON, defaultValue: {} },
   },
   { tableName: 'call_logs', indexes: [

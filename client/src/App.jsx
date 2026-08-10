@@ -8,6 +8,7 @@ import Dashboard, { EmailDraftsPage } from './Dashboard.jsx';
 import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
 import SaleCelebration from './SaleCelebration.jsx';
+import CallRemarkPrompt from './CallRemarkPrompt.jsx';
 import MotivatorTV from './MotivatorTV.jsx';
 import AiBriefPage from './AiBriefPage.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
@@ -1654,7 +1655,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       {/* Full-screen sale-celebration popup (all users, any page). Skipped in
           demo/training mode so fake sales don't trigger it. */}
-      {!IS_DEMO && <SaleCelebration />}      {/* Unmissable reminder that none of this is real, so a training figure is
+      {!IS_DEMO && <SaleCelebration />}      {!IS_DEMO && <CallRemarkPrompt />}      {/* Unmissable reminder that none of this is real, so a training figure is
           never mistaken for a live client number. */}
       {IS_DEMO && (
         <div className="text-white text-[11px] font-bold py-1.5 px-4 flex items-center justify-center gap-3 flex-wrap"
