@@ -171,8 +171,9 @@ router.get('/numbers', requireAuth, async (req, res, next) => {
   try {
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
     const token = settings && settings.getKey ? settings.getKey('callHippoToken') : null;
-    const manual = ((settings && settings.crmConfig && settings.crmConfig.callHippoNumbers) || [])
-      .map((n) => ({ label: n.label || n.value || '', number: n.value || n.number || '', source: 'manual' }))
+    const rawManual = (settings && settings.crmConfig && settings.crmConfig.callHippoNumbers) || [];
+    const manual = rawManual
+      .map((n) => ({ label: n.label || n.country || n.value || '', number: n.value || n.number || '', source: 'manual' }))
       .filter((n) => n.number);
 
     let live = [];
@@ -205,7 +206,7 @@ router.get('/numbers', requireAuth, async (req, res, next) => {
       const key = String(n.number).replace(/\D/g, '');
       byNumber[key] = { ...(byNumber[key] || {}), ...n, number: n.number };
     }
-    res.json({ numbers: Object.values(byNumber), liveError, hasToken: !!token });
+    res.json({ numbers: Object.values(byNumber), liveError, hasToken: !!token, savedManualCount: rawManual.length, manualWithNumber: manual.length });
   } catch (e) { next(e); }
 });
 

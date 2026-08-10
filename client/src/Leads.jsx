@@ -3238,16 +3238,15 @@ function CallButton({ lead, number, onLogged }) {
     } catch (e) { setInfo(e.message); } finally { setBusy(false); }
   };
 
-  // Hand the number to the CallHippo Chrome extension. The extension listens for
-  // clicks on tel: links / elements carrying the number, so we create a hidden
-  // tel: anchor and click it. If the extension isn't installed, this opens the
-  // OS handler (harmless).
+  // The CallHippo Chrome extension scans the page for phone numbers and adds its
+  // own click-to-call icon next to them — it does NOT hook tel: links (those get
+  // grabbed by the OS and pop a "choose an application" dialog). So for the
+  // extension path we copy the number to the clipboard and surface the number as
+  // plain selectable text; the agent clicks CallHippo's own icon / pastes into
+  // the CallHippo dialer. We never invoke a tel: handler.
   const triggerExtension = () => {
-    const tel = `tel:${String(number).replace(/[^\d+]/g, '')}`;
-    const a = document.createElement('a');
-    a.href = tel; a.style.display = 'none';
-    document.body.appendChild(a); a.click();
-    setTimeout(() => document.body.removeChild(a), 500);
+    const clean = String(number).replace(/[^\d+]/g, '');
+    try { navigator.clipboard.writeText(clean); } catch { /* clipboard may be blocked */ }
   };
 
   const cancel = () => { setPhase('setup'); setInfo(''); };
@@ -3315,10 +3314,21 @@ function CallButton({ lead, number, onLogged }) {
 
           {phase === 'calling' && (
             <div className="text-center py-2">
-              <div className="text-3xl mb-1 animate-pulse">📞</div>
-              <div className="text-sm font-bold text-[#050A1F]">Calling {number}…</div>
-              {info && <div className="text-[11px] text-slate-500 mt-1">{info}</div>}
-              <div className="text-[11px] text-slate-400 mt-1">Manage the live call in the CallHippo dialer.</div>
+              {method === 'extension' ? (
+                <>
+                  <div className="text-3xl mb-1">📋</div>
+                  <div className="text-sm font-bold text-[#050A1F]">Number copied</div>
+                  <div className="text-lg font-mono font-bold text-[#050A1F] my-1 select-all">{String(number).replace(/[^\d+]/g, '')}</div>
+                  <div className="text-[11px] text-slate-500 mt-1">Open the CallHippo dialer (extension icon), pick your <b>{fromNumber || 'from'}</b> number, and paste — or click CallHippo's call icon shown next to the number above.</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-3xl mb-1 animate-pulse">📞</div>
+                  <div className="text-sm font-bold text-[#050A1F]">Calling {number}…</div>
+                  {info && <div className="text-[11px] text-slate-500 mt-1">{info}</div>}
+                  <div className="text-[11px] text-slate-400 mt-1">Manage the live call in the CallHippo dialer.</div>
+                </>
+              )}
               <div className="flex gap-2 mt-3">
                 <button onClick={cancel} className="flex-1 rounded-lg px-3 py-2 text-sm font-bold bg-red-50 text-red-600 border border-red-200">Cancel</button>
                 <button onClick={finishToNotes} className="flex-1 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Call finished →</button>

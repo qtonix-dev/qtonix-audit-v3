@@ -964,7 +964,7 @@ function CallHippoPanel({ settings, setSettings, say }) {
     setNumbers({ loading: true });
     try {
       const r = await api('/callhippo/numbers');
-      setNumbers({ list: r.numbers || [], liveError: r.liveError, hasToken: r.hasToken });
+      setNumbers({ list: r.numbers || [], liveError: r.liveError, hasToken: r.hasToken, savedManualCount: r.savedManualCount, manualWithNumber: r.manualWithNumber });
     } catch (e) { setNumbers({ error: e.message }); }
   };
   return (
@@ -1001,7 +1001,15 @@ function CallHippoPanel({ settings, setSettings, say }) {
             {numbers.error ? <span className="text-red-500">{numbers.error}</span> : (
               <>
                 {(numbers.list || []).length === 0
-                  ? <span className="text-amber-600">No numbers found. Add them under CRM Fields → CallHippo numbers, and/or ensure the token has telephony access.</span>
+                  ? (
+                    <span className="text-amber-600">
+                      {numbers.savedManualCount === 0
+                        ? 'No numbers saved yet. Add them under CRM Fields → CallHippo numbers, then click "Save CRM fields".'
+                        : numbers.manualWithNumber === 0
+                          ? `You have ${numbers.savedManualCount} saved entr${numbers.savedManualCount === 1 ? 'y' : 'ies'} but none has a phone number filled in. Re-enter them in the new CallHippo numbers editor (the old format didn't store the number) and Save.`
+                          : 'No numbers found. Add them under CRM Fields → CallHippo numbers, and/or ensure the token has telephony access.'}
+                    </span>
+                  )
                   : (
                     <div className="rounded-lg bg-slate-50 border border-slate-100 p-2 space-y-1">
                       {numbers.list.map((n, i) => (
