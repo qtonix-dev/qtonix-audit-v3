@@ -1202,8 +1202,8 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Body (HTML)</label>
-            <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm h-48 font-mono" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Email body — you can edit the template here before sending." />
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Body</label>
+            <MailEditor value={body} onChange={setBody} placeholder="Email body — you can edit the template here before sending." minHeight={200} maxHeight={340} />
           </div>
 
           <div>
@@ -3564,19 +3564,14 @@ function CallButton({ lead, number, onLogged }) {
 
 function Timeline({ lead, onCompose }) {
   const raw = Array.isArray(lead.timeline) ? lead.timeline : [];
-  if (!raw.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
+  const [page, setPage] = useState(1);
+  const PER = 10;
   const icons = { created: '✨', status: '🏷️', owner: '👤', note: '📝', task: '✅', call: '📞', deal: '💰', report: '📄', email: '✉️' };
 
-  // An activity counts as missed once it is more than an hour past the agreed
-  // time and still isn't done. We check the live activity list rather than the
-  // timeline entry, so completing a call clears the flag immediately.
   const acts = Array.isArray(lead.activities) ? lead.activities : [];
   const GRACE = 60 * 60 * 1000;
   const now = Date.now();
   const missState = (e) => {
-    // An entry is a candidate for the red "missed" highlight if it references a
-    // scheduled activity. We tolerate older entries that lack the `scheduled`
-    // flag by falling back to the linked activity's own mode.
     if (!e.activityId) return null;
     const a = acts.find((x) => x.id === e.activityId);
     if (!a) return null;
@@ -3592,18 +3587,26 @@ function Timeline({ lead, onCompose }) {
     return null;
   };
 
+  if (!raw.length) return <div className="text-slate-300 text-sm py-16 text-center">No activity yet.</div>;
+
+  // Newest first, then paginate (10 per page).
   const tl = [...raw].reverse();
+  const totalPages = Math.max(1, Math.ceil(tl.length / PER));
+  const pageItems = tl.slice((page - 1) * PER, page * PER);
+
+  // Leading emoji in an entry's text (e.g. the webhook writes "📞 Adam called…")
+  // duplicates the icon column, so strip a leading emoji when present.
+  const stripLeadEmoji = (t) => String(t || '').replace(/^\s*[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]\uFE0F?\s*/u, '');
+
   return (
     <div className="space-y-2">
-      {tl.map((e, i) => {
+      {pageItems.map((e, i) => {
         const miss = missState(e);
         const isNote = e.type === 'note';
-        // Email tracking entries (opened / not-opened / clicked / downloaded)
-        // are clickable: they jump to the Email tab and open the composer so
-        // the owner can follow up straight away.
         const isEmailEvent = e.type === 'email' && ['open', 'unopened', 'click', 'download'].includes(e.direction);
+        const text = stripLeadEmoji(e.text);
         return (
-          <div key={i}
+          <div key={(page - 1) * PER + i}
             onClick={isEmailEvent && onCompose ? () => onCompose() : undefined}
             title={isEmailEvent ? 'Open the email composer to follow up' : undefined}
             className={`flex gap-3 rounded-lg px-3 py-2 ${
@@ -3611,11 +3614,16 @@ function Timeline({ lead, onCompose }) {
             } ${isEmailEvent ? 'cursor-pointer hover:bg-orange-50' : ''}`}>
             <div className="text-lg leading-none mt-0.5">{e.type === 'email' && e.direction === 'open' ? '📖' : e.type === 'email' && e.direction === 'unopened' ? '📭' : e.type === 'email' && e.direction === 'click' ? '🔗' : e.type === 'email' && e.direction === 'download' ? '📎' : (icons[e.type] || '•')}</div>
             <div className="min-w-0 flex-1">
-              {/* Notes show what was actually written, not a generic label. */}
-              <div className={`text-sm whitespace-pre-wrap break-words ${miss ? 'text-red-800' : 'text-slate-700'}`}>
-                {isNote && <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mr-1.5">Note</span>}
-                {e.text}
-              </div>
+              {/* Notes are stored as rich HTML — render them, don't print tags.
+                  Everything else is plain text. */}
+              {isNote ? (
+                <div className={`text-sm break-words rich-text ${miss ? 'text-red-800' : 'text-slate-700'}`}>
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mr-1.5">Note</span>
+                  <span dangerouslySetInnerHTML={{ __html: e.text || '' }} />
+                </div>
+              ) : (
+                <div className={`text-sm whitespace-pre-wrap break-words ${miss ? 'text-red-800' : 'text-slate-700'}`}>{text}</div>
+              )}
               {/* Call agenda or task description, when the entry carries one. */}
               {!isNote && e.body && plainText(e.body) && (
                 <div className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-wrap">{plainText(e.body)}</div>
@@ -3636,6 +3644,16 @@ function Timeline({ lead, onCompose }) {
           </div>
         );
       })}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 pt-3">
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+            className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-500 bg-slate-100 disabled:opacity-40">← Prev</button>
+          <span className="text-xs text-slate-400">Page {page} of {totalPages}</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+            className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-500 bg-slate-100 disabled:opacity-40">Next →</button>
+        </div>
+      )}
     </div>
   );
 }
