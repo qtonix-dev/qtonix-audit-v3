@@ -17,3 +17,15 @@ body { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -a
 /* Motivator TV announcement ticker. */
 @keyframes tv-ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 .tv-ticker { display: inline-block; animation: tv-ticker-scroll 40s linear infinite; }
+
+/* CallHippo Chrome extension integration.
+   The extension injects, inside our .callhippo-number tel: link, its own call
+   icon (<img src="chrome-extension://.../callhippo.png">) and — as a sibling —
+   an SMS link (a.chClickToSms with callhippo_sms.png). We only want calling, and
+   we already show our own green call button, so:
+   - hide the injected SMS link entirely
+   - hide the extension's injected call icon image
+   The extension's click handling on the tel: anchor still works, so our styled
+   green button remains the visible call affordance. */
+a.chClickToSms { display: none !important; }
+.callhippo-number img[src^="chrome-extension://"] { display: none !important; }

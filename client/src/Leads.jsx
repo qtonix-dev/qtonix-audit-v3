@@ -3363,7 +3363,8 @@ function AiBriefModal({ lead, onClose }) {
 // mutations, nothing breaks.
 function PhoneText({ number }) {
   const ref = useRef(null);
-  const tel = String(number).replace(/[^\d+]/g, '');
+  const raw = String(number || '').trim();
+  const tel = raw.replace(/[^\d+]/g, '');
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -3377,10 +3378,13 @@ function PhoneText({ number }) {
     }, 300);
     return () => clearTimeout(t);
   }, [number]);
+  // No usable digits → render nothing so the extension has no empty tel: link to
+  // decorate with a bare country code.
+  if (!tel || !/\d/.test(tel)) return null;
   return (
-    <a ref={ref} href={`tel:${tel}`} className="callhippo-number text-inherit no-underline hover:underline" data-phone={String(number)}
+    <a ref={ref} href={`tel:${tel}`} className="callhippo-number text-inherit no-underline hover:underline" data-phone={raw}
       onClick={(e) => e.stopPropagation()}>
-      {number}
+      {raw}
     </a>
   );
 }
@@ -3431,6 +3435,22 @@ function CallButton({ lead, number, onLogged }) {
   // the CallHippo dialer. We never invoke a tel: handler.
   const triggerExtension = () => {
     const clean = String(number).replace(/[^\d+]/g, '');
+    // If CallHippo's extension has rewritten this lead's number into a dialer
+    // link (href = https://dialer.callhippo.com/dial?to=...), open it directly so
+    // the call launches through CallHippo. We match by the digits in data-phone.
+    try {
+      const links = document.querySelectorAll('a.callhippo-number');
+      for (const a of links) {
+        const dp = (a.getAttribute('data-phone') || '').replace(/[^\d+]/g, '');
+        const href = a.getAttribute('href') || '';
+        if (dp === clean && /dialer\.callhippo\.com/.test(href)) {
+          window.open(href, '_blank');
+          return;
+        }
+      }
+    } catch { /* fall through to clipboard */ }
+    // Fallback when the extension hasn't rewritten the link: copy the number so
+    // the agent can paste it into the CallHippo dialer.
     try { navigator.clipboard.writeText(clean); } catch { /* clipboard may be blocked */ }
   };
 
