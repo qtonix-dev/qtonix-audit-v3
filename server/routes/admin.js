@@ -225,7 +225,7 @@ router.post('/settings/test-key', async (req, res) => {
       let lastErr = null;
       for (const url of probes) {
         try {
-          const r = await fetch(url, { headers: { apitoken: useKey, accept: 'application/json' } });
+          const r = await fetch(url, { headers: { apiToken: useKey, apitoken: useKey, accept: 'application/json' } });
           if (r.ok) return res.json({ ok: true, detail: 'Token is valid.' });
           lastErr = `HTTP ${r.status}`;
           if (r.status === 401 || r.status === 403) throw new Error(`HTTP ${r.status}: token rejected`);

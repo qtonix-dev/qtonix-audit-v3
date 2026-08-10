@@ -948,6 +948,8 @@ function CallHippoPanel({ settings, setSettings, say }) {
   const [test, setTest] = useState(null);
   const [numbers, setNumbers] = useState(null);
   const [imp, setImp] = useState(null);
+  const [sync, setSync] = useState(null);
+  const [poll, setPoll] = useState(null);
   useEffect(() => { api('/admin/callhippo').then(setCfg).catch(() => setCfg(null)); }, []);
   const tokenVal = (settings.apiKeys && settings.apiKeys.callHippoToken) || '';
   const copy = () => {
@@ -975,6 +977,20 @@ function CallHippoPanel({ settings, setSettings, say }) {
       setImp({ imported: r.imported || 0, failed: r.failed || 0, total: r.total || 0, error: r.error });
     } catch (e) { setImp({ error: e.message }); }
   };
+  const syncUsers = async () => {
+    setSync({ loading: true });
+    try {
+      const r = await api('/callhippo/sync-users', { method: 'POST', body: JSON.stringify({}) });
+      setSync({ matched: r.matched || 0, total: r.total || 0, unmatched: r.unmatched || [] });
+    } catch (e) { setSync({ error: e.message }); }
+  };
+  const pollNow = async () => {
+    setPoll({ loading: true });
+    try {
+      const r = await api('/callhippo/poll-now', { method: 'POST', body: JSON.stringify({}) });
+      setPoll({ processed: r.processed, skipped: r.skipped, error: r.error });
+    } catch (e) { setPoll({ error: e.message }); }
+  };
   return (
     <div className="max-w-2xl bg-white rounded-xl border border-slate-200 p-5">
       <p className="text-xs text-slate-500 mb-4">Logs every inbound and outbound call onto the matching lead's timeline. Paste the webhook URL below into CallHippo → Integrations → REST API → Webhook, enable <b>Calling Activity</b>, and save. Set each agent's CallHippo email on their user profile so calls are credited correctly.</p>
@@ -983,6 +999,11 @@ function CallHippoPanel({ settings, setSettings, say }) {
         <input className={inputCls} type="password" value={tokenVal}
           onChange={(e) => setSettings({ ...settings, apiKeys: { ...(settings.apiKeys || {}), callHippoToken: e.target.value } })}
           placeholder="Paste API token" />
+      </Field>
+      <Field label="CallHippo auth token (optional)" hint="Some CallHippo API calls (dial, contact add) also need a session authToken. Paste it here if dialing/import fails without it.">
+        <input className={inputCls} type="password" value={(settings.apiKeys && settings.apiKeys.callHippoAuthToken) || ''}
+          onChange={(e) => setSettings({ ...settings, apiKeys: { ...(settings.apiKeys || {}), callHippoAuthToken: e.target.value } })}
+          placeholder="Paste auth token (optional)" />
       </Field>
       <div className="flex items-center gap-2 mt-2">
         <Btn onClick={testToken} disabled={!tokenVal || (test && test.testing)}>{test && test.testing ? 'Testing…' : 'Test token'}</Btn>
@@ -1048,6 +1069,41 @@ function CallHippoPanel({ settings, setSettings, say }) {
         {imp && !imp.loading && (
           <div className={`mt-2 text-xs ${imp.error ? 'text-red-500' : 'text-green-600'}`}>
             {imp.error ? imp.error : `Imported ${imp.imported} of ${imp.total} lead(s)${imp.failed ? `, ${imp.failed} failed` : ''}.`}
+          </div>
+        )}
+      </div>
+
+      {/* Sync CallHippo users → auto-map to QHub users (email → agentId + ext). */}
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Agent mapping</div>
+            <div className="text-[11px] text-slate-400">Match CallHippo users to QHub users by email, storing their CallHippo ID + extension so calls credit correctly.</div>
+          </div>
+          <Btn onClick={syncUsers} disabled={sync && sync.loading}>{sync && sync.loading ? 'Syncing…' : 'Sync CallHippo users'}</Btn>
+        </div>
+        {sync && !sync.loading && (
+          <div className={`mt-2 text-xs ${sync.error ? 'text-red-500' : 'text-green-600'}`}>
+            {sync.error ? sync.error : `Matched ${sync.matched} of ${sync.total} CallHippo user(s).`}
+            {sync.unmatched && sync.unmatched.length > 0 && (
+              <div className="text-amber-600 mt-1">No QHub match for: {sync.unmatched.map((u) => u.email).join(', ')}</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Poll the activity feed on demand (also runs every 2 min automatically). */}
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Call sync</div>
+            <div className="text-[11px] text-slate-400">Completed calls are pulled from CallHippo's activity feed every 2 minutes (backup for the webhook). Poll now to test.</div>
+          </div>
+          <Btn onClick={pollNow} disabled={poll && poll.loading}>{poll && poll.loading ? 'Polling…' : 'Poll now'}</Btn>
+        </div>
+        {poll && !poll.loading && (
+          <div className={`mt-2 text-xs ${poll.error ? 'text-red-500' : 'text-green-600'}`}>
+            {poll.error ? `Error: ${poll.error}` : poll.skipped ? `Skipped (${poll.skipped}).` : `Recorded ${poll.processed || 0} new call(s).`}
           </div>
         )}
       </div>

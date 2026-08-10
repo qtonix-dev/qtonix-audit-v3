@@ -151,6 +151,11 @@ const User = sequelize.define(
     // reported by the CallHippo webhook to the right agent (may differ from the
     // QHub login email).
     callHippoEmail: { type: DataTypes.STRING(190), allowNull: true },
+    // CallHippo user id (their _id) and extension, auto-filled by the "Sync
+    // CallHippo users" action. agentId lets us ring the right agent via the dial
+    // API; extension is shown for reference.
+    callHippoAgentId: { type: DataTypes.STRING(60), allowNull: true },
+    callHippoExtension: { type: DataTypes.STRING(20), allowNull: true },
     gmailConnectedAt: { type: DataTypes.DATE, allowNull: true },
     gmailHistoryId: { type: DataTypes.STRING, allowNull: true }, // last synced marker
   },
