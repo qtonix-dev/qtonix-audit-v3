@@ -1860,11 +1860,11 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Mail size={14} /></span>{lead.email || <span className="text-slate-300">—</span>}</div>
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Phone size={14} /></span>
-                {lead.mobile ? <><PhoneText number={lead.mobile} /><CallButton lead={lead} number={lead.mobile} onLogged={setLead} /></> : <span className="text-slate-300">—</span>}
+                {lead.mobile ? <PhoneText number={lead.mobile} /> : <span className="text-slate-300">—</span>}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Phone size={14} /></span>
-                {lead.phone ? <><PhoneText number={lead.phone} /><CallButton lead={lead} number={lead.phone} onLogged={setLead} /></> : <span className="text-slate-300">—</span>}
+                {lead.phone ? <PhoneText number={lead.phone} /> : <span className="text-slate-300">—</span>}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Globe size={14} /></span>
