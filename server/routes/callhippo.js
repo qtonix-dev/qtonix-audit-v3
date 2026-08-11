@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { CallLog, Lead, User, Settings, Op } = require('../models');
+const { CallLog, CallIntent, Lead, User, Settings, Op } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 
 // CallHippo's API expects the header `apiToken` (capital T). Some endpoints also
@@ -112,10 +112,12 @@ router.post('/webhook/:secret', express.json({ limit: '256kb' }), async (req, re
     const customerNorm = normNumber(rawCustomer);
     const agentEmail = String(body.email || body.agentEmail || '').toLowerCase() || null;
 
-    // Resolve the lead + agent.
+    // Resolve the lead + agent. The agent who CLICKED to call in QHub (a recent
+    // call-intent for this number) wins over the CallHippo email — this is what
+    // correctly attributes calls when several agents share one CallHippo login.
     const lead = await findLeadByNumber(customerNorm);
-    let agent = null;
-    if (agentEmail) {
+    let agent = await resolveIntentAgent(customerNorm);
+    if (!agent && agentEmail) {
       agent = await User.findOne({ where: { [Op.or]: [{ email: agentEmail }, { callHippoEmail: agentEmail }] } });
     }
 
@@ -517,8 +519,9 @@ async function recordCallFromFeed(cl) {
   const customerNorm = normNumber(rawCustomer);
   const agentEmail = String(cl.agentEmail || cl.email || (cl.agent && cl.agent.email) || '').toLowerCase() || null;
   const lead = await findLeadByNumber(customerNorm);
-  let agent = null;
-  if (agentEmail) agent = await User.findOne({ where: { [Op.or]: [{ email: agentEmail }, { callHippoEmail: agentEmail }] } });
+  // Intent (who clicked in QHub) wins over the CallHippo email for attribution.
+  let agent = await resolveIntentAgent(customerNorm);
+  if (!agent && agentEmail) agent = await User.findOne({ where: { [Op.or]: [{ email: agentEmail }, { callHippoEmail: agentEmail }] } });
   const durationSeconds = Number(cl.duration || cl.callDuration || cl.totalCallDuration || 0) || 0;
   const status = cl.status || cl.callStatus || '';
 
@@ -573,5 +576,39 @@ function startPolling() {
   if (_pollTimer.unref) _pollTimer.unref();
 }
 setTimeout(startPolling, 30 * 1000);
+
+/**
+ * POST /api/callhippo/intent — the agent signals they're about to call a number
+ * from QHub. We record who clicked, so the resulting CallHippo call is credited
+ * to THIS agent even when several agents share one CallHippo login. Body:
+ * { number, leadId? }.
+ */
+router.post('/intent', requireAuth, async (req, res, next) => {
+  try {
+    const { number, leadId } = req.body || {};
+    const numberNorm = normNumber(number);
+    if (!numberNorm) return res.status(400).json({ error: 'number required' });
+    await CallIntent.create({ userId: req.user.id, userName: req.user.name, leadId: leadId || null, numberNorm, matched: false });
+    // Keep the table small: drop intents older than 1 day.
+    await CallIntent.destroy({ where: { createdAt: { [Op.lt]: new Date(Date.now() - 24 * 60 * 60 * 1000) } } });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Given a dialled customer number, find the most recent unmatched call-intent
+// for it (within the last 30 minutes) and return the agent who clicked. This is
+// how we attribute a shared-login call to the person who actually placed it.
+async function resolveIntentAgent(customerNorm) {
+  if (!customerNorm) return null;
+  const since = new Date(Date.now() - 30 * 60 * 1000);
+  const intent = await CallIntent.findOne({
+    where: { numberNorm: customerNorm, matched: false, createdAt: { [Op.gte]: since } },
+    order: [['createdAt', 'DESC']],
+  });
+  if (!intent) return null;
+  await intent.update({ matched: true });
+  const u = await User.findByPk(intent.userId);
+  return u || null;
+}
 
 module.exports = router;

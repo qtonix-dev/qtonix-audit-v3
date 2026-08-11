@@ -1030,7 +1030,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                     </td>
                     <td className="px-4 py-3 text-slate-500">
                       <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
-                      <div className="text-[11px] text-slate-400">{(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} /> : ''}</div>
+                      <div className="text-[11px] text-slate-400">{(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : ''}</div>
                     </td>
                     {!isProspect && <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>}
                     {!isProspect && <td className="px-4 py-3"><span className="inline-block rounded-full px-2.5 py-1 text-[10px] font-bold text-white whitespace-nowrap" style={{ background: sm.color }}>{sm.label}</span></td>}
@@ -1911,13 +1911,14 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
             <SectionHead title="Basic info" section="basic" />
             <div className="space-y-2 text-sm text-slate-700">
               <div className="flex items-center gap-2"><span className="text-slate-400"><Icon.Mail size={14} /></span>{lead.email || <span className="text-slate-300">—</span>}</div>
+              {/* Show whichever number exists — mobile takes priority, else phone.
+                  If both are blank, show a single dash (no empty second row, and
+                  no stray country code from an empty tel: link). */}
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Phone size={14} /></span>
-                {lead.mobile ? <PhoneText number={lead.mobile} /> : <span className="text-slate-300">—</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400"><Icon.Phone size={14} /></span>
-                {lead.phone ? <PhoneText number={lead.phone} /> : <span className="text-slate-300">—</span>}
+                {(lead.mobile && lead.mobile.trim()) ? <PhoneText number={lead.mobile} leadId={lead._id} />
+                  : (lead.phone && lead.phone.trim()) ? <PhoneText number={lead.phone} leadId={lead._id} />
+                  : <span className="text-slate-300">—</span>}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-slate-400"><Icon.Globe size={14} /></span>
@@ -3465,7 +3466,7 @@ function AiBriefModal({ lead, onClose }) {
 // and dials through CallHippo; our separate green button remains the reliable
 // in-app path. Best-effort: if the extension strictly scans once and ignores
 // mutations, nothing breaks.
-function PhoneText({ number }) {
+function PhoneText({ number, leadId }) {
   const ref = useRef(null);
   const raw = String(number || '').trim();
   const tel = raw.replace(/[^\d+]/g, '');
@@ -3482,12 +3483,21 @@ function PhoneText({ number }) {
     }, 300);
     return () => clearTimeout(t);
   }, [number]);
-  // No usable digits → render nothing so the extension has no empty tel: link to
-  // decorate with a bare country code.
-  if (!tel || !/\d/.test(tel)) return null;
+  // Not a usable number (blank, or too few digits to be real) → render nothing,
+  // so the CallHippo extension has no empty tel: link to decorate with a bare
+  // country code like "+1".
+  const digits = tel.replace(/\D/g, '');
+  if (digits.length < 5) return null;
+  // When the agent clicks the number to call, record a call-intent so the
+  // resulting call is credited to THEM even if several agents share one
+  // CallHippo login. Fire-and-forget; never blocks the dial.
+  const onClick = (e) => {
+    e.stopPropagation();
+    try { api('/callhippo/intent', { method: 'POST', body: JSON.stringify({ number: tel, leadId }) }); } catch { /* ignore */ }
+  };
   return (
     <a ref={ref} href={`tel:${tel}`} className="callhippo-number text-inherit no-underline hover:underline" data-phone={raw}
-      onClick={(e) => e.stopPropagation()}>
+      onClick={onClick}>
       {raw}
     </a>
   );

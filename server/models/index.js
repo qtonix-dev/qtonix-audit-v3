@@ -900,6 +900,23 @@ const BulkCampaign = sequelize.define(
 );
 BulkCampaign.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Records that a specific QHub agent clicked to call a specific number at a
+// point in time. Used to attribute the resulting CallHippo call to the agent who
+// actually placed it — essential when several agents share one CallHippo login
+// (CallHippo can't tell them apart, but QHub can, from who clicked).
+const CallIntent = sequelize.define(
+  'CallIntent',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false },
+    userName: DataTypes.STRING(160),
+    leadId: DataTypes.INTEGER,
+    numberNorm: DataTypes.STRING(20), // last-10 digits of the dialled number
+    matched: { type: DataTypes.BOOLEAN, defaultValue: false }, // consumed by a call
+  },
+  { tableName: 'call_intents', indexes: [{ name: 'idx_intent_num', fields: ['numberNorm'] }, { name: 'idx_intent_user', fields: ['userId'] }] }
+);
+
 User.hasMany(Report, { foreignKey: 'agentId', as: 'reports' });
 Report.belongsTo(User, { foreignKey: 'agentId', as: 'agent' });
 
@@ -1282,7 +1299,7 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
