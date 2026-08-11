@@ -563,12 +563,15 @@ router.post('/poll-now', requireAuth, async (req, res, next) => {
 });
 
 // Background poller: every 2 minutes, pull the activity feed so completed calls
-// are recorded even if the webhook never arrives.
+// are recorded even if the webhook never arrives. The timer is unref'd so it
+// never blocks process shutdown, and the first run is delayed so it doesn't race
+// DB initialisation on boot.
 let _pollTimer = null;
 function startPolling() {
   if (_pollTimer) return;
   _pollTimer = setInterval(() => { pollActivityFeed().catch(() => {}); }, 2 * 60 * 1000);
+  if (_pollTimer.unref) _pollTimer.unref();
 }
-startPolling();
+setTimeout(startPolling, 30 * 1000);
 
 module.exports = router;
