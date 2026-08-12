@@ -76,6 +76,8 @@ Handlebars.registerHelper('severityClass', (s) =>
  * circle with no warning.
  */
 Handlebars.registerHelper('between', (v, lo, hi) => Number(v) >= Number(lo) && Number(v) <= Number(hi));
+Handlebars.registerHelper('eq', (a, b) => a === b);
+Handlebars.registerHelper('gt', (a, b) => Number(a) > Number(b));
 Handlebars.registerHelper('ringDash', (pct, radius) => {
   const c = 2 * Math.PI * Number(radius);
   const filled = (Math.max(0, Math.min(100, Number(pct) || 0)) / 100) * c;
@@ -205,6 +207,73 @@ function buildViewModel(p, opts = {}) {
 
   vm.keywordGapTop = (p.keywordGap || []).slice(0, 8);
 
+  // --- Estimated traffic VALUE ($): what the client's organic traffic would
+  //     cost in Google Ads. The single most persuasive number for an owner.
+  vm.trafficValueTotal = Math.round(p.keywordData.trafficValue || 0);
+  // Combined competitor traffic value they're capturing (the "money on the table").
+  vm.competitorValueSum = Math.round(
+    (p.competitors || []).reduce((s, c) => s + (Number(c.trafficValue) || 0), 0)
+  );
+
+  // --- Top-performing pages (which URLs actually earn the traffic).
+  vm.topPagesTop = (p.keywordData.topPages || []).slice(0, 6).map((pg) => ({
+    url: pg.url,
+    title: pg.title || pg.url,
+    keywords: Number(pg.keywords_count) || 0,
+    traffic: Number(pg.traffic_sum) || 0,
+    value: Math.round(Number(pg.price_sum) || 0),
+  }));
+
+  // --- Search-intent mix across the ranking keywords. Shows how much traffic is
+  //     buyer-intent (Commercial/Transactional) vs. informational.
+  const intentMap = { I: 0, N: 0, C: 0, T: 0, L: 0 };
+  (p.keywordData.topKeywords || []).forEach((k) => {
+    (Array.isArray(k.intents) ? k.intents : []).forEach((code) => {
+      const c = String(code).charAt(0).toUpperCase();
+      if (c in intentMap) intentMap[c] += 1;
+    });
+  });
+  const intentTotal = Object.values(intentMap).reduce((a, b) => a + b, 0) || 1;
+  const intentMeta = {
+    C: { label: 'Commercial', color: p.settings.colors.orangeDeep || '#FF4500' },
+    T: { label: 'Transactional', color: p.settings.colors.blue || '#2563EB' },
+    I: { label: 'Informational', color: '#94A3B8' },
+    N: { label: 'Navigational', color: '#CBD5E1' },
+    L: { label: 'Local', color: '#F5A524' },
+  };
+  vm.intentMix = ['C', 'T', 'I', 'N', 'L']
+    .filter((c) => intentMap[c] > 0)
+    .map((c) => ({ code: c, label: intentMeta[c].label, color: intentMeta[c].color, count: intentMap[c], pct: Math.round((intentMap[c] / intentTotal) * 100) }));
+  vm.buyerIntentPct = Math.round(((intentMap.C + intentMap.T) / intentTotal) * 100);
+
+  // --- AI Overview (SGE) citation gap — modern GEO/AEO differentiator.
+  if (p.aiOverview && (p.aiOverview.gapCount || p.aiOverview.citedCount)) {
+    vm.aiOverview = {
+      gapCount: p.aiOverview.gapCount || 0,
+      citedCount: p.aiOverview.citedCount || 0,
+      gaps: (p.aiOverview.gaps || []).slice(0, 8).map((g) => ({
+        keyword: g.keyword, volume: Number(g.volume) || 0, position: g.position || '—',
+      })),
+    };
+  }
+
+  // --- Traffic/keyword trend (last few months) — is the site growing or sliding?
+  const hist = Array.isArray(p.keywordData.history) ? p.keywordData.history : [];
+  if (hist.length >= 2) {
+    const pts = hist.slice(-6).map((h) => ({
+      label: `${String(h.month).padStart(2, '0')}/${String(h.year).slice(-2)}`,
+      traffic: Number(h.traffic_sum) || 0,
+    }));
+    const maxT = Math.max(...pts.map((x) => x.traffic), 1);
+    const first = pts[0].traffic || 0;
+    const last = pts[pts.length - 1].traffic || 0;
+    vm.trafficTrend = {
+      points: pts.map((x, i) => ({ ...x, h: Math.max(4, Math.round((x.traffic / maxT) * 100)), i })),
+      direction: last > first * 1.05 ? 'up' : last < first * 0.95 ? 'down' : 'flat',
+      changePct: first ? Math.round(((last - first) / first) * 100) : 0,
+    };
+  }
+
   // --- h2 split: black statement, then blue clause (matches reference)
   vm.summary = { ...(p.summary || {}) };
   if (!vm.summary.headA) {
@@ -261,6 +330,7 @@ function buildViewModel(p, opts = {}) {
     'Health Scorecard',
   ];
   if (p.competitors && p.competitors.length) tocItems.push('Competitor & Backlink Analysis');
+  if (p.keywordData && (p.keywordData.topPages || []).length) tocItems.push('Top Pages & Search Intent');
   if (vm.hasPageSpeed) tocItems.push('Google PageSpeed Insights');
   if (p.socialAssessment) tocItems.push('Social Media (SMO)');
   if (p.local && (p.local.gbpFound || p.local.enabled)) tocItems.push('Google Maps & Local SEO');

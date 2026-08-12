@@ -670,27 +670,21 @@ router.get('/seranking-credits', async (req, res) => {
 
     if (!key) return res.json({ configured: false, usedTotal, usedMonth, remaining: null });
 
-    let remaining = null, raw = null, error = null;
+    let remaining = null, raw = null, error = null, limit = null, expiresAt = null;
     try {
       const { SERanking } = require('../services/seranking');
       const client = new SERanking(key);
       raw = await client.getBalance();
-      // Shape varies by plan/endpoint — pick the first numeric that looks like a
-      // remaining balance across the known field names.
-      const dig = (o) => {
-        if (!o || typeof o !== 'object') return null;
-        const cand = o.balance ?? o.credits ?? o.available ?? o.remaining
-          ?? o.credits_left ?? o.credit_limit ?? (o.subscription && (o.subscription.balance ?? o.subscription.credits))
-          ?? (o.data && dig(o.data));
-        return Number.isFinite(Number(cand)) ? Number(cand) : null;
-      };
-      remaining = dig(raw);
+      // getBalance now normalises the /account/subscription response.
+      remaining = raw && raw.remaining != null ? raw.remaining : null;
+      limit = raw && raw.limit != null ? raw.limit : null;
+      expiresAt = raw && raw.expiresAt ? raw.expiresAt : null;
     } catch (e) {
       // Balance is a nice-to-have; our self-tracked usage below is the reliable
       // figure, so a read failure is a soft note rather than a hard error.
       error = e.message;
     }
-    res.json({ configured: true, remaining, usedTotal, usedMonth, error });
+    res.json({ configured: true, remaining, limit, expiresAt, usedTotal, usedMonth, error });
   } catch (e) {
     res.json({ configured: false, remaining: null, usedTotal: 0, usedMonth: 0, error: e.message });
   }
@@ -710,11 +704,13 @@ router.get('/seranking-diagnose', async (req, res) => {
     if (!key) return res.json({ configured: false, error: 'No SE Ranking API key configured.' });
 
     const domain = (req.query.domain || 'seranking.com').toString().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
-    const source = (req.query.source || 'us').toString();
+    const rawSource = (req.query.source || 'us').toString();
+    const { normaliseSource } = require('../services/seRegions');
+    const source = normaliseSource(rawSource, 'us');
     const { SERanking } = require('../services/seranking');
     const se = new SERanking(key);
 
-    const out = { configured: true, domain, source, keyPreview: `${key.slice(0, 4)}…${key.slice(-3)}`, steps: {} };
+    const out = { configured: true, domain, source, requestedSource: rawSource, keyPreview: `${key.slice(0, 4)}…${key.slice(-3)}`, steps: {} };
 
     const attempt = async (label, fn) => {
       try {

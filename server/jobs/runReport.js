@@ -85,7 +85,12 @@ async function runReport(reportId) {
 
   const se = serKey ? new SERanking(serKey) : null;
   const domain = toDomain(report.website);
-  const source = report.country || settings.defaultCountry || 'us';
+  // Resolve the stored country (may be a full name like "India", or a wrong
+  // code like "gb") to a valid SE Ranking regional database code. This fixes
+  // the "Invalid source" HTTP 400 that was zeroing out every report.
+  const { normaliseSource } = require('../services/seRegions');
+  const source = normaliseSource(report.country || settings.defaultCountry, 'us');
+  const isWorldwide = source === 'worldwide';
   const wantsLocal = report.services.includes('Local SEO');
   const wantsSmo = report.services.includes('SMO');
   const wantsAi = report.services.some((s) => ['AI SEO', 'GEO', 'AEO'].includes(s));
@@ -113,12 +118,16 @@ async function runReport(reportId) {
     // stored on the previous run (see the safe() wrapper), so no credits are
     // spent; the crawl and Claude AI steps still run fresh.
     await setProgress(reportId, 22, STEPS[1]);
+    // Only the overview has a worldwide endpoint. History/keywords/pages/etc.
+    // require a regional database, so for a worldwide report we pull those from
+    // the US database as a representative sample.
+    const regionalSource = isWorldwide ? 'us' : source;
     const [overview, history, keywords, striking, pages] = await Promise.all([
       safeSE('overview', () => se.getDomainOverview(domain, source)),
-      safeSE('history', () => se.getDomainHistory(domain, source)),
-      safeSE('keywords', () => se.getDomainKeywords(domain, source, { limit: 200 }), []),
-      safeSE('striking', () => se.getStrikingDistance(domain, source, 30), []),
-      safeSE('pages', () => se.getDomainPages(domain, source, 20), []),
+      safeSE('history', () => se.getDomainHistory(domain, regionalSource)),
+      safeSE('keywords', () => se.getDomainKeywords(domain, regionalSource, { limit: 200 }), []),
+      safeSE('striking', () => se.getStrikingDistance(domain, regionalSource, 30), []),
+      safeSE('pages', () => se.getDomainPages(domain, regionalSource, 20), []),
     ]);
     if (!refreshing) credits += 500;
 
@@ -199,7 +208,7 @@ async function runReport(reportId) {
 
     // -- 4. Competitors. The highest-converting page in the report.
     await setProgress(reportId, 52, STEPS[3]);
-    const compRaw = await safeSE('competitors', () => se.getCompetitors(domain, source), []);
+    const compRaw = await safeSE('competitors', () => se.getCompetitors(domain, regionalSource), []);
     if (!refreshing) credits += 100;
 
     const topComps = (Array.isArray(compRaw) ? compRaw : [])
@@ -229,7 +238,7 @@ async function runReport(reportId) {
     // Keyword gap vs the single strongest rival.
     let keywordGap = [];
     if (competitors.length) {
-      const gap = await safeSE('gap', () => se.getKeywordGap(domain, competitors[0].domain, source, 30), []);
+      const gap = await safeSE('gap', () => se.getKeywordGap(domain, competitors[0].domain, regionalSource, 30), []);
       keywordGap = Array.isArray(gap) ? gap : [];
       if (!refreshing) credits += 100;
     }
@@ -237,11 +246,12 @@ async function runReport(reportId) {
     // -- 5. AI visibility. Runs when any AI service is selected — this is the hook.
     await setProgress(reportId, 66, STEPS[4]);
     let aiData = null;
+    let aiOverviewData = null;
     if (wantsAi || true) {
       // Always run it: it's the strongest differentiator even on a plain SEO pitch.
       const [aiGaps, aiWins] = await Promise.all([
-        safeSE('aiGaps', () => se.getAiOverviewGaps(domain, source, 30), []),
-        safeSE('aiWins', () => se.getAiOverviewWins(domain, source, 30), []),
+        safeSE('aiGaps', () => se.getAiOverviewGaps(domain, regionalSource, 30), []),
+        safeSE('aiWins', () => se.getAiOverviewWins(domain, regionalSource, 30), []),
       ]);
       if (!refreshing) credits += 200;
 
@@ -251,6 +261,7 @@ async function runReport(reportId) {
         gaps: (Array.isArray(aiGaps) ? aiGaps : []).slice(0, 10),
         wins: (Array.isArray(aiWins) ? aiWins : []).slice(0, 10),
       };
+      aiOverviewData = aiOverview;
 
       aiData = await safe(
         'aiVisibility',
@@ -484,6 +495,7 @@ async function runReport(reportId) {
       },
       crawl,
       keywordData,
+      aiOverview: aiOverviewData,
       // Raw SE Ranking responses captured this run (or replayed from a prior
       // run in refresh mode), so a future refresh can reuse them without
       // spending credits.

@@ -32,6 +32,38 @@ class RateLimiter {
 
 const limiter = new RateLimiter(4);
 
+// The worldwide overview returns organic/adv as ARRAYS whose first element is
+// the aggregate, with the top-position counts nested under positions_tops.
+// Flatten to the same shape as the regional /domain/overview/db endpoint so
+// downstream code (which reads organic.top1_5 etc.) works unchanged.
+function normaliseWorldwide(ww) {
+  const flatten = (arr) => {
+    const o = (Array.isArray(arr) ? arr[0] : arr) || {};
+    const tops = o.positions_tops || {};
+    return {
+      base_domain: o.base_domain || o.target || '',
+      keywords_count: o.keywords_count || 0,
+      traffic_sum: o.traffic_sum || 0,
+      price_sum: o.price_sum || 0,
+      keywords_new_count: o.positions_new_count || 0,
+      keywords_up_count: o.positions_up_count || 0,
+      keywords_down_count: o.positions_down_count || 0,
+      keywords_lost_count: o.positions_lost_count || 0,
+      keywords_equal_count: o.positions_equal_count || 0,
+      top1_5: tops.top1_5 || 0,
+      top6_10: tops.top6_10 || 0,
+      top11_20: tops.top11_20 || 0,
+      top21_50: tops.top21_50 || 0,
+      top51_100: tops.top51_100 || 0,
+      top1_2: tops.top1_2 || 0,
+      top3_5: tops.top3_5 || 0,
+      top6_8: tops.top6_8 || 0,
+      top9_11: tops.top9_11 || 0,
+    };
+  };
+  return { organic: flatten(ww && ww.organic), adv: flatten(ww && ww.adv) };
+}
+
 class SERankingError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -102,27 +134,37 @@ class SERanking {
 
   /**
    * Account balance / remaining credits. Free (does not consume credits).
-   * SE Ranking exposes this on the research-API balance endpoint; shape varies
-   * a little between plans so the caller normalises defensively.
+   * The correct endpoint is GET /v1/account/subscription, which returns
+   * { subscription_info: { status, units_limit, units_left, expiration_date } }.
+   * We normalise to a simple shape the admin UI can display.
    */
   async getBalance() {
-    const candidates = ['/balance', '/account/subscription', '/account/balance', '/research/balance'];
-    let lastErr = null;
-    for (const path of candidates) {
-      try {
-        const body = await this.request(path);
-        if (body && typeof body === 'object') return body;
-      } catch (e) {
-        lastErr = e;
-        // 401/403/404 on one path → try the next candidate.
-      }
-    }
-    if (lastErr) throw lastErr;
-    return null;
+    const body = await this.request('/account/subscription');
+    const info = (body && body.subscription_info) || {};
+    return {
+      status: info.status || null,
+      limit: info.units_limit != null ? Number(info.units_limit) : null,
+      remaining: info.units_left != null ? Number(info.units_left) : null,
+      used: info.units_limit != null && info.units_left != null
+        ? Number(info.units_limit) - Number(info.units_left) : null,
+      expiresAt: info.expiraton_date || info.expiration_date || null,
+      raw: body,
+    };
   }
 
-  /** Domain overview for one regional DB. Cost: 100 credits. */
-  getDomainOverview(domain, source = 'us') {
+  /**
+   * Domain overview. Cost: 100 credits.
+   * `source` is an ISO alpha-2 regional database code (e.g. 'us', 'in', 'uk').
+   * The special value 'worldwide' routes to the aggregate endpoint, whose
+   * response shape differs (organic is an array, tops are nested under
+   * positions_tops). We normalise both to a flat { organic:{...}, adv:{...} }
+   * so the rest of the pipeline is shape-agnostic.
+   */
+  async getDomainOverview(domain, source = 'us') {
+    if (String(source).toLowerCase() === 'worldwide') {
+      const ww = await this.getWorldwideOverview(domain);
+      return normaliseWorldwide(ww);
+    }
     return this.request('/domain/overview/db', { source, domain, with_subdomains: 1 });
   }
 

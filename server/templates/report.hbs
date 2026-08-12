@@ -351,6 +351,37 @@ body{ background:#525659; margin:0; padding:24px 0; }
   <h2>The demand is real and measurable. <span class="b">You're simply not in the results yet.</span></h2>
   <p class="lead">{{visibility.intro}}</p>
 
+  {{#if trafficValueTotal}}
+  <div class="stats" style="margin:4px 0 18px">
+    <div class="stat"><div class="stat-v" style="color:var(--blue)">{{formatNum keywordData.traffic}}</div>
+      <div class="stat-l">Estimated organic visits per month</div></div>
+    <div class="stat"><div class="stat-v" style="color:var(--accent-deep)">{{currency trafficValueTotal}}</div>
+      <div class="stat-l">What that traffic would cost in Google Ads each month</div></div>
+    {{#if competitorValueSum}}
+    <div class="stat"><div class="stat-v ink">{{currency competitorValueSum}}</div>
+      <div class="stat-l">Traffic value your competitors capture each month</div></div>
+    {{/if}}
+  </div>
+  {{/if}}
+
+  {{#if trafficTrend}}
+  <h3>Your organic traffic over the last {{trafficTrend.points.length}} months</h3>
+  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}.
+    {{#if (eq trafficTrend.direction "down")}}Trending <strong style="color:var(--red)">down {{trafficTrend.changePct}}%</strong> — visibility is slipping and needs attention.{{/if}}
+    {{#if (eq trafficTrend.direction "up")}}Trending <strong style="color:#16A34A">up {{trafficTrend.changePct}}%</strong> — there's momentum to build on.{{/if}}
+    {{#if (eq trafficTrend.direction "flat")}}Essentially <strong>flat</strong> — steady, but not growing without action.{{/if}}
+  </p>
+  <div style="display:flex;align-items:flex-end;gap:10px;height:120px;padding:8px 4px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px">
+    {{#each trafficTrend.points}}
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+      <div style="font-size:7pt;color:var(--muted);margin-bottom:3px">{{formatNum this.traffic}}</div>
+      <div style="width:70%;height:{{this.h}}%;background:linear-gradient(180deg,var(--blue),var(--accent));border-radius:3px 3px 0 0"></div>
+      <div style="font-size:7pt;color:var(--muted);margin-top:4px">{{this.label}}</div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
   <h3>Estimated monthly organic traffic — you vs. competitors</h3>
   <p class="note" style="margin:0 0 12px">Source: SE Ranking, {{formatMonth report.date}}. Log scale. Your bar in blue.</p>
   {{#each trafficBars}}
@@ -640,6 +671,47 @@ body{ background:#525659; margin:0; padding:24px 0; }
   <p class="note">This is a sample. The full gap analysis contains {{keywordGap.length}}+ terms your competitors own and you don't.</p>
   {{/if}}
 </div>
+
+{{#if topPagesTop.length}}
+<!-- ================= TOP PAGES & SEARCH INTENT ================= -->
+<div class="page page-break-before">
+  <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">05b</span><span class="sec-rule"></span><span class="sec-name">TOP PAGES &amp; SEARCH INTENT</span></div>
+  <h2>A handful of pages do most of the work. <span class="b">Here's what earns your traffic — and who it's reaching.</span></h2>
+  <p class="lead">These are the pages Google already rewards. Knowing them tells us where to defend, where to expand, and which page types to build next.</p>
+
+  <h3>Your best-performing pages</h3>
+  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}. Ranked by estimated monthly traffic.</p>
+  <table>
+    <thead><tr><th style="width:46%">Page</th><th>Keywords</th><th>Traffic/mo</th><th>Value/mo</th></tr></thead>
+    <tbody>
+      {{#each topPagesTop}}
+      <tr><td class="tb" style="word-break:break-all;font-size:8pt">{{this.url}}</td>
+        <td>{{formatNum this.keywords}}</td>
+        <td>{{formatNum this.traffic}}</td>
+        <td class="tb">{{currency this.value}}</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  {{#if intentMix.length}}
+  <h3 style="margin-top:22px">What your visitors are actually looking for</h3>
+  <p class="note" style="margin:0 0 12px">Buyer-intent (commercial + transactional) searches are the ones that turn into enquiries. Yours: <strong style="color:var(--accent-deep)">{{buyerIntentPct}}%</strong> of ranking keywords.</p>
+  <div style="display:flex;height:26px;border-radius:6px;overflow:hidden;margin-bottom:10px">
+    {{#each intentMix}}
+    <div style="width:{{this.pct}}%;background:{{this.color}}"></div>
+    {{/each}}
+  </div>
+  <div style="font-size:8.5pt">
+    {{#each intentMix}}
+    <span style="margin-right:16px;white-space:nowrap"><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:{{this.color}};vertical-align:middle;margin-right:5px"></span>{{this.label}} · {{this.pct}}%</span>
+    {{/each}}
+  </div>
+  {{#if buyerIntentPct}}
+  <div class="nb" style="margin-top:14px"><strong>Why this matters.</strong> If most of your visibility is informational, you're getting browsers, not buyers. We prioritise commercial and transactional pages so more of your traffic is people ready to act.</div>
+  {{/if}}
+  {{/if}}
+</div>
+{{/if}}
 {{/if}}
 
 <!-- ================= 06 AI SEARCH VISIBILITY ================= -->
@@ -680,6 +752,21 @@ body{ background:#525659; margin:0; padding:24px 0; }
   </table>
 
   <div class="quote accent"><span class="qd"></span><p>{{aiVerdict}}</p></div>
+
+  {{#if aiOverview.gaps.length}}
+  <h3>Searches where Google's AI Overview answers — without citing you</h3>
+  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}. Google shows an AI-generated answer for these terms and cites other sites, not yours. Each is a chance to become the cited source.</p>
+  <table>
+    <thead><tr><th style="width:56%">Search</th><th>Searches/mo</th><th>Your position</th></tr></thead>
+    <tbody>
+      {{#each aiOverview.gaps}}
+      <tr><td class="tb">{{this.keyword}}</td><td>{{formatNum this.volume}}</td><td>{{this.position}}</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+  <p class="note">{{#if aiOverview.citedCount}}You're already cited on {{aiOverview.citedCount}} AI Overview{{#if (gt aiOverview.citedCount 1)}}s{{/if}} — proof it's achievable. {{/if}}We optimise your content so AI answers name you as the source, not just your competitors.</p>
+  {{/if}}
+
   <p class="note">{{ai.methodology}} No one can guarantee an AI platform will mention or recommend any business. These optimisations significantly improve the likelihood that {{report.businessName}} is understood, trusted and surfaced by modern search and AI-powered experiences.</p>
 </div>
 {{/if}}

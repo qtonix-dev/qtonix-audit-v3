@@ -40,6 +40,7 @@ const REQUESTS = ['Wants pricing', 'Wants a call', 'Needs approval', 'Comparing 
 const crmInput = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 
 const COUNTRIES = [
+  { code: 'worldwide', name: '🌐 Worldwide (all regions)' },
   { code: 'us', name: 'United States' }, { code: 'uk', name: 'United Kingdom' },
   { code: 'in', name: 'India' }, { code: 'au', name: 'Australia' },
   { code: 'ca', name: 'Canada' }, { code: 'my', name: 'Malaysia' },
@@ -58,6 +59,15 @@ const COUNTRIES = [
   { code: 'id', name: 'Indonesia' }, { code: 'ph', name: 'Philippines' },
   { code: 'th', name: 'Thailand' }, { code: 'vn', name: 'Vietnam' },
   { code: 'sa', name: 'Saudi Arabia' }, { code: 'qa', name: 'Qatar' },
+  { code: 'hk', name: 'Hong Kong' }, { code: 'tw', name: 'Taiwan' },
+  { code: 'tr', name: 'Türkiye' }, { code: 'gr', name: 'Greece' },
+  { code: 'cz', name: 'Czechia' }, { code: 'ro', name: 'Romania' },
+  { code: 'hu', name: 'Hungary' }, { code: 'il', name: 'Israel' },
+  { code: 'eg', name: 'Egypt' }, { code: 'ng', name: 'Nigeria' },
+  { code: 'ke', name: 'Kenya' }, { code: 'pk', name: 'Pakistan' },
+  { code: 'bd', name: 'Bangladesh' }, { code: 'lk', name: 'Sri Lanka' },
+  { code: 'cl', name: 'Chile' }, { code: 'co', name: 'Colombia' },
+  { code: 'pe', name: 'Peru' }, { code: 'ua', name: 'Ukraine' },
 ];
 
 /**
@@ -424,6 +434,7 @@ function NewReport({ user, initialLeadId, onQueued, onBack }) {
             >
               {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
             </select>
+            <p className="text-[11px] text-slate-400 mt-1">The country whose Google data we pull. Pick <b>Worldwide</b> if the business targets multiple countries or you're unsure.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">
