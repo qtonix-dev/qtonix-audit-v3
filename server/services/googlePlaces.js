@@ -113,15 +113,28 @@ class GooglePlaces {
     }
 
     const queries = [];
+    // Domain-first: the website is the most reliable identifier when the
+    // business name on the GBP listing differs from the name we were given
+    // (e.g. a trading name vs. the registered name). Search the bare domain and
+    // the host early, not just as a last resort.
+    if (bare) queries.push(bare);
     for (const n of nameVariants) {
       if (location) queries.push(`${n} ${location}`);
       queries.push(n);
     }
-    if (bare) queries.push(bare); // domain-only search as a last resort
+    if (host && host !== bare) queries.push(host);
 
     // Normalised comparison key: lowercase alphanumerics only, suffix removed.
     const key = (s) => stripSuffix(s).toLowerCase().replace(/[^a-z0-9]/g, '');
     const targetKeys = nameVariants.map(key).filter(Boolean);
+
+    // Compare two hosts ignoring www. and letting one be a subdomain of the
+    // other, so "shop.example.com" still matches "example.com".
+    const hostMatches = (a, b) => {
+      if (!a || !b) return false;
+      const na = a.replace(/^www\./, ''); const nb = b.replace(/^www\./, '');
+      return na === nb || na.endsWith('.' + nb) || nb.endsWith('.' + na);
+    };
 
     let firstAny = null;
     for (const textQuery of queries) {
@@ -130,7 +143,7 @@ class GooglePlaces {
       try {
         data = await this._post(
           SEARCH_URL,
-          { textQuery, maxResultCount: 5 },
+          { textQuery, maxResultCount: 8 },
           'places.id,places.displayName,places.websiteUri,places.formattedAddress'
         );
       } catch { continue; }
@@ -139,9 +152,11 @@ class GooglePlaces {
       if (!candidates.length) continue;
       if (!firstAny) firstAny = candidates[0];
 
-      // 1) Strongest signal: the listing's website host matches the audited site.
+      // 1) Strongest signal: the listing's website host matches the audited
+      // site (now tolerant of www/subdomain differences). This is what makes a
+      // name mismatch not matter — if the GBP lists their website, we find it.
       if (host) {
-        const matched = candidates.find((p) => safeHost(p.websiteUri) === host);
+        const matched = candidates.find((p) => hostMatches(safeHost(p.websiteUri), host));
         if (matched) return matched.id;
       }
 

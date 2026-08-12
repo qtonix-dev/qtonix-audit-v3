@@ -4672,11 +4672,25 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
 // target market and (optional) location — pre-filled from the lead where known.
 const REPORT_SERVICES = ['SEO', 'SMO', 'AI SEO', 'GEO', 'AEO', 'Local SEO'];
 const REPORT_MARKETS = [
-  { code: 'us', name: 'United States' }, { code: 'gb', name: 'United Kingdom' },
+  { code: 'worldwide', name: '🌐 Worldwide (all regions)' },
+  { code: 'us', name: 'United States' }, { code: 'uk', name: 'United Kingdom' },
   { code: 'ca', name: 'Canada' }, { code: 'au', name: 'Australia' }, { code: 'in', name: 'India' },
   { code: 'ae', name: 'United Arab Emirates' }, { code: 'sg', name: 'Singapore' },
   { code: 'my', name: 'Malaysia' }, { code: 'de', name: 'Germany' }, { code: 'fr', name: 'France' },
   { code: 'nz', name: 'New Zealand' }, { code: 'za', name: 'South Africa' },
+  { code: 'ie', name: 'Ireland' }, { code: 'es', name: 'Spain' }, { code: 'it', name: 'Italy' },
+  { code: 'nl', name: 'Netherlands' }, { code: 'be', name: 'Belgium' }, { code: 'ch', name: 'Switzerland' },
+  { code: 'at', name: 'Austria' }, { code: 'se', name: 'Sweden' }, { code: 'no', name: 'Norway' },
+  { code: 'dk', name: 'Denmark' }, { code: 'fi', name: 'Finland' }, { code: 'pt', name: 'Portugal' },
+  { code: 'pl', name: 'Poland' }, { code: 'br', name: 'Brazil' }, { code: 'mx', name: 'Mexico' },
+  { code: 'ar', name: 'Argentina' }, { code: 'jp', name: 'Japan' }, { code: 'kr', name: 'South Korea' },
+  { code: 'id', name: 'Indonesia' }, { code: 'ph', name: 'Philippines' }, { code: 'th', name: 'Thailand' },
+  { code: 'vn', name: 'Vietnam' }, { code: 'sa', name: 'Saudi Arabia' }, { code: 'qa', name: 'Qatar' },
+  { code: 'hk', name: 'Hong Kong' }, { code: 'tw', name: 'Taiwan' }, { code: 'tr', name: 'Türkiye' },
+  { code: 'gr', name: 'Greece' }, { code: 'cz', name: 'Czechia' }, { code: 'ro', name: 'Romania' },
+  { code: 'hu', name: 'Hungary' }, { code: 'il', name: 'Israel' }, { code: 'eg', name: 'Egypt' },
+  { code: 'ng', name: 'Nigeria' }, { code: 'ke', name: 'Kenya' }, { code: 'pk', name: 'Pakistan' },
+  { code: 'bd', name: 'Bangladesh' }, { code: 'lk', name: 'Sri Lanka' }, { code: 'ua', name: 'Ukraine' },
 ];
 
 function RunReportModal({ lead, onClose, onQueued }) {
@@ -4752,6 +4766,7 @@ function RunReportModal({ lead, onClose, onQueued }) {
               <select className={inp} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}>
                 {REPORT_MARKETS.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
+              <p className="text-[11px] text-slate-400 mt-1">Pick <b>Worldwide</b> if the business targets multiple countries or you're unsure.</p>
             </div>
             <div>
               <label className={lab}>Location <span className="font-normal text-slate-400">(optional)</span></label>

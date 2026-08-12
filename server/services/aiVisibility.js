@@ -246,6 +246,8 @@ async function runAiVisibility(apiKey, ctx) {
     (readiness.filter((c) => c.pass).length / readiness.length) * 100
   );
 
+  const aiBreakdown = scoreAiDimensions(crawl || {});
+
   return {
     promptsTested: valid.length,
     mentions,
@@ -254,11 +256,119 @@ async function runAiVisibility(apiKey, ctx) {
     results,
     readiness,
     readinessScore,
+    // The five business-facing AI-SEO dimensions with score + impact + fix.
+    aiBreakdown,
     // Real Google AI Overview data from SE Ranking, kept distinct from the probe.
     aiOverview: aiOverview || null,
     methodology:
       'Assistant recall measured by asking Claude (Sonnet 4.6) buyer-intent questions with no brand hint. AI Overview data sourced from live Google SERP tracking.',
   };
+}
+
+/**
+ * The five business-facing dimensions that decide whether an AI assistant can
+ * understand, trust and quote a site. Each is scored 0-100 from real crawl
+ * signals, with a plain-English "what's missing", why it costs the business,
+ * and how to fix it — so the report can show a customer exactly where they
+ * stand and what to do. Deterministic (no LLM), so it's consistent and free.
+ */
+function scoreAiDimensions(crawl) {
+  const schemaTypes = crawl.schemaTypes || [];
+  const words = crawl.wordCount || 0;
+  const social = crawl.socialNetworks || Object.keys(crawl.social || {});
+  const has = (re) => schemaTypes.some((t) => re.test(String(t)));
+
+  const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
+
+  // 1) Content depth & answerability
+  let depth = 0;
+  if (words >= 1500) depth += 45; else if (words >= 800) depth += 32; else if (words >= 400) depth += 20; else depth += 8;
+  if ((crawl.h2s || []).length >= 4) depth += 20; else if ((crawl.h2s || []).length >= 2) depth += 10;
+  if (has(/faq|qapage/i)) depth += 25;
+  if (crawl.serverRenderedContent) depth += 10;
+  depth = clamp(depth);
+
+  // 2) Entity clarity (who / where / what)
+  let entity = 0;
+  if (has(/organization|localbusiness/i)) entity += 45;
+  if (crawl.title && crawl.title.length > 10) entity += 15;
+  if (crawl.metaDescription && crawl.metaDescription.length > 20) entity += 15;
+  if (has(/person|author/i)) entity += 10;
+  if (social.length) entity += 15;
+  entity = clamp(entity);
+
+  // 3) Structured data / Schema markup
+  let schema = 0;
+  if (schemaTypes.length) schema += 40;
+  if (has(/organization|localbusiness/i)) schema += 20;
+  if (has(/faq|qapage/i)) schema += 15;
+  if (has(/product|service|breadcrumb|website/i)) schema += 15;
+  if (schemaTypes.length >= 4) schema += 10;
+  schema = clamp(schema);
+
+  // 4) Topical authority signals
+  let authority = 0;
+  if (words >= 1200) authority += 25; else if (words >= 600) authority += 15;
+  if ((crawl.internalLinks || 0) >= 20) authority += 25; else if ((crawl.internalLinks || 0) >= 8) authority += 15;
+  if (crawl.hasAuthorSignals) authority += 20;
+  if ((crawl.h2s || []).length >= 4) authority += 15;
+  if (has(/article|blogposting/i)) authority += 15;
+  authority = clamp(authority);
+
+  // 5) Local signals
+  let local = 0;
+  if (has(/localbusiness/i)) local += 40;
+  if (crawl.napPresent || /\b\d{3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/.test(crawl.bodyTextSample || '')) local += 20;
+  if (/\b(street|road|ave|avenue|suite|floor|city|state|zip|postcode|pincode)\b/i.test(crawl.bodyTextSample || '')) local += 20;
+  if (has(/geo|postaladdress/i)) local += 10;
+  if (social.length) local += 10;
+  local = clamp(local);
+
+  const band = (s) => (s >= 70 ? 'strong' : s >= 40 ? 'partial' : 'weak');
+
+  return [
+    {
+      key: 'content_depth', label: 'Content depth & answerability', score: depth, band: band(depth),
+      missing: depth >= 70 ? 'Content is substantial and answer-formatted.'
+        : words < 400 ? 'Very little content — one thin page. AI has almost nothing to quote.'
+        : !has(/faq|qapage/i) ? 'No question-and-answer content. AI assistants quote direct answers, and yours aren\u2019t formatted that way.'
+        : 'Content is present but shallow in places; more depth would earn more citations.',
+      impact: 'When AI assistants answer buyer questions, they pull from sites that answer clearly and in depth. Thin, brochure-style content is skipped, so you\u2019re absent from the answer your customer sees.',
+      fix: 'Add in-depth service pages and an FAQ that answers the real questions buyers ask, in plain language. Aim for genuine substance per page, not filler.',
+    },
+    {
+      key: 'entity_clarity', label: 'Entity clarity (who / where / what)', score: entity, band: band(entity),
+      missing: entity >= 70 ? 'Your identity is clearly defined for machines.'
+        : !has(/organization|localbusiness/i) ? 'No Organization/LocalBusiness schema — AI can\u2019t reliably confirm who you are, where you operate, or what you sell.'
+        : 'Some identity signals present, but incomplete (name, location, or offering not fully explicit).',
+      impact: 'AI systems recommend businesses they can confidently identify. If your who/where/what is ambiguous, the assistant hesitates to name you and picks a clearer competitor instead.',
+      fix: 'Add Organization (or LocalBusiness) schema with your exact name, address, area served and services, and make those facts explicit in the page text.',
+    },
+    {
+      key: 'schema', label: 'Structured data / Schema markup', score: schema, band: band(schema),
+      missing: schema >= 70 ? 'Good structured-data coverage.'
+        : !schemaTypes.length ? 'No structured data found at all. This is the single clearest signal AI uses to understand a page.'
+        : `Only basic schema present (${schemaTypes.slice(0, 4).join(', ') || 'minimal'}). Key types are missing.`,
+      impact: 'Schema is how machines read your site without guessing. Without it, AI assistants and Google AI Overviews mis-read or ignore your pages, so you lose visibility in exactly the surfaces buyers now use.',
+      fix: 'Implement Organization/LocalBusiness, Service/Product, and FAQ schema across the key pages. This is a fast, high-leverage technical fix.',
+    },
+    {
+      key: 'topical_authority', label: 'Topical authority signals', score: authority, band: band(authority),
+      missing: authority >= 70 ? 'Solid topical depth and internal structure.'
+        : (crawl.internalLinks || 0) < 8 ? 'Few internal links and little supporting content — the site doesn\u2019t demonstrate expertise in its topic.'
+        : 'Some authority signals, but not enough depth or interlinking to read as an authority in your field.',
+      impact: 'AI favours sources that clearly own their subject. A shallow site with no supporting content or author signals reads as a low-authority option and gets passed over for recommendations.',
+      fix: 'Build a cluster of related, well-interlinked content around your core services, add author/credential signals, and keep publishing depth on your topic.',
+    },
+    {
+      key: 'local_signals', label: 'Local signals', score: local, band: band(local),
+      missing: local >= 70 ? 'Local identity is well signalled.'
+        : !has(/localbusiness/i) ? 'No LocalBusiness schema and weak on-page location signals — AI can\u2019t tie you to a place.'
+        : 'Partial local signals; NAP (name, address, phone) or geo data is incomplete or inconsistent.',
+      impact: 'For "near me" and location-based questions, AI and Google lean entirely on local signals. Weak ones mean you\u2019re invisible exactly when a nearby buyer is ready to act.',
+      fix: 'Add complete, consistent NAP on-site, LocalBusiness schema with geo/address, and align it with a claimed, complete Google Business Profile.',
+    },
+  ];
 }
 
 /** Cover tagline — generated from findings, never from a static list. */
@@ -468,5 +578,6 @@ module.exports = {
   assessSocial,
   callClaude,
   analyseAiReadiness,
+  scoreAiDimensions,
   detectBusinessServices,
 };

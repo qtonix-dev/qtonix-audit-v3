@@ -78,6 +78,7 @@ Handlebars.registerHelper('severityClass', (s) =>
 Handlebars.registerHelper('between', (v, lo, hi) => Number(v) >= Number(lo) && Number(v) <= Number(hi));
 Handlebars.registerHelper('eq', (a, b) => a === b);
 Handlebars.registerHelper('gt', (a, b) => Number(a) > Number(b));
+Handlebars.registerHelper('bandColor', (band) => (band === 'strong' ? '#16A34A' : band === 'partial' ? '#E58A24' : '#E5484D'));
 Handlebars.registerHelper('ringDash', (pct, radius) => {
   const c = 2 * Math.PI * Number(radius);
   const filled = (Math.max(0, Math.min(100, Number(pct) || 0)) / 100) * c;
@@ -335,6 +336,7 @@ function buildViewModel(p, opts = {}) {
   if (p.socialAssessment) tocItems.push('Social Media (SMO)');
   if (p.local && (p.local.gbpFound || p.local.enabled)) tocItems.push('Google Maps & Local SEO');
   if (p.ai) tocItems.push('AI Search Visibility — GEO / AEO');
+  if (p.ai && p.ai.aiBreakdown && p.ai.aiBreakdown.length) tocItems.push('AI Readiness — The Five Signals');
   tocItems.push('The Strategy');
   tocItems.push('The Fix, Measured — KPIs');
   if (p.pricing && p.pricing.enabled) tocItems.push('Your Investment');

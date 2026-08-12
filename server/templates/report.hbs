@@ -771,7 +771,31 @@ body{ background:#525659; margin:0; padding:24px 0; }
 </div>
 {{/if}}
 
-<!-- ================= GOOGLE BUSINESS PROFILE / LOCAL SEO ================= -->
+{{#if ai.aiBreakdown.length}}
+<!-- ================= AI READINESS BREAKDOWN ================= -->
+<div class="page page-break-before">
+  <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">06b</span><span class="sec-rule"></span><span class="sec-name">AI READINESS — THE FIVE SIGNALS</span></div>
+  <h2>Five things decide whether AI can understand and recommend you. <span class="b">Here's your score on each — and how to fix the gaps.</span></h2>
+  <p class="lead">AI assistants and Google's AI Overviews judge a site on these five signals before they'll quote or recommend it. Each is scored from a live scan of {{report.domain}}, with the business impact and the fix.</p>
+
+  {{#each ai.aiBreakdown}}
+  <div class="avoid" style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-weight:800;font-size:10.5pt;color:var(--navy)">{{this.label}}</div>
+      <div style="font-weight:800;font-size:11pt;color:{{bandColor this.band}}">{{this.score}}<span style="font-size:8pt;color:var(--muted)">/100</span></div>
+    </div>
+    <div class="bar-track" style="margin-bottom:10px"><div class="bar-fill" style="width:{{this.score}}%;background:{{bandColor this.band}}"></div></div>
+    <table style="margin:0"><tbody>
+      <tr><td class="tb" style="width:26%;vertical-align:top;border:none;padding:3px 8px 3px 0">What's missing</td><td style="border:none;padding:3px 0">{{this.missing}}</td></tr>
+      <tr><td class="tb" style="vertical-align:top;border:none;padding:3px 8px 3px 0">Why it matters</td><td style="border:none;padding:3px 0">{{this.impact}}</td></tr>
+      <tr><td class="tb" style="vertical-align:top;border:none;padding:3px 8px 3px 0;color:var(--blue)">How we fix it</td><td style="border:none;padding:3px 0;color:var(--blue)">{{this.fix}}</td></tr>
+    </tbody></table>
+  </div>
+  {{/each}}
+
+  <div class="nb" style="margin-top:6px"><strong>The bottom line.</strong> Search is shifting from ten blue links to AI-generated answers. The businesses that win the next few years are the ones machines can read, trust and quote today. Fixing these five signals is exactly how we get {{report.businessName}} onto that path.</div>
+</div>
+{{/if}}
 {{#if local.gbpFound}}
 <div class="page">
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">◆</span><span class="sec-rule"></span><span class="sec-name">GOOGLE MAPS &amp; LOCAL SEO</span></div>
