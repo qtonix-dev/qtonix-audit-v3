@@ -161,14 +161,42 @@ router.post('/settings/favicon', uploadFavicon.single('favicon'), async (req, re
   } catch (e) { next(e); }
 });
 
+/**
+ * Save a branding image URL (logo or favicon) that was uploaded to ImageKit by
+ * the browser. Storing the full ImageKit URL — rather than a local file path —
+ * means the logo/favicon survive server restarts and redeploys (Railway's disk
+ * is ephemeral, so ./storage/uploads files are wiped ~daily, which caused the
+ * logo to keep disappearing).
+ */
+router.post('/settings/branding-url', async (req, res, next) => {
+  try {
+    const { kind, url } = req.body || {};
+    if (!['logo', 'favicon'].includes(kind)) return res.status(400).json({ error: 'kind must be logo or favicon.' });
+    if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'A valid https URL is required.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = kind === 'logo' ? 'logoPath' : 'faviconPath';
+    // Clean up a previous LOCAL file if we're replacing one (ImageKit URLs are
+    // left as-is; ImageKit manages its own storage).
+    if (s[key] && s[key].startsWith('/uploads/')) {
+      const old = path.join(UPLOAD_DIR, path.basename(s[key]));
+      if (fs.existsSync(old)) { try { fs.unlinkSync(old); } catch { /* ignore */ } }
+    }
+    s[key] = url;
+    await s.save();
+    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: `settings.${kind}`, ip: req.ip });
+    res.json({ [key]: url });
+  } catch (e) { next(e); }
+});
+
 /** Remove logo or favicon. */
 router.delete('/settings/:asset(logo|favicon)', async (req, res, next) => {
   try {
     const key = req.params.asset === 'logo' ? 'logoPath' : 'faviconPath';
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    if (s[key]) {
+    if (s[key] && s[key].startsWith('/uploads/')) {
+      // Only local files need unlinking; ImageKit URLs are left to ImageKit.
       const f = path.join(UPLOAD_DIR, path.basename(s[key]));
-      if (fs.existsSync(f)) fs.unlinkSync(f);
+      if (fs.existsSync(f)) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
     }
     s[key] = '';
     await s.save();

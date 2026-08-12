@@ -234,15 +234,46 @@ function PricingEditor({ settings, setSettings, say }) {
 // Branding (logo + favicon upload + colours)
 // ---------------------------------------------------------------------------
 function Branding({ settings, setSettings, say, reload }) {
+  // Logo/favicon are uploaded to ImageKit (persistent cloud storage) and the
+  // full URL is saved on the settings record. This is essential on Railway,
+  // whose local disk is wiped on every restart/redeploy — files saved to
+  // ./storage/uploads vanish after a day, which is why the logo kept
+  // disappearing. ImageKit URLs survive restarts.
   const upload = async (file, kind, maxKb) => {
     if (!file) return;
     if (file.size > maxKb * 1024) return say && say(`That file is ${Math.round(file.size / 1024)}KB — the limit is ${maxKb}KB.`, 'bad');
-    const fd = new FormData();
-    fd.append(kind, file);
     try {
+      // Prefer ImageKit; fall back to the legacy server-disk upload only if
+      // ImageKit isn't configured (with a clear warning that it won't persist).
+      let ik = null;
+      try { ik = await api('/admin/imagekit'); } catch { ik = null; }
+      if (ik && ik.configured) {
+        const auth = await api('/admin/imagekit/auth');
+        const form = new FormData();
+        form.append('file', file);
+        form.append('fileName', `${kind}-${Date.now()}`);
+        form.append('folder', '/qtonix-crm/branding');
+        form.append('publicKey', auth.publicKey);
+        form.append('signature', auth.signature);
+        form.append('expire', auth.expire);
+        form.append('token', auth.token);
+        form.append('useUniqueFileName', 'true');
+        const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || 'Upload failed.');
+        // Save the ImageKit URL onto settings (persists across restarts).
+        await api('/admin/settings/branding-url', { method: 'POST', body: JSON.stringify({ kind, url: data.url }) });
+        setSettings({ ...settings, [`${kind}Path`]: data.url });
+        say && say(`${kind} uploaded`, 'good');
+        reload && reload();
+        return;
+      }
+      // No ImageKit → legacy disk upload (works, but WON'T survive a redeploy).
+      const fd = new FormData();
+      fd.append(kind, file);
       const r = await api(`/admin/settings/${kind}`, { method: 'POST', body: fd });
       setSettings({ ...settings, [`${kind}Path`]: r[`${kind}Path`] });
-      say && say(`${kind} uploaded`, 'good');
+      say && say(`${kind} uploaded — but connect ImageKit (API keys tab) so it isn't lost on the next server restart.`, 'bad');
       reload && reload();
     } catch (e) { say && say(e.message, 'bad'); }
   };
