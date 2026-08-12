@@ -27,16 +27,24 @@ const STEPS = [
   'Building the PDF',
 ];
 
+// Thrown when the core SE Ranking data (keyword overview / backlink summary)
+// can't be retrieved. Distinct class so the catch block can tag the report with
+// a clear, user-facing reason and suppress the View/Download options.
+class SERankingReportError extends Error {
+  constructor(message) { super(message); this.name = 'SERankingReportError'; this.code = 'SERANKING_DATA_UNAVAILABLE'; }
+}
+
 async function setProgress(reportId, pct, step) {
   await Report.update({ progress: pct, currentStep: step, status: 'running' }, { where: { id: reportId } });
 }
 
 /** Never let one source sink the report. */
-async function safe(label, fn, fallback = null) {
+async function safe(label, fn, fallback = null, errorSink = null) {
   try {
     return await fn();
   } catch (e) {
     console.error(`[audit] ${label} failed:`, e.message);
+    if (errorSink) errorSink.push({ label, message: e.message, status: e.status || null });
     return fallback;
   }
 }
@@ -85,11 +93,12 @@ async function runReport(reportId) {
   // Refresh-aware wrapper: for SE Ranking labels while refreshing, return the
   // cached value; otherwise call through and capture the result for next time.
   const isSeLabel = (label) => SE_LABELS.has(label) || String(label).startsWith('comp:');
+  const seErrors = []; // collected SE Ranking failures, surfaced on the report
   const safeSE = async (label, fn, fallback = null) => {
     if (refreshing && isSeLabel(label)) {
       return (priorRaw && label in priorRaw) ? priorRaw[label] : fallback;
     }
-    const val = await safe(label, fn, fallback);
+    const val = await safe(label, fn, fallback, isSeLabel(label) ? seErrors : null);
     if (isSeLabel(label)) rawCapture[label] = val;
     return val;
   };
@@ -143,6 +152,24 @@ async function runReport(reportId) {
       safeSE('anchors', () => se.getAnchors(domain, 'domain', 20), null),
     ]);
     if (!refreshing) credits += 300;
+
+    // The domain overview and backlink summary are the backbone of the report —
+    // keyword visibility and Domain Authority both come from them. If either
+    // FAILED (bad key, no credits, API down), we must NOT publish a report full
+    // of zeros: fail loudly with the real reason so the user sees the error and
+    // no viewable/downloadable report is produced.
+    if (!refreshing) {
+      const critical = seErrors.filter((e) => e.label === 'overview' || e.label === 'backlinks');
+      if (critical.length) {
+        const detail = critical.map((e) => `${e.label}${e.status ? ` (HTTP ${e.status})` : ''}: ${e.message}`).join(' · ');
+        const looksAuth = critical.some((e) => e.status === 401 || e.status === 403 || /token|unauthor|forbidden|api key/i.test(e.message));
+        const looksCredits = critical.some((e) => /insufficient|funds|credit|balance|quota|limit/i.test(e.message));
+        const hint = looksAuth ? ' — the SE Ranking API key looks invalid or expired.'
+          : looksCredits ? ' — SE Ranking API credits appear to be exhausted.'
+          : '';
+        throw new SERankingReportError(`SE Ranking data could not be retrieved${hint} (${detail})`);
+      }
+    }
 
     const sum = (blSummary && blSummary.summary && blSummary.summary[0]) || {};
     const refs = (refdomains && refdomains.refdomains) || [];
@@ -480,6 +507,17 @@ async function runReport(reportId) {
       },
     };
 
+    // If SE Ranking calls failed, the report still completes (crawl + AI run),
+    // but the search-visibility numbers will be zero. Surface this clearly on
+    // the payload and in the logs so "all zeros" is diagnosable rather than
+    // silent. A likely cause is an invalid API key or exhausted credits.
+    if (seErrors.length) {
+      console.warn(`[audit] SE Ranking returned ${seErrors.length} error(s):`, seErrors.map((e) => `${e.label}: ${e.message}`).join(' | '));
+      payload.seDataStatus = { ok: false, errors: seErrors };
+    } else {
+      payload.seDataStatus = { ok: true, errors: [] };
+    }
+
     const { pdfPath, htmlPath } = await renderReport(payload);
 
     await Report.update({
@@ -504,7 +542,10 @@ async function runReport(reportId) {
     await Report.update({
       status: 'failed',
       error: err.message,
+      errorCode: err.code || null,
       currentStep: 'Failed',
+      pdfPath: null,
+      htmlPath: null,
       durationMs: Date.now() - started,
       creditsUsed: credits,
     }, { where: { id: reportId } });

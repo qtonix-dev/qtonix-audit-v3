@@ -185,6 +185,7 @@ const Report = sequelize.define(
     progress: { type: DataTypes.INTEGER, defaultValue: 0 },
     currentStep: DataTypes.STRING(120),
     error: DataTypes.TEXT,
+    errorCode: DataTypes.STRING(60),
 
     scores: { type: DataTypes.JSON, defaultValue: {} },
     headline: { type: DataTypes.JSON, defaultValue: {} },

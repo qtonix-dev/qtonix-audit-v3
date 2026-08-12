@@ -697,6 +697,46 @@ router.get('/seranking-credits', async (req, res) => {
 });
 
 /**
+ * GET /api/admin/seranking-diagnose?domain=example.com — live diagnostic. Calls
+ * the balance, domain overview, and backlink summary directly and returns the
+ * RAW responses (or the exact error), so we can see whether the key works, the
+ * account has credits, and which fields the API actually returns. This is how we
+ * diagnose "all zeros" without guessing at field names.
+ */
+router.get('/seranking-diagnose', async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = settings && settings.getKey ? settings.getKey('seranking') : null;
+    if (!key) return res.json({ configured: false, error: 'No SE Ranking API key configured.' });
+
+    const domain = (req.query.domain || 'seranking.com').toString().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    const source = (req.query.source || 'us').toString();
+    const { SERanking } = require('../services/seranking');
+    const se = new SERanking(key);
+
+    const out = { configured: true, domain, source, keyPreview: `${key.slice(0, 4)}…${key.slice(-3)}`, steps: {} };
+
+    const attempt = async (label, fn) => {
+      try {
+        const t0 = Date.now();
+        const val = await fn();
+        out.steps[label] = { ok: true, ms: Date.now() - t0, sample: JSON.stringify(val).slice(0, 1200) };
+      } catch (e) {
+        out.steps[label] = { ok: false, error: e.message, status: e.status || null, body: e.body ? JSON.stringify(e.body).slice(0, 600) : null };
+      }
+    };
+
+    await attempt('balance', () => se.getBalance());
+    await attempt('domain_overview', () => se.getDomainOverview(domain, source));
+    await attempt('backlink_summary', () => se.getBacklinkSummary(domain, 'domain'));
+
+    res.json(out);
+  } catch (e) {
+    res.json({ configured: false, error: e.message });
+  }
+});
+
+/**
  * Demo / training mode. Switching it on mints a random token and exposes the
  * whole app at /demo-app/<token> filled with fabricated data, so agents can be
  * trained on the live interface without touching a real client record.

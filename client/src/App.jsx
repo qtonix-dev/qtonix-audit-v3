@@ -493,7 +493,7 @@ function Progress({ reportId, onDone, onBack }) {
       if (stop) return;
       try {
         const r = await api(`/reports/${reportId}`);
-        setState({ status: r.status, progress: r.progress, step: r.currentStep, error: r.error });
+        setState({ status: r.status, progress: r.progress, step: r.currentStep, error: r.error, errorCode: r.errorCode });
         if (r.status === 'complete') return onDone(r);
         if (r.status === 'failed') return;
       } catch { /* keep polling through transient errors */ }
@@ -504,12 +504,23 @@ function Progress({ reportId, onDone, onBack }) {
   }, [reportId]);
 
   if (state.status === 'failed') {
+    const isSeData = state.errorCode === 'SERANKING_DATA_UNAVAILABLE';
     return (
       <div className="max-w-lg">
         <div className="bg-white rounded-2xl border border-red-200 p-7 text-center">
           <div className="text-4xl mb-3">⚠️</div>
-          <h2 className="text-lg font-bold text-[#050A1F]">That report didn't finish</h2>
+          <h2 className="text-lg font-bold text-[#050A1F]">
+            {isSeData ? "Report not generated — SEO data unavailable" : "That report didn't finish"}
+          </h2>
           <p className="text-sm text-slate-500 mt-2">{state.error}</p>
+          {isSeData && (
+            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 text-left">
+              <div className="text-xs font-bold text-amber-800 mb-1">Why no report was produced</div>
+              <p className="text-[12px] text-amber-700 leading-relaxed">
+                The keyword and backlink data from SE Ranking couldn't be fetched, so we stopped rather than hand you a report full of zeros. This is almost always an <b>invalid/expired API key</b> or <b>exhausted API credits</b>. An admin can confirm which under <b>Admin → API keys → SE Ranking → Diagnose</b>.
+              </p>
+            </div>
+          )}
           <div className="flex gap-2 justify-center mt-5">
             <button
               onClick={async () => { await api(`/reports/${reportId}/retry`, { method: 'POST' }); window.location.reload(); }}

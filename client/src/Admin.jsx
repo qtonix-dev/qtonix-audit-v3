@@ -871,6 +871,16 @@ function ApiKeys({ settings, setSettings, say }) {
   const [credits, setCredits] = useState(null);
   const [usage, setUsage] = useState(null); // self-tracked calls (anthropic/openai)
   const [ikUsage, setIkUsage] = useState(null);
+  const [seDiag, setSeDiag] = useState(null);
+  const [seDiagDomain, setSeDiagDomain] = useState('');
+  const runSeDiag = async () => {
+    setSeDiag({ loading: true });
+    try {
+      const q = seDiagDomain ? `?domain=${encodeURIComponent(seDiagDomain)}` : '';
+      const r = await api(`/admin/seranking-diagnose${q}`);
+      setSeDiag(r);
+    } catch (e) { setSeDiag({ error: e.message }); }
+  };
   useEffect(() => { api('/admin/seranking-credits').then(setCredits).catch(() => setCredits(null)); }, []);
   useEffect(() => { api('/admin/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({})); }, []);
   useEffect(() => { api('/admin/imagekit-usage').then(setIkUsage).catch(() => setIkUsage(null)); }, []);
@@ -933,6 +943,28 @@ function ApiKeys({ settings, setSettings, say }) {
                 {credits.remaining == null && (
                   <div className="text-[10px] text-slate-400 mt-1.5">Live balance unavailable from SE Ranking{credits.error ? ` (${credits.error})` : ''} — "used" figures are tracked from reports you've run.</div>
                 )}
+                <div className="mt-2 pt-2 border-t border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <input className={inputCls + ' text-xs'} placeholder="Domain to test (e.g. example.com)" value={seDiagDomain} onChange={(e) => setSeDiagDomain(e.target.value)} />
+                    <Btn size="sm" variant="ghost" onClick={runSeDiag} disabled={seDiag && seDiag.loading}>{seDiag && seDiag.loading ? 'Checking…' : 'Diagnose'}</Btn>
+                  </div>
+                  {seDiag && !seDiag.loading && (
+                    <div className="mt-2 space-y-1">
+                      {seDiag.error && <div className="text-xs text-red-500">{seDiag.error}</div>}
+                      {seDiag.steps && Object.entries(seDiag.steps).map(([k, v]) => (
+                        <div key={k} className="text-[11px] flex items-start gap-2">
+                          <span className={v.ok ? 'text-green-600 font-bold' : 'text-red-500 font-bold'}>{v.ok ? '✓' : '✗'}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-bold text-slate-600">{k}</span>
+                            {v.ok
+                              ? <span className="text-slate-400"> · {v.ms}ms · <code className="break-all">{v.sample}</code></span>
+                              : <span className="text-red-500"> · {v.status ? `HTTP ${v.status} · ` : ''}{v.error}{v.body ? ` · ${v.body}` : ''}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {(id === 'anthropic' || id === 'openai') && usage && (
