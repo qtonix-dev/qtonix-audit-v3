@@ -1455,6 +1455,47 @@ async function uploadCrmAvatar(file, userName) {
   });
 }
 
+// Shown after a period of inactivity. Counts down 5 minutes; if the user does
+// nothing they're signed out, but they can extend the session or leave now.
+function IdleWarning({ onContinue, onSignOut }) {
+  const COUNTDOWN = 5 * 60; // seconds
+  const [left, setLeft] = useState(COUNTDOWN);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setLeft((s) => {
+        if (s <= 1) { clearInterval(t); onSignOut(); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+  const mm = String(Math.floor(left / 60)).padStart(2, '0');
+  const ss = String(left % 60).padStart(2, '0');
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl text-center">
+        <div className="text-3xl mb-2">⏰</div>
+        <div className="text-lg font-extrabold text-[#050A1F]">Are you still there?</div>
+        <p className="text-sm text-slate-500 mt-1">
+          Your screen has been inactive for a while. For security you'll be signed out in:
+        </p>
+        <div className="my-4 text-4xl font-black tabular-nums" style={{ color: left <= 60 ? '#DC2626' : '#050A1F' }}>{mm}:{ss}</div>
+        <div className="flex flex-col gap-2">
+          <button onClick={onContinue}
+            className="w-full rounded-lg px-4 py-2.5 text-sm font-bold text-white"
+            style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+            Continue logged in
+          </button>
+          <button onClick={onSignOut}
+            className="w-full rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
+            Sign out now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // The Motivator TV board runs at /tv/<token>. It's a public, unauthenticated
   // screen for an office TV, so it short-circuits the whole app shell — no
@@ -1492,6 +1533,12 @@ export default function App() {
   const [linkReport, setLinkReport] = useState(null); // report being linked to a lead
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
+  // Inactivity warning popup: null when hidden, else shows a countdown before
+  // auto sign-out. The manager/agent can extend the session or sign out now.
+  const [idleWarn, setIdleWarn] = useState(false);
+  const idleWarnRef = useRef(false);
+  const idleResetRef = useRef(null);
+  useEffect(() => { idleWarnRef.current = idleWarn; }, [idleWarn]);
   const [dueCount, setDueCount] = useState(0);
   const [leadsEntry, setLeadsEntry] = useState({ view: 'list' });
   // Which dashboard view is showing: the operational overview or analytics.
@@ -1562,24 +1609,27 @@ export default function App() {
     };
     document.addEventListener('copy', onCopy);
 
-    // --- Inactivity auto-logout: no interaction for 10 minutes → sign out.
-    const IDLE_MS = 10 * 60 * 1000;
+    // --- Inactivity: after 5 minutes of no interaction, show a warning popup
+    // with a countdown (handled by the popup component) rather than signing out
+    // immediately. The popup offers "Continue" (resets the timer) or "Sign out".
+    const IDLE_MS = 5 * 60 * 1000;
     let idleTimer = null;
-    const doLogout = () => {
-      localStorage.removeItem('qtx_token');
-      // Full reload back to the login screen so all in-memory state is cleared.
-      window.location.href = '/';
-    };
+    const showWarning = () => { setIdleWarn(true); };
     const resetIdle = () => {
       if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(doLogout, IDLE_MS);
+      idleTimer = setTimeout(showWarning, IDLE_MS);
     };
+    // Expose reset so the warning popup's "Continue" button can restart the idle
+    // countdown from outside this effect.
+    idleResetRef.current = () => { setIdleWarn(false); resetIdle(); };
     const activityEvents = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
     // Throttle resets so constant mouse movement isn't setting timers every ms.
+    // While the warning is up, activity does NOT auto-dismiss it — the user must
+    // explicitly choose, so a stray mouse nudge can't silently keep them in.
     let lastReset = 0;
     const onActivity = () => {
       const now = Date.now();
-      if (now - lastReset > 5000) { lastReset = now; resetIdle(); }
+      if (now - lastReset > 5000) { lastReset = now; if (!idleWarnRef.current) resetIdle(); }
     };
     activityEvents.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
     resetIdle();
@@ -1655,6 +1705,11 @@ export default function App() {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       {/* Full-screen sale-celebration popup (all users, any page). Skipped in
           demo/training mode so fake sales don't trigger it. */}
+      {!IS_DEMO && idleWarn && (
+        <IdleWarning
+          onContinue={() => { if (idleResetRef.current) idleResetRef.current(); else setIdleWarn(false); }}
+          onSignOut={() => { localStorage.removeItem('qtx_token'); window.location.href = '/'; }} />
+      )}
       {!IS_DEMO && <SaleCelebration />}      {!IS_DEMO && <CallRemarkPrompt />}      {/* Unmissable reminder that none of this is real, so a training figure is
           never mistaken for a live client number. */}
       {IS_DEMO && (

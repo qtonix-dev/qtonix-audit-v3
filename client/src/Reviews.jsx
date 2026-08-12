@@ -27,11 +27,20 @@ const BANDS = {
 };
 
 // Month picker covering the last 12 months.
+// Managers review the PREVIOUS month's performance (e.g. July's reviews are done
+// in August). So the current month should not appear as a reviewable option
+// until it's over and we're past the 5th of the following month. The default /
+// first option is therefore last month (or the month before, early in a month
+// before the 5th).
 function monthOptions() {
   const out = [];
   const now = new Date();
+  // The most recent reviewable month: last month normally, but if we're in the
+  // first few days of a month (before the 5th) the previous month's reviews may
+  // still be opening, so we still surface last month as the top option.
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const d = new Date(start.getFullYear(), start.getMonth() - i, 1);
     out.push({
       key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
       label: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }),

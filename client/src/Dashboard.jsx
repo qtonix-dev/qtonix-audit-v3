@@ -389,7 +389,7 @@ function Leaderboard({ board, user, maxSales }) {
 
 // Non-dismissable modal reminding a manager to review last month's agents.
 // Stays until every agent under them has a saved review for last month.
-function ManagerReviewReminder({ info, onGoReviews }) {
+function ManagerReviewReminder({ info, onGoReviews, onLater }) {
   const monthLabel = (() => {
     try { const [y, m] = info.period.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); } catch { return 'last month'; }
   })();
@@ -399,7 +399,7 @@ function ManagerReviewReminder({ info, onGoReviews }) {
         <div className="text-2xl mb-1">📋</div>
         <div className="text-lg font-extrabold text-[#050A1F]">Time to review your team</div>
         <p className="text-sm text-slate-500 mt-1">
-          It's review time for <b>{monthLabel}</b>. Please complete a review for each of your agents. This reminder stays until all are done.
+          It's review time for <b>{monthLabel}</b>. Please complete a review for each of your agents.
         </p>
         <div className="mt-3 rounded-xl bg-slate-50 border border-slate-100 p-3">
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">
@@ -416,7 +416,11 @@ function ManagerReviewReminder({ info, onGoReviews }) {
           style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
           Start reviewing →
         </button>
-        <p className="text-[11px] text-slate-400 text-center mt-2">This can't be dismissed until all reviews are complete.</p>
+        <button onClick={onLater}
+          className="w-full mt-2 rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
+          Later
+        </button>
+        <p className="text-[11px] text-slate-400 text-center mt-2">We'll remind you again until all {monthLabel} reviews are done.</p>
       </div>
     </div>
   );
@@ -521,7 +525,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
       {showRace && <SalesRace onClose={() => setShowRace(false)} />}
 
       {/* Non-dismissable last-month agent-review reminder (managers, from 5th). */}
-      {reviewDue && <ManagerReviewReminder info={reviewDue} onGoReviews={onGoReviews} />}
+      {reviewDue && <ManagerReviewReminder info={reviewDue} onGoReviews={onGoReviews} onLater={() => setReviewDue(null)} />}
 
       {/* Prompt to connect email until the user has done so. */}
       <DashboardGmailNotice />

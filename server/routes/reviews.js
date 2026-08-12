@@ -607,7 +607,47 @@ router.get('/pending-last-month', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/** GET /api/reviews/history/:agentId — every review recorded for one agent. */
+/**
+ * POST /api/reviews/transfer-period — admin tool to move review rows from one
+ * period to another (e.g. a manager mistakenly submitted August's reviews when
+ * they meant July). Optionally scope to one reviewer. Preview first with
+ * dryRun:true. Body: { fromPeriod:'YYYY-MM', toPeriod:'YYYY-MM', reviewerId?,
+ * dryRun? }.
+ */
+router.post('/transfer-period', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only.' });
+    const { fromPeriod, toPeriod, reviewerId, dryRun } = req.body || {};
+    if (!/^\d{4}-\d{2}$/.test(fromPeriod || '') || !/^\d{4}-\d{2}$/.test(toPeriod || '')) {
+      return res.status(400).json({ error: 'fromPeriod and toPeriod must be YYYY-MM.' });
+    }
+    if (fromPeriod === toPeriod) return res.status(400).json({ error: 'from and to are the same.' });
+
+    const where = { period: fromPeriod };
+    if (reviewerId) where.reviewerId = Number(reviewerId);
+    const rows = await Review.findAll({ where });
+
+    // Guard against collisions: a review for the same (agent, reviewer, kind)
+    // may already exist in the target period. Report those instead of clobbering.
+    const moved = []; const conflicts = [];
+    for (const r of rows) {
+      const clash = await Review.findOne({ where: { period: toPeriod, agentId: r.agentId, reviewerId: r.reviewerId, kind: r.kind } });
+      if (clash) { conflicts.push({ id: r.id, agentId: r.agentId, reviewerId: r.reviewerId }); continue; }
+      moved.push(r);
+    }
+
+    if (!dryRun) {
+      for (const r of moved) { r.period = toPeriod; await r.save(); }
+    }
+    res.json({
+      ok: true, dryRun: !!dryRun,
+      fromPeriod, toPeriod, reviewerId: reviewerId || null,
+      matched: rows.length, moved: moved.length, movedIds: moved.map((r) => r.id),
+      conflicts,
+      note: dryRun ? 'Dry run — nothing changed. Re-send with dryRun:false to apply.' : `Moved ${moved.length} review(s) from ${fromPeriod} to ${toPeriod}.`,
+    });
+  } catch (e) { next(e); }
+});
 router.get('/history/:agentId', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'manager' && req.user.role !== 'leadmanager') {
