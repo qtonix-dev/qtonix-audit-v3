@@ -1223,6 +1223,18 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       if (u.active !== false && inScope(u)) ensure(u.id, u.name);
     });
 
+    // Ranking comparator for sales boards: agents and managers are the priority
+    // and always rank above admins, so an admin (who runs demo/test/house data)
+    // never appears at the top even with the highest sales. Within each group,
+    // higher sales rank first. Admins remain visible to an admin viewer — just
+    // pushed below the real competitors.
+    const leaderboardCompare = (a, b) => {
+      const aAdmin = (a.role === 'admin') ? 1 : 0;
+      const bAdmin = (b.role === 'admin') ? 1 : 0;
+      if (aAdmin !== bAdmin) return aAdmin - bAdmin; // non-admins first
+      return b.salesUsd - a.salesUsd;
+    };
+
     const leaderboard = Object.values(byOwner).map((o) => {
       const tg = targetsById[o.ownerId] || {};
       const salesTarget = (tg.sales && tg.sales.enabled) ? Number(tg.sales.monthly || 0) : 0;
@@ -1243,7 +1255,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       // board regardless of who's viewing (they own no leads and make no sales).
       .filter((o) => o.role !== 'leadmanager')
       .filter((o) => viewerIsAdmin || o.role === 'agent' || o.ownerId === req.user.id)
-      .sort((a, b) => b.salesUsd - a.salesUsd);
+      .sort(leaderboardCompare);
 
     // ------------------------------------------------------------------
     // Sales leaderboard shown on the dashboard. Who appears depends on the
@@ -1305,7 +1317,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
             salesTarget, pct, hitTarget: salesTarget > 0 && o.salesUsd >= salesTarget,
           };
         })
-        .sort((a, b) => b.salesUsd - a.salesUsd);
+        // The board celebrates agents and managers — they are the priority — so
+        // an admin never ranks at the top even with the highest sales. Admins
+        // are always sorted to the bottom (still visible to an admin viewer),
+        // and within each group the order is by sales.
+        .sort(leaderboardCompare);
       // A manager also sees their own row alongside the agents.
       if (req.user.role === 'manager' && !companyLeaderboard.some((o) => o.ownerId === req.user.id)) {
         const meComp = compByOwner[req.user.id];
@@ -1319,7 +1335,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           salesTarget, pct: salesTarget > 0 ? Math.min(100, Math.round((sUsd / salesTarget) * 100)) : null,
           hitTarget: salesTarget > 0 && sUsd >= salesTarget,
         });
-        companyLeaderboard.sort((a, b) => b.salesUsd - a.salesUsd);
+        companyLeaderboard.sort(leaderboardCompare);
       }
     } catch (e) { companyLeaderboard = null; }
 
