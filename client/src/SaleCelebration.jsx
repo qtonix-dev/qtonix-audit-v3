@@ -96,7 +96,7 @@ export default function SaleCelebration() {
       className="fixed inset-0 z-[9999] flex flex-col items-center justify-center cursor-pointer select-none"
       style={{ background: 'radial-gradient(circle at center, #0B1533 0%, #050A1F 70%)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <style>{`
-        @keyframes qtx-ray-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes qtx-ray-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
         @keyframes qtx-cele-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
         @keyframes qtx-pop-in { 0% { opacity: 0; transform: translateY(14px); } 100% { opacity: 1; transform: translateY(0); } }
       `}</style>

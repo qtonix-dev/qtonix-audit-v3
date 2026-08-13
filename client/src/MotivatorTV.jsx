@@ -166,7 +166,7 @@ function TvCelebration({ win, logo }) {
     <div className="w-screen h-screen flex flex-col items-center justify-center overflow-hidden"
       style={{ background: 'radial-gradient(circle at center, #0B1533 0%, #050A1F 72%)', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <style>{`
-        @keyframes tv-ray-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes tv-ray-spin { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
         @keyframes tv-cele-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
       `}</style>
       <div className="relative flex items-center justify-center" style={{ animation: 'tv-cele-in 0.6s ease-out' }}>

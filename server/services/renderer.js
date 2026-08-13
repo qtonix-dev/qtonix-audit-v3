@@ -288,10 +288,13 @@ function buildViewModel(p, opts = {}) {
       : 'We present the evidence plainly and let it speak for itself.';
   }
 
-  // --- problem/after columns, generated from actual issues
-  vm.problemsToday = sorted.slice(0, 5).map((i) => i.title);
-  vm.afterFix = sorted.slice(0, 5).map((i) => {
-    const t = i.title.toLowerCase();
+  // --- problem/after columns, generated from actual issues. Two different
+  // issues can map to the same "after" outcome (e.g. two speed issues, or two
+  // that hit the default), which produced duplicate lines like "A fast site
+  // that holds visitors…" twice. Dedupe the outcomes so each appears once.
+  vm.problemsToday = sorted.slice(0, 6).map((i) => i.title);
+  const outcomeFor = (title) => {
+    const t = String(title).toLowerCase();
     if (t.includes('speed') || t.includes('wait')) return 'A fast site that holds visitors instead of losing them.';
     if (t.includes('schema') || t.includes('structured')) return 'Full structured data so Google and AI know exactly who you are.';
     if (t.includes('authority') || t.includes('domain authority')) return 'Genuine, relevant authority built steadily and safely.';
@@ -301,7 +304,17 @@ function buildViewModel(p, opts = {}) {
     if (t.includes('alt') || t.includes('meta') || t.includes('title') || t.includes('h1'))
       return 'Every page correctly titled and described for the searches that matter.';
     return 'Resolved, verified, and monitored monthly.';
-  });
+  };
+  const seenOutcome = new Set();
+  vm.afterFix = [];
+  for (const i of sorted) {
+    const line = outcomeFor(i.title);
+    if (seenOutcome.has(line)) continue;
+    seenOutcome.add(line);
+    vm.afterFix.push(line);
+    if (vm.afterFix.length >= 5) break;
+  }
+  vm.problemsToday = vm.problemsToday.slice(0, 5);
 
   // --- AI verdict line
   if (p.ai) {
@@ -374,20 +387,51 @@ function buildViewModel(p, opts = {}) {
         : `You hold ${p.keywordData.page1Keywords} page-one positions against a category that supports far more. The room to climb is the opportunity.`,
   };
 
-  vm.competitorIntro = `${(p.competitors || []).slice(0, 3).map((c) => c.domain).join(', ')} outrank you because they have built genuine authority over years and have dedicated pages for each need. Your advantage is the business itself. We turn that into rankings — on a clean, trusted domain.`;
+  // Competitor framing must be HONEST — never claim the client is behind when
+  // the data says otherwise, or the whole report loses credibility. We compare
+  // real numbers and only call something a gap when it genuinely is one, while
+  // still appreciating strengths and offering how we help either way.
+  const topRival = (p.competitors && p.competitors[0]) || null;
+  const rivalKw = (topRival && topRival.totalKeywords) || 0;
+  const myPage1 = p.keywordData.page1Keywords || 0;
+  const daAhead = da > avgDA;                 // client's authority beats rivals
+  vm.daAhead = daAhead;
+  const daClose = !daAhead && da >= avgDA - 5; // roughly level
+  const rivalNames = (p.competitors || []).slice(0, 3).map((c) => c.domain).filter(Boolean);
 
-  vm.losing = [
-    `Domain Authority ${da} vs. competitors at ${avgDA} — a large trust gap.`,
-    p.backlinks.toxic ? `${p.backlinks.toxicPercentage}% of your linking sites are spam or low-quality junk.` : 'Too few referring domains to compete.',
-    `${p.keywordData.page1Keywords || 0} first-page rankings against ${(p.competitors[0] && p.competitors[0].totalKeywords || 0).toLocaleString()} keywords for your top rival.`,
-    (p.crawl.wordCount || 0) < 600 ? `Homepage is only ${p.crawl.wordCount} words — too thin to rank.` : 'No dedicated pages for high-intent searches.',
-  ];
-  vm.winning = [
-    'Genuine, relevant authority built steadily and safely.',
-    p.backlinks.toxic ? 'Spam links reviewed and disavowed to protect the domain.' : 'A real link-building programme — no PBNs, ever.',
-    'Dedicated pages targeting the exact searches your buyers make.',
-    'Keyword-matched titles and headings on every page.',
-  ];
+  // Intro adapts to reality rather than always saying "they outrank you".
+  if (!p.competitors || !p.competitors.length) {
+    vm.competitorIntro = `We benchmarked ${p.report.businessName} against the field. Your job now is to convert your real-world credibility into search visibility — on a clean, trusted domain.`;
+  } else if (daAhead) {
+    vm.competitorIntro = `Good news: your domain authority (${da}) is actually ahead of ${rivalNames.join(', ')} (avg ${avgDA}). That's a genuine asset. The gap isn't trust — it's coverage: they rank for more searches because they have more dedicated pages. That's very fixable, and your stronger domain means results should come faster.`;
+  } else if (daClose) {
+    vm.competitorIntro = `You're roughly level with ${rivalNames.join(', ')} on domain authority (${da} vs. ${avgDA}). This is a winnable race — it comes down to who builds the right pages and coverage first.`;
+  } else {
+    vm.competitorIntro = `${rivalNames.join(', ')} currently outrank you largely because they've built more authority over time and have dedicated pages for each need. Your advantage is the business itself. We turn that into rankings — on a clean, trusted domain.`;
+  }
+
+  // "Where you're losing" — only include a line when it's genuinely a gap.
+  vm.losing = [];
+  if (!daAhead && !daClose) vm.losing.push(`Domain Authority ${da} vs. competitors at ${avgDA} — a real trust gap to close.`);
+  else if (daClose) vm.losing.push(`Domain Authority ${da} vs. competitors at ${avgDA} — level, but not yet ahead enough to dominate.`);
+  if (p.backlinks.toxic) vm.losing.push(`${p.backlinks.toxicPercentage}% of your linking sites are spam or low-quality junk.`);
+  if (rivalKw > 0) vm.losing.push(`${myPage1} first-page rankings against ${rivalKw.toLocaleString()} keywords for your top rival — a coverage gap.`);
+  if ((p.crawl.wordCount || 0) < 600) vm.losing.push(`Homepage is only ${p.crawl.wordCount || 0} words — too thin to rank for much.`);
+  else vm.losing.push('Few dedicated pages for high-intent searches — most rivals have more.');
+  // Never show an empty column; if the site is strong across the board, say so.
+  if (!vm.losing.length) vm.losing.push('No major structural gaps — the opportunity here is acceleration, not repair.');
+
+  // "What's already strong" — genuinely appreciate what's good.
+  vm.winning = [];
+  if (daAhead) vm.winning.push(`Your domain authority (${da}) already beats the competitor average (${avgDA}) — a real head start.`);
+  if (!p.backlinks.toxic) vm.winning.push('A clean backlink profile with little or no toxic link risk.');
+  if ((p.backlinks.referringDomains || 0) > 0) vm.winning.push(`${(p.backlinks.referringDomains || 0).toLocaleString()} referring domains already pointing to you.`);
+  if (myPage1 > 0) vm.winning.push(`${myPage1} keyword${myPage1 === 1 ? '' : 's'} already on page one to build from.`);
+  if ((p.crawl.wordCount || 0) >= 600) vm.winning.push('Enough on-page content to give search engines something to rank.');
+  // Always end with how we help, so a strong site still has a clear next step.
+  vm.winning.push(daAhead
+    ? 'We convert your authority lead into rankings by building the pages and coverage your rivals use to win.'
+    : 'We build genuine, relevant authority and the dedicated pages your buyers actually search for.');
 
   vm.onboarding = [
     { t: 'Confirm your package', d: `Reply to let us know which plan fits — we recommend Growth for ${p.report.businessName}.` },

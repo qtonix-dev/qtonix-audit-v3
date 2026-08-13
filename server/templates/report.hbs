@@ -417,13 +417,6 @@ body{ background:#525659; margin:0; padding:24px 0; }
   <div class="sec-head"><span class="sec-dia"></span><span class="sec-num">03</span><span class="sec-rule"></span><span class="sec-name">PROBLEM &amp; TRANSFORMATION</span></div>
   <h2>It's fixable. <span class="b">Here's the honest diagnosis and what changes.</span></h2>
 
-  <div class="two">
-    <div class="box box-bad"><h4>◆ THE PROBLEM TODAY</h4>
-      <ul>{{#each problemsToday}}<li>{{this}}</li>{{/each}}</ul></div>
-    <div class="box box-good"><h4>✓ AFTER WE'RE DONE</h4>
-      <ul>{{#each afterFix}}<li>{{this}}</li>{{/each}}</ul></div>
-  </div>
-
   <div class="stats" style="margin-top:20px">
     <div class="stat"><div class="stat-v" style="color:{{settings.colors.orangeDeep}}">{{growth.lift}}</div>
       <div class="stat-l">Targeted lift in traffic &amp; enquiries within 90 days</div></div>
@@ -444,6 +437,13 @@ body{ background:#525659; margin:0; padding:24px 0; }
     <ul>{{#each roadmap.quickWins}}<li><strong>{{this.title}}</strong> — {{this.detail}}</li>{{/each}}</ul>
   </div>
   {{/if}}
+
+  <div class="two" style="margin-top:20px">
+    <div class="box box-bad"><h4>◆ THE PROBLEM TODAY</h4>
+      <ul>{{#each problemsToday}}<li>{{this}}</li>{{/each}}</ul></div>
+    <div class="box box-good"><h4>✓ AFTER WE'RE DONE</h4>
+      <ul>{{#each afterFix}}<li>{{this}}</li>{{/each}}</ul></div>
+  </div>
 </div>
 
 <!-- ================= 04 HEALTH SCORECARD ================= -->
@@ -611,9 +611,9 @@ body{ background:#525659; margin:0; padding:24px 0; }
   <p class="lead">{{competitorIntro}}</p>
 
   <div class="two">
-    <div class="box box-bad"><h4>◆ WHERE YOU'RE LOSING</h4>
+    <div class="box box-bad"><h4>◆ {{#if daAhead}}WHERE THE GAP IS{{else}}WHERE YOU'RE LOSING GROUND{{/if}}</h4>
       <ul>{{#each losing}}<li>{{this}}</li>{{/each}}</ul></div>
-    <div class="box box-good"><h4>✓ HOW WE WIN IT BACK</h4>
+    <div class="box box-good"><h4>✓ {{#if daAhead}}WHAT'S ALREADY STRONG — &amp; HOW WE BUILD ON IT{{else}}HOW WE WIN IT BACK{{/if}}</h4>
       <ul>{{#each winning}}<li>{{this}}</li>{{/each}}</ul></div>
   </div>
 
