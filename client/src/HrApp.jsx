@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
+import HrJobBuilder from './HrJobBuilder.jsx';
+
+const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 
 // HR portal — deliberately self-contained and separate from the Site Analysis
 // app. It talks only to /api/hr/* and stores its own token, so nothing here can
@@ -8,7 +11,7 @@ import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as
 
 const HR_TOKEN_KEY = 'qtx_hr_token';
 
-const hrApi = async (path, opts = {}) => {
+export const hrApi = async (path, opts = {}) => {
   const token = localStorage.getItem(HR_TOKEN_KEY);
   const res = await fetch(`${API_BASE}/api/hr${path}`, {
     ...opts,
@@ -102,26 +105,218 @@ function HrDashboard({ user }) {
   );
 }
 
-// --- Recruitment (4-tab scaffold) -------------------------------------------
+// --- Recruitment -----------------------------------------------------------
 
 function HrRecruitment() {
   const [tab, setTab] = useState('jobs');
-  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline'], ['onboarded', 'Onboarded']];
+  const [mode, setMode] = useState('list'); // list | choose | build
+  const [builderSeed, setBuilderSeed] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [err, setErr] = useState('');
+  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
+
+  const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
+  useEffect(() => {
+    loadJobs();
+    hrApi('/departments').then(setDepartments).catch(() => {});
+    hrApi('/branches').then(setBranches).catch(() => {});
+  }, []);
+
+  const startBuilder = (seed) => { setBuilderSeed(seed || null); setMode('build'); };
+
+  if (mode === 'build') {
+    return <HrJobBuilder departments={departments} branches={branches} existing={builderSeed}
+      onCancel={() => { setMode('list'); loadJobs(); }}
+      onDone={() => { setMode('list'); loadJobs(); }} />;
+  }
+  if (mode === 'choose') {
+    return <PostJobChoice departments={departments} onCancel={() => setMode('list')} onCreate={() => startBuilder(null)} onParsed={(seed) => startBuilder(seed)} setErr={setErr} />;
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
-        {tab === 'jobs' && <button className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
-        {tab === 'candidates' && <button className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add Candidate</button>}
+        {tab === 'jobs' && <button onClick={() => setMode('choose')} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
       </div>
+      {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
         {tabs.map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
         ))}
       </div>
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">
-        {tabs.find(([id]) => id === tab)[1]} — coming in the next version.
+      {tab === 'jobs' && <JobList jobs={jobs} onEdit={(j) => startBuilder(j)} reload={loadJobs} />}
+      {tab === 'candidates' && <CandidateList jobs={jobs} />}
+      {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
+    </div>
+  );
+}
+
+// Post-a-job entry: choose Create JD or Upload an existing JD.
+function PostJobChoice({ onCancel, onCreate, onParsed, setErr }) {
+  const [busy, setBusy] = useState(false);
+  const fileRef = React.useRef(null);
+
+  const onFile = async (file) => {
+    if (!file) return;
+    setBusy(true); setErr('');
+    try {
+      const text = await extractText(file);
+      if (!text || text.trim().length < 30) throw new Error('Could not read enough text from that file. Try a text-based PDF or a DOCX.');
+      const parsed = await hrApi('/job-posts/ai/parse-jd', { method: 'POST', body: JSON.stringify({ text }) });
+      // Seed the builder with parsed fields (normalise numbers/strings).
+      onParsed({
+        title: parsed.title || '', department: parsed.department || '', workMode: parsed.workMode || 'in_office',
+        locations: parsed.locations || [], description: parsed.description || '',
+        skills: (parsed.skills || []).map((s) => ({ name: s.name || s, primary: !!s.primary })),
+        salaryMin: parsed.salaryMin || '', salaryMax: parsed.salaryMax || '', salaryPeriod: parsed.salaryPeriod || 'monthly',
+        salaryCurrency: parsed.salaryCurrency || 'INR',
+        experienceType: parsed.experienceType || 'experienced', expMin: parsed.expMin || '', expMax: parsed.expMax || '',
+        employmentType: parsed.employmentType || 'full_time', employmentLevel: parsed.employmentLevel || 'entry',
+        education: parsed.education || '', openings: parsed.openings || 1,
+        _missing: parsed.missing || [],
+      });
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div>
+      <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-4">← Back to jobs</button>
+      <div className="text-2xl font-extrabold text-[#050A1F] mb-1">Post a Job</div>
+      <p className="text-sm text-slate-500 mb-6">Start from scratch, or upload a JD you already have and let AI fill in the details.</p>
+      <div className="grid grid-cols-2 gap-4 max-w-2xl">
+        <button onClick={onCreate} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
+          <div className="text-3xl mb-2">📝</div>
+          <div className="text-base font-extrabold text-[#050A1F]">Create JD</div>
+          <div className="text-sm text-slate-500 mt-1">Build the job post step by step, with AI help for the description and skills.</div>
+        </button>
+        <button onClick={() => !busy && fileRef.current?.click()} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition disabled:opacity-60">
+          <div className="text-3xl mb-2">{busy ? '⏳' : '📄'}</div>
+          <div className="text-base font-extrabold text-[#050A1F]">{busy ? 'Reading your JD…' : 'Upload JD'}</div>
+          <div className="text-sm text-slate-500 mt-1">Upload a PDF or Word file. AI reads it, fills the form, and flags anything missing.</div>
+          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Extract text from an uploaded JD in the browser (pdf.js / mammoth / plain).
+async function extractText(file) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.txt')) return await file.text();
+  if (name.endsWith('.pdf')) {
+    const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs';
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let out = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      out += content.items.map((it) => it.str).join(' ') + '\n';
+    }
+    return out;
+  }
+  if (name.endsWith('.docx') || name.endsWith('.doc')) {
+    const mammoth = await import('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+    const buf = await file.arrayBuffer();
+    const result = await (mammoth.default || mammoth).extractRawText({ arrayBuffer: buf });
+    return result.value;
+  }
+  return await file.text();
+}
+
+function JobList({ jobs, onEdit, reload }) {
+  const publishedUrl = (j) => `${API_BASE}/careers/${j.publicToken}/embed`;
+  const close = async (j) => { await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
+  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); };
+  const copy = (url) => { navigator.clipboard?.writeText(`<iframe src="${url}" width="100%" height="900" frameborder="0"></iframe>`); };
+  if (!jobs.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No job posts yet. Click “Post a Job” to create one.</div>;
+  return (
+    <div className="space-y-3">
+      {jobs.map((j) => (
+        <div key={j._id} className="bg-white rounded-2xl border border-slate-200/70 p-4 flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="text-base font-extrabold text-[#050A1F]">{j.title}</div>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${j.status === 'published' ? 'bg-green-100 text-green-700' : j.status === 'closed' ? 'bg-slate-200 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{j.status}</span>
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {j.status === 'published' && <button onClick={() => copy(publishedUrl(j))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600" title="Copy iframe embed code">Copy embed</button>}
+            <button onClick={() => onEdit(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
+            {j.status === 'published' && <button onClick={() => close(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button>}
+            <button onClick={() => del(j)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CandidateList({ jobs }) {
+  const [cands, setCands] = useState([]);
+  useEffect(() => { hrApi('/candidates').then(setCands).catch(() => {}); }, []);
+  const jobTitle = (id) => (jobs.find((j) => j._id === id) || {}).title || '—';
+  if (!cands.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No candidates yet.</div>;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+          <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Job</th><th className="px-4 py-3">Stage</th><th className="px-4 py-3">Source</th>
+        </tr></thead>
+        <tbody>
+          {cands.map((c) => (
+            <tr key={c._id} className="border-b border-slate-50">
+              <td className="px-4 py-3 font-semibold text-slate-700">{c.name}</td>
+              <td className="px-4 py-3 text-slate-500">{c.email}</td>
+              <td className="px-4 py-3 text-slate-500">{jobTitle(c.jobPostId)}</td>
+              <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{c.stage}</span></td>
+              <td className="px-4 py-3 text-slate-400 text-xs">{c.source === 'public_form' ? 'Application form' : 'Manual'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RecruitPipeline({ jobs }) {
+  const published = jobs.filter((j) => j.status === 'published');
+  const [jobId, setJobId] = useState(published[0]?._id || null);
+  const [cands, setCands] = useState([]);
+  useEffect(() => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); }, [jobId]);
+  const job = jobs.find((j) => j._id === jobId);
+  const stages = (job && job.stages) || [];
+  const move = async (c, stage) => { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x)); };
+  if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
+  return (
+    <div>
+      <select className={inp + ' max-w-xs mb-4'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
+        {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+      </select>
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {stages.map((st) => (
+          <div key={st.id} className="w-64 shrink-0 bg-slate-50 rounded-xl p-2">
+            <div className="flex items-center gap-2 px-2 py-1.5 mb-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: st.color }} /><span className="text-xs font-bold text-slate-600">{st.label}</span><span className="text-xs text-slate-400">{cands.filter((c) => c.stage === st.id).length}</span></div>
+            <div className="space-y-2">
+              {cands.filter((c) => c.stage === st.id).map((c) => (
+                <div key={c._id} className="bg-white rounded-lg border border-slate-200 p-2.5">
+                  <div className="text-sm font-semibold text-slate-700">{c.name}</div>
+                  <div className="text-xs text-slate-400">{c.email}</div>
+                  <select className="mt-1.5 w-full text-xs rounded border border-slate-200 px-1.5 py-1" value={c.stage} onChange={(e) => move(c, e.target.value)}>
+                    {stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

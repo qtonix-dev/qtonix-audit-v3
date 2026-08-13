@@ -1271,30 +1271,64 @@ const HrHoliday = sequelize.define('HrHoliday', {
 }, { tableName: 'hr_holidays' });
 HrHoliday.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
-// Recruitment scaffolding — job posts. Structure only for now; functionality
-// arrives in a later version.
+// Recruitment — job posts. Multi-step builder: About Job → Application Form →
+// Hiring Flow → Finishing Up. Published posts expose a public application form
+// (embeddable via iframe) at /careers/:publicToken.
 const HrJobPost = sequelize.define('HrJobPost', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   title: { type: DataTypes.STRING(160), allowNull: false },
   branch: { type: DataTypes.STRING(80), defaultValue: '' },
   description: { type: DataTypes.TEXT, defaultValue: '' },
-  status: { type: DataTypes.STRING(30), defaultValue: 'open' },
+  status: { type: DataTypes.STRING(30), defaultValue: 'draft' }, // draft | published | closed
   createdById: { type: DataTypes.INTEGER, allowNull: true },
   createdByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  // --- About Job ---
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  workMode: { type: DataTypes.STRING(20), defaultValue: 'in_office' }, // in_office | hybrid | remote
+  locations: { type: DataTypes.JSON, defaultValue: [] },   // ["Kolkata, WB, India", ...]
+  skills: { type: DataTypes.JSON, defaultValue: [] },      // [{ name, primary:bool }]
+  // --- Employment details ---
+  salaryPeriod: { type: DataTypes.STRING(12), defaultValue: 'monthly' }, // hourly|monthly|annual
+  salaryMin: { type: DataTypes.INTEGER, allowNull: true },
+  salaryMax: { type: DataTypes.INTEGER, allowNull: true },
+  salaryCurrency: { type: DataTypes.STRING(6), defaultValue: 'INR' },
+  hideSalary: { type: DataTypes.BOOLEAN, defaultValue: false },
+  experienceType: { type: DataTypes.STRING(20), defaultValue: 'experienced' }, // freshers|intern|experienced
+  expMin: { type: DataTypes.INTEGER, allowNull: true },
+  expMax: { type: DataTypes.INTEGER, allowNull: true },
+  employmentType: { type: DataTypes.STRING(20), defaultValue: 'full_time' }, // full_time|part_time|internship|freelance
+  employmentLevel: { type: DataTypes.STRING(20), defaultValue: 'entry' },    // entry|associate|mid_senior|senior|tl|manager
+  // --- Optional ---
+  education: { type: DataTypes.STRING(60), defaultValue: '' },
+  openings: { type: DataTypes.INTEGER, defaultValue: 1 },
+  // --- Application form config ---
+  formFields: { type: DataTypes.JSON, defaultValue: {} },   // { photo:'off', currentLocation:'mandatory', ... }
+  questions: { type: DataTypes.JSON, defaultValue: [] },    // [{ id, type, question, mandatory, options:[] }]
+  // --- Hiring flow (per-post, editable) ---
+  stages: { type: DataTypes.JSON, defaultValue: [] },       // [{ id, label, color }]
+  // --- Public embed ---
+  publicToken: { type: DataTypes.STRING(40), allowNull: true, unique: true },
+  publishedAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'hr_job_posts' });
 HrJobPost.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
-// Recruitment scaffolding — candidates.
+// Recruitment — candidates / applications. Created by HR or via the public
+// application form. Answers holds the applicant's responses to the configured
+// fields and screening questions.
 const HrCandidate = sequelize.define('HrCandidate', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(120), allowNull: false },
   email: { type: DataTypes.STRING(160), defaultValue: '' },
   phone: { type: DataTypes.STRING(40), defaultValue: '' },
   jobPostId: { type: DataTypes.INTEGER, allowNull: true },
-  // Recruitment stage: applied → pipeline → onboarded (details later).
-  stage: { type: DataTypes.STRING(30), defaultValue: 'applied' },
+  // Recruitment stage id — matches one of the job post's configured stages.
+  stage: { type: DataTypes.STRING(40), defaultValue: 'applied' },
   recruiterId: { type: DataTypes.INTEGER, allowNull: true },
   notes: { type: DataTypes.TEXT, defaultValue: '' },
+  resumeUrl: { type: DataTypes.STRING(400), defaultValue: '' },
+  currentLocation: { type: DataTypes.STRING(160), defaultValue: '' },
+  answers: { type: DataTypes.JSON, defaultValue: {} },   // { fieldKey/questionId: value }
+  source: { type: DataTypes.STRING(30), defaultValue: 'manual' }, // manual | public_form
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Apply</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; color: #050A1F; background: #fff; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; }
+  h1 { font-size: 22px; font-weight: 800; margin: 0 0 4px; }
+  .meta { color: #64748b; font-size: 13px; margin-bottom: 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .chip { background: #f1f5f9; color: #475569; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+  .chip.star { background: #fef3c7; color: #92400e; }
+  .desc { color: #334155; font-size: 14px; line-height: 1.6; margin-bottom: 24px; }
+  .desc h3 { font-size: 15px; margin: 16px 0 6px; }
+  .card { border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin: 14px 0 6px; }
+  label .req { color: #f43f5e; }
+  input[type=text], input[type=email], input[type=tel], input[type=url], textarea, select {
+    width: 100%; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #FF6A00; box-shadow: 0 0 0 2px #ffedd5; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .btn { margin-top: 20px; width: 100%; border: 0; border-radius: 10px; padding: 12px; font-size: 15px; font-weight: 800; color: #fff;
+    background: linear-gradient(90deg,#FF6A00,#FF4500); cursor: pointer; }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .muted { color: #94a3b8; font-size: 12px; }
+  .err { color: #dc2626; font-size: 13px; margin-top: 10px; }
+  .ok { text-align: center; padding: 48px 20px; }
+  .ok .big { font-size: 40px; }
+  .seg { display: inline-flex; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><p class="muted">Loading…</p></div>
+<script>
+(function () {
+  var parts = location.pathname.split('/');
+  var token = parts[2]; // /careers/<token>/embed
+  var root = document.getElementById('root');
+  var job = null;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  fetch('/api/careers/' + encodeURIComponent(token))
+    .then(function (r) { if (!r.ok) throw new Error('unavailable'); return r.json(); })
+    .then(function (j) { job = j; render(); })
+    .catch(function () { root.innerHTML = '<p class="muted">This position is no longer available.</p>'; });
+
+  function fieldOn(v){ return v === 'mandatory' || v === 'optional'; }
+  function reqMark(v){ return v === 'mandatory' ? ' <span class="req">*</span>' : ''; }
+
+  function render() {
+    var ff = job.formFields || {};
+    var salary = job.salary ? (job.salary.currency + ' ' + (job.salary.min||'?') + '–' + (job.salary.max||'?') + ' / ' + job.salary.period) : '';
+    var expLabel = job.experienceType === 'freshers' ? 'Freshers' : job.experienceType === 'intern' ? 'Intern'
+      : ((job.expMin||0) + '–' + (job.expMax||0) + ' years');
+    var html = '';
+    html += '<h1>' + esc(job.title) + '</h1>';
+    html += '<div class="meta">' + esc((job.locations||[]).join(' · ') || '') + (job.locations && job.locations.length ? ' · ' : '') + 'Experience: ' + esc(expLabel) + (salary ? ' · ' + esc(salary) : '') + '</div>';
+    if ((job.skills||[]).length) {
+      html += '<div class="chips">' + job.skills.map(function(s){ return '<span class="chip">' + esc(s) + '</span>'; }).join('') + '</div>';
+    }
+    html += '<div class="desc">' + (job.description || '') + '</div>';
+
+    html += '<div class="card"><form id="applyForm">';
+    html += '<div class="row"><div><label>First name <span class="req">*</span></label><input type="text" name="firstName" required></div>'
+          + '<div><label>Last name <span class="req">*</span></label><input type="text" name="lastName" required></div></div>';
+    html += '<label>Email <span class="req">*</span></label><input type="email" name="email" required>';
+    html += '<label>Contact number</label><input type="tel" name="phone">';
+
+    if (fieldOn(ff.currentLocation)) html += '<label>Current location' + reqMark(ff.currentLocation) + '</label><input type="text" name="currentLocation"' + (ff.currentLocation==='mandatory'?' required':'') + '>';
+    if (fieldOn(ff.photo)) html += '<label>Photo' + reqMark(ff.photo) + '</label><input type="url" name="photoUrl" placeholder="Link to your photo">';
+
+    // Resume is always mandatory. We accept a link (file hosting handled later).
+    html += '<label>Resume link <span class="req">*</span></label><input type="url" name="resumeUrl" placeholder="Link to your resume (Drive, Dropbox…)" required>';
+
+    if (fieldOn(ff.workExperience)) html += '<label>Work experience' + reqMark(ff.workExperience) + '</label><textarea name="workExperience" rows="2"' + (ff.workExperience==='mandatory'?' required':'') + '></textarea>';
+    if (fieldOn(ff.educationDetails)) html += '<label>Education details' + reqMark(ff.educationDetails) + '</label><textarea name="educationDetails" rows="2"' + (ff.educationDetails==='mandatory'?' required':'') + '></textarea>';
+    if (fieldOn(ff.noticePeriod)) html += '<label>Notice period' + reqMark(ff.noticePeriod) + '</label><input type="text" name="noticePeriod"' + (ff.noticePeriod==='mandatory'?' required':'') + '>';
+    if (fieldOn(ff.ctc)) html += '<div class="row"><div><label>Current CTC' + reqMark(ff.ctc) + '</label><input type="text" name="currentCtc"' + (ff.ctc==='mandatory'?' required':'') + '></div><div><label>Expected CTC</label><input type="text" name="expectedCtc"></div></div>';
+    if (fieldOn(ff.portfolio)) html += '<label>Work link / Portfolio' + reqMark(ff.portfolio) + '</label><input type="url" name="portfolio"' + (ff.portfolio==='mandatory'?' required':'') + '>';
+    if (fieldOn(ff.gender)) html += '<label>Gender' + reqMark(ff.gender) + '</label><select name="gender"' + (ff.gender==='mandatory'?' required':'') + '><option value="">— Select —</option><option>Male</option><option>Female</option><option>Other</option><option>Prefer not to say</option></select>';
+
+    // Screening questions
+    (job.questions||[]).forEach(function (q) {
+      html += '<label>' + esc(q.question) + (q.mandatory ? ' <span class="req">*</span>' : '') + '</label>';
+      var req = q.mandatory ? ' required' : '';
+      if (q.type === 'multi') html += '<textarea data-q="' + q.id + '" rows="3"' + req + '></textarea>';
+      else if (q.type === 'yesno') html += '<select data-q="' + q.id + '"' + req + '><option value="">— Select —</option><option>Yes</option><option>No</option></select>';
+      else if (q.type === 'multiple') html += '<select data-q="' + q.id + '"' + req + '><option value="">— Select —</option>' + (q.options||[]).map(function(o){return '<option>' + esc(o) + '</option>';}).join('') + '</select>';
+      else if (q.type === 'file') html += '<input type="url" data-q="' + q.id + '" placeholder="Link to file"' + req + '>';
+      else html += '<input type="text" data-q="' + q.id + '"' + req + '>';
+    });
+
+    html += '<div class="err" id="err"></div>';
+    html += '<button class="btn" type="submit" id="submitBtn">Submit application</button>';
+    html += '</form></div>';
+    root.innerHTML = html;
+
+    document.getElementById('applyForm').addEventListener('submit', submitForm);
+  }
+
+  function submitForm(e) {
+    e.preventDefault();
+    var f = e.target;
+    var btn = document.getElementById('submitBtn');
+    var errEl = document.getElementById('err');
+    errEl.textContent = '';
+    var answers = {};
+    f.querySelectorAll('[data-q]').forEach(function (el) { if (el.value) answers[el.getAttribute('data-q')] = el.value; });
+    ['workExperience','educationDetails','noticePeriod','currentCtc','expectedCtc','portfolio','gender','photoUrl'].forEach(function (k) {
+      if (f[k] && f[k].value) answers[k] = f[k].value;
+    });
+    var payload = {
+      firstName: f.firstName.value, lastName: f.lastName.value, email: f.email.value,
+      phone: f.phone ? f.phone.value : '',
+      currentLocation: f.currentLocation ? f.currentLocation.value : '',
+      resumeUrl: f.resumeUrl ? f.resumeUrl.value : '',
+      answers: answers
+    };
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    fetch('/api/careers/' + encodeURIComponent(token) + '/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { errEl.textContent = res.d.error || 'Something went wrong.'; btn.disabled = false; btn.textContent = 'Submit application'; return; }
+        root.innerHTML = '<div class="ok"><div class="big">✅</div><h1>Application received</h1><p class="muted">Thanks for applying to ' + esc(job.title) + '. We\'ll be in touch.</p></div>';
+      })
+      .catch(function () { errEl.textContent = 'Network error. Please try again.'; btn.disabled = false; btn.textContent = 'Submit application'; });
+  }
+})();
+</script>
+</body>
+</html>

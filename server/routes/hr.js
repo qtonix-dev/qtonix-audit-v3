@@ -479,18 +479,170 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
   } catch (e) { next(e); }
 });
 
-// --- Recruitment scaffolding (lists only; functionality comes later) --------
+// --- Recruitment: job-post builder --------------------------------------
+
+const crypto = require('crypto');
+const DEFAULT_STAGES = [
+  { id: 'sourced', label: 'Sourced', color: '#94A3B8' },
+  { id: 'applied', label: 'Applied', color: '#2563EB' },
+  { id: 'contacted', label: 'Contacted', color: '#7C3AED' },
+  { id: 'interview', label: 'Interview', color: '#F5A524' },
+  { id: 'offered', label: 'Offered', color: '#0EA5E9' },
+  { id: 'hired', label: 'Hired', color: '#16A34A' },
+  { id: 'rejected', label: 'Rejected', color: '#DC2626' },
+];
+const DEFAULT_FORM_FIELDS = {
+  photo: 'off', currentLocation: 'mandatory',
+  resume: 'mandatory', workExperience: 'optional', educationDetails: 'optional',
+  noticePeriod: 'optional', ctc: 'optional', portfolio: 'off', gender: 'off',
+};
+
+async function anthropicKey() {
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  const key = s && s.getKey ? s.getKey('anthropic') : null;
+  if (!key) { const e = new Error('AI is not configured. Add an Anthropic API key in the CRM admin settings.'); e.status = 400; throw e; }
+  return key;
+}
 
 router.get('/job-posts', requireHrAccess, async (req, res, next) => {
   try { res.json((await HrJobPost.findAll({ order: [['createdAt', 'DESC']] })).map((r) => r.toJSON())); }
   catch (e) { next(e); }
 });
 
+router.get('/job-posts/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Create or update a draft (the builder auto-saves as the HR moves through steps).
+router.post('/job-posts', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'Job title is required.' });
+    const fields = pickJobFields(b);
+    fields.createdById = req.hrActor.id;
+    fields.createdByName = req.hrActor.name;
+    if (!fields.stages || !fields.stages.length) fields.stages = DEFAULT_STAGES;
+    if (!fields.formFields || !Object.keys(fields.formFields).length) fields.formFields = DEFAULT_FORM_FIELDS;
+    const row = await HrJobPost.create(fields);
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.put('/job-posts/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    const fields = pickJobFields(req.body || {});
+    Object.assign(row, fields);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Publish: mint a public token (if not already) and flip status to published.
+router.post('/job-posts/:id/publish', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    if (!row.publicToken) row.publicToken = crypto.randomBytes(12).toString('hex');
+    row.status = 'published';
+    row.publishedAt = new Date();
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.post('/job-posts/:id/close', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    row.status = 'closed'; await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/job-posts/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- AI helpers for the builder ---
+
+router.post('/job-posts/ai/rewrite-jd', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    const { rewriteJobDescription } = require('../services/hrRecruitAI');
+    const html = await rewriteJobDescription(key, {
+      title: req.body.title, department: req.body.department,
+      draft: req.body.description, workMode: req.body.workMode,
+    });
+    res.json({ description: html });
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
+});
+
+router.post('/job-posts/ai/suggest-skills', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    const { suggestSkills } = require('../services/hrRecruitAI');
+    const skills = await suggestSkills(key, { title: req.body.title, description: req.body.description });
+    res.json({ skills });
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
+});
+
+// Parse an uploaded JD. The client extracts text (pdf/docx) and posts it here.
+router.post('/job-posts/ai/parse-jd', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    const { parseUploadedJD } = require('../services/hrRecruitAI');
+    if (!req.body.text || String(req.body.text).trim().length < 30) {
+      return res.status(400).json({ error: 'Could not read enough text from that file. Try a text-based PDF or DOCX.' });
+    }
+    const parsed = await parseUploadedJD(key, { text: req.body.text });
+    res.json(parsed);
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
+});
+
+// Whitelist of job-post fields the client may set (prevents mass-assignment).
+function pickJobFields(b) {
+  const out = {};
+  const str = ['title', 'branch', 'description', 'department', 'workMode', 'salaryPeriod',
+    'salaryCurrency', 'experienceType', 'employmentType', 'employmentLevel', 'education', 'status'];
+  const num = ['salaryMin', 'salaryMax', 'expMin', 'expMax', 'openings'];
+  const json = ['locations', 'skills', 'formFields', 'questions', 'stages'];
+  for (const k of str) if (b[k] !== undefined) out[k] = String(b[k]).slice(0, 20000);
+  for (const k of num) if (b[k] !== undefined && b[k] !== '' && b[k] !== null) out[k] = Number(b[k]);
+  for (const k of json) if (b[k] !== undefined) out[k] = b[k];
+  if (b.hideSalary !== undefined) out.hideSalary = !!b.hideSalary;
+  // Never let the client set status to published via a plain save.
+  if (out.status && !['draft', 'closed'].includes(out.status)) delete out.status;
+  return out;
+}
+
 router.get('/candidates', requireHrAccess, async (req, res, next) => {
   try {
     const where = {};
     if (req.query.stage) where.stage = String(req.query.stage);
+    if (req.query.jobPostId) where.jobPostId = Number(req.query.jobPostId);
     res.json((await HrCandidate.findAll({ where, order: [['createdAt', 'DESC']] })).map((r) => r.toJSON()));
+  } catch (e) { next(e); }
+});
+
+// Move a candidate between hiring-flow stages.
+router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    row.stage = String(req.body.stage || 'applied');
+    await row.save();
+    res.json(row.toJSON());
   } catch (e) { next(e); }
 });
 
