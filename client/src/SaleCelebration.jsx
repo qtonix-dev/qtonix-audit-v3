@@ -102,12 +102,20 @@ export default function SaleCelebration() {
       `}</style>
 
       <div className="relative flex items-center justify-center" style={{ animation: 'qtx-cele-in 0.5s ease-out' }}>
-        {/* Rotating white rays — full screen, radiating from centre */}
-        <div className="fixed inset-0 pointer-events-none" style={{
+        {/* Rotating white rays. The rotating layer must be a SQUARE larger than
+            the screen's diagonal and centred, otherwise the conic-gradient only
+            fills the viewport rectangle and the rays fall short of the edges /
+            corners as it spins. 220vmax guarantees every corner is covered at
+            any rotation. */}
+        <div className="fixed pointer-events-none" style={{
+          top: '50%', left: '50%',
+          width: '220vmax', height: '220vmax',
+          transform: 'translate(-50%, -50%)',
+          transformOrigin: 'center center',
           animation: 'qtx-ray-spin 16s linear infinite',
           background: 'repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.10) 0deg 5deg, rgba(255,255,255,0) 5deg 13deg)',
-          maskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 85%)',
-          WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 8%, black 55%, transparent 85%)',
+          maskImage: 'radial-gradient(circle at 50% 50%, black 3%, black 24%, transparent 42%)',
+          WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 3%, black 24%, transparent 42%)',
         }} />
         {/* Soft glow ring */}
         <div className="absolute rounded-full" style={{

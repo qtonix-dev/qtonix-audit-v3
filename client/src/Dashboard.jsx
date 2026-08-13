@@ -91,6 +91,7 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
           <div>
             <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Admin-owned</div>
             <div className="text-sm font-extrabold text-slate-400">{splitNote.admin}</div>
+            <div className="text-[8px] text-slate-300 font-semibold">not counted in target</div>
           </div>
         </div>
       )}

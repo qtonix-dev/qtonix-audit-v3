@@ -952,6 +952,15 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // brought in) — so the two can be told apart at a glance.
     let teamSalesUsd = 0, teamNewSalesUsd = 0, teamCrossSalesUsd = 0;
     let teamNewCount = 0, teamCrossCount = 0, teamAwaitingUsd = 0;
+    // Admin-owned tally. This is intentionally STRICTER than the team/company
+    // tally: it counts a deal toward "Admin-owned" ONLY when the admin actually
+    // makes a sale — the first payment of a deal (seq 1), split into new vs
+    // cross. It deliberately EXCLUDES later installment collections (seq >= 2)
+    // and recurring repeat cycles, because collecting an installment on an
+    // existing admin deal is not a new selling event. It is also kept entirely
+    // out of the company-target progress, which is for agents & managers only.
+    let adminSalesUsd = 0, adminNewSalesUsd = 0, adminCrossSalesUsd = 0;
+    let adminNewCount = 0, adminCrossCount = 0;
     const byOwner = {};
     const ensure = (id, name) => (byOwner[id] = byOwner[id] || { ownerId: id, name, salesUsd: 0, newSalesUsd: 0, crossSalesUsd: 0, conversions: 0, leads: 0, transfersToday: 0, leadsGeneratedMonth: 0, leadsGeneratedToday: 0 });
     const genTodayList = [], assignedTodayList = [], untouchedList = [];
@@ -1152,6 +1161,17 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
               teamSalesUsd += usd;
               if (isNew) { teamNewSalesUsd += usd; teamNewCount++; }
               else { teamCrossSalesUsd += usd; teamCrossCount++; }
+            } else {
+              // Admin-owned is treated exactly like an agent/manager's own
+              // sales: a new deal the admin closes counts here (all paid
+              // installments of a one-time deal, and the FIRST cycle of a
+              // recurring deal — a fresh sale). Later recurring cycles never
+              // reach this point: they're a "recurringRepeat" and were excluded
+              // by the guard above, so they count nowhere (not admin-owned, not
+              // team, not company target).
+              adminSalesUsd += usd;
+              if (isNew) { adminNewSalesUsd += usd; adminNewCount++; }
+              else { adminCrossSalesUsd += usd; adminCrossCount++; }
             }
             if (!adminOwned) {
               salesThisMonthUsd += usd;
@@ -1353,7 +1373,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     // Achieved against that target. For a manager this is their whole team's
     // collected sales (which already includes any cross-sales they closed
     // themselves on converted clients, since those leads are in their scope).
-    const scopeAchieved = salesThisMonthUsd;
+    // For an ADMIN, the company target is for agents & managers only, so the
+    // progress must be measured against team sales — admin-owned house/test
+    // sales are shown separately and never count toward the company target.
+    const scopeAchieved = req.user.role === 'admin' ? teamSalesUsd : salesThisMonthUsd;
 
     // 6-month trend (collected USD by paid date) within scope. For historical
     // months we also overlay manually-entered figures from Admin → Monthly
@@ -1579,7 +1602,18 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         newSalesUsd: Math.round(newSalesUsd), crossSalesUsd: Math.round(crossSalesUsd),
         newSalesCount, crossSalesCount,
         companyTarget: Math.round(companyTarget),
-        companyPct: companyTarget > 0 ? Math.round((salesThisMonthUsd / companyTarget) * 100) : null,
+        // Company-target progress is for agents & managers only, so it must
+        // exclude admin-owned money. For an admin viewer, salesThisMonthUsd
+        // includes their own house/test sales, so we measure progress against
+        // team sales (which already exclude admin-owned). Managers never see
+        // admin-owned money, so their figure is already team-only.
+        companyPct: companyTarget > 0
+          ? Math.round(((viewerIsAdmin ? teamSalesUsd : salesThisMonthUsd) / companyTarget) * 100)
+          : null,
+        // The sales figure that actually counts toward the company target
+        // (excludes admin-owned for admins). Lets the UI show the right number
+        // next to the target instead of the mixed all-in figure.
+        companySalesUsd: Math.round(viewerIsAdmin ? teamSalesUsd : salesThisMonthUsd),
         // Role-aware target for the row-1 box.
         scopeTarget: Math.round(scopeTarget),
         scopeAchieved: Math.round(scopeAchieved),
@@ -1602,7 +1636,15 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         teamNewSalesCount: viewerIsAdmin ? teamNewCount : null,
         teamCrossSalesCount: viewerIsAdmin ? teamCrossCount : null,
         teamAwaitingUsd: viewerIsAdmin ? Math.round(teamAwaitingUsd) : null,
-        adminSalesUsd: viewerIsAdmin ? Math.round(salesThisMonthUsd - teamSalesUsd) : null,
+        // Admin-owned money the admin made themselves. Computed from seq-1 sale
+        // events only (new + cross), so recurring/installment collections on
+        // admin deals are excluded. Shown on the admin dashboard but kept OUT of
+        // the company-target progress below.
+        adminSalesUsd: viewerIsAdmin ? Math.round(adminSalesUsd) : null,
+        adminNewSalesUsd: viewerIsAdmin ? Math.round(adminNewSalesUsd) : null,
+        adminCrossSalesUsd: viewerIsAdmin ? Math.round(adminCrossSalesUsd) : null,
+        adminNewSalesCount: viewerIsAdmin ? adminNewCount : null,
+        adminCrossSalesCount: viewerIsAdmin ? adminCrossCount : null,
         teamCompanyPct: viewerIsAdmin && companyTarget > 0 ? Math.round((teamSalesUsd / companyTarget) * 100) : null,
       },
       lists: { generatedToday: genTodayList, assignedToday: assignedTodayList, untouched: untouchedList, recentlyAdded },
