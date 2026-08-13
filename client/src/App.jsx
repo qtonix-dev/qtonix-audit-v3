@@ -70,6 +70,48 @@ const COUNTRIES = [
   { code: 'pe', name: 'Peru' }, { code: 'ua', name: 'Ukraine' },
 ];
 
+// Searchable Target-market picker: type to filter, fixed-height scroll list,
+// click to select. Stores the market CODE, shows/searches by country name.
+function MarketCombobox({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [rect, setRect] = useState(null);
+  const inputRef = useRef(null);
+  const selected = COUNTRIES.find((m) => m.code === value);
+  const query = q.trim().toLowerCase();
+  const matches = query
+    ? COUNTRIES.filter((m) => m.name.toLowerCase().includes(query) || m.code.includes(query))
+    : COUNTRIES;
+  const openList = () => {
+    if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+    setOpen(true); setQ('');
+  };
+  const cls = 'w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]';
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        className={cls}
+        value={open ? q : (selected ? selected.name : '')}
+        placeholder="Type to search markets…"
+        onFocus={openList}
+        onChange={(e) => setQ(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && rect && (
+        <div className="fixed z-[80] max-h-60 overflow-auto rounded-lg border border-slate-200 bg-white shadow-xl"
+          style={{ top: rect.bottom + 4, left: rect.left, width: rect.width }}>
+          {matches.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No match</div>}
+          {matches.map((m) => (
+            <button key={m.code} type="button" onMouseDown={() => { onChange(m.code); setOpen(false); }}
+              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${value === m.code ? 'font-bold text-[#FF4500]' : 'text-slate-700'}`}>{m.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Training mode. When the app is opened at /demo-app/<token> every component
  * keeps calling api('/leads') exactly as before, but the request is rewritten
@@ -428,12 +470,7 @@ function NewReport({ user, initialLeadId, onQueued, onBack }) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Target market</label>
-            <select
-              value={form.country} onChange={(e) => set('country', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
-            >
-              {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-            </select>
+            <MarketCombobox value={form.country} onChange={(v) => set('country', v)} />
             <p className="text-[11px] text-slate-400 mt-1">The country whose Google data we pull. Pick <b>Worldwide</b> if the business targets multiple countries or you're unsure.</p>
           </div>
           <div>

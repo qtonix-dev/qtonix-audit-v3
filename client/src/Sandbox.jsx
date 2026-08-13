@@ -239,6 +239,69 @@ const seedDb = () => ({
 // UI atoms
 // ---------------------------------------------------------------------------
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent';
+
+// Full SE Ranking market list (code + name), Worldwide first. Correct 'uk' code.
+const SANDBOX_MARKETS = [
+  { code: 'worldwide', name: '🌐 Worldwide (all regions)' },
+  { code: 'us', name: 'United States' }, { code: 'uk', name: 'United Kingdom' },
+  { code: 'ca', name: 'Canada' }, { code: 'au', name: 'Australia' }, { code: 'in', name: 'India' },
+  { code: 'ae', name: 'United Arab Emirates' }, { code: 'sg', name: 'Singapore' },
+  { code: 'my', name: 'Malaysia' }, { code: 'de', name: 'Germany' }, { code: 'fr', name: 'France' },
+  { code: 'nz', name: 'New Zealand' }, { code: 'za', name: 'South Africa' },
+  { code: 'ie', name: 'Ireland' }, { code: 'es', name: 'Spain' }, { code: 'it', name: 'Italy' },
+  { code: 'nl', name: 'Netherlands' }, { code: 'be', name: 'Belgium' }, { code: 'ch', name: 'Switzerland' },
+  { code: 'at', name: 'Austria' }, { code: 'se', name: 'Sweden' }, { code: 'no', name: 'Norway' },
+  { code: 'dk', name: 'Denmark' }, { code: 'fi', name: 'Finland' }, { code: 'pt', name: 'Portugal' },
+  { code: 'pl', name: 'Poland' }, { code: 'br', name: 'Brazil' }, { code: 'mx', name: 'Mexico' },
+  { code: 'ar', name: 'Argentina' }, { code: 'jp', name: 'Japan' }, { code: 'kr', name: 'South Korea' },
+  { code: 'id', name: 'Indonesia' }, { code: 'ph', name: 'Philippines' }, { code: 'th', name: 'Thailand' },
+  { code: 'vn', name: 'Vietnam' }, { code: 'sa', name: 'Saudi Arabia' }, { code: 'qa', name: 'Qatar' },
+  { code: 'hk', name: 'Hong Kong' }, { code: 'tw', name: 'Taiwan' }, { code: 'tr', name: 'Türkiye' },
+  { code: 'gr', name: 'Greece' }, { code: 'cz', name: 'Czechia' }, { code: 'ro', name: 'Romania' },
+  { code: 'hu', name: 'Hungary' }, { code: 'il', name: 'Israel' }, { code: 'eg', name: 'Egypt' },
+  { code: 'ng', name: 'Nigeria' }, { code: 'ke', name: 'Kenya' }, { code: 'pk', name: 'Pakistan' },
+  { code: 'bd', name: 'Bangladesh' }, { code: 'lk', name: 'Sri Lanka' }, { code: 'ua', name: 'Ukraine' },
+];
+
+// Searchable Target-market picker: type to filter, fixed-height scroll list.
+function MarketCombobox({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [rect, setRect] = useState(null);
+  const inputRef = useRef(null);
+  const selected = SANDBOX_MARKETS.find((m) => m.code === value);
+  const query = q.trim().toLowerCase();
+  const matches = query
+    ? SANDBOX_MARKETS.filter((m) => m.name.toLowerCase().includes(query) || m.code.includes(query))
+    : SANDBOX_MARKETS;
+  const openList = () => {
+    if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+    setOpen(true); setQ('');
+  };
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        className={inputCls}
+        value={open ? q : (selected ? selected.name : '')}
+        placeholder="Type to search markets…"
+        onFocus={openList}
+        onChange={(e) => setQ(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && rect && (
+        <div className="fixed z-[80] max-h-60 overflow-auto rounded-lg border border-slate-200 bg-white shadow-xl"
+          style={{ top: rect.bottom + 4, left: rect.left, width: rect.width }}>
+          {matches.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No match</div>}
+          {matches.map((m) => (
+            <button key={m.code} type="button" onMouseDown={() => { onChange(m.code); setOpen(false); }}
+              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${value === m.code ? 'font-bold text-orange-600' : 'text-slate-700'}`}>{m.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 const Btn = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md', title }) => {
   const sz = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-5 py-2.5 text-sm';
   const base = `rounded-lg font-bold transition disabled:opacity-40 ${sz} ${className}`;
@@ -971,7 +1034,7 @@ export default function App() {
                 </div>
               </Field>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Target market"><select className={inputCls} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })}>{[['us', 'United States'], ['uk', 'United Kingdom'], ['in', 'India'], ['au', 'Australia'], ['ca', 'Canada'], ['my', 'Malaysia'], ['sg', 'Singapore'], ['ae', 'United Arab Emirates'], ['de', 'Germany'], ['nz', 'New Zealand'], ['ie', 'Ireland'], ['za', 'South Africa'], ['fr', 'France'], ['es', 'Spain'], ['it', 'Italy'], ['nl', 'Netherlands'], ['be', 'Belgium'], ['ch', 'Switzerland'], ['at', 'Austria'], ['se', 'Sweden'], ['no', 'Norway'], ['dk', 'Denmark'], ['fi', 'Finland'], ['pt', 'Portugal'], ['pl', 'Poland'], ['br', 'Brazil'], ['mx', 'Mexico'], ['ar', 'Argentina'], ['jp', 'Japan'], ['kr', 'South Korea'], ['id', 'Indonesia'], ['ph', 'Philippines'], ['th', 'Thailand'], ['vn', 'Vietnam'], ['sa', 'Saudi Arabia'], ['qa', 'Qatar']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+                <Field label="Target market"><MarketCombobox value={form.country} onChange={(v) => setForm({ ...form, country: v })} /></Field>
                 <Field label="Location (optional)"><input className={inputCls} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Kuala Lumpur" /></Field>
               </div>
               <div className="flex justify-between items-center pt-3 border-t border-slate-100">

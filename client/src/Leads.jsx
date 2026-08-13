@@ -4693,6 +4693,49 @@ const REPORT_MARKETS = [
   { code: 'bd', name: 'Bangladesh' }, { code: 'lk', name: 'Sri Lanka' }, { code: 'ua', name: 'Ukraine' },
 ];
 
+// Searchable Target-market picker: type to filter, fixed-height scroll list,
+// click to select. Stores the market CODE but shows/searches by country name.
+function MarketCombobox({ value, onChange, className }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [rect, setRect] = useState(null);
+  const inputRef = React.useRef(null);
+  const selected = REPORT_MARKETS.find((m) => m.code === value);
+  const query = q.trim().toLowerCase();
+  const matches = query
+    ? REPORT_MARKETS.filter((m) => m.name.toLowerCase().includes(query) || m.code.includes(query))
+    : REPORT_MARKETS;
+
+  const openList = () => {
+    if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+    setOpen(true); setQ('');
+  };
+
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        className={className}
+        value={open ? q : (selected ? selected.name : '')}
+        placeholder="Type to search markets…"
+        onFocus={openList}
+        onChange={(e) => setQ(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && rect && (
+        <div className="fixed z-[80] max-h-60 overflow-auto rounded-lg border border-slate-200 bg-white shadow-xl"
+          style={{ top: rect.bottom + 4, left: rect.left, width: rect.width }}>
+          {matches.length === 0 && <div className="px-3 py-2 text-xs text-slate-400">No match</div>}
+          {matches.map((m) => (
+            <button key={m.code} type="button" onMouseDown={() => { onChange(m.code); setOpen(false); }}
+              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${value === m.code ? 'font-bold text-[#FF4500]' : 'text-slate-700'}`}>{m.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RunReportModal({ lead, onClose, onQueued }) {
   const fullName = `${titleCase(lead.firstName)} ${titleCase(lead.lastName)}`.trim();
   const [f, setF] = useState({
@@ -4763,9 +4806,7 @@ function RunReportModal({ lead, onClose, onQueued }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={lab}>Target market</label>
-              <select className={inp} value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })}>
-                {REPORT_MARKETS.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-              </select>
+              <MarketCombobox className={inp} value={f.country} onChange={(v) => setF({ ...f, country: v })} />
               <p className="text-[11px] text-slate-400 mt-1">Pick <b>Worldwide</b> if the business targets multiple countries or you're unsure.</p>
             </div>
             <div>
