@@ -15,10 +15,14 @@ const DISPLAY_MS = 10000;
 const POLL_MS = 20000;
 
 // Lets other parts of the app (e.g. clicking the dashboard win banner) open the
-// same full-screen celebration on demand. Set by the mounted component.
+// same full-screen celebration on demand. Accepts a single win or an array of
+// wins — when several are passed (e.g. all sales from the last 48h), they play
+// one after another. Set by the mounted component.
 let externalTrigger = null;
 export function showCelebration(win) {
-  if (externalTrigger && win) externalTrigger(win);
+  if (!externalTrigger || !win) return;
+  const list = Array.isArray(win) ? win.filter(Boolean) : [win];
+  if (list.length) externalTrigger(list);
 }
 
 function initials(name) {
@@ -29,17 +33,28 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 export default function SaleCelebration() {
   const [queue, setQueue] = useState([]); // unseen celebrations to play
   const [current, setCurrent] = useState(null);
-  const [manual, setManual] = useState(null); // externally-triggered replay
+  const [manualQueue, setManualQueue] = useState([]); // externally-triggered replays, played in order
+  const [manual, setManual] = useState(null); // the manual replay currently showing
   const timerRef = useRef(null);
   const seenRef = useRef(new Set()); // ids already queued this session (dedupe)
 
   // Register the imperative trigger so clicking a win banner replays it here.
+  // Passing several wins queues them to play one after another.
   useEffect(() => {
-    externalTrigger = (win) => setManual(win);
+    externalTrigger = (wins) => setManualQueue((q) => [...q, ...wins]);
     return () => { externalTrigger = null; };
   }, []);
 
-  // Manual replays get their own 10s timer and don't touch seen-tracking.
+  // Pull the next manual replay off its queue when nothing manual is showing.
+  useEffect(() => {
+    if (manual || manualQueue.length === 0) return;
+    const [next, ...rest] = manualQueue;
+    setManualQueue(rest);
+    setManual(next);
+  }, [manualQueue, manual]);
+
+  // Each manual replay gets its own 10s timer, then advances to the next in the
+  // queue. Doesn't touch seen-tracking (these are deliberate replays).
   useEffect(() => {
     if (!manual) return;
     const t = setTimeout(() => setManual(null), DISPLAY_MS);

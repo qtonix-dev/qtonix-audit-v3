@@ -1427,8 +1427,15 @@ function SalesCelebration({ latest, others }) {
 
   return (
     <div className="rounded-2xl overflow-hidden shadow-sm border border-orange-200">
-      <div onClick={() => showCelebration({ id: latest.id, ownerName: latest.ownerName, avatar: latest.avatar, amountUsd: latest.amountUsd })}
-        title="Click to celebrate 🎉"
+      <div onClick={() => {
+          // Play a celebration for every sale in the last 48h, one after
+          // another (newest first). Falls back to just the latest if the full
+          // list isn't available.
+          const all = (others && others.length ? others : [latest])
+            .map((w) => ({ id: w.id, ownerName: w.ownerName, avatar: w.avatar, amountUsd: w.amountUsd }));
+          showCelebration(all);
+        }}
+        title={(others && others.length > 1) ? `Click to celebrate all ${others.length} recent sales 🎉` : 'Click to celebrate 🎉'}
         className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:brightness-[0.98] transition" style={{ background: 'linear-gradient(90deg,#FFF7ED,#FFEDD5)' }}>
         <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>🎉</div>
         {latest.avatar ? (
