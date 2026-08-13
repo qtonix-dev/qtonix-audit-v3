@@ -231,30 +231,44 @@ async function extractText(file) {
 }
 
 function JobList({ jobs, onEdit, reload }) {
+  const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const publishedUrl = (j) => `${API_BASE}/careers/${j.publicToken}/embed`;
-  const close = async (j) => { await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
+  const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
+  const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
   const del = async (j) => { if (!window.confirm('Delete this job post?')) return; await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); };
   const copy = (url) => { navigator.clipboard?.writeText(`<iframe src="${url}" width="100%" height="900" frameborder="0"></iframe>`); };
+  const statusPill = (s) => {
+    if (s === 'published') return { label: 'Live', cls: 'bg-green-100 text-green-700' };
+    if (s === 'paused') return { label: 'Paused', cls: 'bg-amber-100 text-amber-700' };
+    if (s === 'closed') return { label: 'Closed', cls: 'bg-slate-200 text-slate-500' };
+    return { label: 'Draft', cls: 'bg-slate-100 text-slate-500' };
+  };
   if (!jobs.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No job posts yet. Click “Post a Job” to create one.</div>;
   return (
     <div className="space-y-3">
-      {jobs.map((j) => (
+      {jobs.map((j) => {
+        const sp = statusPill(j.status);
+        return (
         <div key={j._id} className="bg-white rounded-2xl border border-slate-200/70 p-4 flex items-center justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <div className="text-base font-extrabold text-[#050A1F]">{j.title}</div>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${j.status === 'published' ? 'bg-green-100 text-green-700' : j.status === 'closed' ? 'bg-slate-200 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{j.status}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${sp.cls}`}>{sp.label}</span>
             </div>
             <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {(j.status === 'published' || j.status === 'paused') && <button onClick={() => setAddFor(j)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>+ Add candidate</button>}
             {j.status === 'published' && <button onClick={() => copy(publishedUrl(j))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600" title="Copy iframe embed code">Copy embed</button>}
             <button onClick={() => onEdit(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
-            {j.status === 'published' && <button onClick={() => close(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button>}
+            {(j.status === 'published' || j.status === 'paused') && <button onClick={() => pause(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">{j.status === 'paused' ? 'Resume' : 'Pause'}</button>}
+            {j.status !== 'closed' && <button onClick={() => close(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button>}
             <button onClick={() => del(j)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
           </div>
         </div>
-      ))}
+        );
+      })}
+      {addFor && <AddCandidateModal job={addFor} onClose={() => setAddFor(null)} onSaved={() => { setAddFor(null); reload(); }} />}
     </div>
   );
 }
@@ -282,6 +296,213 @@ function CandidateList({ jobs }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Add-candidate modal: choose Upload resume (AI autofill) or Add manually,
+// then a full accordion form. Screening questions come from the job post.
+const CAND_EMPTY = {
+  firstName: '', lastName: '', phone: '', email: '', currentCtc: '', expectedCtc: '', noticePeriod: '',
+  resumeUrl: '', isFresher: false, work: [{ company: '', title: '', start: '', end: '', current: false }],
+  portfolio: '', skills: [], education: [{ type: '', course: '', specialization: '', institute: '', start: '', end: '' }],
+  address: '', country: '', state: '', city: '', dob: '', gender: '', maritalStatus: '',
+  linkedin: '', github: '', facebook: '', instagram: '', twitter: '', profileUrl: '',
+  answers: {},
+};
+
+function AddCandidateModal({ job, onClose, onSaved }) {
+  const [phase, setPhase] = useState('choose'); // choose | form
+  const [c, setC] = useState(CAND_EMPTY);
+  const [open, setOpen] = useState({ basic: true, work: false, edu: false, addl: false, screen: false });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const fileRef = React.useRef(null);
+  const set = (patch) => setC((s) => ({ ...s, ...patch }));
+  const skillInput = React.useRef('');
+
+  const onResume = async (file) => {
+    if (!file) return;
+    setParsing(true); setErr('');
+    try {
+      const text = await extractText(file);
+      const p = await hrApi('/candidates/ai/parse-resume', { method: 'POST', body: JSON.stringify({ text }) });
+      setC((s) => ({
+        ...s,
+        firstName: p.firstName || s.firstName, lastName: p.lastName || s.lastName,
+        email: p.email || s.email, phone: p.phone || s.phone,
+        currentCtc: p.currentCtc || s.currentCtc, expectedCtc: p.expectedCtc || s.expectedCtc,
+        noticePeriod: p.noticePeriod || s.noticePeriod,
+        currentLocation: p.currentLocation || s.currentLocation,
+        address: p.address || s.address, country: p.country || s.country, state: p.state || s.state, city: p.city || s.city,
+        dob: p.dob || s.dob, gender: (p.gender || '').toUpperCase() || s.gender, maritalStatus: (p.maritalStatus || '').toUpperCase() || s.maritalStatus,
+        linkedin: p.linkedin || s.linkedin, github: p.github || s.github, portfolio: p.portfolio || s.portfolio,
+        twitter: p.twitter || s.twitter, facebook: p.facebook || s.facebook, instagram: p.instagram || s.instagram,
+        skills: (p.skills && p.skills.length) ? p.skills : s.skills,
+        work: (p.workExperience && p.workExperience.length) ? p.workExperience.map((w) => ({ company: w.company || '', title: w.title || '', start: w.start || '', end: w.end || '', current: !!w.current })) : s.work,
+        education: (p.education && p.education.length) ? p.education.map((e) => ({ type: e.type || '', course: e.course || '', specialization: e.specialization || '', institute: e.institute || '', start: e.start || '', end: e.end || '' })) : s.education,
+      }));
+      setPhase('form');
+    } catch (e) { setErr(e.message); } finally { setParsing(false); }
+  };
+
+  const save = async () => {
+    if (!c.firstName.trim() || !c.email.trim()) { setErr('First name and email are required.'); setOpen((o) => ({ ...o, basic: true })); return; }
+    setBusy(true); setErr('');
+    try {
+      await hrApi('/candidates', { method: 'POST', body: JSON.stringify({
+        firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone,
+        jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address,
+        answers: {
+          ...c.answers,
+          currentCtc: c.currentCtc, expectedCtc: c.expectedCtc, noticePeriod: c.noticePeriod,
+          isFresher: c.isFresher, work: c.work, portfolio: c.portfolio, skills: c.skills,
+          education: c.education, address: c.address, country: c.country, state: c.state, city: c.city,
+          dob: c.dob, gender: c.gender, maritalStatus: c.maritalStatus,
+          linkedin: c.linkedin, github: c.github, facebook: c.facebook, instagram: c.instagram, twitter: c.twitter, profileUrl: c.profileUrl,
+        },
+      }) });
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  const Section = ({ id, title, children }) => (
+    <div className="border border-slate-200 rounded-xl mb-3 overflow-hidden">
+      <button onClick={() => setOpen((o) => ({ ...o, [id]: !o[id] }))} className="w-full flex items-center justify-between px-4 py-3 bg-slate-50">
+        <span className="font-bold text-[#050A1F] capitalize">{title}</span>
+        <span className="text-slate-400">{open[id] ? '▲' : '▼'}</span>
+      </button>
+      {open[id] && <div className="p-4">{children}</div>}
+    </div>
+  );
+  const L = ({ children, req }) => <p className="text-[12px] font-bold text-slate-600 mb-1">{children}{req && <span className="text-red-500">*</span>}</p>;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">Add Candidate {job ? `to ${job.title}` : ''}</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
+        </div>
+
+        {phase === 'choose' && (
+          <div className="p-6">
+            {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => !parsing && fileRef.current?.click()} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
+                <div className="text-3xl mb-2">{parsing ? '⏳' : '📄'}</div>
+                <div className="text-base font-extrabold text-[#050A1F]">{parsing ? 'Reading resume…' : 'Upload resume'}</div>
+                <div className="text-sm text-slate-500 mt-1">AI reads the PDF/Word file and fills the form. You can edit before saving.</div>
+                <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => onResume(e.target.files?.[0])} />
+              </button>
+              <button onClick={() => setPhase('form')} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
+                <div className="text-3xl mb-2">✍️</div>
+                <div className="text-base font-extrabold text-[#050A1F]">Add manually</div>
+                <div className="text-sm text-slate-500 mt-1">Fill in the candidate's details yourself.</div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'form' && (
+          <>
+            <div className="p-6 overflow-auto flex-1">
+              {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+
+              <Section id="basic" title="Basic Information">
+                <div className="grid grid-cols-2 gap-4">
+                  <div><L req>First Name</L><input className={inp} value={c.firstName} onChange={(e) => set({ firstName: e.target.value })} /></div>
+                  <div><L req>Last Name</L><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
+                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+91…" /></div>
+                  <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} /></div>
+                  <div><L>Current CTC (Annual)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 4,50,000" /></div>
+                  <div><L>Expected CTC (Annual)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 8,50,000" /></div>
+                  <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
+                  <div><L>Resume link</L><input className={inp} value={c.resumeUrl} onChange={(e) => set({ resumeUrl: e.target.value })} placeholder="Drive / Dropbox link" /></div>
+                </div>
+              </Section>
+
+              <Section id="work" title="Work Information">
+                <label className="flex items-center gap-2 text-sm text-slate-600 mb-3"><input type="checkbox" checked={c.isFresher} onChange={(e) => set({ isFresher: e.target.checked })} /> I am a recent graduate</label>
+                {!c.isFresher && (c.work || []).map((w, i) => (
+                  <div key={i} className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-slate-100 last:border-0">
+                    <div><L>Company Name</L><input className={inp} value={w.company} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, company: e.target.value } : x) })} /></div>
+                    <div><L>Job Title</L><input className={inp} value={w.title} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, title: e.target.value } : x) })} /></div>
+                    <div className="flex gap-2 items-end">
+                      <div className="flex-1"><L>From</L><input className={inp} value={w.start} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
+                      <div className="flex-1"><L>To</L><input className={inp} value={w.end} disabled={w.current} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
+                    </div>
+                    <label className="col-span-3 flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={w.current} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, current: e.target.checked } : x) })} /> I currently work here</label>
+                  </div>
+                ))}
+                {!c.isFresher && <button onClick={() => set({ work: [...c.work, { company: '', title: '', start: '', end: '', current: false }] })} className="text-xs font-bold text-orange-600">+ Add Work Experience</button>}
+                <div className="mt-3"><L>Work Link / Online Portfolio</L><input className={inp} value={c.portfolio} onChange={(e) => set({ portfolio: e.target.value })} /></div>
+                <div className="mt-3"><L>Skills</L>
+                  <div className="flex flex-wrap gap-1.5 mb-2">{(c.skills || []).map((s, i) => <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold">{s}<button onClick={() => set({ skills: c.skills.filter((_, idx) => idx !== i) })} className="text-slate-400 hover:text-red-500">×</button></span>)}</div>
+                  <input className={inp} placeholder="Type a skill, press Enter" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value.trim(); if (v && !c.skills.includes(v)) set({ skills: [...c.skills, v] }); e.target.value = ''; } }} />
+                </div>
+              </Section>
+
+              <Section id="edu" title="Educational Information">
+                {(c.education || []).map((ed, i) => (
+                  <div key={i} className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-slate-100 last:border-0">
+                    <div><L>Type</L><input className={inp} value={ed.type} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, type: e.target.value } : x) })} placeholder="Bachelor's…" /></div>
+                    <div><L>Course</L><input className={inp} value={ed.course} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, course: e.target.value } : x) })} /></div>
+                    <div><L>Specialization</L><input className={inp} value={ed.specialization} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, specialization: e.target.value } : x) })} /></div>
+                    <div className="col-span-2"><L>Institute Name</L><input className={inp} value={ed.institute} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, institute: e.target.value } : x) })} /></div>
+                    <div className="flex gap-2 items-end">
+                      <div className="flex-1"><L>From</L><input className={inp} value={ed.start} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} /></div>
+                      <div className="flex-1"><L>To</L><input className={inp} value={ed.end} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} /></div>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => set({ education: [...c.education, { type: '', course: '', specialization: '', institute: '', start: '', end: '' }] })} className="text-xs font-bold text-orange-600">+ Add Educational Details</button>
+              </Section>
+
+              <Section id="addl" title="Additional Information">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2"><L>Address</L><input className={inp} value={c.address} onChange={(e) => set({ address: e.target.value })} /></div>
+                  <div><L>Country</L><input className={inp} value={c.country} onChange={(e) => set({ country: e.target.value })} /></div>
+                  <div><L>State</L><input className={inp} value={c.state} onChange={(e) => set({ state: e.target.value })} /></div>
+                  <div><L>City</L><input className={inp} value={c.city} onChange={(e) => set({ city: e.target.value })} /></div>
+                  <div><L>Date Of Birth</L><input className={inp} value={c.dob} onChange={(e) => set({ dob: e.target.value })} placeholder="DD/MM/YYYY" /></div>
+                  <div><L>Gender</L>
+                    <div className="flex gap-3 mt-1">{['MALE', 'FEMALE', 'OTHER'].map((g) => <label key={g} className="flex items-center gap-1 text-sm"><input type="radio" name="gender" checked={c.gender === g} onChange={() => set({ gender: g })} /> {g === 'OTHER' ? 'Prefer not to say' : g[0] + g.slice(1).toLowerCase()}</label>)}</div>
+                  </div>
+                  <div><L>Marital Status</L>
+                    <div className="flex gap-3 mt-1">{['MARRIED', 'SINGLE', 'OTHER'].map((g) => <label key={g} className="flex items-center gap-1 text-sm"><input type="radio" name="marital" checked={c.maritalStatus === g} onChange={() => set({ maritalStatus: g })} /> {g === 'OTHER' ? 'Prefer not to say' : g[0] + g.slice(1).toLowerCase()}</label>)}</div>
+                  </div>
+                  <div><L>LinkedIn</L><input className={inp} value={c.linkedin} onChange={(e) => set({ linkedin: e.target.value })} /></div>
+                  <div><L>GitHub</L><input className={inp} value={c.github} onChange={(e) => set({ github: e.target.value })} /></div>
+                  <div><L>Facebook</L><input className={inp} value={c.facebook} onChange={(e) => set({ facebook: e.target.value })} /></div>
+                  <div><L>Instagram</L><input className={inp} value={c.instagram} onChange={(e) => set({ instagram: e.target.value })} /></div>
+                  <div><L>Twitter</L><input className={inp} value={c.twitter} onChange={(e) => set({ twitter: e.target.value })} /></div>
+                  <div><L>Profile Link</L><input className={inp} value={c.profileUrl} onChange={(e) => set({ profileUrl: e.target.value })} /></div>
+                </div>
+              </Section>
+
+              {(job.questions || []).length > 0 && (
+                <Section id="screen" title="Screening Questions">
+                  {(job.questions || []).map((q) => (
+                    <div key={q.id} className="mb-3">
+                      <L req={q.mandatory}>{q.question}</L>
+                      {q.type === 'multi' ? <textarea className={inp} rows={3} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })} />
+                        : q.type === 'yesno' ? <select className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })}><option value="">— Select —</option><option>Yes</option><option>No</option></select>
+                        : q.type === 'multiple' ? <select className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })}><option value="">— Select —</option>{(q.options || []).map((o) => <option key={o}>{o}</option>)}</select>
+                        : <input className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })} />}
+                    </div>
+                  ))}
+                </Section>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Add Candidate'}</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

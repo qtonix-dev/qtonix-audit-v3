@@ -106,4 +106,37 @@ ${raw}`,
   return data;
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD };
+/**
+ * Parse a candidate's resume (already extracted to plain text) into the fields
+ * the Add Candidate form uses. Everything is best-effort; the HR reviews/edits.
+ */
+async function parseResume(apiKey, { text }) {
+  const raw = String(text || '').slice(0, 14000);
+  const out = await callClaude(apiKey, {
+    system: 'You extract structured candidate data from a resume. Return ONLY JSON matching the requested schema, nothing else. Never invent data that is not present — use empty string / null / [] instead.',
+    maxTokens: 1800,
+    messages: [{
+      role: 'user',
+      content: `From the resume below, extract this JSON exactly:
+{
+  "firstName": "", "lastName": "", "email": "", "phone": "",
+  "currentCtc": "", "expectedCtc": "", "noticePeriod": "",
+  "currentLocation": "", "address": "", "country": "", "state": "", "city": "",
+  "dob": "", "gender": "", "maritalStatus": "",
+  "linkedin": "", "github": "", "portfolio": "", "twitter": "", "facebook": "", "instagram": "",
+  "skills": ["skill1","skill2"],
+  "workExperience": [{"company":"","title":"","start":"","end":"","current":false}],
+  "education": [{"type":"","course":"","specialization":"","institute":"","start":"","end":""}]
+}
+Extract only what the resume actually contains. Phone should include country code if present. Dates as written. Return valid JSON only.
+
+RESUME:
+${raw}`,
+    }],
+  });
+  const data = parseJson(out);
+  ['skills', 'workExperience', 'education'].forEach((k) => { if (!Array.isArray(data[k])) data[k] = []; });
+  return data;
+}
+
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume };

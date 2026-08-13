@@ -179,7 +179,7 @@ function AboutStep({ job, set, departments, branches, setErr }) {
             </div>
           </div>
           <div>
-            <label className={lab}>Location(s)</label>
+            <label className={lab}>Location(s) <span className="font-normal text-slate-400">— from your branches</span></label>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {(job.locations || []).map((l, i) => (
                 <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
@@ -187,9 +187,15 @@ function AboutStep({ job, set, departments, branches, setErr }) {
                 </span>
               ))}
             </div>
+            {(branches || []).length > 0 && (
+              <select className={inp + ' mb-2'} value="" onChange={(e) => { if (e.target.value) addLoc(e.target.value); }}>
+                <option value="">+ Add a branch location…</option>
+                {(branches || []).filter((b) => !(job.locations || []).includes(b.name)).map((b) => <option key={b._id || b.name} value={b.name}>{b.name}</option>)}
+              </select>
+            )}
             <input className={inp} value={locInput} onChange={(e) => setLocInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLoc(locInput); } }}
-              placeholder="Type a location and press Enter (e.g. Kolkata, West Bengal, India)" />
+              placeholder="…or type a custom location and press Enter" />
           </div>
         </div>
       </div>
@@ -486,30 +492,60 @@ function FinishStep({ job, jobId }) {
 function Row({ k, v }) { return <div className="flex gap-3"><div className="w-32 shrink-0 font-bold text-slate-400">{k}</div><div className="text-slate-700">{v}</div></div>; }
 
 // ---------------- Preview modal (after step 1) ----------------
+// Styled after a public careers detail page (jobs.pyjamahr.com), in brand colours.
 function PreviewModal({ job, onCancel, onProceed }) {
-  const expLabel = job.experienceType === 'freshers' ? 'Freshers' : job.experienceType === 'intern' ? 'Intern' : `${job.expMin || 0}–${job.expMax || 0} years`;
+  const expLabel = job.experienceType === 'freshers' ? 'Fresher' : job.experienceType === 'intern' ? 'Intern' : `${job.expMin || 0} – ${job.expMax || 0} years`;
+  const empType = { full_time: 'Full-time', part_time: 'Part-time', internship: 'Internship', freelance: 'Freelance' }[job.employmentType] || '';
+  const empLevel = { entry: 'Entry Level', associate: 'Associate', mid_senior: 'Mid-Senior', senior: 'Senior', tl: 'Team Lead', manager: 'Manager' }[job.employmentLevel] || '';
+  const mode = { in_office: 'In-Office', hybrid: 'Hybrid', remote: 'Remote' }[job.workMode];
+  const salary = job.hideSalary ? null : (job.salaryMin || job.salaryMax
+    ? `${job.salaryCurrency} ${Number(job.salaryMin || 0).toLocaleString()} – ${Number(job.salaryMax || 0).toLocaleString()} / ${job.salaryPeriod}` : null);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col">
-        <div className="px-6 py-4 border-b border-slate-100">
-          <div className="text-lg font-extrabold text-[#050A1F]">{job.title}</div>
-          <div className="text-xs text-slate-500 mt-1">
-            {(job.locations || []).join(' · ') || 'No location'} · {{ in_office: 'In-Office', hybrid: 'Hybrid', remote: 'Remote' }[job.workMode]} · Experience: {expLabel}
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[88vh] flex flex-col overflow-hidden">
+        {/* Branded header band */}
+        <div className="px-8 py-6 text-white" style={{ background: 'linear-gradient(120deg,#050A1F,#0B1533)' }}>
+          <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#FF8A3D' }}>{job.department || 'Careers'}</div>
+          <div className="text-2xl font-extrabold mt-1">{job.title}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[13px] text-slate-200">
+            {(job.locations || []).length > 0 && <span>📍 {(job.locations || []).join(' · ')}</span>}
+            <span>💼 {mode}</span>
+            <span>⏳ {expLabel}</span>
+            {empType && <span>🕒 {empType}</span>}
           </div>
         </div>
-        <div className="p-6 overflow-auto">
+
+        <div className="p-8 overflow-auto">
+          <div className="flex flex-wrap gap-2 mb-5">
+            {empLevel && <Pill>{empLevel}</Pill>}
+            {job.education && <Pill>{job.education}</Pill>}
+            {salary && <Pill accent>{salary}</Pill>}
+            {job.openings > 1 && <Pill>{job.openings} openings</Pill>}
+          </div>
+
           {(job.skills || []).length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {job.skills.map((s, i) => <span key={i} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${s.primary ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>{s.primary ? '★ ' : ''}{s.name}</span>)}
-            </div>
+            <>
+              <SectionTitle>Skills</SectionTitle>
+              <div className="flex flex-wrap gap-1.5 mb-5">
+                {job.skills.map((s, i) => (
+                  <span key={i} className={`rounded-full px-3 py-1 text-xs font-semibold ${s.primary ? 'text-white' : 'bg-slate-100 text-slate-600'}`} style={s.primary ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : undefined}>{s.primary ? '★ ' : ''}{s.name}</span>
+                ))}
+              </div>
+            </>
           )}
-          <div className="prose prose-sm max-w-none text-slate-700" dangerouslySetInnerHTML={{ __html: job.description || '<p class="text-slate-400">No description yet.</p>' }} />
+
+          <SectionTitle>Job description</SectionTitle>
+          <div className="prose prose-sm max-w-none text-slate-700 prose-headings:text-[#050A1F] prose-headings:font-extrabold" dangerouslySetInnerHTML={{ __html: job.description || '<p class="text-slate-400">No description yet.</p>' }} />
         </div>
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onCancel} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={onProceed} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Proceed</button>
+
+        <div className="px-8 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
+          <button onClick={onCancel} className="rounded-lg border border-slate-300 px-6 py-2.5 text-sm font-bold text-slate-600 bg-white">Cancel</button>
+          <button onClick={onProceed} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white" style={{ background: ORANGE }}>Proceed</button>
         </div>
       </div>
     </div>
   );
 }
+function Pill({ children, accent }) { return <span className={`rounded-lg px-3 py-1.5 text-xs font-bold ${accent ? 'bg-orange-50 text-orange-700' : 'bg-slate-100 text-slate-600'}`}>{children}</span>; }
+function SectionTitle({ children }) { return <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{children}</div>; }

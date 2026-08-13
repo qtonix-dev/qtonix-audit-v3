@@ -565,6 +565,20 @@ router.post('/job-posts/:id/close', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Toggle a published job between Live and Paused (paused hides the public form
+// but keeps the post and its candidates).
+router.post('/job-posts/:id/pause', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    if (row.status === 'paused') { row.status = 'published'; if (!row.publishedAt) row.publishedAt = new Date(); }
+    else if (row.status === 'published') { row.status = 'paused'; }
+    else return res.status(400).json({ error: 'Only a published job can be paused.' });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 router.delete('/job-posts/:id', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
@@ -633,6 +647,43 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     if (req.query.jobPostId) where.jobPostId = Number(req.query.jobPostId);
     res.json((await HrCandidate.findAll({ where, order: [['createdAt', 'DESC']] })).map((r) => r.toJSON()));
   } catch (e) { next(e); }
+});
+
+// HR manually adds a candidate to a job (full application data).
+router.post('/candidates', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const name = b.name || `${(b.firstName || '').trim()} ${(b.lastName || '').trim()}`.trim();
+    if (!name) return res.status(400).json({ error: 'Candidate name is required.' });
+    const job = b.jobPostId ? await HrJobPost.findByPk(b.jobPostId) : null;
+    const firstStage = (job && job.stages && job.stages[0] && job.stages[0].id) || 'applied';
+    const row = await HrCandidate.create({
+      name,
+      email: String(b.email || '').slice(0, 160),
+      phone: String(b.phone || '').slice(0, 40),
+      jobPostId: b.jobPostId || null,
+      stage: b.stage || firstStage,
+      recruiterId: req.hrActor.id,
+      resumeUrl: String(b.resumeUrl || '').slice(0, 400),
+      currentLocation: String(b.currentLocation || '').slice(0, 160),
+      answers: (b.answers && typeof b.answers === 'object') ? b.answers : {},
+      source: 'manual',
+    });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Parse an uploaded resume (client extracts text) into candidate fields.
+router.post('/candidates/ai/parse-resume', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!req.body.text || String(req.body.text).trim().length < 30) {
+      return res.status(400).json({ error: 'Could not read enough text from that file. Try a text-based PDF or DOCX.' });
+    }
+    const { parseResume } = require('../services/hrRecruitAI');
+    const parsed = await parseResume(key, { text: req.body.text });
+    res.json(parsed);
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
 // Move a candidate between hiring-flow stages.
