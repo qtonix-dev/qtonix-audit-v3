@@ -432,8 +432,13 @@ const Settings = sequelize.define(
 
     apiKeys: {
       type: DataTypes.JSON,
-      defaultValue: { seranking: '', anthropic: '', openai: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '' },
+      defaultValue: { seranking: '', anthropic: '', openai: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '', hrMailboxToken: '' },
     },
+
+    // Shared HR recruitment mailbox (e.g. career@qtonix.com). One inbox all
+    // recruiters send from and see. Refresh token lives in apiKeys.hrMailboxToken
+    // (encrypted); this holds the address and connection metadata.
+    hrMailbox: { type: DataTypes.JSON, defaultValue: { email: '', connectedAt: null } },
 
     pricing: { type: DataTypes.JSON },
     // CRM dropdown configuration — admin-editable so new sources/services/stages

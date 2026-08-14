@@ -571,6 +571,47 @@ function RecruitPipeline({ jobs }) {
   );
 }
 
+// Shared recruitment mailbox connect/disconnect (used by all recruiters).
+function RecruitmentMailbox({ isAdmin, setErr }) {
+  const [status, setStatus] = useState(null);
+  const load = () => hrApi('/mailbox/status').then(setStatus).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const connect = async () => {
+    try {
+      const { url } = await hrApi('/mailbox/connect');
+      const w = window.open(url, 'hrmail', 'width=520,height=640');
+      const onMsg = (e) => { if (e.data && e.data.gmail) { window.removeEventListener('message', onMsg); setTimeout(load, 800); try { w && w.close(); } catch {} } };
+      window.addEventListener('message', onMsg);
+    } catch (e) { setErr(e.message); }
+  };
+  const disconnect = async () => { if (!window.confirm('Unlink the recruitment mailbox? Recruiters will no longer be able to email candidates until it is reconnected.')) return; try { await hrApi('/mailbox/disconnect', { method: 'POST' }); load(); } catch (e) { setErr(e.message); } };
+  if (!status) return <Empty>Loading…</Empty>;
+  return (
+    <div className="max-w-xl">
+      <div className="rounded-2xl border border-slate-200 p-6">
+        <div className="text-base font-extrabold text-[#050A1F] mb-1">Recruitment mailbox</div>
+        <p className="text-sm text-slate-500 mb-4">One shared inbox (e.g. career@qtonix.com) that every recruiter sends from and reads. Candidates always correspond with this single address.</p>
+        {status.connected ? (
+          <div className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-4 py-3">
+            <div><div className="text-sm font-bold text-green-700">✓ Connected</div><div className="text-xs text-slate-500">{status.email}</div></div>
+            {isAdmin && <button onClick={disconnect} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Disconnect</button>}
+          </div>
+        ) : (
+          <div>
+            {!status.configured && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2 mb-3">Google credentials aren't set up yet. Add them in CRM Admin → API keys first.</div>}
+            {isAdmin ? (
+              <button onClick={connect} disabled={!status.configured} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Connect recruitment mailbox</button>
+            ) : (
+              <div className="text-sm text-slate-500">Not connected. Ask an admin to link the shared recruitment mailbox.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+function Empty({ children }) { return <div className="text-center text-slate-400 text-sm py-10">{children}</div>; }
+
 // --- Admin: HR users + branches ---------------------------------------------
 
 function IconBtn({ title, onClick, children, danger }) {
@@ -647,7 +688,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['users', 'Users'], ['org', 'Organization Chart'], ['branches', 'Branches & Departments'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['imagekit', 'ImageKit']];
+  const TABS = [['users', 'Users'], ['org', 'Organization Chart'], ['branches', 'Branches & Departments'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['mailbox', 'Recruitment Mailbox'], ['imagekit', 'ImageKit']];
 
   return (
     <div className="max-w-5xl">
@@ -765,6 +806,7 @@ function HrAdmin({ user }) {
       {tab === 'holidays' && <HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} />}
 
       {/* IMAGEKIT TAB */}
+      {tab === 'mailbox' && <RecruitmentMailbox isAdmin={user.role === 'admin'} setErr={setErr} />}
       {tab === 'imagekit' && <ImageKitSection />}
 
       {showAdd && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShowAdd(false)} onCreated={(n) => { setMsg(`User created: ${n}`); load(); }} />}

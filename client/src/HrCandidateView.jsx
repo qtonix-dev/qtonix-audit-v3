@@ -105,8 +105,7 @@ export default function HrCandidateView({ candidateId, onClose }) {
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)}
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify(payload) })); setShowFeedback(false); }} />}
-      {showInterview && <InterviewModal onClose={() => setShowInterview(false)}
-        onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/interview`, { method: 'POST', body: JSON.stringify(payload) })); setShowInterview(false); }} />}
+      {showInterview && <InterviewModal candidateId={c.id} onClose={() => setShowInterview(false)} onDone={load} />}
     </div>
   );
 }
@@ -227,11 +226,119 @@ function CommentsTab({ c, onAdd }) {
 }
 
 function MailTab({ c }) {
-  return (
+  const [data, setData] = useState(null);
+  const [compose, setCompose] = useState(null); // {mode:'new'|'reply', to, subject, inReplyTo, threadId}
+  const load = () => hrApi(`/candidates/${c.id}/emails`).then(setData).catch((e) => setData({ connected: false, error: e.message }));
+  useEffect(() => { load(); }, [c.id]);
+  if (!data) return <Empty>Loading…</Empty>;
+  if (!data.connected) return (
     <div className="text-center py-8">
-      <div className="text-sm text-slate-500 mb-3">Send an email to this candidate.</div>
-      <a href={`mailto:${c.email}`} className="rounded-lg px-4 py-2 text-sm font-bold text-white inline-block" style={{ background: ORANGE }}>✉️ Compose email</a>
-      <div className="text-xs text-slate-400 mt-3">In-app mail threading can be added later.</div>
+      <div className="text-sm text-slate-500 mb-2">The shared recruitment mailbox isn't linked yet.</div>
+      <div className="text-xs text-slate-400">Ask an admin to connect it in HR Admin → Recruitment mailbox.</div>
+    </div>
+  );
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs text-slate-400">Conversation from <b className="text-slate-600">{data.mailbox}</b></div>
+        <button onClick={() => setCompose({ mode: 'new', to: c.email, subject: '' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>✉️ Compose</button>
+      </div>
+      {(data.messages || []).length === 0 ? <Empty>No emails with this candidate yet.</Empty> : (
+        <div className="space-y-3">
+          {data.messages.map((m) => (
+            <div key={m.id} className="rounded-lg border border-slate-200 p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold text-slate-700">{m.direction === 'outbound' ? 'Us' : (m.fromName || m.from)}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-slate-400">{fmt(m.date)}</div>
+                  <button onClick={() => setCompose({ mode: 'reply', to: c.email, subject: m.subject && /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId })} className="text-xs font-bold text-orange-600">Reply</button>
+                </div>
+              </div>
+              {m.subject && <div className="text-xs font-semibold text-slate-500 mt-0.5">{m.subject}</div>}
+              <div className="text-sm text-slate-600 mt-1 line-clamp-4" dangerouslySetInnerHTML={{ __html: m.bodyHtml || m.snippet || '' }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {compose && <ComposeModal candidate={c} initial={compose} onClose={() => setCompose(null)} onSent={() => { setCompose(null); load(); }} />}
+    </div>
+  );
+}
+
+const HR_AI_MODES = [
+  ['interview_invite', 'Interview invite'], ['shortlist', 'Shortlist'], ['assignment', 'Assignment'],
+  ['offer', 'Offer'], ['rejection', 'Rejection'], ['followup', 'Follow-up'],
+  ['request_docs', 'Request documents'], ['custom', 'Custom prompt'],
+];
+
+function ComposeModal({ candidate, initial, onClose, onSent }) {
+  const [to, setTo] = useState(initial.to || candidate.email);
+  const [subject, setSubject] = useState(initial.subject || '');
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiMode, setAiMode] = useState('interview_invite');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const runAi = async () => {
+    setAiBusy(true); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidate.id}/emails/ai-draft`, { method: 'POST', body: JSON.stringify({ mode: aiMode, prompt: aiPrompt }) });
+      if (r.subject && !subject) setSubject(r.subject);
+      if (r.subject && initial.mode === 'new') setSubject(r.subject);
+      setBody(r.body || '');
+      setAiOpen(false);
+    } catch (e) { setErr(e.message); } finally { setAiBusy(false); }
+  };
+  const send = async () => {
+    if (!to.trim() || !subject.trim()) { setErr('To and subject are required.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await hrApi(`/candidates/${candidate.id}/emails/send`, { method: 'POST', body: JSON.stringify({ to, subject, body, inReplyTo: initial.inReplyTo, threadId: initial.threadId }) });
+      onSent();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">{initial.mode === 'reply' ? 'Reply' : 'Compose'} email</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
+        </div>
+        <div className="p-6 overflow-auto flex-1 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+          <div><div className="text-xs font-bold text-slate-500 mb-1">To</div><input className={inp} value={to} onChange={(e) => setTo(e.target.value)} /></div>
+          <div><div className="text-xs font-bold text-slate-500 mb-1">Subject</div><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-bold text-slate-500">Message</div>
+              <button onClick={() => setAiOpen((v) => !v)} className="text-xs font-bold text-orange-600">✨ AI Draft</button>
+            </div>
+            {aiOpen && (
+              <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-3 mb-2">
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {HR_AI_MODES.map(([v, l]) => (
+                    <button key={v} onClick={() => setAiMode(v)} className={`rounded-full px-2.5 py-1 text-xs font-bold ${aiMode === v ? 'text-white' : 'bg-white text-slate-600 border border-slate-200'}`} style={aiMode === v ? { background: ORANGE } : {}}>{l}</button>
+                  ))}
+                </div>
+                {(aiMode === 'custom' || aiMode === 'assignment' || aiMode === 'request_docs') && (
+                  <textarea className={inp + ' mb-2'} rows={2} value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="Add details for the AI…" />
+                )}
+                <button onClick={runAi} disabled={aiBusy} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{aiBusy ? 'Drafting…' : 'Generate draft'}</button>
+              </div>
+            )}
+            <div className="rounded-lg border border-slate-300 min-h-[200px] p-3 text-sm focus:outline-none" contentEditable suppressContentEditableWarning
+              onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} />
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={send} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -306,11 +413,25 @@ function FeedbackModal({ onClose, onSubmit }) {
   );
 }
 
-function InterviewModal({ onClose, onSubmit }) {
+function InterviewModal({ candidateId, onClose, onDone }) {
   const [at, setAt] = useState('');
+  const [duration, setDuration] = useState(30);
   const [mode, setMode] = useState('online');
   const [notes, setNotes] = useState('');
+  const [sendEmail, setSendEmail] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null);
+
+  const schedule = async () => {
+    if (!at) { setErr('Pick a date and time.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidateId}/schedule-interview`, { method: 'POST', body: JSON.stringify({ start: at, durationMins: duration, mode, notes, sendEmail }) });
+      setResult(r); onDone && onDone();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4">
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
@@ -318,17 +439,35 @@ function InterviewModal({ onClose, onSubmit }) {
           <div className="text-lg font-extrabold text-[#050A1F]">Schedule Interview</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
         </div>
-        <div className="p-6 space-y-3">
-          <div><div className="text-xs font-bold text-slate-500 mb-1">Date &amp; time</div><input className={inp} type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} /></div>
-          <div><div className="text-xs font-bold text-slate-500 mb-1">Mode</div>
-            <select className={inp} value={mode} onChange={(e) => setMode(e.target.value)}><option value="online">Online</option><option value="in_person">In person</option><option value="phone">Phone</option></select>
+        {result ? (
+          <div className="p-6 text-center">
+            <div className="text-3xl mb-2">✅</div>
+            <div className="font-bold text-[#050A1F] mb-2">Interview scheduled</div>
+            {result.meetLink && <a href={result.meetLink} target="_blank" rel="noreferrer" className="text-orange-600 font-semibold text-sm block mb-2">{result.meetLink}</a>}
+            <div className="text-xs text-slate-400">A Google Calendar invite{sendEmail ? ' and email' : ''} was sent to the candidate.</div>
+            <button onClick={onClose} className="mt-4 rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Done</button>
           </div>
-          <div><div className="text-xs font-bold text-slate-500 mb-1">Notes</div><textarea className={inp} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={async () => { setBusy(true); await onSubmit({ at, mode, notes }); setBusy(false); }} disabled={busy || !at} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Schedule'}</button>
-        </div>
+        ) : (
+          <>
+            <div className="p-6 space-y-3">
+              {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+              <div><div className="text-xs font-bold text-slate-500 mb-1">Date &amp; time</div><input className={inp} type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><div className="text-xs font-bold text-slate-500 mb-1">Duration (mins)</div><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
+                <div><div className="text-xs font-bold text-slate-500 mb-1">Mode</div>
+                  <select className={inp} value={mode} onChange={(e) => setMode(e.target.value)}><option value="online">Online (Google Meet)</option><option value="in_person">In person</option><option value="phone">Phone</option></select>
+                </div>
+              </div>
+              <div><div className="text-xs font-bold text-slate-500 mb-1">Notes</div><textarea className={inp} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+              <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Email the candidate the invite &amp; Meet link</label>
+              <div className="text-[11px] text-slate-400">A Google Meet link is created automatically and the candidate is invited via Google Calendar.</div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={schedule} disabled={busy || !at} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Scheduling…' : 'Schedule with Meet'}</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

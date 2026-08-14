@@ -127,6 +127,15 @@ router.get('/callback', async (req, res) => {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const { refreshToken, email } = await gmail.exchangeCode(s, code);
     if (!refreshToken) return done('Google did not return a refresh token. Remove the app’s access in your Google account and try again.', false);
+    if (payload.hrMailbox) {
+      // Link the shared HR recruitment mailbox (stored in Settings, used by all
+      // recruiters). No specific user is required.
+      const keys = { ...(s.apiKeys || {}) }; keys.hrMailboxToken = refreshToken;
+      s.apiKeys = keys; s.changed('apiKeys', true);
+      s.hrMailbox = { email, connectedAt: new Date() };
+      await s.save();
+      return done(`Recruitment mailbox linked: ${email}.`, true);
+    }
     const user = await User.findByPk(payload.uid);
     if (!user) return done('User not found.', false);
 

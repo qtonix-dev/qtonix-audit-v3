@@ -18,6 +18,7 @@ const { google } = require('googleapis');
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/userinfo.email',
   'openid',
 ];
@@ -338,8 +339,32 @@ async function setStar(settings, refreshToken, gmailMessageId, starred) {
   await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody: starred ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] } });
 }
 
+/** Create a Google Calendar event with a Meet link, inviting the attendees.
+ *  Returns { htmlLink, meetLink, eventId }. */
+async function createCalendarEvent(settings, refreshToken, { summary, description, start, end, attendees = [], timeZone = 'Asia/Kolkata' }) {
+  const client = oauthClient(settings);
+  client.setCredentials({ refresh_token: refreshToken });
+  const calendar = google.calendar({ version: 'v3', auth: client });
+  const res = await calendar.events.insert({
+    calendarId: 'primary',
+    conferenceDataVersion: 1,
+    sendUpdates: 'all',
+    requestBody: {
+      summary, description,
+      start: { dateTime: start, timeZone },
+      end: { dateTime: end, timeZone },
+      attendees: attendees.filter(Boolean).map((email) => ({ email })),
+      conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
+    },
+  });
+  const ev = res.data;
+  const meetLink = (ev.conferenceData && ev.conferenceData.entryPoints || []).find((e) => e.entryPointType === 'video');
+  return { htmlLink: ev.htmlLink, meetLink: meetLink ? meetLink.uri : '', eventId: ev.id };
+}
+
 module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
   listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
+  createCalendarEvent, oauthClient, gmailFor,
 };

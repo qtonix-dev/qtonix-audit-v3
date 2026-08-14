@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v170';
+const APP_VERSION = 'v171';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -73,6 +73,7 @@ app.use('/api/reviews', reviews);
 app.use('/api/briefs', briefs);
 app.use('/api/tv', tv);
 app.use('/api/hr', hr);
+app.use('/api/hr', require('./routes/hrMail'));
 app.use('/api/careers', require('./routes/careers'));
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/track', require('./routes/track'));

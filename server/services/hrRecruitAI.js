@@ -220,4 +220,49 @@ Current/Expected CTC: ${a.currentCtc || '?'} / ${a.expectedCtc || '?'}`,
   return data;
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate };
+/**
+ * Draft a recruitment email (Claude). HR-specific modes replace the CRM's
+ * sales-oriented ones. Returns { subject, body(HTML) }.
+ */
+async function draftRecruitmentEmail(apiKey, { mode, prompt, candidateName, roleTitle, recruiterName, meetingWhen, meetLink }) {
+  const first = String(candidateName || 'there').split(' ')[0];
+  const modeInstruction = (() => {
+    switch (mode) {
+      case 'interview_invite':
+        return `Invite ${first} to an interview for the ${roleTitle} role${meetingWhen ? ` on ${meetingWhen}` : ''}. ${meetLink ? `Include this Google Meet link: ${meetLink}.` : 'Ask them to confirm their availability.'} Warm and professional.`;
+      case 'shortlist':
+        return `Tell ${first} they've been shortlisted for the ${roleTitle} role and outline the next steps. Encouraging and clear.`;
+      case 'assignment':
+        return `Send ${first} a take-home assignment for the ${roleTitle} role. Explain the task briefly, expectations and the deadline. ${prompt ? `Details: ${prompt}` : ''}`;
+      case 'offer':
+        return `Send ${first} a warm offer email for the ${roleTitle} role, expressing enthusiasm and saying a formal offer letter will follow. Do NOT invent specific salary numbers unless provided.`;
+      case 'rejection':
+        return `Write a kind, respectful rejection to ${first} for the ${roleTitle} role. Thank them for their time, be gentle and encouraging, keep it short.`;
+      case 'followup':
+        return `Write a friendly follow-up to ${first} regarding their ${roleTitle} application, checking in and keeping them warm.`;
+      case 'request_docs':
+        return `Politely ask ${first} to share documents/details needed to proceed with the ${roleTitle} process. ${prompt ? `Specifically: ${prompt}` : ''}`;
+      case 'custom':
+      default:
+        return prompt || `Write a professional, friendly recruitment email to ${first} regarding the ${roleTitle} role.`;
+    }
+  })();
+
+  const system = [
+    'You are a professional, warm recruiter writing to a candidate.',
+    'Tone: friendly, respectful, clear and concise. Never pushy.',
+    `Sign off as "${recruiterName || 'The Talent Team'}" on its own line after "Best regards,".`,
+    'FORMATTING: body must be clean HTML — wrap each paragraph in its own <p>, use <br> for line breaks and <ul><li> for lists. Separate greeting, paragraphs and sign-off into distinct <p> tags.',
+    'Return STRICT JSON: {"subject":"...","body":"<p>...</p>"}. No markdown, no <html> wrapper, no commentary.',
+  ].join(' ');
+
+  const out = await callClaude(apiKey, {
+    system, maxTokens: 1100,
+    messages: [{ role: 'user', content: `Candidate: ${candidateName}\nRole: ${roleTitle}\n\nTASK:\n${modeInstruction}` }],
+  });
+  let parsed;
+  try { parsed = parseJson(out); } catch { parsed = { subject: '', body: String(out) }; }
+  return { subject: parsed.subject || '', body: parsed.body || '' };
+}
+
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate, draftRecruitmentEmail };
