@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v167';
+const APP_VERSION = 'v168';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -86,11 +86,20 @@ app.get('/demo', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/demo.html'));
 });
 
-// Public, embeddable application form for a published job. Rendered as a
-// self-contained page (no auth) so it can be dropped into any website via
+// Public, embeddable application form (form only) for a published job.
 // <iframe src="…/careers/<token>/embed">. Served before the SPA catch-all.
 app.get('/careers/:token/embed', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/careers.html'));
+});
+
+app.get('/careers-shared.js', (req, res) => {
+  res.type('application/javascript').sendFile(path.join(__dirname, 'public/careers-shared.js'));
+});
+
+// Public listing page — the full job post with the application form on the
+// right (the shareable careers page). Same token, no auth.
+app.get('/careers/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/careers-page.html'));
 });
 
 // Lightweight liveness probe — never touches the DB, so the platform can tell

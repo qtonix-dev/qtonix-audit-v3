@@ -232,11 +232,10 @@ async function extractText(file) {
 
 function JobList({ jobs, onEdit, reload }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
-  const publishedUrl = (j) => `${API_BASE}/careers/${j.publicToken}/embed`;
+  const [shareFor, setShareFor] = useState(null); // job to share
   const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
   const del = async (j) => { if (!window.confirm('Delete this job post?')) return; await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); };
-  const copy = (url) => { navigator.clipboard?.writeText(`<iframe src="${url}" width="100%" height="900" frameborder="0"></iframe>`); };
   const statusPill = (s) => {
     if (s === 'published') return { label: 'Live', cls: 'bg-green-100 text-green-700' };
     if (s === 'paused') return { label: 'Paused', cls: 'bg-amber-100 text-amber-700' };
@@ -248,6 +247,7 @@ function JobList({ jobs, onEdit, reload }) {
     <div className="space-y-3">
       {jobs.map((j) => {
         const sp = statusPill(j.status);
+        const live = j.status === 'published' || j.status === 'paused';
         return (
         <div key={j._id} className="bg-white rounded-2xl border border-slate-200/70 p-4 flex items-center justify-between">
           <div className="min-w-0">
@@ -257,18 +257,74 @@ function JobList({ jobs, onEdit, reload }) {
             </div>
             <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {(j.status === 'published' || j.status === 'paused') && <button onClick={() => setAddFor(j)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>+ Add candidate</button>}
-            {j.status === 'published' && <button onClick={() => copy(publishedUrl(j))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600" title="Copy iframe embed code">Copy embed</button>}
-            <button onClick={() => onEdit(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
-            {(j.status === 'published' || j.status === 'paused') && <button onClick={() => pause(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">{j.status === 'paused' ? 'Resume' : 'Pause'}</button>}
-            {j.status !== 'closed' && <button onClick={() => close(j)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button>}
-            <button onClick={() => del(j)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {live && <JobIconBtn primary onClick={() => setAddFor(j)} icon="user-plus" label="Add candidate" />}
+            {j.status === 'published' && <JobIconBtn onClick={() => setShareFor(j)} icon="link" label="Share / embed" />}
+            <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit" />
+            {live && <JobIconBtn onClick={() => pause(j)} icon={j.status === 'paused' ? 'play' : 'pause'} label={j.status === 'paused' ? 'Resume' : 'Pause'} />}
+            {j.status !== 'closed' && <JobIconBtn onClick={() => close(j)} icon="close" label="Close" />}
+            <JobIconBtn danger onClick={() => del(j)} icon="trash" label="Delete" />
           </div>
         </div>
         );
       })}
       {addFor && <AddCandidateModal job={addFor} onClose={() => setAddFor(null)} onSaved={() => { setAddFor(null); reload(); }} />}
+      {shareFor && <ShareJobModal job={shareFor} onClose={() => setShareFor(null)} />}
+    </div>
+  );
+}
+
+// Small icon button with a tooltip, matching the CRM's action-button style.
+function JobIconBtn({ icon, label, onClick, primary, danger }) {
+  const paths = {
+    'user-plus': 'M15 14c-2.7 0-8 1.3-8 4v2h10m-2-14a4 4 0 11-8 0 4 4 0 018 0M19 8v6M22 11h-6',
+    link: 'M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l1-1',
+    edit: 'M11 4H4v16h16v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z',
+    pause: 'M10 4H6v16h4zM18 4h-4v16h4z',
+    play: 'M8 5v14l11-7z',
+    close: 'M18 6L6 18M6 6l12 12',
+    trash: 'M3 6h18M8 6V4h8v2m-9 0v14h10V6',
+  };
+  const base = 'inline-flex items-center justify-center w-8 h-8 rounded-lg border transition';
+  const cls = primary ? 'bg-orange-500 border-orange-500 text-white hover:bg-orange-600'
+    : danger ? 'border-red-200 text-red-500 hover:bg-red-50'
+    : 'border-slate-300 text-slate-500 hover:bg-slate-50';
+  return (
+    <button onClick={onClick} title={label} aria-label={label} className={`${base} ${cls}`}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={paths[icon]} /></svg>
+    </button>
+  );
+}
+
+// Share modal: full listing-page URL and form-only embed URL, both absolute.
+function ShareJobModal({ job, onClose }) {
+  const origin = window.location.origin;
+  const listingUrl = `${origin}/careers/${job.publicToken}`;
+  const embedUrl = `${origin}/careers/${job.publicToken}/embed`;
+  const iframe = `<iframe src="${embedUrl}" width="100%" height="900" frameborder="0"></iframe>`;
+  const [copied, setCopied] = useState('');
+  const copy = (text, which) => { navigator.clipboard?.writeText(text); setCopied(which); setTimeout(() => setCopied(''), 1500); };
+  const Field = ({ title, note, value, which }) => (
+    <div className="mb-4">
+      <div className="text-sm font-bold text-[#050A1F]">{title}</div>
+      <div className="text-xs text-slate-500 mb-1.5">{note}</div>
+      <div className="flex gap-2">
+        <input readOnly value={value} className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600" onFocus={(e) => e.target.select()} />
+        <button onClick={() => copy(value, which)} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>{copied === which ? 'Copied!' : 'Copy'}</button>
+      </div>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-lg font-extrabold text-[#050A1F]">Share “{job.title}”</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
+        </div>
+        <Field title="Listing page URL" note="Public page with the full job post and the application form on the right." value={listingUrl} which="listing" />
+        <Field title="Form URL" note="The application form on its own." value={embedUrl} which="form" />
+        <Field title="Embed code" note="Paste this into your website to embed the form." value={iframe} which="iframe" />
+      </div>
     </div>
   );
 }
@@ -296,6 +352,34 @@ function CandidateList({ jobs }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Resume/file upload to ImageKit (HRMS/<Job>/Resumes), with a link fallback.
+function ResumeUpload({ jobPostId, value, onChange, kind = 'resume' }) {
+  const [status, setStatus] = useState('');
+  const ref = React.useRef(null);
+  const doUpload = async (file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setStatus('File too large (max 5MB).'); return; }
+    setStatus('Uploading…');
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+      const out = await hrApi('/candidates/upload', { method: 'POST', body: JSON.stringify({ base64: b64, fileName: file.name, kind, jobPostId }) });
+      onChange(out.url); setStatus(`✅ ${file.name}`);
+    } catch (e) { setStatus(e.message || 'Upload failed. Paste a link below instead.'); }
+  };
+  return (
+    <div>
+      <div onClick={() => ref.current?.click()}
+        onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); doUpload(e.dataTransfer.files?.[0]); }}
+        className="border border-dashed border-slate-300 rounded-lg px-4 py-4 text-center text-sm text-slate-500 cursor-pointer hover:border-orange-400">
+        {value ? <span className="text-green-600 font-semibold">✅ Uploaded — click to replace</span> : <>Drop file here or click to upload<div className="text-xs text-slate-400">Only .doc, .docx, .pdf, image · max 5MB</div></>}
+        <input ref={ref} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => doUpload(e.target.files?.[0])} />
+      </div>
+      {status && <div className="text-xs text-slate-500 mt-1">{status}</div>}
+      <input className={inp + ' mt-2'} value={value || ''} onChange={(e) => onChange(e.target.value)} placeholder="…or paste a resume link" />
     </div>
   );
 }
@@ -419,7 +503,9 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                   <div><L>Current CTC (Annual)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 4,50,000" /></div>
                   <div><L>Expected CTC (Annual)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 8,50,000" /></div>
                   <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
-                  <div><L>Resume link</L><input className={inp} value={c.resumeUrl} onChange={(e) => set({ resumeUrl: e.target.value })} placeholder="Drive / Dropbox link" /></div>
+                  <div className="col-span-2"><L>Resume</L>
+                    <ResumeUpload jobPostId={job._id} value={c.resumeUrl} onChange={(url) => set({ resumeUrl: url })} />
+                  </div>
                 </div>
               </Section>
 

@@ -649,6 +649,24 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// HR uploads a candidate's resume/photo to ImageKit under HRMS/<Job>/Resumes.
+router.post('/candidates/upload', requireHrAccess, async (req, res, next) => {
+  try {
+    const { base64, fileName, kind, jobPostId } = req.body || {};
+    if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    let jobName = 'General';
+    if (jobPostId) { const j = await HrJobPost.findByPk(jobPostId); if (j) jobName = j.title; }
+    const { safeFolder } = require('./careers');
+    const imagekit = require('../services/imagekit');
+    const sub = kind === 'photo' ? 'Photos' : 'Resumes';
+    const out = await imagekit.uploadFile({ base64, fileName: fileName || 'resume', folder: `HRMS/${safeFolder(jobName)}/${sub}` });
+    res.json({ url: out.url, name: out.name });
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'ImageKit is not configured. Add ImageKit keys in admin settings.' });
+    next(e);
+  }
+});
+
 // HR manually adds a candidate to a job (full application data).
 router.post('/candidates', requireHrAccess, async (req, res, next) => {
   try {

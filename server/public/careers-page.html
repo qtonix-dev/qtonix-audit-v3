@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Careers</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; color: #050A1F; background: #f8fafc; }
+  .band { color: #fff; padding: 40px 24px; background: linear-gradient(120deg,#050A1F,#0B1533); }
+  .band-inner { max-width: 1040px; margin: 0 auto; }
+  .dept { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: #FF8A3D; }
+  h1 { font-size: 30px; font-weight: 800; margin: 6px 0 12px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: #cbd5e1; }
+  .grid { max-width: 1040px; margin: -24px auto 48px; padding: 0 24px; display: grid; grid-template-columns: 1fr 400px; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(2,6,23,.06); }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .pill { background: #f1f5f9; color: #475569; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 700; }
+  .pill.accent { background: #fff1e6; color: #c2410c; }
+  .stitle { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; margin: 20px 0 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: #f1f5f9; color: #475569; border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+  .chip.star { background: linear-gradient(90deg,#FF6A00,#FF4500); color: #fff; }
+  .desc { color: #334155; font-size: 15px; line-height: 1.7; }
+  .desc h3 { font-size: 16px; color: #050A1F; margin: 18px 0 6px; }
+  .desc ul { padding-left: 20px; }
+  .form-card { position: sticky; top: 20px; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin: 14px 0 6px; }
+  label .req { color: #f43f5e; }
+  input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #FF6A00; box-shadow: 0 0 0 2px #ffedd5; }
+  .row { display: flex; gap: 10px; } .row > div { flex: 1; }
+  .btn { margin-top: 18px; width: 100%; border: 0; border-radius: 10px; padding: 12px; font-size: 15px; font-weight: 800; color: #fff; background: linear-gradient(90deg,#FF6A00,#FF4500); cursor: pointer; }
+  .btn:disabled { opacity: .6; }
+  .muted { color: #94a3b8; font-size: 12px; }
+  .err { color: #dc2626; font-size: 13px; margin-top: 10px; }
+  .ok { text-align: center; padding: 40px 10px; } .ok .big { font-size: 40px; }
+  .drop { border: 1.5px dashed #cbd5e1; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; font-size: 13px; color: #64748b; }
+  .drop.on { border-color: #FF6A00; background: #fff7ed; }
+</style>
+</head>
+<body>
+<div id="app"><div style="padding:60px;text-align:center" class="muted">Loading…</div></div>
+<script src="/careers-shared.js"></script>
+<script>
+(function () {
+  var token = location.pathname.split('/')[2];
+  fetch('/api/careers/' + encodeURIComponent(token))
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (job) { renderPage(job, token); })
+    .catch(function () { document.getElementById('app').innerHTML = '<div style="padding:60px;text-align:center" class="muted">This position is no longer available.</div>'; });
+
+  function renderPage(job, token) {
+    var C = window.CareersShared;
+    var mode = { in_office: 'In-Office', hybrid: 'Hybrid', remote: 'Remote' }[job.workMode] || '';
+    var expLabel = job.experienceType === 'freshers' ? 'Fresher' : job.experienceType === 'intern' ? 'Intern' : ((job.expMin||0) + ' – ' + (job.expMax||0) + ' years');
+    var empType = { full_time:'Full-time', part_time:'Part-time', internship:'Internship', freelance:'Freelance' }[job.employmentType] || '';
+    var salary = job.salary ? (job.salary.currency + ' ' + Number(job.salary.min||0).toLocaleString() + ' – ' + Number(job.salary.max||0).toLocaleString() + ' / ' + job.salary.period) : '';
+    var empLevel = { entry:'Entry Level', associate:'Associate', mid_senior:'Mid-Senior', senior:'Senior', tl:'Team Lead', manager:'Manager' }[job.employmentLevel] || '';
+
+    var html = '';
+    html += '<div class="band"><div class="band-inner">';
+    html += '<div class="dept">' + C.esc(job.department || 'Careers') + '</div>';
+    html += '<h1>' + C.esc(job.title) + '</h1>';
+    html += '<div class="meta">';
+    if ((job.locations||[]).length) html += '<span>📍 ' + C.esc(job.locations.join(' · ')) + '</span>';
+    html += '<span>💼 ' + C.esc(mode) + '</span><span>⏳ ' + C.esc(expLabel) + '</span>';
+    if (empType) html += '<span>🕒 ' + C.esc(empType) + '</span>';
+    html += '</div></div></div>';
+
+    html += '<div class="grid">';
+    // Left: details
+    html += '<div class="card">';
+    html += '<div class="pills">';
+    if (empLevel) html += '<span class="pill">' + C.esc(empLevel) + '</span>';
+    if (job.education) html += '<span class="pill">' + C.esc(job.education) + '</span>';
+    if (salary) html += '<span class="pill accent">' + C.esc(salary) + '</span>';
+    if (job.openings > 1) html += '<span class="pill">' + job.openings + ' openings</span>';
+    html += '</div>';
+    if ((job.skills||[]).length) {
+      html += '<div class="stitle">Skills</div><div class="chips">' + job.skills.map(function(s){ return '<span class="chip">' + C.esc(s) + '</span>'; }).join('') + '</div>';
+    }
+    html += '<div class="stitle">Job description</div><div class="desc">' + (job.description || '') + '</div>';
+    html += '</div>';
+    // Right: form
+    html += '<div class="card form-card"><div id="formHost"></div></div>';
+    html += '</div>';
+
+    document.getElementById('app').innerHTML = html;
+    C.renderForm(document.getElementById('formHost'), job, token);
+  }
+})();
+</script>
+</body>
+</html>

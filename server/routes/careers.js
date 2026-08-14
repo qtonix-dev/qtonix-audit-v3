@@ -73,4 +73,26 @@ router.post('/:token/apply', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Sanitise a job title into a safe ImageKit folder segment.
+function safeFolder(s) { return String(s || 'job').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'job'; }
+
+// Public resume/photo upload (candidate applying via the form). Tied to a valid
+// published-job token; stores under HRMS/<Job>/Resumes on ImageKit.
+router.post('/:token/upload', async (req, res, next) => {
+  try {
+    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token, status: 'published' } });
+    if (!job) return res.status(404).json({ error: 'This position is no longer available.' });
+    const { base64, fileName, kind } = req.body || {};
+    if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    const imagekit = require('../services/imagekit');
+    const sub = kind === 'photo' ? 'Photos' : 'Resumes';
+    const out = await imagekit.uploadFile({ base64, fileName: fileName || 'resume', folder: `HRMS/${safeFolder(job.title)}/${sub}` });
+    res.json({ url: out.url, name: out.name });
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'File uploads are not set up yet. Please paste a link instead.' });
+    next(e);
+  }
+});
+
 module.exports = router;
+module.exports.safeFolder = safeFolder;

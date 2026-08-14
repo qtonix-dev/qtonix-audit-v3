@@ -152,9 +152,9 @@ function AboutStep({ job, set, departments, branches, setErr }) {
   const addLoc = (v) => { const n = v.trim(); if (!n || (job.locations || []).includes(n)) { setLocInput(''); return; } set({ locations: [...(job.locations || []), n] }); setLocInput(''); };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <div className="text-base font-extrabold text-[#050A1F] mb-3">Basic details</div>
+    <div className="space-y-5 max-w-3xl">
+      <div className="rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-extrabold text-[#050A1F] mb-4 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Basic details</div>
         <div className="space-y-4">
           <div>
             <label className={lab}>Job title *</label>
@@ -179,44 +179,43 @@ function AboutStep({ job, set, departments, branches, setErr }) {
             </div>
           </div>
           <div>
-            <label className={lab}>Location(s) <span className="font-normal text-slate-400">— from your branches</span></label>
+            <label className={lab}>Location(s) <span className="font-normal text-slate-400">— select from your branches</span></label>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {(job.locations || []).map((l, i) => (
-                <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                  {l}<button onClick={() => set({ locations: job.locations.filter((_, idx) => idx !== i) })} className="text-slate-400 hover:text-red-500">×</button>
+                <span key={i} className="inline-flex items-center gap-1 rounded-full bg-orange-50 text-orange-700 px-2.5 py-1 text-xs font-semibold">
+                  {l}<button onClick={() => set({ locations: job.locations.filter((_, idx) => idx !== i) })} className="text-orange-400 hover:text-red-500">×</button>
                 </span>
               ))}
             </div>
-            {(branches || []).length > 0 && (
-              <select className={inp + ' mb-2'} value="" onChange={(e) => { if (e.target.value) addLoc(e.target.value); }}>
+            {(branches || []).length > 0 ? (
+              <select className={inp} value="" onChange={(e) => { if (e.target.value) addLoc(e.target.value); }}>
                 <option value="">+ Add a branch location…</option>
                 {(branches || []).filter((b) => !(job.locations || []).includes(b.name)).map((b) => <option key={b._id || b.name} value={b.name}>{b.name}</option>)}
               </select>
+            ) : (
+              <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No branches set up yet. Add branches in Admin → Settings to use them as job locations.</div>
             )}
-            <input className={inp} value={locInput} onChange={(e) => setLocInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLoc(locInput); } }}
-              placeholder="…or type a custom location and press Enter" />
           </div>
         </div>
       </div>
 
       {/* Job description with AI rewrite */}
-      <div>
+      <div className="rounded-xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-2">
-          <label className={lab + ' mb-0'}>Job description</label>
-          <button onClick={rewriteJD} disabled={aiBusy === 'jd'} className="text-xs font-bold text-orange-600 hover:text-orange-700 disabled:opacity-50">
+          <div className="text-sm font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Job description</div>
+          <button onClick={rewriteJD} disabled={aiBusy === 'jd'} className="inline-flex items-center gap-1 rounded-lg bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-600 hover:bg-orange-100 disabled:opacity-50">
             {aiBusy === 'jd' ? '✨ Rewriting…' : '✨ Rewrite with AI'}
           </button>
         </div>
-        <p className="text-[11px] text-slate-400 mb-2">Provide a summary of the role, what success looks like, and how it fits the organisation. Include Responsibilities and Qualifications. Use AI to format it properly.</p>
+        <p className="text-[11px] text-slate-400 mb-2">Summary of the role, what success looks like, and how it fits the organisation — plus Responsibilities and Qualifications. Use AI to format it properly.</p>
         <RichText value={job.description} onChange={(v) => set({ description: v })} placeholder="Describe the role…" minHeight={200} />
       </div>
 
       {/* Skills */}
-      <div>
+      <div className="rounded-xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-2">
-          <label className={lab + ' mb-0'}>Skills required <span className="font-normal text-slate-400">(star the primary ones)</span></label>
-          <button onClick={suggestSkills} disabled={aiBusy === 'skills'} className="text-xs font-bold text-orange-600 hover:text-orange-700 disabled:opacity-50">
+          <div className="text-sm font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Skills required <span className="font-normal text-slate-400 text-xs">(★ = primary)</span></div>
+          <button onClick={suggestSkills} disabled={aiBusy === 'skills'} className="inline-flex items-center gap-1 rounded-lg bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-600 hover:bg-orange-100 disabled:opacity-50">
             {aiBusy === 'skills' ? '✨ Suggesting…' : '✨ Suggest with AI'}
           </button>
         </div>
@@ -235,28 +234,41 @@ function AboutStep({ job, set, departments, branches, setErr }) {
       </div>
 
       {/* Employment details */}
-      <div>
-        <div className="text-base font-extrabold text-[#050A1F] mb-3">Employment details</div>
+      <div className="rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-extrabold text-[#050A1F] mb-4 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Employment details</div>
         <div className="space-y-4">
-          <div>
-            <label className={lab}>Salary range</label>
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="inline-flex bg-slate-100 rounded-lg p-1">
-                {[['hourly', 'Hourly'], ['monthly', 'Monthly'], ['annual', 'Annual']].map(([v, l]) => (
-                  <button key={v} onClick={() => set({ salaryPeriod: v })} className={`px-3 py-1.5 rounded-md text-xs font-bold ${job.salaryPeriod === v ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{l}</button>
-                ))}
-              </div>
-              <input className={inp + ' w-32'} type="number" value={job.salaryMin} onChange={(e) => set({ salaryMin: e.target.value })} placeholder="Min" />
-              <span className="text-slate-400">to</span>
-              <input className={inp + ' w-32'} type="number" value={job.salaryMax} onChange={(e) => set({ salaryMax: e.target.value })} placeholder="Max" />
-              <select className={inp + ' w-24'} value={job.salaryCurrency} onChange={(e) => set({ salaryCurrency: e.target.value })}>
-                {['INR', 'USD', 'GBP', 'EUR', 'AED', 'SGD'].map((c) => <option key={c}>{c}</option>)}
-              </select>
+          <div className="rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <label className={lab + ' mb-0'}>Salary range</label>
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={job.hideSalary} onChange={(e) => set({ hideSalary: e.target.checked })} />
+                Hide from candidates
+              </label>
             </div>
-            <label className="flex items-center gap-2 mt-2 text-sm text-slate-600">
-              <input type="checkbox" checked={job.hideSalary} onChange={(e) => set({ hideSalary: e.target.checked })} />
-              Hide salary details from candidates
-            </label>
+            <div className="grid grid-cols-[auto_1fr] gap-3 items-start">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Pay period</div>
+                <div className="inline-flex bg-slate-100 rounded-lg p-1">
+                  {[['hourly', 'Hourly'], ['monthly', 'Monthly'], ['annual', 'Annual']].map(([v, l]) => (
+                    <button key={v} onClick={() => set({ salaryPeriod: v })} className={`px-3 py-1.5 rounded-md text-xs font-bold transition ${job.salaryPeriod === v ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Amount</div>
+                <div className="flex items-stretch">
+                  <select className="rounded-l-lg border border-r-0 border-slate-300 bg-slate-50 px-2 text-sm font-bold text-slate-600 focus:outline-none" value={job.salaryCurrency} onChange={(e) => set({ salaryCurrency: e.target.value })}>
+                    {['INR', 'USD', 'GBP', 'EUR', 'AED', 'SGD'].map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                  <input className="w-full border-y border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" type="number" value={job.salaryMin} onChange={(e) => set({ salaryMin: e.target.value })} placeholder="Minimum" />
+                  <span className="flex items-center px-2 border-y border-slate-300 bg-slate-50 text-slate-400 text-sm">–</span>
+                  <input className="w-full rounded-r-lg border border-l-0 border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" type="number" value={job.salaryMax} onChange={(e) => set({ salaryMax: e.target.value })} placeholder="Maximum" />
+                </div>
+                {(job.salaryMin || job.salaryMax) && !job.hideSalary && (
+                  <div className="text-[11px] text-slate-400 mt-1">Shown to candidates as: <b>{job.salaryCurrency} {Number(job.salaryMin || 0).toLocaleString()} – {Number(job.salaryMax || 0).toLocaleString()}</b> / {job.salaryPeriod}</div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -290,8 +302,8 @@ function AboutStep({ job, set, departments, branches, setErr }) {
       </div>
 
       {/* Optional */}
-      <div>
-        <div className="text-base font-extrabold text-[#050A1F] mb-3">Optional details</div>
+      <div className="rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-extrabold text-[#050A1F] mb-4 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Optional details</div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={lab}>Education</label>
