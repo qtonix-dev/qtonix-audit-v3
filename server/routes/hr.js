@@ -721,6 +721,23 @@ router.post('/candidates/ai/parse-resume', requireHrAccess, async (req, res, nex
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
+// Edit core candidate fields.
+router.patch('/candidates/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    if (b.name !== undefined) row.name = String(b.name).slice(0, 120);
+    if (b.email !== undefined) row.email = String(b.email).slice(0, 160);
+    if (b.phone !== undefined) row.phone = String(b.phone).slice(0, 40);
+    if (b.jobPostId !== undefined) row.jobPostId = b.jobPostId || null;
+    if (b.currentLocation !== undefined) row.currentLocation = String(b.currentLocation).slice(0, 160);
+    if (b.answers && typeof b.answers === 'object') { row.answers = { ...(row.answers || {}), ...b.answers }; row.changed('answers', true); }
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 // Full candidate detail (with job for stages/questions context).
 router.get('/candidates/:id', requireHrAccess, async (req, res, next) => {
   try {

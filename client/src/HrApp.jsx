@@ -256,37 +256,172 @@ function ShareJobModal({ job, onClose }) {
     </div>
   );
 }
+// Total years of experience, derived from the candidate's work history if
+// present, else from the "experience" answer, else blank.
+function totalExperience(c) {
+  const a = c.answers || {};
+  const work = a.work || [];
+  if (work.length) {
+    let months = 0;
+    for (const w of work) {
+      const s = parseYearMonth(w.start); const e = w.current ? new Date() : parseYearMonth(w.end);
+      if (s && e) months += Math.max(0, (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()));
+    }
+    if (months > 0) { const y = Math.floor(months / 12); const m = months % 12; return `${y}y${m ? ` ${m}m` : ''}`; }
+  }
+  if (a.experience) return String(a.experience);
+  return '—';
+}
+function parseYearMonth(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  let m = s.match(/(\d{1,2})[\/\-](\d{4})/); if (m) return new Date(Number(m[2]), Number(m[1]) - 1, 1);
+  m = s.match(/(\d{4})[\/\-](\d{1,2})/); if (m) return new Date(Number(m[1]), Number(m[2]) - 1, 1);
+  m = s.match(/(\d{4})/); if (m) return new Date(Number(m[1]), 0, 1);
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000); if (mins < 1) return 'just now'; if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60); if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24); if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
 function CandidateList({ jobs }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [notesFor, setNotesFor] = useState(null);
   const load = () => hrApi('/candidates').then(setCands).catch(() => {});
   useEffect(() => { load(); }, []);
-  const jobTitle = (id) => (jobs.find((j) => j._id === id) || {}).title || '—';
+  const job = (id) => jobs.find((j) => j._id === id) || {};
+  const stageLabel = (c) => {
+    if (c.rejected) return { label: 'Rejected', color: '#DC2626' };
+    const st = ((job(c.jobPostId).stages) || []).find((s) => s.id === c.stage);
+    return { label: st ? st.label : c.stage, color: st ? st.color : '#64748B' };
+  };
+
+  // A candidate is "viewed" → show the full page instead of the list.
+  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
+
   if (!cands.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No candidates yet.</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-          <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Job</th><th className="px-4 py-3">Stage</th><th className="px-4 py-3">Source</th><th className="px-4 py-3"></th>
-        </tr></thead>
-        <tbody>
-          {cands.map((c) => (
-            <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer" onClick={() => setViewId(c._id)}>
-              <td className="px-4 py-3 font-semibold text-slate-700">{c.name}</td>
-              <td className="px-4 py-3 text-slate-500">{c.email}</td>
-              <td className="px-4 py-3 text-slate-500">{jobTitle(c.jobPostId)}</td>
-              <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{c.rejected ? 'Rejected' : c.stage}</span></td>
-              <td className="px-4 py-3 text-slate-400 text-xs">{c.source === 'public_form' ? 'Application form' : 'Manual'}</td>
-              <td className="px-4 py-3 text-right"><button onClick={(e) => { e.stopPropagation(); setViewId(c._id); }} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600">View</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {viewId && <HrCandidateView candidateId={viewId} onClose={() => { setViewId(null); load(); }} />}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+            <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
+            <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Status</th>
+            <th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
+          </tr></thead>
+          <tbody>
+            {cands.map((c) => {
+              const a = c.answers || {}; const st = stageLabel(c);
+              return (
+                <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                  <td className="px-4 py-3">
+                    <button onClick={() => setViewId(c._id)} className="text-left">
+                      <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
+                      <div className="text-xs text-slate-400">{c.email}</div>
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{job(c.jobPostId).title || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500">{totalExperience(c)}</td>
+                  <td className="px-4 py-3 text-slate-500">{a.currentCtc || '—'}</td>
+                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
+                  <td className="px-4 py-3 text-slate-400 text-xs">{timeAgo(c.updatedAt)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <CandIconBtn icon="edit" label="Edit" onClick={() => setEditId(c._id)} />
+                      <CandIconBtn icon="eye" label="View" onClick={() => setViewId(c._id)} />
+                      <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {editId && <EditCandidateModal candidateId={editId} jobs={jobs} onClose={() => setEditId(null)} onSaved={() => { setEditId(null); load(); }} />}
+      {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(); }} />}
     </div>
   );
 }
+
+function CandIconBtn({ icon, label, onClick }) {
+  const paths = {
+    edit: 'M11 4H4v16h16v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z',
+    eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 15a3 3 0 100-6 3 3 0 000 6z',
+    note: 'M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z',
+  };
+  return (
+    <button onClick={onClick} title={label} aria-label={label} className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 transition">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={paths[icon]} /></svg>
+    </button>
+  );
+}
+
+// Quick "add note" modal (posts a comment).
+function QuickNoteModal({ candidateId, onClose, onSaved }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => { if (!text.trim()) return; setBusy(true); try { await hrApi(`/candidates/${candidateId}/comments`, { method: 'POST', body: JSON.stringify({ text: text.trim() }) }); onSaved(); } catch { setBusy(false); } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div className="text-lg font-extrabold text-[#050A1F] mb-3">Add note</div>
+        <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a note about this candidate…" autoFocus />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save note'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Lightweight edit for the key candidate fields.
+function EditCandidateModal({ candidateId, jobs, onClose, onSaved }) {
+  const [c, setC] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi(`/candidates/${candidateId}`).then(setC).catch(() => {}); }, [candidateId]);
+  if (!c) return null;
+  const a = c.answers || {};
+  const setA = (k, v) => setC((s) => ({ ...s, answers: { ...(s.answers || {}), [k]: v } }));
+  const save = async () => {
+    setBusy(true);
+    try {
+      await hrApi(`/candidates/${candidateId}`, { method: 'PATCH', body: JSON.stringify({ name: c.name, email: c.email, phone: c.phone, jobPostId: c.jobPostId, answers: c.answers }) });
+      onSaved();
+    } catch { setBusy(false); }
+  };
+  const F = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl max-h-[88vh] overflow-auto">
+        <div className="text-lg font-extrabold text-[#050A1F] mb-4">Edit candidate</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><L>Name</L><input className={F} value={c.name || ''} onChange={(e) => setC({ ...c, name: e.target.value })} /></div>
+          <div><L>Phone</L><input className={F} value={c.phone || ''} onChange={(e) => setC({ ...c, phone: e.target.value })} /></div>
+          <div><L>Email</L><input className={F} value={c.email || ''} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
+          <div><L>Position</L><select className={F} value={c.jobPostId || ''} onChange={(e) => setC({ ...c, jobPostId: Number(e.target.value) })}><option value="">—</option>{jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}</select></div>
+          <div><L>Current Salary</L><input className={F} value={a.currentCtc || ''} onChange={(e) => setA('currentCtc', e.target.value)} /></div>
+          <div><L>Expected Salary</L><input className={F} value={a.expectedCtc || ''} onChange={(e) => setA('expectedCtc', e.target.value)} /></div>
+          <div><L>Notice Period (days)</L><input className={F} value={a.noticePeriod || ''} onChange={(e) => setA('noticePeriod', e.target.value)} /></div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function L({ children }) { return <div className="text-[11px] font-bold text-slate-500 mb-1">{children}</div>; }
 
 // Resume/file upload to ImageKit (HRMS/<Job>/Resumes), with a link fallback.
 function ResumeUpload({ jobPostId, value, onChange, kind = 'resume' }) {
@@ -541,6 +676,7 @@ function RecruitPipeline({ jobs }) {
   const stages = (job && job.stages) || [];
   const move = async (c, stage) => { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x)); };
   if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
+  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
   return (
     <div>
       <select className={inp + ' max-w-xs mb-4'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
@@ -566,7 +702,6 @@ function RecruitPipeline({ jobs }) {
           </div>
         ))}
       </div>
-      {viewId && <HrCandidateView candidateId={viewId} onClose={() => { setViewId(null); load(); }} />}
     </div>
   );
 }
@@ -806,7 +941,7 @@ function HrAdmin({ user }) {
       {tab === 'holidays' && <HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} />}
 
       {/* IMAGEKIT TAB */}
-      {tab === 'mailbox' && <RecruitmentMailbox isAdmin={user.role === 'admin'} setErr={setErr} />}
+      {tab === 'mailbox' && <RecruitmentMailbox isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'imagekit' && <ImageKitSection />}
 
       {showAdd && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShowAdd(false)} onCreated={(n) => { setMsg(`User created: ${n}`); load(); }} />}

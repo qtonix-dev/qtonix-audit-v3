@@ -7,22 +7,19 @@ const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:o
 const VERDICTS = [['definitely', 'Definitely', '#16A34A'], ['yes', 'Yes', '#2563EB'], ['no', 'No', '#DC2626'], ['not_sure', 'Not Sure', '#F59E0B']];
 const DEFAULT_ATTRS = ['Communication skills', 'Technical skill', 'Ability to learn'];
 
-export default function HrCandidateView({ candidateId, onClose }) {
+export default function HrCandidateView({ candidateId, onBack, onClose }) {
   const [c, setC] = useState(null);
   const [tab, setTab] = useState('resume');
   const [err, setErr] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
   const [showInterview, setShowInterview] = useState(false);
+  const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [candidateId]);
 
   if (!c) {
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
-        <div className="bg-white rounded-2xl p-8 text-slate-400 text-sm">{err || 'Loading…'}</div>
-      </div>
-    );
+    return <div className="py-20 text-center text-slate-400 text-sm">{err || 'Loading…'}</div>;
   }
 
   const a = c.answers || {};
@@ -39,10 +36,11 @@ export default function HrCandidateView({ candidateId, onClose }) {
   const TABS = [['resume', 'Resume'], ['application', 'Application Form'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Attachments']];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-auto">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl my-4">
+    <div>
+      <button onClick={back} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to candidates</button>
+      <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
         {/* Header */}
-        <div className="p-6 border-b border-slate-100">
+        <div className="p-6 border-b border-slate-100" style={{ background: 'linear-gradient(180deg,#fafbff,#fff)' }}>
           <div className="flex items-start justify-between">
             <div className="flex gap-4">
               <div className="w-16 h-16 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center text-xl font-extrabold shrink-0">
@@ -53,6 +51,7 @@ export default function HrCandidateView({ candidateId, onClose }) {
                   <div className="text-xl font-extrabold text-[#050A1F]">{c.name}</div>
                   {a.age && <span className="text-slate-400 text-sm">{a.age}</span>}
                   {c.rejected && <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Rejected</span>}
+                  {curStage && !c.rejected && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: curStage.color + '18', color: curStage.color }}>{curStage.label}</span>}
                 </div>
                 <div className="mt-1 text-sm text-slate-500 space-y-0.5">
                   {c.email && <div>✉️ {c.email}</div>}
@@ -64,12 +63,10 @@ export default function HrCandidateView({ candidateId, onClose }) {
                   <div className="flex flex-wrap gap-x-4 text-xs text-slate-400 pt-1">
                     <span>Source: <b className="text-slate-600">{c.source === 'public_form' ? 'Application form' : 'Manual'}</b></span>
                     {c.recruiterName && <span>Recruiter: <b className="text-slate-600">{c.recruiterName}</b></span>}
-                    <span>Current stage: <b className="text-slate-600">{curStage ? curStage.label : c.stage}</b></span>
                   </div>
                 </div>
               </div>
             </div>
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
           </div>
 
           {/* Actions */}
@@ -92,7 +89,7 @@ export default function HrCandidateView({ candidateId, onClose }) {
           ))}
         </div>
 
-        <div className="p-6 min-h-[300px]">
+        <div className="p-6 min-h-[320px]">
           {tab === 'resume' && <ResumeTab c={c} />}
           {tab === 'application' && <ApplicationTab c={c} a={a} job={job} />}
           {tab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
