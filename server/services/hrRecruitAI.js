@@ -11,6 +11,38 @@
 
 const { callClaude } = require('./aiVisibility');
 
+/**
+ * Extract plain text from an uploaded file (base64 data URL or raw base64).
+ * Handles PDF (pdf-parse), Word .docx (mammoth) and plain text. Runs entirely
+ * server-side so it doesn't depend on browser CDN modules.
+ */
+async function extractFileText({ base64, fileName }) {
+  let b64 = String(base64 || '');
+  const m = b64.match(/^data:([^;]+);base64,(.*)$/s);
+  const mime = m ? m[1] : '';
+  if (m) b64 = m[2];
+  const buf = Buffer.from(b64, 'base64');
+  const name = String(fileName || '').toLowerCase();
+
+  if (name.endsWith('.pdf') || mime === 'application/pdf') {
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buf });
+    const data = await parser.getText();
+    return (data && data.text) || '';
+  }
+  if (name.endsWith('.docx') || mime.includes('officedocument.wordprocessingml')) {
+    const mammoth = require('mammoth');
+    const out = await mammoth.extractRawText({ buffer: buf });
+    return out.value || '';
+  }
+  if (name.endsWith('.doc') || mime === 'application/msword') {
+    // Legacy .doc isn't cleanly parseable; fall back to a best-effort text pull.
+    return buf.toString('utf8').replace(/[^\x09\x0A\x0D\x20-\x7E]+/g, ' ');
+  }
+  // txt / rtf / unknown → treat as UTF-8 text.
+  return buf.toString('utf8');
+}
+
 function parseJson(text) {
   const cleaned = String(text).replace(/```json/gi, '').replace(/```/g, '').trim();
   const start = cleaned.search(/[[{]/);
@@ -139,4 +171,4 @@ ${raw}`,
   return data;
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume };
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText };

@@ -611,15 +611,21 @@ router.post('/job-posts/ai/suggest-skills', requireHrAccess, async (req, res, ne
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
-// Parse an uploaded JD. The client extracts text (pdf/docx) and posts it here.
+// Parse an uploaded JD. Accepts either extracted `text` OR a `base64` file
+// (PDF/DOCX/txt) which we extract server-side — no browser CDN modules needed.
 router.post('/job-posts/ai/parse-jd', requireHrAccess, async (req, res, next) => {
   try {
     const key = await anthropicKey();
-    const { parseUploadedJD } = require('../services/hrRecruitAI');
-    if (!req.body.text || String(req.body.text).trim().length < 30) {
+    const { parseUploadedJD, extractFileText } = require('../services/hrRecruitAI');
+    let text = req.body.text;
+    if ((!text || String(text).trim().length < 30) && req.body.base64) {
+      try { text = await extractFileText({ base64: req.body.base64, fileName: req.body.fileName }); }
+      catch (ex) { return res.status(400).json({ error: 'Could not read that file. Try a text-based PDF or DOCX.' }); }
+    }
+    if (!text || String(text).trim().length < 30) {
       return res.status(400).json({ error: 'Could not read enough text from that file. Try a text-based PDF or DOCX.' });
     }
-    const parsed = await parseUploadedJD(key, { text: req.body.text });
+    const parsed = await parseUploadedJD(key, { text });
     res.json(parsed);
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
@@ -691,15 +697,20 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Parse an uploaded resume (client extracts text) into candidate fields.
+// Parse an uploaded resume. Accepts extracted `text` OR a `base64` file.
 router.post('/candidates/ai/parse-resume', requireHrAccess, async (req, res, next) => {
   try {
     const key = await anthropicKey();
-    if (!req.body.text || String(req.body.text).trim().length < 30) {
+    const { parseResume, extractFileText } = require('../services/hrRecruitAI');
+    let text = req.body.text;
+    if ((!text || String(text).trim().length < 30) && req.body.base64) {
+      try { text = await extractFileText({ base64: req.body.base64, fileName: req.body.fileName }); }
+      catch (ex) { return res.status(400).json({ error: 'Could not read that file. Try a text-based PDF or DOCX.' }); }
+    }
+    if (!text || String(text).trim().length < 30) {
       return res.status(400).json({ error: 'Could not read enough text from that file. Try a text-based PDF or DOCX.' });
     }
-    const { parseResume } = require('../services/hrRecruitAI');
-    const parsed = await parseResume(key, { text: req.body.text });
+    const parsed = await parseResume(key, { text });
     res.json(parsed);
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });

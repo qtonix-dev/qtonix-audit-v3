@@ -131,15 +131,12 @@ function HrRecruitment() {
       onCancel={() => { setMode('list'); loadJobs(); }}
       onDone={() => { setMode('list'); loadJobs(); }} />;
   }
-  if (mode === 'choose') {
-    return <PostJobChoice departments={departments} onCancel={() => setMode('list')} onCreate={() => startBuilder(null)} onParsed={(seed) => startBuilder(seed)} setErr={setErr} />;
-  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
-        {tab === 'jobs' && <button onClick={() => setMode('choose')} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
+        {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
       </div>
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
@@ -155,79 +152,9 @@ function HrRecruitment() {
   );
 }
 
-// Post-a-job entry: choose Create JD or Upload an existing JD.
-function PostJobChoice({ onCancel, onCreate, onParsed, setErr }) {
-  const [busy, setBusy] = useState(false);
-  const fileRef = React.useRef(null);
-
-  const onFile = async (file) => {
-    if (!file) return;
-    setBusy(true); setErr('');
-    try {
-      const text = await extractText(file);
-      if (!text || text.trim().length < 30) throw new Error('Could not read enough text from that file. Try a text-based PDF or a DOCX.');
-      const parsed = await hrApi('/job-posts/ai/parse-jd', { method: 'POST', body: JSON.stringify({ text }) });
-      // Seed the builder with parsed fields (normalise numbers/strings).
-      onParsed({
-        title: parsed.title || '', department: parsed.department || '', workMode: parsed.workMode || 'in_office',
-        locations: parsed.locations || [], description: parsed.description || '',
-        skills: (parsed.skills || []).map((s) => ({ name: s.name || s, primary: !!s.primary })),
-        salaryMin: parsed.salaryMin || '', salaryMax: parsed.salaryMax || '', salaryPeriod: parsed.salaryPeriod || 'monthly',
-        salaryCurrency: parsed.salaryCurrency || 'INR',
-        experienceType: parsed.experienceType || 'experienced', expMin: parsed.expMin || '', expMax: parsed.expMax || '',
-        employmentType: parsed.employmentType || 'full_time', employmentLevel: parsed.employmentLevel || 'entry',
-        education: parsed.education || '', openings: parsed.openings || 1,
-        _missing: parsed.missing || [],
-      });
-    } catch (e) { setErr(e.message); setBusy(false); }
-  };
-
-  return (
-    <div>
-      <button onClick={onCancel} className="text-xs font-bold text-slate-400 hover:text-slate-600 mb-4">← Back to jobs</button>
-      <div className="text-2xl font-extrabold text-[#050A1F] mb-1">Post a Job</div>
-      <p className="text-sm text-slate-500 mb-6">Start from scratch, or upload a JD you already have and let AI fill in the details.</p>
-      <div className="grid grid-cols-2 gap-4 max-w-2xl">
-        <button onClick={onCreate} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
-          <div className="text-3xl mb-2">📝</div>
-          <div className="text-base font-extrabold text-[#050A1F]">Create JD</div>
-          <div className="text-sm text-slate-500 mt-1">Build the job post step by step, with AI help for the description and skills.</div>
-        </button>
-        <button onClick={() => !busy && fileRef.current?.click()} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition disabled:opacity-60">
-          <div className="text-3xl mb-2">{busy ? '⏳' : '📄'}</div>
-          <div className="text-base font-extrabold text-[#050A1F]">{busy ? 'Reading your JD…' : 'Upload JD'}</div>
-          <div className="text-sm text-slate-500 mt-1">Upload a PDF or Word file. AI reads it, fills the form, and flags anything missing.</div>
-          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Extract text from an uploaded JD in the browser (pdf.js / mammoth / plain).
-async function extractText(file) {
-  const name = (file.name || '').toLowerCase();
-  if (name.endsWith('.txt')) return await file.text();
-  if (name.endsWith('.pdf')) {
-    const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs';
-    const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-    let out = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      out += content.items.map((it) => it.str).join(' ') + '\n';
-    }
-    return out;
-  }
-  if (name.endsWith('.docx') || name.endsWith('.doc')) {
-    const mammoth = await import('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
-    const buf = await file.arrayBuffer();
-    const result = await (mammoth.default || mammoth).extractRawText({ arrayBuffer: buf });
-    return result.value;
-  }
-  return await file.text();
+// Read a File as a base64 data URL for server-side extraction/upload.
+export function fileToBase64(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
 }
 
 function JobList({ jobs, onEdit, reload }) {
@@ -396,29 +323,34 @@ const CAND_EMPTY = {
 };
 
 function AddCandidateModal({ job, onClose, onSaved }) {
-  const [phase, setPhase] = useState('choose'); // choose | form
   const [c, setC] = useState(CAND_EMPTY);
   const [open, setOpen] = useState({ basic: true, work: false, edu: false, addl: false, screen: false });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [parsing, setParsing] = useState(false);
-  const fileRef = React.useRef(null);
+  const [prog, setProg] = useState(null); // {pct,label} during resume autofill
+  const autofillRef = React.useRef(null);
   const set = (patch) => setC((s) => ({ ...s, ...patch }));
-  const skillInput = React.useRef('');
 
-  const onResume = async (file) => {
+  // Upload a resume and let AI autofill the form (server extracts text).
+  const autofillFromResume = async (file) => {
     if (!file) return;
-    setParsing(true); setErr('');
+    if (file.size > 8 * 1024 * 1024) { setErr('File too large (max 8MB).'); return; }
+    setErr(''); setProg({ pct: 15, label: 'Reading file…' });
     try {
-      const text = await extractText(file);
-      const p = await hrApi('/candidates/ai/parse-resume', { method: 'POST', body: JSON.stringify({ text }) });
+      const base64 = await fileToBase64(file);
+      setProg({ pct: 40, label: 'Extracting text…' });
+      let done = 40;
+      const timer = setInterval(() => { done = Math.min(90, done + 6); setProg({ pct: done, label: 'AI is reading the resume…' }); }, 250);
+      let p;
+      try { p = await hrApi('/candidates/ai/parse-resume', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); }
+      finally { clearInterval(timer); }
+      setProg({ pct: 100, label: 'Done' });
       setC((s) => ({
         ...s,
         firstName: p.firstName || s.firstName, lastName: p.lastName || s.lastName,
         email: p.email || s.email, phone: p.phone || s.phone,
         currentCtc: p.currentCtc || s.currentCtc, expectedCtc: p.expectedCtc || s.expectedCtc,
         noticePeriod: p.noticePeriod || s.noticePeriod,
-        currentLocation: p.currentLocation || s.currentLocation,
         address: p.address || s.address, country: p.country || s.country, state: p.state || s.state, city: p.city || s.city,
         dob: p.dob || s.dob, gender: (p.gender || '').toUpperCase() || s.gender, maritalStatus: (p.maritalStatus || '').toUpperCase() || s.maritalStatus,
         linkedin: p.linkedin || s.linkedin, github: p.github || s.github, portfolio: p.portfolio || s.portfolio,
@@ -427,8 +359,9 @@ function AddCandidateModal({ job, onClose, onSaved }) {
         work: (p.workExperience && p.workExperience.length) ? p.workExperience.map((w) => ({ company: w.company || '', title: w.title || '', start: w.start || '', end: w.end || '', current: !!w.current })) : s.work,
         education: (p.education && p.education.length) ? p.education.map((e) => ({ type: e.type || '', course: e.course || '', specialization: e.specialization || '', institute: e.institute || '', start: e.start || '', end: e.end || '' })) : s.education,
       }));
-      setPhase('form');
-    } catch (e) { setErr(e.message); } finally { setParsing(false); }
+      setOpen({ basic: true, work: true, edu: true, addl: true, screen: true });
+      setTimeout(() => setProg(null), 700);
+    } catch (e) { setErr(e.message); setProg(null); }
   };
 
   const save = async () => {
@@ -470,29 +403,29 @@ function AddCandidateModal({ job, onClose, onSaved }) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
         </div>
 
-        {phase === 'choose' && (
-          <div className="p-6">
-            {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
-            <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => !parsing && fileRef.current?.click()} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
-                <div className="text-3xl mb-2">{parsing ? '⏳' : '📄'}</div>
-                <div className="text-base font-extrabold text-[#050A1F]">{parsing ? 'Reading resume…' : 'Upload resume'}</div>
-                <div className="text-sm text-slate-500 mt-1">AI reads the PDF/Word file and fills the form. You can edit before saving.</div>
-                <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => onResume(e.target.files?.[0])} />
-              </button>
-              <button onClick={() => setPhase('form')} className="rounded-2xl border-2 border-slate-200 hover:border-orange-400 p-6 text-left transition">
-                <div className="text-3xl mb-2">✍️</div>
-                <div className="text-base font-extrabold text-[#050A1F]">Add manually</div>
-                <div className="text-sm text-slate-500 mt-1">Fill in the candidate's details yourself.</div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {phase === 'form' && (
-          <>
+        <>
             <div className="p-6 overflow-auto flex-1">
               {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+
+              {/* Autofill from resume */}
+              <div className="rounded-xl border border-dashed border-orange-300 bg-orange-50/50 p-4 mb-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-extrabold text-[#050A1F]">Upload a resume to autofill</div>
+                    <div className="text-xs text-slate-500">PDF or Word. AI reads it and fills the fields below — you can edit anything.</div>
+                  </div>
+                  <button onClick={() => !prog && autofillRef.current?.click()} disabled={!!prog} className="rounded-lg px-4 py-2 text-sm font-bold text-white shrink-0 disabled:opacity-60" style={{ background: ORANGE }}>
+                    {prog ? 'Reading…' : '📄 Upload & autofill'}
+                  </button>
+                  <input ref={autofillRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => autofillFromResume(e.target.files?.[0])} />
+                </div>
+                {prog && (
+                  <div className="mt-3">
+                    <div className="h-2 rounded-full bg-slate-200 overflow-hidden"><div className="h-full rounded-full transition-all duration-300" style={{ width: `${Math.max(5, Math.min(100, prog.pct))}%`, background: ORANGE }} /></div>
+                    <div className="text-[11px] text-slate-500 mt-1">{prog.label} {prog.pct >= 100 ? '✓' : `${Math.round(prog.pct)}%`}</div>
+                  </div>
+                )}
+              </div>
 
               <Section id="basic" title="Basic Information">
                 <div className="grid grid-cols-2 gap-4">
@@ -587,7 +520,6 @@ function AddCandidateModal({ job, onClose, onSaved }) {
               <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Add Candidate'}</button>
             </div>
           </>
-        )}
       </div>
     </div>
   );

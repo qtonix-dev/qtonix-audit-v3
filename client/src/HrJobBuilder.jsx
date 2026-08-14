@@ -1,11 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
-import { hrApi } from './HrApp.jsx';
+import { hrApi, fileToBase64 } from './HrApp.jsx';
 import { RichText } from './Leads.jsx';
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
 const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 const lab = 'block text-[12px] font-bold text-slate-600 mb-1.5';
+
+// Animated progress bar for uploads/parsing.
+export function ProgressBar({ pct, label }) {
+  return (
+    <div>
+      <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+        <div className="h-full rounded-full transition-all duration-300" style={{ width: `${Math.max(5, Math.min(100, pct))}%`, background: ORANGE }} />
+      </div>
+      {label && <div className="text-[11px] text-slate-500 mt-1">{label} {pct >= 100 ? '✓' : `${Math.round(pct)}%`}</div>}
+    </div>
+  );
+}
+
+// POST a base64 payload to an hrApi endpoint, animating a fake progress ramp
+// while we wait (real byte-progress isn't available through fetch on JSON).
+export async function hrApiUpload(path, body, onProgress) {
+  let p = 0;
+  const timer = setInterval(() => { p = Math.min(0.9, p + 0.08); onProgress && onProgress(p); }, 250);
+  try { return await hrApi(path, { method: 'POST', body: JSON.stringify(body) }); }
+  finally { clearInterval(timer); onProgress && onProgress(1); }
+}
 
 const STEPS = [
   { id: 'about', label: 'About Job' },
@@ -123,6 +144,35 @@ function AboutStep({ job, set, departments, branches, setErr }) {
   const [skillInput, setSkillInput] = useState('');
   const [aiBusy, setAiBusy] = useState('');
   const [locInput, setLocInput] = useState('');
+  const [jdProg, setJdProg] = useState(null); // {pct, label} while reading a JD
+  const [missing, setMissing] = useState([]);
+  const jdRef = React.useRef(null);
+
+  const uploadJD = async (file) => {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { setErr('File too large (max 8MB).'); return; }
+    setErr(''); setMissing([]);
+    setJdProg({ pct: 15, label: 'Reading file…' });
+    try {
+      const base64 = await fileToBase64(file);
+      setJdProg({ pct: 45, label: 'Extracting text…' });
+      // Small delay so the bar is visible for tiny files.
+      const parsed = await hrApiUpload('/job-posts/ai/parse-jd', { base64, fileName: file.name }, (p) => setJdProg({ pct: 45 + Math.round(p * 0.5), label: 'AI is reading your JD…' }));
+      setJdProg({ pct: 100, label: 'Done' });
+      set({
+        title: parsed.title || job.title, department: parsed.department || job.department,
+        workMode: parsed.workMode || job.workMode, description: parsed.description || job.description,
+        skills: (parsed.skills && parsed.skills.length) ? parsed.skills.map((s) => ({ name: s.name || s, primary: !!s.primary })) : job.skills,
+        salaryMin: parsed.salaryMin || job.salaryMin, salaryMax: parsed.salaryMax || job.salaryMax,
+        salaryPeriod: parsed.salaryPeriod || job.salaryPeriod, salaryCurrency: parsed.salaryCurrency || job.salaryCurrency,
+        experienceType: parsed.experienceType || job.experienceType, expMin: parsed.expMin || job.expMin, expMax: parsed.expMax || job.expMax,
+        employmentType: parsed.employmentType || job.employmentType, employmentLevel: parsed.employmentLevel || job.employmentLevel,
+        education: parsed.education || job.education, openings: parsed.openings || job.openings,
+      });
+      setMissing(Array.isArray(parsed.missing) ? parsed.missing : []);
+      setTimeout(() => setJdProg(null), 600);
+    } catch (e) { setErr(e.message); setJdProg(null); }
+  };
 
   const rewriteJD = async () => {
     setAiBusy('jd'); setErr('');
@@ -153,6 +203,26 @@ function AboutStep({ job, set, departments, branches, setErr }) {
 
   return (
     <div className="space-y-5 max-w-3xl">
+      {/* Upload JD to autofill */}
+      <div className="rounded-xl border border-dashed border-orange-300 bg-orange-50/50 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-extrabold text-[#050A1F]">Have a JD already? Upload it to autofill</div>
+            <div className="text-xs text-slate-500">PDF or Word. AI reads it and fills the fields below — you can edit anything.</div>
+          </div>
+          <button onClick={() => !jdProg && jdRef.current?.click()} disabled={!!jdProg} className="rounded-lg px-4 py-2 text-sm font-bold text-white shrink-0 disabled:opacity-60" style={{ background: ORANGE }}>
+            {jdProg ? 'Reading…' : '📄 Upload JD'}
+          </button>
+          <input ref={jdRef} type="file" accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => uploadJD(e.target.files?.[0])} />
+        </div>
+        {jdProg && <div className="mt-3"><ProgressBar pct={jdProg.pct} label={jdProg.label} /></div>}
+        {missing.length > 0 && (
+          <div className="mt-3 text-xs text-amber-700 bg-amber-100 rounded-lg px-3 py-2">
+            <b>AI couldn't find:</b> {missing.join(', ')}. Please fill these in below.
+          </div>
+        )}
+      </div>
+
       <div className="rounded-xl border border-slate-200 p-5">
         <div className="text-sm font-extrabold text-[#050A1F] mb-4 flex items-center gap-2"><span className="w-1.5 h-4 rounded-full" style={{ background: ORANGE }} />Basic details</div>
         <div className="space-y-4">

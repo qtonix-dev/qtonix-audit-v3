@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v168';
+const APP_VERSION = 'v169';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -54,7 +54,7 @@ app.use(helmet({
   },
 }));
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '12mb' }));
 
 // Login is the brute-force surface. Everything else is behind a token.
 app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many attempts. Try again in 15 minutes.' } }));
