@@ -64,10 +64,11 @@ router.post('/:token/apply', async (req, res, next) => {
     const firstStage = (job.stages && job.stages[0] && job.stages[0].id) || 'applied';
     const row = await HrCandidate.create({
       name, email: String(b.email).slice(0, 160), phone: String(b.phone || '').slice(0, 40),
-      jobPostId: job.id, stage: 'applied',
+      jobPostId: job.id, stage: firstStage,
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
       currentLocation: String(b.currentLocation || '').slice(0, 160),
       answers, source: 'public_form',
+      timeline: [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the public form to ${job.title}.`, by: name, at: new Date().toISOString() }],
     });
     res.json({ ok: true, id: row.id });
   } catch (e) { next(e); }

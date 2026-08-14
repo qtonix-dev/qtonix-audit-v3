@@ -681,6 +681,7 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
     if (!name) return res.status(400).json({ error: 'Candidate name is required.' });
     const job = b.jobPostId ? await HrJobPost.findByPk(b.jobPostId) : null;
     const firstStage = (job && job.stages && job.stages[0] && job.stages[0].id) || 'applied';
+    const now = new Date().toISOString();
     const row = await HrCandidate.create({
       name,
       email: String(b.email || '').slice(0, 160),
@@ -688,10 +689,15 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
       jobPostId: b.jobPostId || null,
       stage: b.stage || firstStage,
       recruiterId: req.hrActor.id,
+      recruiterName: req.hrActor.name || '',
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
       currentLocation: String(b.currentLocation || '').slice(0, 160),
       answers: (b.answers && typeof b.answers === 'object') ? b.answers : {},
       source: 'manual',
+      timeline: [
+        { id: `t${Date.now()}`, type: 'assigned', text: `${req.hrActor.name} assigned as the recruiter.`, by: req.hrActor.name, at: now },
+        { id: `t${Date.now() + 1}`, type: 'imported', text: `Added by ${req.hrActor.name}${job ? ` to ${job.title}` : ''}.`, by: req.hrActor.name, at: now },
+      ],
     });
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -715,15 +721,114 @@ router.post('/candidates/ai/parse-resume', requireHrAccess, async (req, res, nex
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
-// Move a candidate between hiring-flow stages.
+// Full candidate detail (with job for stages/questions context).
+router.get('/candidates/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    res.json({ ...row.toJSON(), job: job ? job.toJSON() : null });
+  } catch (e) { next(e); }
+});
+
+const pushTimeline = (row, entry) => {
+  const t = Array.isArray(row.timeline) ? row.timeline.slice() : [];
+  t.unshift({ id: `t${Date.now()}`, at: new Date().toISOString(), ...entry });
+  row.timeline = t; row.changed('timeline', true);
+};
+
+// Move a candidate between hiring-flow stages (logs to timeline).
 router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const from = row.stage;
     row.stage = String(req.body.stage || 'applied');
+    row.rejected = false;
+    let label = row.stage;
+    if (row.jobPostId) { const j = await HrJobPost.findByPk(row.jobPostId); const st = (j && j.stages || []).find((s) => s.id === row.stage); if (st) label = st.label; }
+    pushTimeline(row, { type: 'stage', text: `Moved to ${label}.`, by: req.hrActor.name });
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
+});
+
+// Reject a candidate.
+router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    row.rejected = true; row.stage = 'rejected';
+    pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 200)}` : ''}.`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Add a comment / note.
+router.post('/candidates/:id/comments', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    if (!req.body.text || !String(req.body.text).trim()) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    const list = Array.isArray(row.comments) ? row.comments.slice() : [];
+    list.unshift({ id: `c${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, text: String(req.body.text).slice(0, 4000), at: new Date().toISOString() });
+    row.comments = list; row.changed('comments', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Submit feedback (any HR / senior can add their own).
+router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const entry = {
+      id: `f${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, at: new Date().toISOString(),
+      skills: Array.isArray(b.skills) ? b.skills.map((s) => ({ name: String(s.name || '').slice(0, 60), rating: Math.max(0, Math.min(5, Number(s.rating) || 0)) })) : [],
+      verdict: ['definitely', 'yes', 'no', 'not_sure'].includes(b.verdict) ? b.verdict : 'not_sure',
+      note: String(b.note || '').slice(0, 4000),
+    };
+    const list = Array.isArray(row.feedback) ? row.feedback.slice() : [];
+    list.unshift(entry);
+    row.feedback = list; row.changed('feedback', true);
+    pushTimeline(row, { type: 'feedback', text: `${req.hrActor.name} submitted feedback (${entry.verdict.replace('_', ' ')}).`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Schedule an interview (logged; actual calendar integration can come later).
+router.post('/candidates/:id/interview', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const iv = { id: `iv${Date.now()}`, at: String(b.at || ''), mode: String(b.mode || 'online').slice(0, 40), notes: String(b.notes || '').slice(0, 1000), by: req.hrActor.name };
+    const list = Array.isArray(row.interviews) ? row.interviews.slice() : [];
+    list.unshift(iv);
+    row.interviews = list; row.changed('interviews', true);
+    pushTimeline(row, { type: 'interview', text: `Interview scheduled by ${req.hrActor.name}${b.at ? ` for ${b.at}` : ''}.`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// AI Recruiter — screen the candidate against the job requirements.
+router.post('/candidates/:id/ai-screen', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const { screenCandidate } = require('../services/hrRecruitAI');
+    const result = await screenCandidate(key, { candidate: row.toJSON(), job: job ? job.toJSON() : null });
+    row.aiSummary = result; row.changed('aiSummary', true);
+    await row.save();
+    res.json(result);
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
 module.exports = router;

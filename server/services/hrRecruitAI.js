@@ -171,4 +171,53 @@ ${raw}`,
   return data;
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText };
+/**
+ * AI Recruiter — assess how well a candidate matches the job. Returns a
+ * structured verdict the UI renders (score, strengths, gaps, recommendation).
+ */
+async function screenCandidate(apiKey, { candidate, job }) {
+  const a = candidate.answers || {};
+  const skills = (a.skills || []).join(', ');
+  const work = (a.work || []).map((w) => `${w.title || ''} @ ${w.company || ''} (${w.start || ''}–${w.current ? 'present' : (w.end || '')})`).join('; ');
+  const edu = (a.education || []).map((e) => `${e.course || ''} ${e.specialization || ''} @ ${e.institute || ''}`).join('; ');
+  const jobSkills = job ? (job.skills || []).map((s) => (typeof s === 'string' ? s : s.name)).join(', ') : '';
+  const jobDesc = job ? String(job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 2500) : '';
+
+  const out = await callClaude(apiKey, {
+    system: 'You are an expert technical recruiter screening a candidate against a job. Be fair, specific and honest. Return ONLY JSON, no prose.',
+    maxTokens: 1200,
+    messages: [{
+      role: 'user',
+      content: `Assess this candidate against the role and return exactly:
+{
+  "matchScore": 0-100,
+  "verdict": "strong_match | possible_match | weak_match",
+  "summary": "2-3 sentence overall assessment",
+  "strengths": ["..."],
+  "gaps": ["..."],
+  "recommendation": "one clear next-step recommendation"
+}
+
+ROLE
+Title: ${job ? job.title : 'N/A'}
+Required skills: ${jobSkills}
+Experience wanted: ${job ? `${job.expMin || 0}-${job.expMax || 0} years` : 'N/A'}
+Description: ${jobDesc}
+
+CANDIDATE
+Name: ${candidate.name}
+Location: ${candidate.currentLocation || a.city || ''}
+Skills: ${skills}
+Work: ${work}
+Education: ${edu}
+Notice period: ${a.noticePeriod || ''}
+Current/Expected CTC: ${a.currentCtc || '?'} / ${a.expectedCtc || '?'}`,
+    }],
+  });
+  const data = parseJson(out);
+  ['strengths', 'gaps'].forEach((k) => { if (!Array.isArray(data[k])) data[k] = []; });
+  data.generatedAt = new Date().toISOString();
+  return data;
+}
+
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate };

@@ -1324,11 +1324,20 @@ const HrCandidate = sequelize.define('HrCandidate', {
   // Recruitment stage id — matches one of the job post's configured stages.
   stage: { type: DataTypes.STRING(40), defaultValue: 'applied' },
   recruiterId: { type: DataTypes.INTEGER, allowNull: true },
+  recruiterName: { type: DataTypes.STRING(120), defaultValue: '' },
   notes: { type: DataTypes.TEXT, defaultValue: '' },
   resumeUrl: { type: DataTypes.STRING(400), defaultValue: '' },
   currentLocation: { type: DataTypes.STRING(160), defaultValue: '' },
   answers: { type: DataTypes.JSON, defaultValue: {} },   // { fieldKey/questionId: value }
   source: { type: DataTypes.STRING(30), defaultValue: 'manual' }, // manual | public_form
+  rejected: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Candidate-view data:
+  comments: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, text, at }]
+  feedback: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, skills:[{name,rating}], verdict, note, at }]
+  timeline: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, type, text, by, at }]
+  attachments: { type: DataTypes.JSON, defaultValue: [] },  // [{ id, name, url, at }]
+  interviews: { type: DataTypes.JSON, defaultValue: [] },   // [{ id, at, mode, notes, by }]
+  aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 

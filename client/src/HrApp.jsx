@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
+import HrCandidateView from './HrCandidateView.jsx';
 
 const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 
@@ -258,27 +259,31 @@ function ShareJobModal({ job, onClose }) {
 
 function CandidateList({ jobs }) {
   const [cands, setCands] = useState([]);
-  useEffect(() => { hrApi('/candidates').then(setCands).catch(() => {}); }, []);
+  const [viewId, setViewId] = useState(null);
+  const load = () => hrApi('/candidates').then(setCands).catch(() => {});
+  useEffect(() => { load(); }, []);
   const jobTitle = (id) => (jobs.find((j) => j._id === id) || {}).title || '—';
   if (!cands.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No candidates yet.</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
       <table className="w-full text-sm">
         <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-          <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Job</th><th className="px-4 py-3">Stage</th><th className="px-4 py-3">Source</th>
+          <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Job</th><th className="px-4 py-3">Stage</th><th className="px-4 py-3">Source</th><th className="px-4 py-3"></th>
         </tr></thead>
         <tbody>
           {cands.map((c) => (
-            <tr key={c._id} className="border-b border-slate-50">
+            <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer" onClick={() => setViewId(c._id)}>
               <td className="px-4 py-3 font-semibold text-slate-700">{c.name}</td>
               <td className="px-4 py-3 text-slate-500">{c.email}</td>
               <td className="px-4 py-3 text-slate-500">{jobTitle(c.jobPostId)}</td>
-              <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{c.stage}</span></td>
+              <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{c.rejected ? 'Rejected' : c.stage}</span></td>
               <td className="px-4 py-3 text-slate-400 text-xs">{c.source === 'public_form' ? 'Application form' : 'Manual'}</td>
+              <td className="px-4 py-3 text-right"><button onClick={(e) => { e.stopPropagation(); setViewId(c._id); }} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-bold text-slate-600">View</button></td>
             </tr>
           ))}
         </tbody>
       </table>
+      {viewId && <HrCandidateView candidateId={viewId} onClose={() => { setViewId(null); load(); }} />}
     </div>
   );
 }
@@ -529,7 +534,9 @@ function RecruitPipeline({ jobs }) {
   const published = jobs.filter((j) => j.status === 'published');
   const [jobId, setJobId] = useState(published[0]?._id || null);
   const [cands, setCands] = useState([]);
-  useEffect(() => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); }, [jobId]);
+  const [viewId, setViewId] = useState(null);
+  const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
+  useEffect(() => { load(); }, [jobId]);
   const job = jobs.find((j) => j._id === jobId);
   const stages = (job && job.stages) || [];
   const move = async (c, stage) => { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x)); };
@@ -546,8 +553,10 @@ function RecruitPipeline({ jobs }) {
             <div className="space-y-2">
               {cands.filter((c) => c.stage === st.id).map((c) => (
                 <div key={c._id} className="bg-white rounded-lg border border-slate-200 p-2.5">
-                  <div className="text-sm font-semibold text-slate-700">{c.name}</div>
-                  <div className="text-xs text-slate-400">{c.email}</div>
+                  <div className="cursor-pointer" onClick={() => setViewId(c._id)}>
+                    <div className="text-sm font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
+                    <div className="text-xs text-slate-400">{c.email}</div>
+                  </div>
                   <select className="mt-1.5 w-full text-xs rounded border border-slate-200 px-1.5 py-1" value={c.stage} onChange={(e) => move(c, e.target.value)}>
                     {stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                   </select>
@@ -557,6 +566,7 @@ function RecruitPipeline({ jobs }) {
           </div>
         ))}
       </div>
+      {viewId && <HrCandidateView candidateId={viewId} onClose={() => { setViewId(null); load(); }} />}
     </div>
   );
 }
