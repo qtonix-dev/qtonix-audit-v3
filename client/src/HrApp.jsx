@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
+import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 
@@ -88,20 +89,126 @@ function HrLogin({ onSignIn }) {
 
 function HrDashboard({ user }) {
   const [data, setData] = useState(null);
-  useEffect(() => { hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} })); }, []);
+  const [stats, setStats] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [targets, setTargets] = useState([]);
+  useEffect(() => {
+    hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} }));
+    hrApi('/dashboard-stats').then(setStats).catch(() => {});
+    hrApi('/job-posts').then(setJobs).catch(() => {});
+    hrApi('/source-analytics').then((r) => setAnalytics(r.sources || [])).catch(() => {});
+    hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
+  }, []);
   const m = (data && data.metrics) || {};
+  const stageLabels = {}; jobs.forEach((j) => (j.stages || []).forEach((s) => { stageLabels[s.id] = s.label; }));
+  const byStage = (stats && stats.byStage) || {};
+  const stageRows = Object.entries(byStage).map(([id, n]) => ({ id, label: stageLabels[id] || id, n })).sort((a, b) => b.n - a.n);
+  const SRC = { manual: 'Manual', linkedin: 'LinkedIn', naukri: 'Naukri', indeed: 'Indeed', referral: 'Referral', careers_page: 'Careers', public_form: 'Careers' };
+  const cards = [
+    ['Open positions', stats ? stats.openJobs : m.openJobs, '#2563EB', 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z'],
+    ['Active candidates', stats ? stats.totalActive : m.candidates, '#FF6A00', 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+    ['Applications this week', stats ? stats.applicationsThisWeek : '—', '#8b5cf6', 'M22 11.08V12a10 10 0 1 1-5.93-9.14 M22 4L12 14.01l-3-3'],
+    ['Avg time-to-hire', stats && stats.avgTimeToHire != null ? `${stats.avgTimeToHire}d` : '—', '#16A34A', 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
+  ];
+  const softTint = (hex) => `${hex}0F`;
   return (
-    <div>
-      <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
-      <p className="text-slate-500 text-sm mt-1 mb-6">Here's your HR overview.</p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[['HR staff', m.staff], ['Open jobs', m.openJobs], ['Candidates', m.candidates], ['Onboarded', m.onboarded]].map(([label, val]) => (
-          <div key={label} className="bg-white rounded-2xl border border-slate-200/70 p-5">
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
+        <p className="text-slate-500 text-sm mt-1">Here's your recruitment overview.</p>
+      </div>
+
+      {/* Accent stat cards, CRM-style */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {cards.map(([label, val, color, icon]) => (
+          <div key={label} className="rounded-2xl border p-5 relative overflow-hidden" style={{ borderColor: color + '33', background: '#fff' }}>
+            <div className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: softTint(color) }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icon.split(' M').map((seg, i) => <path key={i} d={(i ? 'M' : '') + seg} />)}</svg>
+            </div>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-            <div className="text-3xl font-extrabold mt-1 text-[#050A1F]">{val ?? '—'}</div>
+            <div className="text-3xl font-extrabold mt-1" style={{ color }}>{val ?? '—'}</div>
           </div>
         ))}
       </div>
+
+      {/* HR target progress (daily scheduling + monthly hiring) */}
+      {targets.length > 0 && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-5">
+          <div className="font-extrabold text-[#050A1F] mb-4">HR targets</div>
+          <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
+            {targets.map((t) => (
+              <div key={t.id} className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">
+                  {t.avatar ? <img src={t.avatar} alt="" className="w-full h-full object-cover" /> : (t.name || '?')[0]}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-[#050A1F] truncate">{t.name}</div>
+                  <div className="grid grid-cols-2 gap-3 mt-1.5">
+                    {t.dailyTarget > 0 && <TargetBar label="Today's interviews" done={t.dailyDone} target={t.dailyTarget} color="#2563EB" />}
+                    {t.monthlyTarget > 0 && <TargetBar label="Hired this month" done={t.monthlyDone} target={t.monthlyTarget} color="#16A34A" />}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Candidates per stage (funnel) */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="font-extrabold text-[#050A1F] mb-3">Pipeline funnel</div>
+          {stageRows.length === 0 ? <div className="text-sm text-slate-400">No active candidates.</div> : (
+            <div className="space-y-2.5">
+              {stageRows.map((s) => {
+                const max = Math.max(...stageRows.map((x) => x.n), 1);
+                return (
+                  <div key={s.id} className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-slate-600 w-32 truncate">{s.label}</span>
+                    <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(s.n / max) * 100}%`, background: ORANGE }} /></div>
+                    <span className="text-xs font-bold text-slate-500 w-6 text-right">{s.n}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Source analytics */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="font-extrabold text-[#050A1F] mb-3">Source analytics <span className="text-xs font-semibold text-slate-400">(hire rate)</span></div>
+          {!analytics || analytics.length === 0 ? <div className="text-sm text-slate-400">No candidate data yet.</div> : (
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="pb-2">Source</th><th className="pb-2 text-right">Total</th><th className="pb-2 text-right">Hired</th><th className="pb-2 text-right">Hire rate</th></tr></thead>
+              <tbody>
+                {analytics.map((s) => (
+                  <tr key={s.source} className="border-t border-slate-50">
+                    <td className="py-1.5 font-semibold text-slate-700">{SRC[s.source] || s.source}</td>
+                    <td className="py-1.5 text-right text-slate-500">{s.total}</td>
+                    <td className="py-1.5 text-right text-slate-500">{s.hired}</td>
+                    <td className="py-1.5 text-right"><span className={`font-bold ${s.hireRate >= 20 ? 'text-green-600' : s.hireRate > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{s.hireRate}%</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TargetBar({ label, done, target, color }) {
+  const pct = target > 0 ? Math.min(100, Math.round((done / target) * 100)) : 0;
+  const hit = done >= target && target > 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 mb-0.5">
+        <span className="truncate">{label}</span>
+        <span style={{ color: hit ? '#16A34A' : color }}>{done}/{target}{hit ? ' ✓' : ''}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} /></div>
     </div>
   );
 }
@@ -304,6 +411,8 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
   const [viewId, setViewId] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
   const [sel, setSel] = useState([]); // selected candidate ids for bulk actions
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
   const [bulkModal, setBulkModal] = useState(null); // 'move' | 'reject' | 'assign'
   const [q, setQ] = useState('');
   const [jobFilter, setJobFilter] = useState(initialJobFilter || '');
@@ -340,9 +449,14 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
     return true;
   });
 
+  // Client-side pagination (mirrors the CRM lead list).
+  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const curPage = Math.min(page, pages);
+  const paged = filtered.slice((curPage - 1) * perPage, curPage * perPage);
+
   const toggleSel = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
-  const allShownSelected = filtered.length > 0 && filtered.every((c) => sel.includes(c._id));
-  const toggleAll = () => setSel(allShownSelected ? sel.filter((id) => !filtered.some((c) => c._id === id)) : Array.from(new Set([...sel, ...filtered.map((c) => c._id)])));
+  const allShownSelected = paged.length > 0 && paged.every((c) => sel.includes(c._id));
+  const toggleAll = () => setSel(allShownSelected ? sel.filter((id) => !paged.some((c) => c._id === id)) : Array.from(new Set([...sel, ...paged.map((c) => c._id)])));
   const delCandidate = async (id) => { if (!window.confirm('Delete this candidate permanently?')) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { alert(e.message); } };
 
   const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
@@ -399,7 +513,7 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
                 <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
               </tr></thead>
               <tbody>
-                {filtered.map((c) => {
+                {paged.map((c) => {
                   const a = c.answers || {}; const st = stageLabel(c);
                   return (
                     <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
@@ -436,6 +550,9 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="px-4 pb-3">
+            <Pagination page={curPage} pages={pages} total={filtered.length} perPage={perPage} onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="candidates" />
           </div>
         </div>
       )}
@@ -890,10 +1007,16 @@ function RecruitPipeline({ jobs }) {
   const [viewId, setViewId] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [moveFor, setMoveFor] = useState(null); // candidate to move via popup
+  const [mine, setMine] = useState(false);
+  const [me, setMe] = useState(null);
   const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
   useEffect(() => { load(); }, [jobId]);
+  useEffect(() => { hrApi('/profile-me').then(setMe).catch(() => {}); }, []);
   const job = jobs.find((j) => j._id === jobId);
   const stages = (job && job.stages) || [];
+  const myId = me && (me._id || me.id);
+  const isMine = (c) => myId && (c.recruiterId === myId || (me.name && c.recruiterName === me.name));
+  const visible = mine ? cands.filter(isMine) : cands;
   const move = async (c, stage) => {
     if (c.stage === stage) return;
     setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x));
@@ -902,17 +1025,25 @@ function RecruitPipeline({ jobs }) {
   if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
   const softBg = (hex) => `${hex}14`;
+  const RC = { high: '#15803D', medium: '#A16207', low: '#B91C1C', not_available: '#94A3B8' };
+  const RBG = { high: '#DCFCE7', medium: '#FEF9C3', low: '#FEE2E2', not_available: '#F1F5F9' };
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
-          {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
-        </select>
-        <div className="text-sm text-slate-400">{cands.length} candidates · drag a card, or use the ⇄ button to move</div>
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
+            {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+          </select>
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
+            <button onClick={() => setMine(false)} className={`px-3 py-2 ${!mine ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500'}`}>All candidates</button>
+            <button onClick={() => setMine(true)} className={`px-3 py-2 ${mine ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500'}`}>My candidates</button>
+          </div>
+        </div>
+        <div className="text-sm text-slate-400">{visible.length} candidates · drag a card, or use the ⇄ button to move</div>
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
-          const col = cands.filter((c) => c.stage === s.id && !c.rejected);
+          const col = visible.filter((c) => c.stage === s.id && !c.rejected);
           return (
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}
@@ -925,30 +1056,52 @@ function RecruitPipeline({ jobs }) {
                   <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
                 </div>
               </div>
-              <div className="space-y-3 min-h-[160px]">
+              <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
                 {col.map((c) => {
                   const a = c.answers || {};
+                  const rm = c.resumeMatch || {};
+                  const score = typeof rm.score === 'number' ? rm.score : null;
+                  const rlevel = rm.level || 'not_available';
+                  const rating = Number(c.rating) || 0;
                   return (
                     <div key={c._id} draggable
                       onDragStart={() => setDragId(c._id)}
                       className="group bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all relative">
-                      <button onClick={(e) => { e.stopPropagation(); setMoveFor(c); }} title="Move to stage" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                      <button onClick={(e) => { e.stopPropagation(); setMoveFor(c); }} title="Move to stage" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
                       </button>
                       <div onClick={() => setViewId(c._id)}>
-                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: c.source === 'public_form' ? '#E7F6EF' : '#EEF2FF', color: c.source === 'public_form' ? '#0F9D58' : '#4F46E5' }}>{c.source === 'public_form' ? 'Applied' : 'Sourced'}</span>
-                        <div className="font-extrabold text-sm text-[#050A1F] leading-snug pr-6">{c.name}</div>
-                        {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
+                        {/* Top row: name + AI score badge on the right */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 pr-1">
+                            <div className="font-extrabold text-sm text-[#050A1F] leading-snug truncate">{c.name}</div>
+                            {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
+                          </div>
+                          {score != null && (
+                            <div className="shrink-0 text-center rounded-lg px-2 py-1 mt-0.5" style={{ background: RBG[rlevel], color: RC[rlevel] }} title={`AI match: ${rlevel}`}>
+                              <div className="text-[13px] font-extrabold leading-none">{score}</div>
+                              <div className="text-[8px] font-bold uppercase tracking-wide leading-none mt-0.5">AI</div>
+                            </div>
+                          )}
+                        </div>
+                        {/* Rating stars */}
+                        <div className="flex items-center gap-0.5 mt-2">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <svg key={n} width="13" height="13" viewBox="0 0 24 24" fill={n <= rating ? '#F59E0B' : 'none'} stroke={n <= rating ? '#F59E0B' : '#CBD5E1'} strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" /></svg>
+                          ))}
+                          {rating === 0 && <span className="text-[10px] text-slate-300 ml-1">Not rated</span>}
+                        </div>
                         <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-500">
                           {totalExperience(c) !== '—' && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{totalExperience(c)}</span>}
                           {a.currentCtc && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{a.currentCtc}</span>}
                         </div>
-                        <div className="flex items-center justify-between mt-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center">{(c.recruiterName || c.name || '?').trim()[0]?.toUpperCase()}</span>
-                            <span className="text-[10px] text-slate-400">{c.recruiterName || ''}</span>
+                        {/* Assigned HR */}
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-50">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center shrink-0">{(c.recruiterName || c.name || '?').trim()[0]?.toUpperCase()}</span>
+                            <span className="text-[10px] text-slate-500 font-semibold truncate">{c.recruiterName || 'Unassigned'}</span>
                           </div>
-                          <span className="text-[10px] text-slate-400">{timeAgo(c.updatedAt)}</span>
+                          <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(c.updatedAt)}</span>
                         </div>
                       </div>
                     </div>
@@ -994,8 +1147,10 @@ function MoveStageModal({ candidate, stages, onClose, onMoved }) {
 function MyInterviews() {
   const [data, setData] = useState(null);
   const [viewId, setViewId] = useState(null);
-  const load = () => hrApi('/my-interviews').then(setData).catch(() => setData({ jobs: [] }));
+  const [reqs, setReqs] = useState([]);
+  const load = () => { hrApi('/my-interviews').then(setData).catch(() => setData({ jobs: [] })); hrApi('/my-schedule-requests').then((r) => setReqs(r.requests || [])).catch(() => {}); };
   useEffect(() => { load(); }, []);
+  const confirmSlots = async (candidateId, slotIds) => { try { await hrApi(`/candidates/${candidateId}/self-schedule/confirm`, { method: 'POST', body: JSON.stringify({ slotIds }) }); load(); } catch (e) { alert(e.message); } };
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
   const jobs = data.jobs || [];
@@ -1003,6 +1158,16 @@ function MyInterviews() {
     <div>
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">My Interviews</h1>
       <p className="text-sm text-slate-500 mb-6">Candidates you've been assigned to interview. Open a candidate to submit your feedback.</p>
+
+      {reqs.length > 0 && (
+        <div className="mb-6">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">⏳ Confirm your availability</div>
+          <div className="space-y-3">
+            {reqs.map((r) => <ConfirmAvailabilityCard key={r.candidateId} req={r} onConfirm={(ids) => confirmSlots(r.candidateId, ids)} />)}
+          </div>
+        </div>
+      )}
+
       {jobs.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">You have no interview assignments right now.</div>
       ) : jobs.map((j) => (
@@ -1025,6 +1190,25 @@ function MyInterviews() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ConfirmAvailabilityCard({ req, onConfirm }) {
+  const [picked, setPicked] = useState(req.slots.filter((s) => s.confirmed).map((s) => s.id));
+  const toggle = (id) => setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-4">
+      <div className="font-semibold text-slate-700 mb-1">{req.candidateName} <span className="text-xs text-slate-400 font-normal">· {req.roundLabel}</span></div>
+      <div className="text-xs text-slate-400 mb-2">Tick the times you're available. The candidate only sees confirmed slots.</div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {req.slots.map((s) => (
+          <button key={s.id} onClick={() => toggle(s.id)} className={`rounded-lg px-3 py-1.5 text-xs font-bold border ${picked.includes(s.id) ? 'bg-green-600 text-white border-transparent' : 'text-slate-600 border-slate-200'}`}>
+            {new Date(s.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </button>
+        ))}
+      </div>
+      <button onClick={() => onConfirm(picked)} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Confirm availability</button>
     </div>
   );
 }
@@ -1071,22 +1255,87 @@ function TemplateEditor({ tpl, onClose, onSaved }) {
   const [subject, setSubject] = useState(tpl.subject || '');
   const [body, setBody] = useState(tpl.body || '');
   const [busy, setBusy] = useState(false);
+  const [vars, setVars] = useState([]);
+  const [showVars, setShowVars] = useState(false);
+  const [showSubjVars, setShowSubjVars] = useState(false);
+  const [showAi, setShowAi] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  useEffect(() => { hrApi('/template-variables').then(setVars).catch(() => setVars([])); }, []);
   const save = async () => {
     if (!name.trim()) { alert('Give the template a name.'); return; }
     setBusy(true);
     try { await hrApi('/email-templates', { method: 'POST', body: JSON.stringify({ id: tpl.id, name, subject, body }) }); onSaved(); }
     catch (e) { alert(e.message); setBusy(false); }
   };
+  const insertVar = (key) => { setBody((b) => `${b || ''} {{${key}}}`); setShowVars(false); };
+  const insertSubjectVar = (key) => { setSubject((s) => `${s || ''}{{${key}}}`); setShowSubjVars(false); };
+  const runAi = async () => {
+    if (!aiPrompt.trim()) return;
+    setAiBusy(true);
+    try {
+      const r = await hrApi('/templates/ai-draft', { method: 'POST', body: JSON.stringify({ prompt: aiPrompt.trim() }) });
+      if (r.subject) setSubject(r.subject);
+      if (r.body) setBody(r.body);
+      setShowAi(false); setAiPrompt('');
+    } catch (e) { alert(e.message); } finally { setAiBusy(false); }
+  };
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const VarMenu = ({ onPick }) => (
+    <div className="absolute right-0 mt-1 w-60 max-h-64 overflow-auto bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50">
+      <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase">Candidate fields</div>
+      {vars.map((v) => (
+        <button key={v.key} onClick={() => onPick(v.key)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex justify-between gap-2">
+          <span>{v.label}</span><span className="text-slate-300">{`{{${v.key}}}`}</span>
+        </button>
+      ))}
+    </div>
+  );
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 text-lg font-extrabold text-[#050A1F]">{tpl.id ? 'Edit template' : 'New template'}</div>
-        <div className="p-6 space-y-3 overflow-auto">
-          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Name</div><input className={inp2} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interview invite" /></div>
-          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Subject</div><input className={inp2} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Interview for {{role}}" /></div>
-          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Body</div><div className="rounded-lg border border-slate-300 min-h-[200px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
-          <div className="text-[11px] text-slate-400">Placeholders: {'{{candidate_name}}'}, {'{{role}}'}, {'{{company}}'}.</div>
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">{tpl.id ? 'Edit template' : 'New template'}</div>
+          <button onClick={() => setShowAi((v) => !v)} className="rounded-lg px-3 py-1.5 text-xs font-bold border border-purple-200 text-purple-600 hover:bg-purple-50">✨ Write with AI</button>
+        </div>
+        <div className="p-6 space-y-3">
+          {showAi && (
+            <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-3">
+              <div className="text-xs font-bold text-purple-700 mb-1.5">Describe the email — AI drafts it, then you can drop in placeholders.</div>
+              <textarea className={inp2} rows={2} value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. Invite the candidate to a first-round technical interview and ask for their availability." />
+              <div className="flex justify-end gap-2 mt-2">
+                <button onClick={() => setShowAi(false)} className="text-xs font-bold text-slate-400">Cancel</button>
+                <button onClick={runAi} disabled={aiBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#8b5cf6,#6d28d9)' }}>{aiBusy ? 'Drafting…' : 'Generate draft'}</button>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <div><div className="text-[11px] font-bold text-slate-500 mb-1">Name</div><input className={inp2} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interview invite" /></div>
+            <div>
+              <div className="text-[11px] font-bold text-slate-500 mb-1">Subject</div>
+              <div className="relative">
+                <input className={inp2 + ' pr-8'} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Interview for {{role}}" />
+                <button type="button" onClick={() => setShowSubjVars((v) => !v)} title="Insert placeholder" className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-orange-500 hover:bg-orange-50">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                </button>
+                {showSubjVars && <VarMenu onPick={insertSubjectVar} />}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[11px] font-bold text-slate-500">Body</div>
+              <div className="relative">
+                <button onClick={() => setShowVars((v) => !v)} className="text-[11px] font-bold text-orange-600 flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                  Insert placeholder
+                </button>
+                {showVars && <VarMenu onPick={insertVar} />}
+              </div>
+            </div>
+            <MailEditor value={body} onChange={setBody} minHeight={220} placeholder="Write your template… use Insert placeholder for dynamic fields" />
+            <div className="text-[10px] text-slate-400 mt-1.5">Placeholders like <code>{'{{first_name}}'}</code> and <code>{'{{role}}'}</code> are filled with the candidate's real data when you send.</div>
+          </div>
         </div>
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1097,40 +1346,69 @@ function TemplateEditor({ tpl, onClose, onSaved }) {
   );
 }
 
-// Named signature templates (like the Sales CRM). Create/edit/delete; one default.
+// Named signature templates — same UX as the Sales CRM: a gallery of 3 built-in
+// templates you can start from, plus your own saved signatures.
 function EmailSignaturePage() {
   const [sigs, setSigs] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [gallery, setGallery] = useState([]);
+  const [showGallery, setShowGallery] = useState(false);
   const load = () => hrApi('/signatures').then((r) => setSigs(r.signatures || [])).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); hrApi('/signature-templates').then(setGallery).catch(() => setGallery([])); }, []);
   const del = async (id) => { if (!window.confirm('Delete this signature?')) return; await hrApi(`/signatures/${id}`, { method: 'DELETE' }); load(); };
   const makeDefault = async (s) => { await hrApi('/signatures', { method: 'POST', body: JSON.stringify({ id: s.id, name: s.name, body: s.body, isDefault: true }) }); load(); };
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-1">
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Email Signatures</h1>
-        <button onClick={() => setEditing({ name: '', body: '' })} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ New signature</button>
-      </div>
-      <p className="text-sm text-slate-500 mb-6">Named signatures you can insert into recruitment emails. Your default is appended when you use a template.</p>
-      {sigs.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No signatures yet.</div>
-      ) : (
-        <div className="space-y-2">
-          {sigs.map((s) => (
-            <div key={s.id} className="bg-white rounded-xl border border-slate-200/70 p-4 flex items-center justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2"><span className="font-bold text-slate-700">{s.name}</span>{s.isDefault && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Default</span>}</div>
-                <div className="text-xs text-slate-400 mt-1" dangerouslySetInnerHTML={{ __html: s.body }} />
-              </div>
-              <div className="flex gap-2 shrink-0">
-                {!s.isDefault && <button onClick={() => makeDefault(s)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Make default</button>}
-                <button onClick={() => setEditing(s)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
-                <button onClick={() => del(s.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
-              </div>
-            </div>
-          ))}
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Signatures</h1>
+      <p className="text-sm text-slate-500 mb-5">Named signatures you can insert into recruitment emails. Your default is appended when you use a template.</p>
+
+      <div className="rounded-2xl border border-slate-200 p-4 bg-white">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-bold text-[#050A1F]">Signatures</div>
+          <div className="flex gap-2">
+            <button onClick={() => setShowGallery((v) => !v)} className="rounded-lg px-3 py-1.5 text-xs font-bold border border-slate-300 text-slate-600 hover:bg-slate-50">✨ Start from a template</button>
+            <button onClick={() => { setShowGallery(false); setEditing({ name: '', body: '' }); }} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#050A1F' }}>+ New signature</button>
+          </div>
         </div>
-      )}
+
+        {showGallery && (
+          <div className="mb-4 grid grid-cols-1 gap-2">
+            {gallery.length === 0 && <div className="text-xs text-slate-400">Loading templates…</div>}
+            {gallery.map((t) => (
+              <div key={t.id} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <div className="text-xs font-bold text-[#050A1F]">{t.name}</div>
+                    <div className="text-[10px] text-slate-400">{t.description}</div>
+                  </div>
+                  <button onClick={() => { setShowGallery(false); setEditing({ name: t.name, body: t.html }); }} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white flex-shrink-0" style={{ background: ORANGE }}>Use &amp; customise</button>
+                </div>
+                <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-2 overflow-auto" dangerouslySetInnerHTML={{ __html: t.html }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {sigs.length === 0 && !showGallery ? (
+          <div className="text-xs text-slate-400 py-4 text-center">No signatures yet. Create one from scratch, or start from a template above.</div>
+        ) : (
+          <div className="space-y-2">
+            {sigs.map((s) => (
+              <div key={s.id} className="rounded-lg border border-slate-200 px-3 py-2.5 flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{s.name} {s.isDefault && <span className="text-[9px] bg-orange-100 text-[#FF4500] rounded px-1.5 py-0.5">DEFAULT</span>}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-md" dangerouslySetInnerHTML={{ __html: s.body }} />
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  {!s.isDefault && <button onClick={() => makeDefault(s)} className="text-[11px] font-bold text-slate-500">Make default</button>}
+                  <button onClick={() => setEditing({ ...s })} className="text-[11px] font-bold text-blue-500">Edit</button>
+                  <button onClick={() => del(s.id)} className="text-[11px] font-bold text-red-500">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {editing && <SignatureEditor sig={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );
@@ -1148,12 +1426,16 @@ function SignatureEditor({ sig, onClose, onSaved }) {
   };
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 text-lg font-extrabold text-[#050A1F]">{sig.id ? 'Edit signature' : 'New signature'}</div>
         <div className="p-6 space-y-3">
           <div><div className="text-[11px] font-bold text-slate-500 mb-1">Name</div><input className={inp2} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Formal" /></div>
-          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Signature</div><div className="rounded-lg border border-slate-300 min-h-[140px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+          <div>
+            <div className="text-[11px] font-bold text-slate-500 mb-1">Signature</div>
+            <MailEditor value={body} onChange={setBody} minHeight={160} placeholder="Design your signature, or start from a template." />
+            <div className="text-[10px] text-slate-400 mt-1.5">Tip: start from a template in the gallery, then tweak the text, colours, or links here.</div>
+          </div>
         </div>
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1374,6 +1656,135 @@ function IconBtn({ title, onClick, children, danger }) {
   return <button title={title} onClick={onClick} className={`p-1.5 rounded-lg transition ${danger ? 'text-slate-300 hover:text-red-500 hover:bg-red-50' : 'text-slate-400 hover:text-[#050A1F] hover:bg-slate-100'}`}>{children}</button>;
 }
 
+// API tab — ImageKit config + Claude/OpenAI usage tracking.
+function HrApiTab() {
+  const [usage, setUsage] = useState(null);
+  useEffect(() => { hrApi('/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({})); }, []);
+  const providers = [['anthropic', 'Claude (Anthropic)'], ['openai', 'OpenAI (email drafts)']];
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="text-sm font-bold text-[#050A1F] mb-3">API usage</div>
+        <div className="grid grid-cols-2 gap-4">
+          {providers.map(([id, label]) => (
+            <div key={id} className="bg-white rounded-2xl border border-slate-200/70 p-5">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+              <div className="text-3xl font-extrabold mt-1 text-[#050A1F]">{usage ? (usage[id] || 0) : '—'}</div>
+              <div className="text-[11px] text-slate-400 mt-1">total API calls</div>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-slate-400 mt-2">API keys are managed in the Sales CRM admin (shared across the product). Resume-match scoring uses Claude; email drafts use OpenAI.</p>
+      </div>
+      <div>
+        <div className="text-sm font-bold text-[#050A1F] mb-2">ImageKit (image hosting)</div>
+        <ImageKitSection />
+      </div>
+    </div>
+  );
+}
+
+// Settings tab — auto-scoring toggle.
+function HrSettingsTab() {
+  const [s, setS] = useState(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { hrApi('/settings').then(setS).catch(() => {}); }, []);
+  const toggle = async (v) => { setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ autoScore: v }) }); setS((x) => ({ ...x, autoScore: r.autoScore })); setSaved(true); } catch (e) { alert(e.message); } };
+  if (!s) return <div className="text-slate-400 text-sm">Loading…</div>;
+  return (
+    <div className="max-w-xl space-y-4">
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-bold text-[#050A1F]">Auto-score resume match</div>
+            <div className="text-xs text-slate-500 mt-1 max-w-md">When on, Claude scores each candidate's resume match automatically on add, on application, and when feedback is submitted. Turn off to save API credits — you can still score manually from each candidate.</div>
+          </div>
+          <button onClick={() => toggle(!s.autoScore)} className={`relative w-12 h-6 rounded-full transition ${s.autoScore ? 'bg-green-500' : 'bg-slate-300'}`}>
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition ${s.autoScore ? 'translate-x-6' : ''}`} />
+          </button>
+        </div>
+        {saved && <div className="text-sm text-green-600 font-semibold mt-3">Saved ✓</div>}
+      </div>
+    </div>
+  );
+}
+
+// Logs tab — HR-scoped audit log (same UI as the CRM).
+function HrLogsTab() {
+  const [logs, setLogs] = useState(null);
+  useEffect(() => { hrApi('/logs').then((r) => setLogs(r.logs || [])).catch(() => setLogs([])); }, []);
+  if (!logs) return <div className="text-slate-400 text-sm">Loading…</div>;
+  return (
+    <div>
+      <div className="text-sm font-bold text-[#050A1F] mb-3">Activity logs</div>
+      {logs.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No HR activity logged yet.</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th className="px-4 py-3">When</th><th className="px-4 py-3">User</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Target</th>
+            </tr></thead>
+            <tbody>
+              {logs.map((l) => (
+                <tr key={l.id} className="border-b border-slate-50">
+                  <td className="px-4 py-2.5 text-slate-400 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{l.userName || '—'}</td>
+                  <td className="px-4 py-2.5"><span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{l.action}</span></td>
+                  <td className="px-4 py-2.5 text-slate-500 text-xs">{l.target || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Careers page branding + public link.
+function HrCareersTab() {
+  const [c, setC] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const logoRef = useRef(null);
+  useEffect(() => { hrApi('/settings').then((r) => setC(r.careers || {})).catch(() => {}); }, []);
+  if (!c) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const publicUrl = c.token ? `${window.location.origin}/jobs/${c.token}` : '';
+  const save = async () => { setBusy(true); setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ careers: { title: c.title, description: c.description, logo: c.logo } }) }); setC(r.careers); setSaved(true); } catch (e) { alert(e.message); } finally { setBusy(false); } };
+  const uploadLogo = async (file) => { if (!file) return; try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); setC((x) => ({ ...x, logo: r.url })); } catch (e) { alert(e.message); } };
+  const L = 'text-[11px] font-bold text-slate-500 mb-1';
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div className="max-w-2xl">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Public careers page</div>
+      <p className="text-xs text-slate-500 mb-4">One public page listing all your published roles. Share the link anywhere.</p>
+      {publicUrl && (
+        <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 mb-4 flex items-center gap-2">
+          <input readOnly className={inp2 + ' text-xs'} value={publicUrl} onClick={(e) => e.target.select()} />
+          <a href={publicUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Open</a>
+          <button onClick={() => navigator.clipboard?.writeText(publicUrl)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Copy</button>
+        </div>
+      )}
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-4">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">{c.logo ? <img src={c.logo} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">Logo</span>}</div>
+          <div>
+            <button onClick={() => logoRef.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Upload logo</button>
+            <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+          </div>
+        </div>
+        <div><div className={L}>Page title</div><input className={inp2} value={c.title || ''} onChange={(e) => setC({ ...c, title: e.target.value })} placeholder="Careers at Qtonix" /></div>
+        <div><div className={L}>Description</div><textarea rows={4} className={inp2} value={c.description || ''} onChange={(e) => setC({ ...c, description: e.target.value })} placeholder="Tell candidates about your company and culture…" /></div>
+        <div className="flex items-center gap-3">
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+          {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓{!c.token ? ' — link generated' : ''}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HrAdmin({ user }) {
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
@@ -1444,7 +1855,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['users', 'Users'], ['org', 'Organization Chart'], ['branches', 'Branches & Departments'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['mailbox', 'Recruitment Mailbox'], ['imagekit', 'ImageKit']];
+  const TABS = [['users', 'Users'], ['org', 'Organization Chart'], ['branches', 'Branches & Departments'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['mailbox', 'Recruitment Mailbox'], ['api', 'API'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -1483,10 +1894,10 @@ function HrAdmin({ user }) {
                 <div className="flex items-center gap-2 pt-6"><input type="checkbox" id="inc-edit" checked={!!edit.branchIncharge} onChange={(e) => setEdit({ ...edit, branchIncharge: e.target.checked })} /><label htmlFor="inc-edit" className="text-sm font-semibold text-slate-600">Branch in-charge</label></div>
                 <SharedField label="New password" hint="Leave blank to keep current"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} /></SharedField>
               </div>
-              {edit.type === 'recruiter' && (
-                <div className="mt-4 rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Recruiter targets</div><div className="grid grid-cols-2 gap-4">
-                  <SharedField label="Daily interview schedule"><input type="number" className={inputCls} value={edit.targets?.dailyInterviews ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, dailyInterviews: e.target.value } })} /></SharedField>
-                  <SharedField label="Monthly closing / onboarding"><input type="number" className={inputCls} value={edit.targets?.monthlyOnboarding ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, monthlyOnboarding: e.target.value } })} /></SharedField>
+              {/^(hr|human resource|human resources)$/i.test((edit.department || '').trim()) && (
+                <div className="mt-4 rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">HR targets</div><div className="grid grid-cols-2 gap-4">
+                  <SharedField label="Daily scheduling target"><input type="number" min="0" className={inputCls} value={edit.targets?.dailyInterviews ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, dailyInterviews: e.target.value } })} /></SharedField>
+                  <SharedField label="Monthly hiring target"><input type="number" min="0" className={inputCls} value={edit.targets?.monthlyOnboarding ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, monthlyOnboarding: e.target.value } })} /></SharedField>
                 </div></div>
               )}
               <div className="flex justify-end gap-2 mt-4"><button onClick={() => setEdit(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={saveEdit} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save changes</button></div>
@@ -1563,7 +1974,10 @@ function HrAdmin({ user }) {
 
       {/* IMAGEKIT TAB */}
       {tab === 'mailbox' && <RecruitmentMailbox isAdmin={!!user.isAdmin} setErr={setErr} />}
-      {tab === 'imagekit' && <ImageKitSection />}
+      {tab === 'api' && <HrApiTab />}
+      {tab === 'settings' && <HrSettingsTab />}
+      {tab === 'logs' && <HrLogsTab />}
+      {tab === 'careers' && <HrCareersTab />}
 
       {showAdd && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShowAdd(false)} onCreated={(n) => { setMsg(`User created: ${n}`); load(); }} />}
     </div>
@@ -1766,7 +2180,10 @@ export default function HrApp() {
               ))}
             </nav>
           </div>
-          <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={logout} isAdmin={isAdmin} />
+          <div className="flex items-center gap-2">
+            <NotificationBell onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />
+            <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={logout} isAdmin={isAdmin} />
+          </div>
         </div>
       </header>
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${view}-${navKey}`}>
@@ -1784,6 +2201,48 @@ export default function HrApp() {
         {view === 'users' && isAdmin && <HrUserManagement />}
         {view === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
+    </div>
+  );
+}
+
+// In-app notifications bell (mentions, new applications, interview reminders).
+function NotificationBell({ onOpenCandidate }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [unread, setUnread] = useState(0);
+  const load = () => hrApi('/notifications').then((r) => { setItems(r.notifications || []); setUnread(r.unread || 0); }).catch(() => {});
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, []);
+  const markAll = async () => { try { await hrApi('/notifications/read', { method: 'POST', body: JSON.stringify({}) }); setUnread(0); setItems((xs) => xs.map((x) => ({ ...x, read: true }))); } catch {} };
+  const icon = (t) => t === 'mention' ? '💬' : t === 'application' ? '📥' : t === 'interview' ? '📅' : t === 'offer' ? '📄' : '🔔';
+  return (
+    <div className="relative">
+      <button onClick={() => { setOpen((v) => !v); if (!open && unread) markAll(); }} className="relative w-9 h-9 rounded-lg hover:bg-white/10 flex items-center justify-center text-slate-300" title="Notifications">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+        {unread > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#FF4500] text-white text-[10px] font-bold flex items-center justify-center">{unread > 9 ? '9+' : unread}</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <span className="font-extrabold text-[#050A1F] text-sm">Notifications</span>
+              {items.length > 0 && <button onClick={markAll} className="text-[11px] font-bold text-orange-600">Mark all read</button>}
+            </div>
+            <div className="max-h-96 overflow-auto">
+              {items.length === 0 ? <div className="px-4 py-8 text-center text-slate-400 text-sm">You're all caught up.</div> : items.map((n) => (
+                <button key={n._id} onClick={() => { setOpen(false); if (n.candidateId && onOpenCandidate) onOpenCandidate(n.candidateId); }}
+                  className={`w-full text-left px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex gap-3 ${n.read ? '' : 'bg-orange-50/40'}`}>
+                  <span className="text-lg leading-none">{icon(n.type)}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-700">{n.text}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{timeAgo(n.createdAt)}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Schedule your interview</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; color: #050A1F; background: #f8fafc; }
+  .band { color: #fff; padding: 40px 24px; background: linear-gradient(120deg,#050A1F,#0B1533); }
+  .band-inner { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 800; margin: 6px 0 8px; }
+  .sub { color: #cbd5e1; font-size: 14px; }
+  .wrap { max-width: 720px; margin: -24px auto 48px; padding: 0 24px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(2,6,23,.06); }
+  .stitle { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; margin: 22px 0 10px; }
+  .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 560px) { .slots { grid-template-columns: 1fr; } }
+  .slot { border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 12px; font-size: 14px; font-weight: 700; cursor: pointer; text-align: center; background: #fff; }
+  .slot.on { border-color: #FF6A00; background: #fff7ed; color: #c2410c; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin: 14px 0 6px; }
+  input, textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+  input:focus, textarea:focus { outline: none; border-color: #FF6A00; box-shadow: 0 0 0 2px #ffedd5; }
+  .row { display: flex; gap: 10px; } .row > div { flex: 1; }
+  .task { background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; color: #7c3aed; display: inline-block; margin-bottom: 6px; }
+  .btn { margin-top: 20px; width: 100%; border: 0; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 800; color: #fff; background: linear-gradient(90deg,#FF6A00,#FF4500); cursor: pointer; }
+  .btn:disabled { opacity: .6; }
+  .muted { color: #94a3b8; font-size: 12px; }
+  .err { color: #dc2626; font-size: 13px; margin-top: 10px; }
+  .ok { text-align: center; padding: 40px 10px; } .ok .big { font-size: 44px; }
+  a.meet { display: inline-block; margin-top: 12px; color: #2563eb; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="app"><div style="padding:60px;text-align:center" class="muted">Loading…</div></div>
+<script>
+(function () {
+  var token = location.pathname.split('/')[2];
+  var app = document.getElementById('app');
+  var state = { picked: null, answers: {} };
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function fmt(iso) { try { return new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } }
+
+  fetch('/api/careers/schedule/' + encodeURIComponent(token))
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(render)
+    .catch(function () { app.innerHTML = '<div style="padding:60px;text-align:center" class="muted">This scheduling link is no longer available.</div>'; });
+
+  function render(d) {
+    if (d.booked) { return renderBooked(d); }
+    var slots = d.slots || [];
+    var html = '';
+    html += '<div class="band"><div class="band-inner"><div class="sub">' + esc(d.roleTitle || '') + '</div><h1>Schedule your ' + esc(d.roundLabel || 'interview') + '</h1><div class="sub">Hi ' + esc(d.candidateName) + ', pick a time that works for you.</div></div></div>';
+    html += '<div class="wrap"><div class="card">';
+    if (!slots.length) {
+      html += '<div class="muted">No time slots are available yet. Please check back shortly.</div>';
+    } else {
+      html += '<div class="stitle">Available times</div><div class="slots" id="slots">';
+      slots.forEach(function (s) { html += '<div class="slot" data-id="' + s.id + '">' + esc(fmt(s.at)) + '</div>'; });
+      html += '</div>';
+      html += '<div class="stitle">Your contact details</div>';
+      html += '<div class="row"><div><label>Email</label><input id="email" value="' + esc(d.email || '') + '" /></div><div><label>Phone</label><input id="phone" value="' + esc(d.phone || '') + '" /></div></div>';
+      if ((d.questions || []).length) {
+        html += '<div class="stitle">A few questions</div>';
+        d.questions.forEach(function (q) {
+          if (q.type === 'task') html += '<div class="task">TASK</div>';
+          html += '<label>' + esc(q.prompt) + '</label><textarea rows="2" data-qid="' + q.id + '"></textarea>';
+        });
+      }
+      html += '<button class="btn" id="book">Confirm booking</button>';
+      html += '<div class="err" id="err"></div>';
+    }
+    html += '<div class="muted" style="margin-top:14px">A Google Meet link is created automatically once you book.</div>';
+    html += '</div></div>';
+    app.innerHTML = html;
+
+    var slotEls = document.querySelectorAll('.slot');
+    slotEls.forEach(function (el) { el.onclick = function () { slotEls.forEach(function (x) { x.classList.remove('on'); }); el.classList.add('on'); state.picked = el.getAttribute('data-id'); }; });
+    var bookBtn = document.getElementById('book');
+    if (bookBtn) bookBtn.onclick = function () { book(d); };
+  }
+
+  function book(d) {
+    var err = document.getElementById('err');
+    err.textContent = '';
+    if (!state.picked) { err.textContent = 'Please pick a time slot.'; return; }
+    var answers = {};
+    document.querySelectorAll('[data-qid]').forEach(function (t) { answers[t.getAttribute('data-qid')] = t.value; });
+    var body = { slotId: state.picked, email: (document.getElementById('email') || {}).value, phone: (document.getElementById('phone') || {}).value, answers: answers };
+    var btn = document.getElementById('book'); btn.disabled = true; btn.textContent = 'Booking…';
+    fetch('/api/careers/schedule/' + encodeURIComponent(token) + '/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { err.textContent = res.j.error || 'Could not book.'; btn.disabled = false; btn.textContent = 'Confirm booking'; return; }
+        app.innerHTML = '<div class="wrap"><div class="card ok"><div class="big">✅</div><h1>You\'re booked!</h1><p class="muted">We\'ve sent the details to your email.' + (res.j.meetLink ? '</p><a class="meet" href="' + esc(res.j.meetLink) + '" target="_blank">Join the Google Meet</a>' : '</p>') + '</div></div>';
+      })
+      .catch(function () { err.textContent = 'Something went wrong. Please try again.'; btn.disabled = false; btn.textContent = 'Confirm booking'; });
+  }
+
+  function renderBooked(d) {
+    var b = d.booked;
+    app.innerHTML = '<div class="wrap" style="margin-top:40px"><div class="card ok"><div class="big">✅</div><h1>Already booked</h1><p class="muted">Your ' + esc(d.roundLabel || 'interview') + ' is confirmed for ' + esc(fmt(b.at)) + '.' + (b.meetLink ? '</p><a class="meet" href="' + esc(b.meetLink) + '" target="_blank">Join the Google Meet</a>' : '</p>') + '</div></div>';
+  }
+})();
+</script>
+</body>
+</html>

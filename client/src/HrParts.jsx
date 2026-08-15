@@ -157,12 +157,12 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
           </div>
         </div>
 
-        {f.type === 'recruiter' && (
+        {/^(hr|human resource|human resources)$/i.test((f.department || '').trim()) && (
           <div className="mt-4 rounded-xl bg-slate-50 p-4">
-            <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Recruiter targets</div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">HR targets</div>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Daily interview schedule"><input type="number" className={inputCls} value={f.targets.dailyInterviews} onChange={(e) => set({ targets: { ...f.targets, dailyInterviews: e.target.value } })} /></Field>
-              <Field label="Monthly closing / onboarding"><input type="number" className={inputCls} value={f.targets.monthlyOnboarding} onChange={(e) => set({ targets: { ...f.targets, monthlyOnboarding: e.target.value } })} /></Field>
+              <Field label="Daily scheduling target"><input type="number" min="0" className={inputCls} value={f.targets.dailyInterviews} onChange={(e) => set({ targets: { ...f.targets, dailyInterviews: e.target.value } })} /></Field>
+              <Field label="Monthly hiring target"><input type="number" min="0" className={inputCls} value={f.targets.monthlyOnboarding} onChange={(e) => set({ targets: { ...f.targets, monthlyOnboarding: e.target.value } })} /></Field>
             </div>
           </div>
         )}

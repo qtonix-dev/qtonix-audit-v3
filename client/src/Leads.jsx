@@ -6122,7 +6122,7 @@ function DealsPipeline({ user, onOpenLead }) {
                 <span className="text-[11px] font-bold text-slate-500">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</span>
               </div>
 
-              <div className="space-y-3 min-h-[160px]">
+              <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
                 {col.map((d) => {
                   const pinfo = paidInfo(d);
                   const pct = pinfo ? pinfo.pct : (d.stage === 'closed_won' ? 100 : 0);

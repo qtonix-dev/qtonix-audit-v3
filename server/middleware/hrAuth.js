@@ -70,4 +70,10 @@ function requireScheduler(req, res, next) {
   return res.status(403).json({ error: 'Only HR, recruiters and admins can manage this.' });
 }
 
-module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler };
+// Whether the actor may see internal-only content (salary/approval, internal
+// notes): admins + HR/recruiter/manager/TL. Pure interview panelists cannot.
+function canViewInternal(req) {
+  return !!req.isHrAdmin || (req.hrType && SCHEDULER_TYPES.includes(req.hrType));
+}
+
+module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, canViewInternal };

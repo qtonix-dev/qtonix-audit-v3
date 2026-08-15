@@ -14,6 +14,24 @@ const VERDICTS = [
 ];
 const DEFAULT_ATTRS = ['Communication skills', 'Technical skill', 'Ability to learn'];
 
+// Compact per-tab icons (stroke SVG paths).
+const TAB_ICONS = {
+  resume: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h6',
+  application: 'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
+  ai: 'M12 2a2 2 0 0 1 2 2v1h1a3 3 0 0 1 3 3v1h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v1a3 3 0 0 1-3 3h-1v1a2 2 0 0 1-4 0v-1H9a3 3 0 0 1-3-3v-1H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h1V8a3 3 0 0 1 3-3h1V4a2 2 0 0 1 2-2z',
+  comments: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  feedback: 'M11.5 2l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3 8.2l5.9-.9z',
+  activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
+  offer: 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+  mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M22 6l-10 7L2 6',
+  timeline: 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
+  attachments: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+};
+function TabIcon({ name, active }) {
+  const d = TAB_ICONS[name]; if (!d) return null;
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.7 }}>{d.split(' M').map((seg, i) => <path key={i} d={(i ? 'M' : '') + seg} />)}</svg>;
+}
+
 // WhatsApp glyph.
 const WA_PATH = 'M12 2a10 10 0 0 0-8.5 15.2L2 22l4.9-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-4-4.7-4.2-.1-.2-1-1.4-1-2.6s.6-1.8.9-2.1c.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.3 0 .5l-.4.5-.3.3c-.1.1-.2.3-.1.5.1.2.6 1 1.3 1.6.9.8 1.6 1 1.8 1.1.2.1.4.1.5-.1l.6-.8c.2-.2.4-.2.5-.1l1.8.9c.2.1.4.2.4.3.1.2.1.6 0 1z';
 
@@ -27,6 +45,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [activityModal, setActivityModal] = useState(null); // 'task' | 'call'
   const [showReject, setShowReject] = useState(false);
   const [rescoring, setRescoring] = useState(false);
+  const [showSelfSchedule, setShowSelfSchedule] = useState(false);
   const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
@@ -57,7 +76,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const moveNext = () => nextStage && act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: nextStage.id }) }));
   const reject = () => setShowReject(true);
 
-  const TABS = [['resume', 'Resume'], ['application', 'Application Form'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ['offer', 'Offer'], ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Attachments']];
+  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ...(c.canViewInternal !== false ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
 
   return (
     <div>
@@ -111,6 +130,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
             <button onClick={() => setActivityModal('call')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📞 Add Call</button>
             <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule Interview</button>
+            {c.canViewInternal !== false && <button onClick={() => setShowSelfSchedule(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">🔗 Self-schedule</button>}
             <button onClick={reject} disabled={c.rejected} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">⛔ Reject</button>
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
@@ -118,13 +138,18 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-4 border-b border-slate-100 overflow-x-auto">
-          {TABS.map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={`px-3 py-2.5 text-sm font-bold whitespace-nowrap border-b-2 -mb-px ${tab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-              {label}{id === 'comments' && (c.comments || []).length ? ` (${c.comments.length})` : ''}{id === 'feedback' && (c.feedback || []).length ? ` (${c.feedback.length})` : ''}
-            </button>
-          ))}
+        <div className="flex gap-0.5 px-3 border-b border-slate-100 overflow-x-auto">
+          {TABS.map(([id, label]) => {
+            const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : 0;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${tab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                <TabIcon name={id} active={tab === id} />
+                <span>{label}</span>
+                {count > 0 && <span className={`rounded-full px-1.5 text-[10px] font-bold ${tab === id ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-400'}`}>{count}</span>}
+              </button>
+            );
+          })}
         </div>
 
         <div className="p-6 min-h-[340px]">
@@ -147,6 +172,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
       {showReject && <RejectModal onClose={() => setShowReject(false)} onReject={async (reason) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) })); setShowReject(false); }} />}
+      {showSelfSchedule && <SelfScheduleModal candidate={c} onClose={() => setShowSelfSchedule(false)} onSaved={() => { setShowSelfSchedule(false); load(); }} />}
     </div>
   );
 }
@@ -326,23 +352,32 @@ function AiTab({ c, reload, setErr }) {
 function CommentsTab({ c, reload }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [internal, setInternal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editText, setEditText] = useState('');
+  const canInternal = c.canViewInternal !== false; // HR/admin only
   const list = c.comments || [];
-  const add = async () => { if (!text.trim()) return; setBusy(true); try { await hrApi(`/candidates/${c.id}/comments`, { method: 'POST', body: JSON.stringify({ text: text.trim() }) }); setText(''); await reload(); } finally { setBusy(false); } };
+  const add = async () => { if (!text.trim()) return; setBusy(true); try { await hrApi(`/candidates/${c.id}/comments`, { method: 'POST', body: JSON.stringify({ text: text.trim(), internal: canInternal && internal }) }); setText(''); setInternal(false); await reload(); } finally { setBusy(false); } };
   const saveEdit = async (id) => { if (!editText.trim()) return; try { await hrApi(`/candidates/${c.id}/comments/${id}`, { method: 'PATCH', body: JSON.stringify({ text: editText.trim() }) }); setEditId(null); await reload(); } catch {} };
   return (
     <div>
-      <div className="flex gap-2 mb-4">
-        <input className={inp} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note or comment…" onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+      <div className="flex gap-2 mb-1">
+        <input className={inp} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note… use @name to notify a colleague" onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
         <button onClick={add} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-white shrink-0 disabled:opacity-50" style={{ background: ORANGE }}>Post</button>
       </div>
+      {canInternal && (
+        <label className="flex items-center gap-2 text-xs text-slate-500 mb-4 select-none">
+          <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+          🔒 Internal only — visible to HR &amp; admins, hidden from interview panel
+        </label>
+      )}
+      {!canInternal && <div className="mb-4" />}
       {list.length === 0 ? <Empty>No comments yet.</Empty> : (
         <div className="space-y-3">
           {list.map((cm) => (
-            <div key={cm.id} className="rounded-lg border border-slate-200 p-3">
+            <div key={cm.id} className={`rounded-lg border p-3 ${cm.internal ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'}`}>
               <div className="flex items-center justify-between">
-                <div className="text-sm font-bold text-slate-700">{cm.by}</div>
+                <div className="text-sm font-bold text-slate-700 flex items-center gap-2">{cm.by}{cm.internal && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">🔒 Internal</span>}</div>
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <span>{fmt(cm.at)}{cm.edited ? ' · edited' : ''}</span>
                   {editId !== cm.id && <button onClick={() => { setEditId(cm.id); setEditText(cm.text); }} className="font-bold text-orange-600">Edit</button>}
@@ -515,9 +550,20 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
     hrApi('/email-templates').then((r) => setTemplates(r.templates || [])).catch(() => {});
     hrApi('/signatures').then((r) => setSignatures(r.signatures || [])).catch(() => {});
   }, []);
+  const _ans = candidate.answers || {};
+  const _work = (Array.isArray(_ans.work) && _ans.work[0]) || {};
   const fillPlaceholders = (str) => (str || '')
     .replace(/\{\{\s*candidate_name\s*\}\}/gi, candidate.name || '')
+    .replace(/\{\{\s*first_name\s*\}\}/gi, String(candidate.name || '').split(' ')[0] || '')
+    .replace(/\{\{\s*email\s*\}\}/gi, candidate.email || '')
+    .replace(/\{\{\s*phone\s*\}\}/gi, candidate.phone || '')
     .replace(/\{\{\s*role\s*\}\}/gi, (candidate.job && candidate.job.title) || '')
+    .replace(/\{\{\s*current_designation\s*\}\}/gi, _work.title || '')
+    .replace(/\{\{\s*current_company\s*\}\}/gi, _work.company || '')
+    .replace(/\{\{\s*location\s*\}\}/gi, candidate.currentLocation || _ans.city || '')
+    .replace(/\{\{\s*expected_ctc\s*\}\}/gi, _ans.expectedCtc || '')
+    .replace(/\{\{\s*notice_period\s*\}\}/gi, _ans.noticePeriod || '')
+    .replace(/\{\{\s*recruiter_name\s*\}\}/gi, candidate.recruiterName || '')
     .replace(/\{\{\s*company\s*\}\}/gi, 'Qtonix');
   const applyTemplate = (t) => {
     if (!t) return;
@@ -1150,6 +1196,109 @@ function OfferLetterModal({ candidate, onClose, onSent }) {
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
         <button onClick={send} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send offer letter'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Self-schedule setup: HR proposes slots + questions, panelists confirm, then
+// the candidate books via a public link (which creates the Google Meet).
+function SelfScheduleModal({ candidate, onClose, onSaved }) {
+  const existing = candidate.selfSchedule || {};
+  const [roundLabel, setRoundLabel] = useState(existing.roundLabel || 'Technical Round');
+  const [durationMins, setDuration] = useState(existing.durationMins || 45);
+  const [panelistIds, setPanelistIds] = useState(existing.panelistIds || []);
+  const [slots, setSlots] = useState((existing.slots || []).map((s) => ({ id: s.id, at: s.at, confirmedBy: s.confirmedBy || [] })));
+  const [questions, setQuestions] = useState(existing.questions || []);
+  const [emps, setEmps] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
+
+  const publicLink = existing.token ? `${window.location.origin}/schedule/${existing.token}` : '';
+  const togglePanelist = (id) => setPanelistIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  const addSlot = () => setSlots((s) => [...s, { id: `new${Date.now()}`, at: '', confirmedBy: [] }]);
+  const setSlot = (i, at) => setSlots((s) => s.map((x, idx) => idx === i ? { ...x, at } : x));
+  const rmSlot = (i) => setSlots((s) => s.filter((_, idx) => idx !== i));
+  const addQ = (type) => setQuestions((q) => [...q, { id: `newq${Date.now()}`, type, prompt: '' }]);
+  const setQ = (i, prompt) => setQuestions((q) => q.map((x, idx) => idx === i ? { ...x, prompt } : x));
+  const rmQ = (i) => setQuestions((q) => q.filter((_, idx) => idx !== i));
+
+  const nameOf = (id) => { const e = emps.find((x) => x._id === id); return e ? e.name : `#${id}`; };
+  const save = async () => {
+    const cleanSlots = slots.filter((s) => s.at).map((s) => ({ id: s.id.startsWith('new') ? undefined : s.id, at: new Date(s.at).toISOString(), confirmedBy: s.confirmedBy }));
+    if (!cleanSlots.length) { alert('Add at least one time slot.'); return; }
+    setBusy(true);
+    try {
+      await hrApi(`/candidates/${candidate.id}/self-schedule`, { method: 'POST', body: JSON.stringify({ roundLabel, durationMins: Number(durationMins), panelistIds, slots: cleanSlots, questions: questions.filter((q) => q.prompt.trim()) }) });
+      onSaved();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  const toLocalInput = (iso) => { if (!iso) return ''; const d = new Date(iso); const pad = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+  return (
+    <Modal title="Self-schedule interview" onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Round label</Lbl><input className={inp} value={roundLabel} onChange={(e) => setRoundLabel(e.target.value)} /></div>
+          <div><Lbl>Duration (mins)</Lbl><input type="number" className={inp} value={durationMins} onChange={(e) => setDuration(e.target.value)} /></div>
+        </div>
+
+        <div>
+          <Lbl>Interview panel (they confirm their availability)</Lbl>
+          <div className="flex flex-wrap gap-2">
+            {emps.map((e) => (
+              <button key={e._id} onClick={() => togglePanelist(e._id)} className={`rounded-full px-3 py-1 text-xs font-bold border ${panelistIds.includes(e._id) ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{e.name}</button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1"><Lbl>Proposed time slots</Lbl><button onClick={addSlot} className="text-xs font-bold text-orange-600">+ Add slot</button></div>
+          {slots.length === 0 ? <div className="text-xs text-slate-400">No slots yet.</div> : (
+            <div className="space-y-2">
+              {slots.map((s, i) => (
+                <div key={s.id} className="flex items-center gap-2">
+                  <input type="datetime-local" className={inp} value={toLocalInput(s.at)} onChange={(e) => setSlot(i, e.target.value)} />
+                  {(s.confirmedBy || []).length > 0 && <span className="text-[10px] font-bold text-green-600 whitespace-nowrap">✓ {s.confirmedBy.length} confirmed</span>}
+                  <button onClick={() => rmSlot(i)} className="text-slate-300 hover:text-red-500 shrink-0">×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1"><Lbl>Questions for the candidate</Lbl>
+            <div className="flex gap-2"><button onClick={() => addQ('text')} className="text-xs font-bold text-orange-600">+ Question</button><button onClick={() => addQ('task')} className="text-xs font-bold text-purple-600">+ Task</button></div>
+          </div>
+          {questions.length === 0 ? <div className="text-xs text-slate-400">Optional — e.g. "Why are you leaving your current role?" or assign a take-home task.</div> : (
+            <div className="space-y-2">
+              {questions.map((q, i) => (
+                <div key={q.id} className="flex items-center gap-2">
+                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${q.type === 'task' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>{q.type === 'task' ? 'Task' : 'Q'}</span>
+                  <input className={inp} value={q.prompt} onChange={(e) => setQ(i, e.target.value)} placeholder={q.type === 'task' ? 'Describe the task…' : 'Question…'} />
+                  <button onClick={() => rmQ(i)} className="text-slate-300 hover:text-red-500 shrink-0">×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {publicLink && (
+          <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+            <div className="text-[11px] font-bold text-slate-500 mb-1">Candidate booking link {existing.booked ? '(booked ✓)' : ''}</div>
+            <div className="flex items-center gap-2">
+              <input readOnly className={inp + ' text-xs'} value={publicLink} onClick={(e) => e.target.select()} />
+              <button onClick={() => { navigator.clipboard?.writeText(publicLink); }} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Copy</button>
+            </div>
+            {existing.booked && <div className="text-xs text-green-600 font-semibold mt-1">Booked {fmt(existing.booked.at)}{existing.booked.meetLink ? ' · Meet created' : ''}.</div>}
+            <div className="text-[11px] text-slate-400 mt-1">Only slots a panelist has confirmed show to the candidate. Share after panelists confirm.</div>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 mt-5">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
+        <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (publicLink ? 'Update' : 'Create link')}</button>
       </div>
     </Modal>
   );

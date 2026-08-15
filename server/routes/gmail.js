@@ -675,7 +675,7 @@ router.get('/lead/:leadId/unread', requireAuth, async (req, res, next) => {
 async function hydrateMedia(row, viewer, settings) {
   try {
     const imagekit = require('../services/imagekit');
-    if (!(await imagekit.isConfigured())) return row.toJSON();
+    if (!imagekit.isConfigured(settings)) return row.toJSON();
     const owner = await User.findByPk(row.userId);
     const token = owner && owner.gmailRefreshToken ? owner.getGmailRefreshToken() : (viewer.gmailRefreshToken ? viewer.getGmailRefreshToken() : null);
     if (!token) return row.toJSON();

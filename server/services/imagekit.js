@@ -23,7 +23,7 @@ function getConfig(settings) {
   };
   return {
     publicKey: rawOrDecrypt('imagekitPublic'),
-    privateKey: settings.getKey('imagekitPrivate') || (raw.imagekitPrivate && !/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(raw.imagekitPrivate) ? raw.imagekitPrivate : ''),
+    privateKey: (settings && settings.getKey && settings.getKey('imagekitPrivate')) || (raw.imagekitPrivate && !/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(raw.imagekitPrivate) ? raw.imagekitPrivate : ''),
     urlEndpoint: rawOrDecrypt('imagekitEndpoint'),
   };
 }
@@ -86,7 +86,9 @@ function emailFolder(user) {
  * which we pull from Gmail server-side and re-host so the CRM can display them.
  */
 async function uploadFile({ base64, fileName, folder }) {
-  const cfg = await getConfig();
+  const { Settings } = require('../models');
+  const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+  const cfg = getConfig(settings);
   if (!cfg.privateKey) throw new Error('ImageKit is not configured.');
   const auth = 'Basic ' + Buffer.from(cfg.privateKey + ':').toString('base64');
   const form = new URLSearchParams();

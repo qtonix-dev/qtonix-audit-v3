@@ -443,6 +443,10 @@ const Settings = sequelize.define(
     // Shared recruitment email templates and rejection reasons (HR-managed).
     hrEmailTemplates: { type: DataTypes.JSON, defaultValue: [] }, // [{ id, name, subject, body }]
     hrRejectionReasons: { type: DataTypes.JSON, defaultValue: ['Position filled', 'Skills mismatch', 'Salary expectations', 'Location constraints', 'Did not clear interview'] },
+    // Resume-match auto-scoring on add/apply/feedback (admins can turn off to save API credits).
+    hrAutoScore: { type: DataTypes.BOOLEAN, defaultValue: true },
+    // Public careers page branding.
+    hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
 
     pricing: { type: DataTypes.JSON },
     // CRM dropdown configuration — admin-editable so new sources/services/stages
@@ -1360,6 +1364,10 @@ const HrCandidate = sequelize.define('HrCandidate', {
   //   date, time, description/note, priority, assignedToId, assignedToName,
   //   reminderOn, by, at, done }]
   activities: { type: DataTypes.JSON, defaultValue: [] },
+  // selfSchedule: { active, token, roundLabel, durationMins, panelistIds:[],
+  //   slots:[{ id, at, confirmedBy:[panelistId] }], questions:[{ id, type:'text'|'task', prompt }],
+  //   booked:{ slotId, at, meetLink, eventLink, answers:{qid:val}, phone, email } , createdBy, createdAt }
+  selfSchedule: { type: DataTypes.JSON, defaultValue: null },
   // offer: { active, salaryDiscussions:[...], approvals:[...], loi:{...},
   //   offerLetter:{...}, finalCtc, joiningDate, status }
   offer: { type: DataTypes.JSON, defaultValue: null },
@@ -1368,9 +1376,23 @@ const HrCandidate = sequelize.define('HrCandidate', {
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// In-app notifications for HR users (mentions, new applications, interview reminders).
+const HrNotification = sequelize.define('HrNotification', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId: { type: DataTypes.INTEGER, allowNull: false }, // recipient HrUser
+  type: { type: DataTypes.STRING(40), defaultValue: 'info' }, // mention | application | interview | offer | info
+  text: { type: DataTypes.STRING(500), allowNull: false },
+  candidateId: { type: DataTypes.INTEGER, allowNull: true },
+  read: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, {
+  tableName: 'hr_notifications',
+  indexes: [{ name: 'idx_hr_notif_user', fields: ['userId'] }],
+});
+HrNotification.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

@@ -4,8 +4,8 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, User, AuditLog, Settings } = require('../models');
-const { signHr, requireHrAccess, requireHrAdmin, requireScheduler } = require('../middleware/hrAuth');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, User, AuditLog, Settings } = require('../models');
+const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
 const router = express.Router();
@@ -444,7 +444,7 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
       avatar: b.avatar || null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
       reportsToAdminId: b.reportsToAdminId ? Number(b.reportsToAdminId) : null,
-      targets: type === 'recruiter'
+      targets: (b.targets && (b.targets.dailyInterviews != null || b.targets.monthlyOnboarding != null))
         ? { dailyInterviews: Number((b.targets && b.targets.dailyInterviews) || 0), monthlyOnboarding: Number((b.targets && b.targets.monthlyOnboarding) || 0) }
         : { dailyInterviews: 0, monthlyOnboarding: 0 },
       timeline: [{ at: new Date().toISOString(), kind: 'created', text: `Employee record created by ${req.hrActor.name}`, by: req.hrActor.name }],
@@ -521,6 +521,7 @@ function scorable(row) {
 async function scoreResumeMatchBg(candidateId) {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (s && s.hrAutoScore === false) return; // auto-scoring disabled by admin
     const key = s && s.getKey ? s.getKey('anthropic') : null;
     if (!key) return;
     const row = await HrCandidate.findByPk(candidateId);
@@ -827,9 +828,41 @@ router.get('/candidates/:id', requireHrAccess, async (req, res, next) => {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
-    res.json({ ...row.toJSON(), job: job ? job.toJSON() : null });
+    const out = { ...row.toJSON(), job: job ? job.toJSON() : null };
+    // Pure interview panelists don't see internal notes, offer, or salary/approval.
+    if (!canViewInternal(req)) {
+      out.comments = (out.comments || []).filter((c) => !c.internal);
+      out.offer = null;
+      out.canViewInternal = false;
+    } else {
+      out.canViewInternal = true;
+    }
+    res.json(out);
   } catch (e) { next(e); }
 });
+
+// Create an in-app notification for an HR user (best-effort, never throws).
+async function notify(userId, { type, text, candidateId }) {
+  try {
+    if (!userId) return;
+    await HrNotification.create({ userId, type: type || 'info', text: String(text || '').slice(0, 500), candidateId: candidateId || null });
+  } catch (e) { console.error('[notify] failed:', e.message); }
+}
+// Resolve @mentions in a comment body to HrUsers and notify them.
+async function notifyMentions(text, { candidateId, candidateName, by }) {
+  try {
+    const handles = Array.from(new Set((String(text).match(/@([a-zA-Z0-9._-]+)/g) || []).map((h) => h.slice(1).toLowerCase())));
+    if (!handles.length) return;
+    const users = await HrUser.findAll();
+    for (const u of users) {
+      const uname = String(u.name || '').toLowerCase().replace(/\s+/g, '');
+      const uemail = String(u.email || '').split('@')[0].toLowerCase();
+      if (handles.some((h) => uname.includes(h) || uemail === h)) {
+        await notify(u.id, { type: 'mention', text: `${by} mentioned you on ${candidateName}.`, candidateId });
+      }
+    }
+  } catch (e) { console.error('[notifyMentions] failed:', e.message); }
+}
 
 const pushTimeline = (row, entry) => {
   const t = Array.isArray(row.timeline) ? row.timeline.slice() : [];
@@ -889,11 +922,17 @@ router.post('/candidates/:id/comments', requireHrAccess, async (req, res, next) 
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     if (!req.body.text || !String(req.body.text).trim()) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    // Only HR/admin can mark a note internal; panelists never can.
+    const internal = !!req.body.internal && canViewInternal(req);
+    const text = String(req.body.text).slice(0, 4000);
     const list = Array.isArray(row.comments) ? row.comments.slice() : [];
-    list.unshift({ id: `c${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, text: String(req.body.text).slice(0, 4000), at: new Date().toISOString() });
+    list.unshift({ id: `c${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, text, internal, at: new Date().toISOString() });
     row.comments = list; row.changed('comments', true);
     await row.save();
-    res.json(row.toJSON());
+    notifyMentions(text, { candidateId: row.id, candidateName: row.name, by: req.hrActor.name });
+    const out = row.toJSON();
+    if (!canViewInternal(req)) out.comments = (out.comments || []).filter((c) => !c.internal);
+    res.json(out);
   } catch (e) { next(e); }
 });
 
@@ -1103,6 +1142,56 @@ router.post('/rejection-reasons', requireHrAccess, async (req, res, next) => {
 });
 
 // ---- HR email templates ----
+// Placeholder variables a recruitment template can use (mirrors CRM's
+// template-variables). Derived from candidate detail fields.
+router.get('/template-variables', requireHrAccess, (req, res) => {
+  res.json([
+    { key: 'candidate_name', label: 'Candidate name' },
+    { key: 'first_name', label: 'First name' },
+    { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Phone' },
+    { key: 'role', label: 'Role / job title' },
+    { key: 'current_designation', label: 'Current designation' },
+    { key: 'current_company', label: 'Current company' },
+    { key: 'location', label: 'Location' },
+    { key: 'expected_ctc', label: 'Expected CTC' },
+    { key: 'notice_period', label: 'Notice period' },
+    { key: 'recruiter_name', label: 'Recruiter name (you)' },
+    { key: 'company', label: 'Our company' },
+  ]);
+});
+
+// AI-draft a recruitment email template (candidate-agnostic). Uses OpenAI, same
+// as the CRM's email drafting. HR then inserts placeholders where needed.
+router.post('/templates/ai-draft', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('openai') : null;
+    if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in CRM Admin → API keys.' });
+    const prompt = String((req.body || {}).prompt || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Add a short prompt describing the email.' });
+    const signName = req.hrActor.name || 'The Talent Team';
+    const system = [
+      'Act as a professional HR / talent acquisition specialist at a software company writing a recruitment email template.',
+      'The email is a reusable TEMPLATE, so where a candidate-specific value belongs, use one of these placeholders EXACTLY: {{candidate_name}}, {{first_name}}, {{role}}, {{current_company}}, {{current_designation}}, {{company}}, {{recruiter_name}}.',
+      'For example greet with "Hi {{first_name}}," and refer to the position as "{{role}}".',
+      'Tone: warm, professional, concise. Structure the body as clean HTML — wrap each paragraph in its own <p> tag, use <br> and <ul><li> where useful. No <html> wrapper.',
+      'Return strict JSON: {"subject":"...","body":"<p>...</p>"}. No markdown, no commentary outside the JSON.',
+    ].join(' ');
+    try { const { recordApiCall } = require('../models'); recordApiCall && recordApiCall('openai'); } catch {}
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: `TASK:\n${prompt}` }], max_tokens: 1000, response_format: { type: 'json_object' } }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
+    let parsed = {};
+    try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
+    res.json({ subject: parsed.subject || '', body: parsed.body || '' });
+  } catch (e) { next(e); }
+});
+
 router.get('/email-templates', requireHrAccess, async (req, res, next) => {
   try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); res.json({ templates: s.hrEmailTemplates || [] }); }
   catch (e) { next(e); }
@@ -1298,6 +1387,32 @@ router.post('/profile-me/avatar', requireHrAccess, async (req, res, next) => {
 });
 
 // ---- Signature templates (named, like the CRM) ----
+// Built-in gallery — the exact same 3 templates as the Sales CRM, pre-filled
+// with this HR user's details, company socials, and avatar.
+router.get('/signature-templates', requireHrAccess, async (req, res, next) => {
+  try {
+    const sig = require('../services/signatureTemplates');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const company = (s && s.socialLinks) || {};
+    const u = req.hrUser || {};
+    const mine = (u.socialLinks && typeof u.socialLinks === 'object') ? u.socialLinks : {};
+    const vals = {
+      name: u.name || (req.adminUser && req.adminUser.name) || 'Your Name',
+      title: u.designation || 'Talent Acquisition',
+      company: (s && s.companyName) || 'Qtonix',
+      email: u.email || (req.adminUser && req.adminUser.email) || '',
+      phone: u.phone || '',
+      website: company.website || (s && s.website) || '',
+      photo: u.avatar || '',
+      linkedin: company.linkedin || '',
+      facebook: company.facebook || '',
+      instagram: company.instagram || '',
+      calendly: mine.calendly || '',
+    };
+    res.json(sig.templates.map((t) => ({ id: t.id, name: t.name, description: t.description, html: sig.render(t, vals) })));
+  } catch (e) { next(e); }
+});
+
 router.get('/signatures', requireHrAccess, async (req, res, next) => {
   try {
     if (req.hrActor.kind !== 'hr') return res.json({ signatures: [] });
@@ -1356,5 +1471,221 @@ router.post('/users/:id/active', requireHrAccess, requireHrAdmin, async (req, re
   } catch (e) { next(e); }
 });
 
+// Self-schedule requests where I'm a panelist and haven't confirmed yet.
+router.get('/my-schedule-requests', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ requests: [] });
+    const uid = req.hrUser.id;
+    const cands = await HrCandidate.findAll();
+    const requests = [];
+    for (const c of cands) {
+      const ss = c.selfSchedule;
+      if (ss && ss.active && !ss.booked && (ss.panelistIds || []).includes(uid)) {
+        requests.push({
+          candidateId: c.id, candidateName: c.name, roundLabel: ss.roundLabel,
+          slots: (ss.slots || []).map((s) => ({ id: s.id, at: s.at, confirmed: (s.confirmedBy || []).includes(uid) })),
+        });
+      }
+    }
+    res.json({ requests });
+  } catch (e) { next(e); }
+});
+
+// ---- Notifications (in-app bell) ----
+router.get('/notifications', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ notifications: [], unread: 0 });
+    const rows = await HrNotification.findAll({ where: { userId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 });
+    const unread = await HrNotification.count({ where: { userId: req.hrUser.id, read: false } });
+    res.json({ notifications: rows.map((r) => r.toJSON()), unread });
+  } catch (e) { next(e); }
+});
+router.post('/notifications/read', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+    const where = { userId: req.hrUser.id };
+    if (ids) where.id = ids;
+    await HrNotification.update({ read: true }, { where });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Recruiter dashboard stats ----
+// ---- HR target progress (per HR user: daily scheduling + monthly hiring) ----
+router.get('/targets-progress', requireHrAccess, async (req, res, next) => {
+  try {
+    const users = await HrUser.findAll({ where: { active: true } });
+    const withTargets = users.filter((u) => u.targets && (Number(u.targets.dailyInterviews) > 0 || Number(u.targets.monthlyOnboarding) > 0));
+    if (!withTargets.length) return res.json({ rows: [] });
+    const cands = await HrCandidate.findAll();
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const rows = withTargets.map((u) => {
+      // Interviews this HR scheduled today (across candidate.interviews[].scheduledById or createdBy name).
+      let interviewsToday = 0;
+      let onboardedThisMonth = 0;
+      cands.forEach((c) => {
+        (c.interviews || []).forEach((iv) => {
+          const at = iv.createdAt || iv.at;
+          const byMe = iv.scheduledById === u.id || iv.createdBy === u.name || iv.by === u.name;
+          if (byMe && at && new Date(at).getTime() >= startOfDay) interviewsToday += 1;
+        });
+        // Onboarded = accepted offer, credited to the recruiter, this month.
+        if (c.offer && c.offer.status === 'accepted' && (c.recruiterId === u.id || c.recruiterName === u.name)) {
+          const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
+          if (doneAt && new Date(doneAt).getTime() >= startOfMonth) onboardedThisMonth += 1;
+        }
+      });
+      const t = u.targets || {};
+      return {
+        id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '',
+        dailyTarget: Number(t.dailyInterviews) || 0, dailyDone: interviewsToday,
+        monthlyTarget: Number(t.monthlyOnboarding) || 0, monthlyDone: onboardedThisMonth,
+      };
+    });
+    res.json({ rows });
+  } catch (e) { next(e); }
+});
+
+router.get('/dashboard-stats', requireHrAccess, async (req, res, next) => {
+  try {
+    const jobs = await HrJobPost.findAll();
+    const openJobs = jobs.filter((j) => j.status === 'published').length;
+    const cands = await HrCandidate.findAll();
+    const now = Date.now();
+    const weekAgo = now - 7 * 864e5;
+    const applicationsThisWeek = cands.filter((c) => new Date(c.createdAt).getTime() >= weekAgo).length;
+    // Candidates per stage (per job stage id → label handled client-side; here counts by stage id).
+    const byStage = {};
+    cands.forEach((c) => { if (!c.rejected) byStage[c.stage] = (byStage[c.stage] || 0) + 1; });
+    // Time-to-hire: avg days from created → offer accepted, for accepted offers.
+    const hireDays = [];
+    cands.forEach((c) => {
+      if (c.offer && c.offer.status === 'accepted') {
+        const acc = (c.offer.salaryDiscussions || []); // fallback
+        const created = new Date(c.createdAt).getTime();
+        const done = c.offer.offerLetter && c.offer.offerLetter.sentAt ? new Date(c.offer.offerLetter.sentAt).getTime() : now;
+        hireDays.push(Math.max(0, Math.round((done - created) / 864e5)));
+      }
+    });
+    const avgTimeToHire = hireDays.length ? Math.round(hireDays.reduce((a, b) => a + b, 0) / hireDays.length) : null;
+    const totalActive = cands.filter((c) => !c.rejected).length;
+    const hired = cands.filter((c) => c.offer && c.offer.status === 'accepted').length;
+    res.json({ openJobs, applicationsThisWeek, byStage, avgTimeToHire, totalActive, hired, totalCandidates: cands.length });
+  } catch (e) { next(e); }
+});
+
+// ---- Source analytics ----
+router.get('/source-analytics', requireHrAccess, async (req, res, next) => {
+  try {
+    const cands = await HrCandidate.findAll();
+    const by = {};
+    const bump = (src, key) => { by[src] = by[src] || { source: src, total: 0, hired: 0, rejected: 0, inProcess: 0 }; by[src][key] += 1; };
+    cands.forEach((c) => {
+      const src = c.source || 'manual';
+      bump(src, 'total');
+      if (c.offer && c.offer.status === 'accepted') bump(src, 'hired');
+      else if (c.rejected) bump(src, 'rejected');
+      else bump(src, 'inProcess');
+    });
+    const rows = Object.values(by).map((r) => ({ ...r, hireRate: r.total ? Math.round((r.hired / r.total) * 100) : 0 })).sort((a, b) => b.total - a.total);
+    res.json({ sources: rows });
+  } catch (e) { next(e); }
+});
+
+// ---- Self-schedule interviews ----
+// HR creates/updates the slot offer.
+router.post('/candidates/:id/self-schedule', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const crypto = require('crypto');
+    const ss = row.selfSchedule && row.selfSchedule.token ? row.selfSchedule : {
+      active: true, token: crypto.randomBytes(12).toString('hex'), createdBy: req.hrActor.name, createdAt: new Date().toISOString(), booked: null,
+    };
+    ss.active = true;
+    ss.roundLabel = String(b.roundLabel || ss.roundLabel || 'Interview').slice(0, 80);
+    ss.durationMins = Number(b.durationMins) || ss.durationMins || 45;
+    ss.panelistIds = Array.isArray(b.panelistIds) ? b.panelistIds : (ss.panelistIds || []);
+    ss.slots = Array.isArray(b.slots) ? b.slots.map((s, i) => ({ id: s.id || `slot${Date.now()}_${i}`, at: s.at, confirmedBy: s.confirmedBy || [] })) : (ss.slots || []);
+    ss.questions = Array.isArray(b.questions) ? b.questions.map((q, i) => ({ id: q.id || `q${Date.now()}_${i}`, type: q.type === 'task' ? 'task' : 'text', prompt: String(q.prompt || '').slice(0, 500) })) : (ss.questions || []);
+    row.selfSchedule = ss; row.changed('selfSchedule', true);
+    pushTimeline(row, { type: 'interview', text: `${req.hrActor.name} set up self-scheduling (${ss.slots.length} slots).`, by: req.hrActor.name });
+    await row.save();
+    // Notify panelists to confirm availability.
+    for (const pid of ss.panelistIds) await notify(pid, { type: 'interview', text: `Confirm your availability for ${row.name}'s interview.`, candidateId: row.id });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Panelist confirms which slots they're available for.
+router.post('/candidates/:id/self-schedule/confirm', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only panelists confirm slots.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row || !row.selfSchedule) return res.status(404).json({ error: 'No schedule found.' });
+    const ss = row.selfSchedule;
+    const chosen = Array.isArray(req.body.slotIds) ? req.body.slotIds : [];
+    ss.slots = (ss.slots || []).map((s) => {
+      const set = new Set(s.confirmedBy || []);
+      if (chosen.includes(s.id)) set.add(req.hrUser.id); else set.delete(req.hrUser.id);
+      return { ...s, confirmedBy: Array.from(set) };
+    });
+    row.selfSchedule = ss; row.changed('selfSchedule', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// ---- HR settings: auto-score toggle + careers branding ----
+router.get('/settings', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
+  } catch (e) { next(e); }
+});
+router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const b = req.body || {};
+    if (b.autoScore !== undefined) s.hrAutoScore = !!b.autoScore;
+    if (b.careers && typeof b.careers === 'object') {
+      const crypto = require('crypto');
+      const cur = s.hrCareers || {};
+      s.hrCareers = {
+        logo: b.careers.logo !== undefined ? String(b.careers.logo).slice(0, 400) : cur.logo || '',
+        title: b.careers.title !== undefined ? String(b.careers.title).slice(0, 160) : cur.title || 'Careers',
+        description: b.careers.description !== undefined ? String(b.careers.description).slice(0, 4000) : cur.description || '',
+        token: cur.token || crypto.randomBytes(8).toString('hex'),
+      };
+      s.changed('hrCareers', true);
+    }
+    await s.save();
+    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
+  } catch (e) { next(e); }
+});
+
+// ---- Audit logs (HR-scoped view) + API usage ----
+router.get('/logs', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const limit = Math.min(500, Number(req.query.limit) || 200);
+    const logs = await AuditLog.findAll({ where: { action: { [Op.like]: 'hr.%' } }, order: [['createdAt', 'DESC']], limit });
+    res.json({ logs: logs.map((l) => l.toJSON ? l.toJSON() : l) });
+  } catch (e) { next(e); }
+});
+router.get('/api-usage', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const { ApiUsage } = require('../models');
+    const rows = await ApiUsage.findAll();
+    const usage = {};
+    rows.forEach((r) => { usage[r.provider] = (usage[r.provider] || 0) + r.count; });
+    res.json({ usage });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;
+module.exports.notify = notify;
