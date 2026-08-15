@@ -216,6 +216,8 @@ Current/Expected CTC: ${a.currentCtc || '?'} / ${a.expectedCtc || '?'}`,
   });
   const data = parseJson(out);
   ['strengths', 'gaps'].forEach((k) => { if (!Array.isArray(data[k])) data[k] = []; });
+  // Score out of 10 for a simple, HR-friendly headline number.
+  data.score10 = Math.round(((Number(data.matchScore) || 0) / 10) * 10) / 10;
   data.generatedAt = new Date().toISOString();
   return data;
 }

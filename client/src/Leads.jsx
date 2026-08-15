@@ -2845,7 +2845,7 @@ function AiDraftModal({ lead, onClose, onDraft }) {
   );
 }
 
-function ChipInput({ value, onChange, placeholder }) {
+export function ChipInput({ value, onChange, placeholder }) {
   const [text, setText] = useState('');
   const commit = () => { const t = text.trim().replace(/,$/, ''); if (t) { onChange([...value, t]); setText(''); } };
   return (

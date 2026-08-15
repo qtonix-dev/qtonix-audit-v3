@@ -37,6 +37,7 @@ async function requireHrAccess(req, res, next) {
     if (!hr || !hr.active) return res.status(401).json({ error: 'This account is no longer active.' });
     req.hrUser = hr;
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
+    req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
     return next();
   }
@@ -59,4 +60,14 @@ function requireHrAdmin(req, res, next) {
   next();
 }
 
-module.exports = { signHr, requireHrAccess, requireHrAdmin };
+// Guards recruiting-management routes (scheduling interviews, assigning
+// panelists, managing offers). Admins and HR/recruiting roles qualify; plain
+// employees (who may still be interview panelists) do not.
+const SCHEDULER_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
+function requireScheduler(req, res, next) {
+  if (req.isHrAdmin) return next();
+  if (req.hrType && SCHEDULER_TYPES.includes(req.hrType)) return next();
+  return res.status(403).json({ error: 'Only HR, recruiters and admins can manage this.' });
+}
+
+module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler };

@@ -1336,12 +1336,18 @@ const HrCandidate = sequelize.define('HrCandidate', {
   answers: { type: DataTypes.JSON, defaultValue: {} },   // { fieldKey/questionId: value }
   source: { type: DataTypes.STRING(30), defaultValue: 'manual' }, // manual | public_form
   rejected: { type: DataTypes.BOOLEAN, defaultValue: false },
+  rejectionReason: { type: DataTypes.STRING(300), defaultValue: '' },
+  rating: { type: DataTypes.INTEGER, defaultValue: 0 },     // 0-5 quick rating
+  tags: { type: DataTypes.JSON, defaultValue: [] },          // ['referral','urgent',...]
+  resumeText: { type: DataTypes.TEXT, defaultValue: '' },    // extracted text for keyword search
   // Candidate-view data:
   comments: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, text, at }]
-  feedback: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, skills:[{name,rating}], verdict, note, at }]
+  feedback: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, skills:[{name,rating}], verdict, note, at, interviewId, round, panelist }]
   timeline: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, type, text, by, at }]
   attachments: { type: DataTypes.JSON, defaultValue: [] },  // [{ id, name, url, at }]
-  interviews: { type: DataTypes.JSON, defaultValue: [] },   // [{ id, at, mode, notes, by }]
+  // interviews: [{ id, at, end, mode, round, notes, by, meetLink, eventLink,
+  //               panelists:[{ id, name, department, email }], feedbackByPanelist:{ panelistId: bool } }]
+  interviews: { type: DataTypes.JSON, defaultValue: [] },
   aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };

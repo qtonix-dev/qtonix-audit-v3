@@ -505,8 +505,16 @@ async function anthropicKey() {
 }
 
 router.get('/job-posts', requireHrAccess, async (req, res, next) => {
-  try { res.json((await HrJobPost.findAll({ order: [['createdAt', 'DESC']] })).map((r) => r.toJSON())); }
-  catch (e) { next(e); }
+  try {
+    const rows = await HrJobPost.findAll({ order: [['createdAt', 'DESC']] });
+    // Applied-candidate counts per job (single grouped query).
+    const counts = await HrCandidate.findAll({
+      attributes: ['jobPostId', [HrCandidate.sequelize.fn('COUNT', HrCandidate.sequelize.col('id')), 'n']],
+      group: ['jobPostId'], raw: true,
+    });
+    const byJob = {}; counts.forEach((c) => { byJob[c.jobPostId] = Number(c.n); });
+    res.json(rows.map((r) => ({ ...r.toJSON(), applicantCount: byJob[r.id] || 0 })));
+  } catch (e) { next(e); }
 });
 
 router.get('/job-posts/:id', requireHrAccess, async (req, res, next) => {
@@ -581,6 +589,7 @@ router.post('/job-posts/:id/pause', requireHrAccess, async (req, res, next) => {
 
 router.delete('/job-posts/:id', requireHrAccess, async (req, res, next) => {
   try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a job post.' });
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
     await row.destroy();
@@ -651,7 +660,21 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     const where = {};
     if (req.query.stage) where.stage = String(req.query.stage);
     if (req.query.jobPostId) where.jobPostId = Number(req.query.jobPostId);
-    res.json((await HrCandidate.findAll({ where, order: [['createdAt', 'DESC']] })).map((r) => r.toJSON()));
+    let rows = await HrCandidate.findAll({ where, order: [['createdAt', 'DESC']] });
+    // Keyword search across name, email, skills and resume text (forward-only:
+    // resumeText is populated for candidates added after this feature shipped).
+    const q = String(req.query.q || '').toLowerCase().trim();
+    if (q) {
+      rows = rows.filter((r) => {
+        const a = r.answers || {};
+        const hay = `${r.name} ${r.email} ${(a.skills || []).join(' ')} ${r.resumeText || ''}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    const tag = String(req.query.tag || '').toLowerCase().trim();
+    if (tag) rows = rows.filter((r) => (r.tags || []).some((t) => String(t).toLowerCase() === tag));
+    // Strip the big resumeText from list payloads.
+    res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
 });
 
@@ -666,11 +689,30 @@ router.post('/candidates/upload', requireHrAccess, async (req, res, next) => {
     const imagekit = require('../services/imagekit');
     const sub = kind === 'photo' ? 'Photos' : 'Resumes';
     const out = await imagekit.uploadFile({ base64, fileName: fileName || 'resume', folder: `HRMS/${safeFolder(jobName)}/${sub}` });
-    res.json({ url: out.url, name: out.name });
+    // For resumes, also extract text so it can be stored for keyword search.
+    let text = '';
+    if (sub === 'Resumes') { try { const { extractFileText } = require('../services/hrRecruitAI'); text = await extractFileText({ base64, fileName: fileName || 'resume' }); } catch { /* non-fatal */ } }
+    res.json({ url: out.url, name: out.name, text: text ? text.slice(0, 50000) : '' });
   } catch (e) {
     if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'ImageKit is not configured. Add ImageKit keys in admin settings.' });
     next(e);
   }
+});
+
+// Check for existing candidates with the same email or phone (duplicate warning).
+router.get('/candidates/check-duplicate', requireHrAccess, async (req, res, next) => {
+  try {
+    const email = String(req.query.email || '').toLowerCase().trim();
+    const phone = String(req.query.phone || '').replace(/[^0-9]/g, '');
+    if (!email && !phone) return res.json({ duplicates: [] });
+    const rows = await HrCandidate.findAll({ order: [['createdAt', 'DESC']], limit: 200 });
+    const dups = rows.filter((r) => {
+      const re = String(r.email || '').toLowerCase().trim();
+      const rp = String(r.phone || '').replace(/[^0-9]/g, '');
+      return (email && re && re === email) || (phone && rp && rp === phone);
+    }).map((r) => ({ id: r.id, name: r.name, email: r.email, phone: r.phone, jobPostId: r.jobPostId, stage: r.stage }));
+    res.json({ duplicates: dups });
+  } catch (e) { next(e); }
 });
 
 // HR manually adds a candidate to a job (full application data).
@@ -691,6 +733,8 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
       recruiterId: req.hrActor.id,
       recruiterName: req.hrActor.name || '',
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
+      resumeText: String(b.resumeText || '').slice(0, 50000),
+      tags: Array.isArray(b.tags) ? b.tags.slice(0, 20).map((t) => String(t).slice(0, 40)) : [],
       currentLocation: String(b.currentLocation || '').slice(0, 160),
       answers: (b.answers && typeof b.answers === 'object') ? b.answers : {},
       source: 'manual',
@@ -717,7 +761,7 @@ router.post('/candidates/ai/parse-resume', requireHrAccess, async (req, res, nex
       return res.status(400).json({ error: 'Could not read enough text from that file. Try a text-based PDF or DOCX.' });
     }
     const parsed = await parseResume(key, { text });
-    res.json(parsed);
+    res.json({ ...parsed, _text: String(text).slice(0, 50000) });
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
@@ -732,6 +776,8 @@ router.patch('/candidates/:id', requireHrAccess, async (req, res, next) => {
     if (b.phone !== undefined) row.phone = String(b.phone).slice(0, 40);
     if (b.jobPostId !== undefined) row.jobPostId = b.jobPostId || null;
     if (b.currentLocation !== undefined) row.currentLocation = String(b.currentLocation).slice(0, 160);
+    if (b.rating !== undefined) row.rating = Math.max(0, Math.min(5, Number(b.rating) || 0));
+    if (b.tags !== undefined && Array.isArray(b.tags)) { row.tags = b.tags.slice(0, 20).map((t) => String(t).slice(0, 40)); row.changed('tags', true); }
     if (b.answers && typeof b.answers === 'object') { row.answers = { ...(row.answers || {}), ...b.answers }; row.changed('answers', true); }
     await row.save();
     res.json(row.toJSON());
@@ -782,6 +828,23 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
   } catch (e) { next(e); }
 });
 
+// Edit an existing comment (only the author, or an admin).
+router.patch('/candidates/:id/comments/:commentId', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const list = Array.isArray(row.comments) ? row.comments.slice() : [];
+    const idx = list.findIndex((c) => c.id === req.params.commentId);
+    if (idx < 0) return res.status(404).json({ error: 'Comment not found.' });
+    if (list[idx].byId !== req.hrActor.id && !req.isHrAdmin) return res.status(403).json({ error: 'You can only edit your own comment.' });
+    if (!req.body.text || !String(req.body.text).trim()) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    list[idx] = { ...list[idx], text: String(req.body.text).slice(0, 4000), edited: true, editedAt: new Date().toISOString() };
+    row.comments = list; row.changed('comments', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 // Add a comment / note.
 router.post('/candidates/:id/comments', requireHrAccess, async (req, res, next) => {
   try {
@@ -807,29 +870,53 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
       skills: Array.isArray(b.skills) ? b.skills.map((s) => ({ name: String(s.name || '').slice(0, 60), rating: Math.max(0, Math.min(5, Number(s.rating) || 0)) })) : [],
       verdict: ['definitely', 'yes', 'no', 'not_sure'].includes(b.verdict) ? b.verdict : 'not_sure',
       note: String(b.note || '').slice(0, 4000),
+      // Optional interview/panel context.
+      interviewId: b.interviewId || null,
+      round: b.round || '',
+      roundLabel: b.roundLabel || '',
     };
     const list = Array.isArray(row.feedback) ? row.feedback.slice() : [];
     list.unshift(entry);
     row.feedback = list; row.changed('feedback', true);
-    pushTimeline(row, { type: 'feedback', text: `${req.hrActor.name} submitted feedback (${entry.verdict.replace('_', ' ')}).`, by: req.hrActor.name });
+    // Mark this panelist as having submitted for the interview.
+    if (b.interviewId) {
+      const ivs = (row.interviews || []).map((iv) => {
+        if (iv.id !== b.interviewId) return iv;
+        const fbp = { ...(iv.feedbackByPanelist || {}) }; fbp[req.hrActor.id] = true;
+        return { ...iv, feedbackByPanelist: fbp };
+      });
+      row.interviews = ivs; row.changed('interviews', true);
+    }
+    pushTimeline(row, { type: 'feedback', text: `${req.hrActor.name} submitted feedback${entry.roundLabel ? ` for ${entry.roundLabel}` : ''} (${entry.verdict.replace('_', ' ')}).`, by: req.hrActor.name });
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
 
-// Schedule an interview (logged; actual calendar integration can come later).
-router.post('/candidates/:id/interview', requireHrAccess, async (req, res, next) => {
+// A panelist's own interview assignments, grouped by job. Any HR user (incl.
+// plain employees) can see the interviews they've been assigned to.
+router.get('/my-interviews', requireHrAccess, async (req, res, next) => {
   try {
-    const row = await HrCandidate.findByPk(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
-    const b = req.body || {};
-    const iv = { id: `iv${Date.now()}`, at: String(b.at || ''), mode: String(b.mode || 'online').slice(0, 40), notes: String(b.notes || '').slice(0, 1000), by: req.hrActor.name };
-    const list = Array.isArray(row.interviews) ? row.interviews.slice() : [];
-    list.unshift(iv);
-    row.interviews = list; row.changed('interviews', true);
-    pushTimeline(row, { type: 'interview', text: `Interview scheduled by ${req.hrActor.name}${b.at ? ` for ${b.at}` : ''}.`, by: req.hrActor.name });
-    await row.save();
-    res.json(row.toJSON());
+    if (req.hrActor.kind !== 'hr') return res.json({ jobs: [] }); // admins don't sit on panels
+    const myId = req.hrActor.id;
+    const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
+    const jobsById = {};
+    for (const r of rows) {
+      const mine = (r.interviews || []).filter((iv) => (iv.panelists || []).some((p) => p.id === myId));
+      if (!mine.length) continue;
+      const job = r.jobPostId ? await HrJobPost.findByPk(r.jobPostId) : null;
+      const jkey = r.jobPostId || 'none';
+      if (!jobsById[jkey]) jobsById[jkey] = { jobId: r.jobPostId, jobTitle: job ? job.title : 'General', candidates: [] };
+      mine.forEach((iv) => {
+        jobsById[jkey].candidates.push({
+          candidateId: r.id, name: r.name, email: r.email, stage: r.stage,
+          interviewId: iv.id, at: iv.at, mode: iv.mode, round: iv.round, roundLabel: iv.roundLabel,
+          meetLink: iv.meetLink, notes: iv.notes,
+          submitted: !!(iv.feedbackByPanelist || {})[myId],
+        });
+      });
+    }
+    res.json({ jobs: Object.values(jobsById) });
   } catch (e) { next(e); }
 });
 

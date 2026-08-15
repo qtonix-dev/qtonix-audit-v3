@@ -108,7 +108,7 @@ function HrDashboard({ user }) {
 
 // --- Recruitment -----------------------------------------------------------
 
-function HrRecruitment() {
+function HrRecruitment({ isAdmin }) {
   const [tab, setTab] = useState('jobs');
   const [mode, setMode] = useState('list'); // list | choose | build
   const [builderSeed, setBuilderSeed] = useState(null);
@@ -116,6 +116,7 @@ function HrRecruitment() {
   const [departments, setDepartments] = useState([]);
   const [branches, setBranches] = useState([]);
   const [err, setErr] = useState('');
+  const [candFilterJob, setCandFilterJob] = useState(null); // preset job filter when arriving from a job's applicant link
   const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
 
   const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
@@ -126,6 +127,7 @@ function HrRecruitment() {
   }, []);
 
   const startBuilder = (seed) => { setBuilderSeed(seed || null); setMode('build'); };
+  const viewApplicants = (jobId) => { setCandFilterJob(jobId); setTab('candidates'); };
 
   if (mode === 'build') {
     return <HrJobBuilder departments={departments} branches={branches} existing={builderSeed}
@@ -142,12 +144,12 @@ function HrRecruitment() {
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
         {tabs.map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)}
+          <button key={id} onClick={() => { setTab(id); if (id !== 'candidates') setCandFilterJob(null); }}
             className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
         ))}
       </div>
-      {tab === 'jobs' && <JobList jobs={jobs} onEdit={(j) => startBuilder(j)} reload={loadJobs} />}
-      {tab === 'candidates' && <CandidateList jobs={jobs} />}
+      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
+      {tab === 'candidates' && <CandidateList jobs={jobs} initialJobFilter={candFilterJob} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -158,24 +160,26 @@ export function fileToBase64(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
 }
 
-function JobList({ jobs, onEdit, reload }) {
+function JobList({ jobs, isAdmin, onEdit, reload, onViewApplicants }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const [shareFor, setShareFor] = useState(null); // job to share
   const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
-  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); };
+  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
   const statusPill = (s) => {
     if (s === 'published') return { label: 'Live', cls: 'bg-green-100 text-green-700' };
     if (s === 'paused') return { label: 'Paused', cls: 'bg-amber-100 text-amber-700' };
     if (s === 'closed') return { label: 'Closed', cls: 'bg-slate-200 text-slate-500' };
     return { label: 'Draft', cls: 'bg-slate-100 text-slate-500' };
   };
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
   if (!jobs.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No job posts yet. Click “Post a Job” to create one.</div>;
   return (
     <div className="space-y-3">
       {jobs.map((j) => {
         const sp = statusPill(j.status);
         const live = j.status === 'published' || j.status === 'paused';
+        const published = fmtDate(j.publishedAt);
         return (
         <div key={j._id} className="bg-white rounded-2xl border border-slate-200/70 p-4 flex items-center justify-between">
           <div className="min-w-0">
@@ -184,14 +188,20 @@ function JobList({ jobs, onEdit, reload }) {
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${sp.cls}`}>{sp.label}</span>
             </div>
             <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
+            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
+              {published && <span>Published {published}</span>}
+              <button onClick={() => onViewApplicants(j._id)} className="font-bold text-orange-600 hover:text-orange-700 hover:underline">
+                {j.applicantCount || 0} candidate{(j.applicantCount || 0) === 1 ? '' : 's'} applied
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {live && <JobIconBtn primary onClick={() => setAddFor(j)} icon="user-plus" label="Add candidate" />}
             {j.status === 'published' && <JobIconBtn onClick={() => setShareFor(j)} icon="link" label="Share / embed" />}
-            <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit" />
-            {live && <JobIconBtn onClick={() => pause(j)} icon={j.status === 'paused' ? 'play' : 'pause'} label={j.status === 'paused' ? 'Resume' : 'Pause'} />}
-            {j.status !== 'closed' && <JobIconBtn onClick={() => close(j)} icon="close" label="Close" />}
-            <JobIconBtn danger onClick={() => del(j)} icon="trash" label="Delete" />
+            <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit job post" />
+            {live && <JobIconBtn onClick={() => pause(j)} icon={j.status === 'paused' ? 'play' : 'pause'} label={j.status === 'paused' ? 'Resume job' : 'Pause job'} />}
+            {j.status !== 'closed' && <JobIconBtn onClick={() => close(j)} icon="close" label="Close job" />}
+            {isAdmin && <JobIconBtn danger onClick={() => del(j)} icon="trash" label="Delete job post" />}
           </div>
         </div>
         );
@@ -289,13 +299,23 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs }) {
+function CandidateList({ jobs, initialJobFilter }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
-  const [editId, setEditId] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
-  const load = () => hrApi('/candidates').then(setCands).catch(() => {});
+  const [q, setQ] = useState('');
+  const [jobFilter, setJobFilter] = useState(initialJobFilter || '');
+  const [stageFilter, setStageFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  // Keyword search runs server-side (covers resume text); other filters are local.
+  const load = (kw) => {
+    const qs = kw && kw.trim() ? `?q=${encodeURIComponent(kw.trim())}` : '';
+    return hrApi(`/candidates${qs}`).then(setCands).catch(() => {});
+  };
   useEffect(() => { load(); }, []);
+  useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
+  useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
   const job = (id) => jobs.find((j) => j._id === id) || {};
   const stageLabel = (c) => {
     if (c.rejected) return { label: 'Rejected', color: '#DC2626' };
@@ -303,50 +323,99 @@ function CandidateList({ jobs }) {
     return { label: st ? st.label : c.stage, color: st ? st.color : '#64748B' };
   };
 
-  // A candidate is "viewed" → show the full page instead of the list.
-  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
+  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(q); }} />;
 
-  if (!cands.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No candidates yet.</div>;
+  // All stages across jobs, de-duplicated, for the stage filter.
+  const allStages = []; const seen = new Set();
+  jobs.forEach((j) => (j.stages || []).forEach((s) => { if (!seen.has(s.id)) { seen.add(s.id); allStages.push(s); } }));
+  const allTags = Array.from(new Set(cands.flatMap((c) => c.tags || []))).sort();
+
+  const filtered = cands.filter((c) => {
+    if (jobFilter && c.jobPostId !== Number(jobFilter)) return false;
+    if (stageFilter && (stageFilter === 'rejected' ? !c.rejected : c.stage !== stageFilter)) return false;
+    if (sourceFilter && c.source !== sourceFilter) return false;
+    if (tagFilter && !(c.tags || []).includes(tagFilter)) return false;
+    return true;
+  });
+
+  const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-            <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
-            <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
-          </tr></thead>
-          <tbody>
-            {cands.map((c) => {
-              const a = c.answers || {}; const st = stageLabel(c);
-              return (
-                <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
-                  <td className="px-4 py-3">
-                    <button onClick={() => setViewId(c._id)} className="text-left">
-                      <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
-                      <div className="text-xs text-slate-400">{c.email}</div>
-                    </button>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{job(c.jobPostId).title || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{totalExperience(c)}</td>
-                  <td className="px-4 py-3 text-slate-500">{a.currentCtc || '—'}</td>
-                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{timeAgo(c.updatedAt)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <CandIconBtn icon="edit" label="Edit" onClick={() => setEditId(c._id)} />
-                      <CandIconBtn icon="eye" label="View" onClick={() => setViewId(c._id)} />
-                      <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+    <div>
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
+        <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
+          <option value="">All positions</option>
+          {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+        </select>
+        <select className={F} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+          <option value="">All stages</option>
+          {allStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          <option value="rejected">Rejected</option>
+        </select>
+        <select className={F} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+          <option value="">All sources</option>
+          <option value="manual">Manual</option>
+          <option value="public_form">Application form</option>
+        </select>
+        {allTags.length > 0 && (
+          <select className={F} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+            <option value="">All tags</option>
+            {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+        {(q || jobFilter || stageFilter || sourceFilter || tagFilter) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Clear</button>}
       </div>
-      {editId && <EditCandidateModal candidateId={editId} jobs={jobs} onClose={() => setEditId(null)} onSaved={() => { setEditId(null); load(); }} />}
+
+      {!filtered.length ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">{cands.length ? 'No candidates match these filters.' : 'No candidates yet.'}</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
+                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((c) => {
+                  const a = c.answers || {}; const st = stageLabel(c);
+                  return (
+                    <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                      <td className="px-4 py-3">
+                        <button onClick={() => setViewId(c._id)} className="text-left">
+                          <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
+                          <div className="text-xs text-slate-400">{c.email}</div>
+                        </button>
+                        {(c.rating > 0 || (c.tags || []).length > 0) && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            {c.rating > 0 && <span className="text-amber-400 text-xs">{'★'.repeat(c.rating)}<span className="text-slate-200">{'★'.repeat(5 - c.rating)}</span></span>}
+                            {(c.tags || []).slice(0, 3).map((t) => <span key={t} className="rounded-full bg-slate-100 text-slate-500 px-1.5 py-0.5 text-[10px] font-semibold">{t}</span>)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{job(c.jobPostId).title || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{totalExperience(c)}</td>
+                      <td className="px-4 py-3 text-slate-500">{a.currentCtc || '—'}</td>
+                      <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
+                      <td className="px-4 py-3 text-slate-500">{c.recruiterName || '—'}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{timeAgo(c.updatedAt)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
+                          <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(); }} />}
     </div>
   );
@@ -354,13 +423,14 @@ function CandidateList({ jobs }) {
 
 function CandIconBtn({ icon, label, onClick }) {
   const paths = {
-    edit: 'M11 4H4v16h16v-7M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z',
-    eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 15a3 3 0 100-6 3 3 0 000 6z',
-    note: 'M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z',
+    eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z',
+    // A speech-bubble note icon (distinct from the edit/pencil used elsewhere).
+    note: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   };
+  const extra = icon === 'eye' ? <circle cx="12" cy="12" r="3" /> : null;
   return (
     <button onClick={onClick} title={label} aria-label={label} className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 transition">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={paths[icon]} /></svg>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={paths[icon]} />{extra}</svg>
     </button>
   );
 }
@@ -468,8 +538,22 @@ function AddCandidateModal({ job, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [prog, setProg] = useState(null); // {pct,label} during resume autofill
+  const [dups, setDups] = useState([]); // existing candidates with same email/phone
+  const [resumeText, setResumeText] = useState('');
   const autofillRef = React.useRef(null);
   const set = (patch) => setC((s) => ({ ...s, ...patch }));
+
+  // Warn if a candidate with the same email/phone already exists.
+  const checkDup = async () => {
+    if (!c.email && !c.phone) return;
+    try {
+      const params = new URLSearchParams();
+      if (c.email) params.set('email', c.email);
+      if (c.phone) params.set('phone', c.phone);
+      const r = await hrApi(`/candidates/check-duplicate?${params.toString()}`);
+      setDups(r.duplicates || []);
+    } catch { /* non-fatal */ }
+  };
 
   // Upload a resume and let AI autofill the form (server extracts text).
   const autofillFromResume = async (file) => {
@@ -485,6 +569,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
       try { p = await hrApi('/candidates/ai/parse-resume', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); }
       finally { clearInterval(timer); }
       setProg({ pct: 100, label: 'Done' });
+      if (p._text) setResumeText(p._text);
       setC((s) => ({
         ...s,
         firstName: p.firstName || s.firstName, lastName: p.lastName || s.lastName,
@@ -510,7 +595,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
     try {
       await hrApi('/candidates', { method: 'POST', body: JSON.stringify({
         firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone,
-        jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address,
+        jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address, resumeText,
         answers: {
           ...c.answers,
           currentCtc: c.currentCtc, expectedCtc: c.expectedCtc, noticePeriod: c.noticePeriod,
@@ -546,6 +631,11 @@ function AddCandidateModal({ job, onClose, onSaved }) {
         <>
             <div className="p-6 overflow-auto flex-1">
               {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+              {dups.length > 0 && (
+                <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+                  <b>Possible duplicate:</b> a candidate with this email/phone already exists — {dups.map((d) => d.name).join(', ')}. You can still add them, but check first.
+                </div>
+              )}
 
               {/* Autofill from resume */}
               <div className="rounded-xl border border-dashed border-orange-300 bg-orange-50/50 p-4 mb-4">
@@ -571,8 +661,8 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                 <div className="grid grid-cols-2 gap-4">
                   <div><L req>First Name</L><input className={inp} value={c.firstName} onChange={(e) => set({ firstName: e.target.value })} /></div>
                   <div><L req>Last Name</L><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
-                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+91…" /></div>
-                  <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} /></div>
+                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={checkDup} placeholder="+91…" /></div>
+                  <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} onBlur={checkDup} /></div>
                   <div><L>Current CTC (Annual)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 4,50,000" /></div>
                   <div><L>Expected CTC (Annual)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 8,50,000" /></div>
                   <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
@@ -666,47 +756,140 @@ function AddCandidateModal({ job, onClose, onSaved }) {
 }
 
 function RecruitPipeline({ jobs }) {
-  const published = jobs.filter((j) => j.status === 'published');
+  const published = jobs.filter((j) => j.status === 'published' || j.status === 'paused');
   const [jobId, setJobId] = useState(published[0]?._id || null);
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
+  const [dragId, setDragId] = useState(null);
   const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
   useEffect(() => { load(); }, [jobId]);
   const job = jobs.find((j) => j._id === jobId);
   const stages = (job && job.stages) || [];
-  const move = async (c, stage) => { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x)); };
+  const move = async (c, stage) => {
+    if (c.stage === stage) return;
+    setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x));
+    try { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); } catch (e) { alert(e.message); load(); }
+  };
   if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
+  const softBg = (hex) => `${hex}14`;
   return (
     <div>
-      <select className={inp + ' max-w-xs mb-4'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
-        {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
-      </select>
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {stages.map((st) => (
-          <div key={st.id} className="w-64 shrink-0 bg-slate-50 rounded-xl p-2">
-            <div className="flex items-center gap-2 px-2 py-1.5 mb-2"><span className="w-2.5 h-2.5 rounded-full" style={{ background: st.color }} /><span className="text-xs font-bold text-slate-600">{st.label}</span><span className="text-xs text-slate-400">{cands.filter((c) => c.stage === st.id).length}</span></div>
-            <div className="space-y-2">
-              {cands.filter((c) => c.stage === st.id).map((c) => (
-                <div key={c._id} className="bg-white rounded-lg border border-slate-200 p-2.5">
-                  <div className="cursor-pointer" onClick={() => setViewId(c._id)}>
-                    <div className="text-sm font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
-                    <div className="text-xs text-slate-400">{c.email}</div>
-                  </div>
-                  <select className="mt-1.5 w-full text-xs rounded border border-slate-200 px-1.5 py-1" value={c.stage} onChange={(e) => move(c, e.target.value)}>
-                    {stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                  </select>
+      <div className="flex items-center justify-between mb-4">
+        <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
+          {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+        </select>
+        <div className="text-sm text-slate-400">{cands.length} candidates · drag a card to move it between stages</div>
+      </div>
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {stages.map((s) => {
+          const col = cands.filter((c) => c.stage === s.id && !c.rejected);
+          return (
+            <div key={s.id}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => { const d = cands.find((x) => x._id === dragId); if (d) move(d, s.id); setDragId(null); }}
+              className="shrink-0 w-72 rounded-3xl p-3" style={{ background: softBg(s.color) }}>
+              <div className="flex items-center justify-between px-2 pt-1 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
+                  <span className="text-sm font-extrabold text-[#050A1F]">{s.label}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
                 </div>
-              ))}
+              </div>
+              <div className="space-y-3 min-h-[160px]">
+                {col.map((c) => {
+                  const a = c.answers || {};
+                  return (
+                    <div key={c._id} draggable
+                      onDragStart={() => setDragId(c._id)}
+                      onClick={() => setViewId(c._id)}
+                      className="bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all">
+                      <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: c.source === 'public_form' ? '#E7F6EF' : '#EEF2FF', color: c.source === 'public_form' ? '#0F9D58' : '#4F46E5' }}>{c.source === 'public_form' ? 'Applied' : 'Sourced'}</span>
+                      <div className="font-extrabold text-sm text-[#050A1F] leading-snug">{c.name}</div>
+                      {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
+                      <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-500">
+                        {totalExperience(c) !== '—' && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{totalExperience(c)}</span>}
+                        {a.currentCtc && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{a.currentCtc}</span>}
+                      </div>
+                      <div className="flex items-center justify-between mt-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center">{(c.recruiterName || c.name || '?').trim()[0]?.toUpperCase()}</span>
+                          <span className="text-[10px] text-slate-400">{c.recruiterName || ''}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400">{timeAgo(c.updatedAt)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// Shared recruitment mailbox connect/disconnect (used by all recruiters).
+// Panelist view: interviews assigned to me, grouped by job, with a way to open
+// the candidate and submit feedback.
+function MyInterviews() {
+  const [data, setData] = useState(null);
+  const [viewId, setViewId] = useState(null);
+  const load = () => hrApi('/my-interviews').then(setData).catch(() => setData({ jobs: [] }));
+  useEffect(() => { load(); }, []);
+  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
+  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const jobs = data.jobs || [];
+  return (
+    <div>
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">My Interviews</h1>
+      <p className="text-sm text-slate-500 mb-6">Candidates you've been assigned to interview. Open a candidate to submit your feedback.</p>
+      {jobs.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">You have no interview assignments right now.</div>
+      ) : jobs.map((j) => (
+        <div key={j.jobId || 'none'} className="mb-6">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{j.jobTitle}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden divide-y divide-slate-50">
+            {j.candidates.map((c) => (
+              <div key={c.interviewId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60">
+                <div>
+                  <div className="font-semibold text-slate-700">{c.name}</div>
+                  <div className="text-xs text-slate-400">{c.roundLabel || 'Interview'} · {c.at ? new Date(c.at).toLocaleString() : 'TBD'}{c.meetLink ? ' · Google Meet' : ''}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {c.meetLink && <a href={c.meetLink} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Join Meet</a>}
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${c.submitted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{c.submitted ? 'Feedback submitted' : 'Feedback pending'}</span>
+                  <button onClick={() => setViewId(c.candidateId)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>{c.submitted ? 'View' : 'Give feedback'}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Email templates & signature live behind the user menu. Full management ships
+// in the next phase; these give the menu real destinations now.
+function EmailTemplatesPage() {
+  return (
+    <div className="max-w-2xl">
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Templates</h1>
+      <p className="text-sm text-slate-500 mb-6">Reusable recruitment email templates (offer, rejection, interview invite) will be managed here.</p>
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Template management is coming in the next update.</div>
+    </div>
+  );
+}
+function EmailSignaturePage() {
+  return (
+    <div className="max-w-2xl">
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Signature</h1>
+      <p className="text-sm text-slate-500 mb-6">Your personal signature appended to recruitment emails will be managed here.</p>
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Signature management is coming in the next update.</div>
+    </div>
+  );
+}
 function RecruitmentMailbox({ isAdmin, setErr }) {
   const [status, setStatus] = useState(null);
   const load = () => hrApi('/mailbox/status').then(setStatus).catch((e) => setErr(e.message));
@@ -1123,8 +1306,8 @@ export default function HrApp() {
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'recruitment', label: 'Recruitment' },
+    { id: 'interview', label: 'Interview' },
     { id: 'employees', label: 'Employee' },
-    ...(!isAdmin ? [{ id: 'profile', label: 'My Profile' }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
 
@@ -1143,23 +1326,52 @@ export default function HrApp() {
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400">{user.name}</span>
-            <button onClick={logout} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white hover:border-slate-400">Logout</button>
-          </div>
+          <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); }} onLogout={logout} isAdmin={isAdmin} />
         </div>
       </header>
       <main className="max-w-6xl mx-auto px-4 py-8">
         {view === 'dashboard' && <HrDashboard user={user} />}
-        {view === 'recruitment' && <HrRecruitment />}
+        {view === 'recruitment' && <HrRecruitment isAdmin={isAdmin} />}
+        {view === 'interview' && <MyInterviews />}
         {view === 'employees' && (
           profileTarget
             ? <div><button onClick={() => setProfileTarget(null)} className="text-xs font-bold text-slate-400 mb-3">← Back to employees</button><ProfilePage me={user} targetId={profileTarget} /></div>
             : <EmployeeDirectory isAdmin={isAdmin} onOpenProfile={(id) => setProfileTarget(id)} />
         )}
-        {view === 'profile' && !isAdmin && <ProfilePage me={user} />}
+        {view === 'profile' && <ProfilePage me={user} />}
+        {view === 'templates' && <EmailTemplatesPage />}
+        {view === 'signature' && <EmailSignaturePage />}
         {view === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
+    </div>
+  );
+}
+
+// Top-right user dropdown: My Profile, Email Template, Email Signature, Logout.
+function UserMenu({ user, onNavigate, onLogout, isAdmin }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+  const item = (label, action) => <button onClick={() => { setOpen(false); action(); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">{label}</button>;
+  return (
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
+      <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-200 hover:border-slate-400">
+        <span className="w-6 h-6 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[11px]">{(user.name || '?')[0]?.toUpperCase()}</span>
+        {user.name} <span className="text-slate-500">▾</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50">
+          {!isAdmin && item('My Profile', () => onNavigate('profile'))}
+          {item('Email Template', () => onNavigate('templates'))}
+          {item('Email Signature', () => onNavigate('signature'))}
+          <div className="border-t border-slate-100 my-1" />
+          <button onClick={() => { setOpen(false); onLogout(); }} className="w-full text-left px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Logout</button>
+        </div>
+      )}
     </div>
   );
 }
