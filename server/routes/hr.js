@@ -5,7 +5,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, User, AuditLog, Settings } = require('../models');
-const { signHr, requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
+const { signHr, requireHrAccess, requireHrAdmin, requireScheduler } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
 const router = express.Router();
@@ -822,6 +822,7 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     row.rejected = true; row.stage = 'rejected';
+    row.rejectionReason = String(req.body.reason || '').slice(0, 300);
     pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 200)}` : ''}.`, by: req.hrActor.name });
     await row.save();
     res.json(row.toJSON());
@@ -933,6 +934,254 @@ router.post('/candidates/:id/ai-screen', requireHrAccess, async (req, res, next)
     await row.save();
     res.json(result);
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
+});
+
+// ---- Activities (tasks & calls) ----
+router.post('/candidates/:id/activities', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const act = {
+      id: `act${Date.now()}`, kind: b.kind === 'call' ? 'call' : 'task', mode: b.mode === 'done' ? 'done' : 'scheduled',
+      title: String(b.title || '').slice(0, 200), agenda: String(b.agenda || '').slice(0, 200),
+      date: b.date || '', time: b.time || '', description: String(b.description || b.note || '').slice(0, 2000),
+      priority: ['High', 'Medium', 'Low'].includes(b.priority) ? b.priority : 'Medium',
+      assignedToId: b.assignedToId || null, assignedToName: String(b.assignedToName || '').slice(0, 120),
+      reminderOn: !!b.reminderOn, done: b.mode === 'done',
+      by: req.hrActor.name, at: new Date().toISOString(),
+    };
+    const list = Array.isArray(row.activities) ? row.activities.slice() : [];
+    list.unshift(act);
+    row.activities = list; row.changed('activities', true);
+    const label = act.kind === 'call' ? (act.agenda || 'Call') : (act.title || 'Task');
+    pushTimeline(row, { type: act.kind, text: `${act.mode === 'done' ? 'Logged' : 'Scheduled'} ${act.kind}: ${label}${act.assignedToName ? ` (→ ${act.assignedToName})` : ''}.`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.patch('/candidates/:id/activities/:actId', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const list = (row.activities || []).map((a) => a.id === req.params.actId ? { ...a, ...req.body, id: a.id } : a);
+    row.activities = list; row.changed('activities', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/candidates/:id/activities/:actId', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    row.activities = (row.activities || []).filter((a) => a.id !== req.params.actId); row.changed('activities', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// ---- Attachments ----
+router.post('/candidates/:id/attachments', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const { base64, fileName } = req.body || {};
+    if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    const { safeFolder } = require('./careers');
+    const imagekit = require('../services/imagekit');
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const out = await imagekit.uploadFile({ base64, fileName: fileName || 'file', folder: `HRMS/${safeFolder(job ? job.title : 'General')}/Attachments` });
+    const list = Array.isArray(row.attachments) ? row.attachments.slice() : [];
+    list.unshift({ id: `at${Date.now()}`, name: out.name || fileName, url: out.url, at: new Date().toISOString(), by: req.hrActor.name });
+    row.attachments = list; row.changed('attachments', true);
+    pushTimeline(row, { type: 'attachment', text: `${req.hrActor.name} uploaded an attachment: ${out.name || fileName}.`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'ImageKit is not configured. Add ImageKit keys in admin settings.' });
+    next(e);
+  }
+});
+
+router.delete('/candidates/:id/attachments/:attId', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    row.attachments = (row.attachments || []).filter((a) => a.id !== req.params.attId); row.changed('attachments', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// ---- Delete candidate (admin only) ----
+router.delete('/candidates/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a candidate.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Rejection reasons ----
+router.get('/rejection-reasons', requireHrAccess, async (req, res, next) => {
+  try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); res.json({ reasons: s.hrRejectionReasons || [] }); }
+  catch (e) { next(e); }
+});
+router.post('/rejection-reasons', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const reason = String(req.body.reason || '').trim().slice(0, 120);
+    if (!reason) return res.status(400).json({ error: 'Reason cannot be empty.' });
+    const list = Array.isArray(s.hrRejectionReasons) ? s.hrRejectionReasons.slice() : [];
+    if (!list.includes(reason)) list.push(reason);
+    s.hrRejectionReasons = list; s.changed('hrRejectionReasons', true); await s.save();
+    res.json({ reasons: list });
+  } catch (e) { next(e); }
+});
+
+// ---- HR email templates ----
+router.get('/email-templates', requireHrAccess, async (req, res, next) => {
+  try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); res.json({ templates: s.hrEmailTemplates || [] }); }
+  catch (e) { next(e); }
+});
+router.post('/email-templates', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const list = Array.isArray(s.hrEmailTemplates) ? s.hrEmailTemplates.slice() : [];
+    const b = req.body || {};
+    if (b.id) {
+      const idx = list.findIndex((t) => t.id === b.id);
+      if (idx >= 0) list[idx] = { ...list[idx], name: String(b.name || '').slice(0, 120), subject: String(b.subject || '').slice(0, 300), body: String(b.body || '').slice(0, 20000) };
+    } else {
+      list.push({ id: `tpl${Date.now()}`, name: String(b.name || 'Untitled').slice(0, 120), subject: String(b.subject || '').slice(0, 300), body: String(b.body || '').slice(0, 20000) });
+    }
+    s.hrEmailTemplates = list; s.changed('hrEmailTemplates', true); await s.save();
+    res.json({ templates: list });
+  } catch (e) { next(e); }
+});
+router.delete('/email-templates/:tplId', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    s.hrEmailTemplates = (s.hrEmailTemplates || []).filter((t) => t.id !== req.params.tplId); s.changed('hrEmailTemplates', true); await s.save();
+    res.json({ templates: s.hrEmailTemplates });
+  } catch (e) { next(e); }
+});
+
+// ---- Personal email signature ----
+router.get('/signature', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ signature: '' });
+    res.json({ signature: req.hrUser.emailSignature || '' });
+  } catch (e) { next(e); }
+});
+router.post('/signature', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(400).json({ error: 'Only employees have a personal signature.' });
+    req.hrUser.emailSignature = String(req.body.signature || '').slice(0, 5000);
+    await req.hrUser.save();
+    res.json({ signature: req.hrUser.emailSignature });
+  } catch (e) { next(e); }
+});
+
+// ---- Bulk actions ----
+router.post('/candidates/bulk', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const ids = Array.isArray(b.ids) ? b.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'No candidates selected.' });
+    const rows = await HrCandidate.findAll({ where: { id: ids } });
+    for (const row of rows) {
+      if (b.action === 'move' && b.stage) { row.stage = String(b.stage); row.rejected = false; pushTimeline(row, { type: 'stage', text: `Moved to ${b.stage} (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); }
+      else if (b.action === 'reject') { row.rejected = true; row.stage = 'rejected'; row.rejectionReason = String(b.reason || '').slice(0, 300); pushTimeline(row, { type: 'reject', text: `Rejected (bulk) by ${req.hrActor.name}${b.reason ? ` — ${b.reason}` : ''}.`, by: req.hrActor.name }); }
+      else if (b.action === 'assign' && b.recruiterId) { const u = await HrUser.findByPk(b.recruiterId); if (u) { row.recruiterId = u.id; row.recruiterName = u.name; pushTimeline(row, { type: 'assigned', text: `${u.name} assigned as recruiter (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); } }
+      await row.save();
+    }
+    res.json({ ok: true, count: rows.length });
+  } catch (e) { next(e); }
+});
+
+// ---- Offer management ----
+router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const offer = row.offer || { active: true, status: 'discussion', salaryDiscussions: [], approvals: [], loi: null, offerLetter: null, finalCtc: '', joiningDate: '' };
+    offer.active = true;
+    const now = new Date().toISOString();
+    switch (b.op) {
+      case 'add_discussion':
+        offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', notes: b.notes || '', by: req.hrActor.name });
+        pushTimeline(row, { type: 'offer', text: `Salary discussion logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered})` : ''}.`, by: req.hrActor.name });
+        break;
+      case 'request_approval':
+        offer.approvals.unshift({ id: `ap${Date.now()}`, requestedBy: req.hrActor.name, candidateAsk: b.candidateAsk || '', justification: b.justification || '', status: 'pending', counterOffer: '', decidedBy: '', at: now });
+        offer.status = 'approval_pending';
+        pushTimeline(row, { type: 'offer', text: `${req.hrActor.name} requested management approval for a higher package${b.candidateAsk ? ` (${b.candidateAsk})` : ''}.`, by: req.hrActor.name });
+        break;
+      case 'send_loi':
+        offer.loi = { sentAt: now, by: req.hrActor.name, subject: b.subject || '', body: b.body || '', status: b.emailSent ? 'sent' : 'draft' };
+        offer.status = 'loi_sent';
+        pushTimeline(row, { type: 'offer', text: `Letter of Intent ${b.emailSent ? 'sent' : 'drafted'} by ${req.hrActor.name}.`, by: req.hrActor.name });
+        break;
+      case 'send_offer_letter':
+        offer.offerLetter = { sentAt: now, by: req.hrActor.name, fileUrl: b.fileUrl || '', fileName: b.fileName || '', status: b.emailSent ? 'sent' : 'draft' };
+        offer.finalCtc = b.finalCtc || offer.finalCtc;
+        offer.joiningDate = b.joiningDate || offer.joiningDate;
+        offer.status = 'offer_sent';
+        pushTimeline(row, { type: 'offer', text: `Offer letter ${b.emailSent ? 'sent' : 'attached'} by ${req.hrActor.name}${b.finalCtc ? ` (CTC ${b.finalCtc})` : ''}.`, by: req.hrActor.name });
+        break;
+      case 'set_status':
+        offer.status = b.status || offer.status;
+        if (b.status === 'accepted') pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer.`, by: req.hrActor.name });
+        if (b.status === 'declined') pushTimeline(row, { type: 'offer', text: `Candidate declined the offer.`, by: req.hrActor.name });
+        break;
+      default: return res.status(400).json({ error: 'Unknown offer operation.' });
+    }
+    row.offer = offer; row.changed('offer', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Admin decides on a salary-approval request (counter-offer).
+router.post('/candidates/:id/offer/approve', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can approve.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row || !row.offer) return res.status(404).json({ error: 'Offer not found.' });
+    const b = req.body || {};
+    const offer = row.offer;
+    const ap = (offer.approvals || []).find((a) => a.id === b.approvalId);
+    if (!ap) return res.status(404).json({ error: 'Approval request not found.' });
+    ap.status = b.decision === 'approved' ? 'approved' : b.decision === 'countered' ? 'countered' : 'rejected';
+    ap.counterOffer = b.counterOffer || '';
+    ap.decidedBy = req.hrActor.name;
+    ap.decidedAt = new Date().toISOString();
+    offer.status = 'discussion';
+    pushTimeline(row, { type: 'offer', text: `${req.hrActor.name} ${ap.status} the approval request${ap.counterOffer ? ` — counter: ${ap.counterOffer}` : ''}.`, by: req.hrActor.name });
+    row.offer = offer; row.changed('offer', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Pending approval requests across candidates (admin in-app queue).
+router.get('/offer-approvals', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.json({ requests: [] });
+    const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
+    const requests = [];
+    for (const r of rows) {
+      const pend = ((r.offer && r.offer.approvals) || []).filter((a) => a.status === 'pending');
+      pend.forEach((a) => requests.push({ candidateId: r.id, candidateName: r.name, ...a }));
+    }
+    res.json({ requests });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

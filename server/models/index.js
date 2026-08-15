@@ -440,6 +440,10 @@ const Settings = sequelize.define(
     // (encrypted); this holds the address and connection metadata.
     hrMailbox: { type: DataTypes.JSON, defaultValue: { email: '', connectedAt: null } },
 
+    // Shared recruitment email templates and rejection reasons (HR-managed).
+    hrEmailTemplates: { type: DataTypes.JSON, defaultValue: [] }, // [{ id, name, subject, body }]
+    hrRejectionReasons: { type: DataTypes.JSON, defaultValue: ['Position filled', 'Skills mismatch', 'Salary expectations', 'Location constraints', 'Did not clear interview'] },
+
     pricing: { type: DataTypes.JSON },
     // CRM dropdown configuration — admin-editable so new sources/services/stages
     // can be added without a code change. Defaults seed the lists you specified.
@@ -1225,6 +1229,7 @@ const HrUser = sequelize.define('HrUser', {
   // without a migration for each one.
   profile: { type: DataTypes.JSON, defaultValue: {} },
   shiftId: { type: DataTypes.INTEGER, allowNull: true }, // assigned HrShift
+  emailSignature: { type: DataTypes.TEXT, defaultValue: '' }, // personal recruitment-email signature (HTML)
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1345,9 +1350,15 @@ const HrCandidate = sequelize.define('HrCandidate', {
   feedback: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, skills:[{name,rating}], verdict, note, at, interviewId, round, panelist }]
   timeline: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, type, text, by, at }]
   attachments: { type: DataTypes.JSON, defaultValue: [] },  // [{ id, name, url, at }]
-  // interviews: [{ id, at, end, mode, round, notes, by, meetLink, eventLink,
-  //               panelists:[{ id, name, department, email }], feedbackByPanelist:{ panelistId: bool } }]
+  // interviews: [...]
   interviews: { type: DataTypes.JSON, defaultValue: [] },
+  // activities: [{ id, kind:'task'|'call', mode:'scheduled'|'done', title/agenda,
+  //   date, time, description/note, priority, assignedToId, assignedToName,
+  //   reminderOn, by, at, done }]
+  activities: { type: DataTypes.JSON, defaultValue: [] },
+  // offer: { active, salaryDiscussions:[...], approvals:[...], loi:{...},
+  //   offerLetter:{...}, finalCtc, joiningDate, status }
+  offer: { type: DataTypes.JSON, defaultValue: null },
   aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };

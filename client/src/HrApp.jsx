@@ -149,7 +149,7 @@ function HrRecruitment({ isAdmin }) {
         ))}
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
-      {tab === 'candidates' && <CandidateList jobs={jobs} initialJobFilter={candFilterJob} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} initialJobFilter={candFilterJob} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -299,10 +299,12 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, initialJobFilter }) {
+function CandidateList({ jobs, isAdmin, initialJobFilter }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
+  const [sel, setSel] = useState([]); // selected candidate ids for bulk actions
+  const [bulkModal, setBulkModal] = useState(null); // 'move' | 'reject' | 'assign'
   const [q, setQ] = useState('');
   const [jobFilter, setJobFilter] = useState(initialJobFilter || '');
   const [stageFilter, setStageFilter] = useState('');
@@ -323,7 +325,7 @@ function CandidateList({ jobs, initialJobFilter }) {
     return { label: st ? st.label : c.stage, color: st ? st.color : '#64748B' };
   };
 
-  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(q); }} />;
+  if (viewId) return <HrCandidateView candidateId={viewId} isAdmin={isAdmin} onBack={() => { setViewId(null); load(q); }} onDeleted={() => { setViewId(null); load(q); }} />;
 
   // All stages across jobs, de-duplicated, for the stage filter.
   const allStages = []; const seen = new Set();
@@ -337,6 +339,11 @@ function CandidateList({ jobs, initialJobFilter }) {
     if (tagFilter && !(c.tags || []).includes(tagFilter)) return false;
     return true;
   });
+
+  const toggleSel = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const allShownSelected = filtered.length > 0 && filtered.every((c) => sel.includes(c._id));
+  const toggleAll = () => setSel(allShownSelected ? sel.filter((id) => !filtered.some((c) => c._id === id)) : Array.from(new Set([...sel, ...filtered.map((c) => c._id)])));
+  const delCandidate = async (id) => { if (!window.confirm('Delete this candidate permanently?')) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { alert(e.message); } };
 
   const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
   return (
@@ -367,6 +374,18 @@ function CandidateList({ jobs, initialJobFilter }) {
         {(q || jobFilter || stageFilter || sourceFilter || tagFilter) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Clear</button>}
       </div>
 
+      {/* Bulk action bar */}
+      {sel.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 rounded-xl bg-[#050A1F] text-white px-4 py-2.5">
+          <span className="text-sm font-bold">{sel.length} selected</span>
+          <div className="flex-1" />
+          <button onClick={() => setBulkModal('move')} className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-bold">Move stage</button>
+          <button onClick={() => setBulkModal('assign')} className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-bold">Assign recruiter</button>
+          <button onClick={() => setBulkModal('reject')} className="rounded-lg bg-red-500/80 hover:bg-red-500 px-3 py-1.5 text-xs font-bold">Reject</button>
+          <button onClick={() => setSel([])} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white">Clear</button>
+        </div>
+      )}
+
       {!filtered.length ? (
         <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">{cands.length ? 'No candidates match these filters.' : 'No candidates yet.'}</div>
       ) : (
@@ -374,6 +393,7 @@ function CandidateList({ jobs, initialJobFilter }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="px-4 py-3"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
                 <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
                 <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
@@ -383,6 +403,7 @@ function CandidateList({ jobs, initialJobFilter }) {
                   const a = c.answers || {}; const st = stageLabel(c);
                   return (
                     <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                      <td className="px-4 py-3"><input type="checkbox" checked={sel.includes(c._id)} onChange={() => toggleSel(c._id)} /></td>
                       <td className="px-4 py-3">
                         <button onClick={() => setViewId(c._id)} className="text-left">
                           <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
@@ -406,6 +427,7 @@ function CandidateList({ jobs, initialJobFilter }) {
                         <div className="flex items-center justify-end gap-1.5">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
                           <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
+                          {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
                         </div>
                       </td>
                     </tr>
@@ -416,7 +438,8 @@ function CandidateList({ jobs, initialJobFilter }) {
           </div>
         </div>
       )}
-      {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(); }} />}
+      {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(q); }} />}
+      {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
   );
 }
@@ -426,12 +449,76 @@ function CandIconBtn({ icon, label, onClick }) {
     eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z',
     // A speech-bubble note icon (distinct from the edit/pencil used elsewhere).
     note: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+    trash: 'M3 6h18M8 6V4h8v2m-9 0v14h10V6M10 11v6M14 11v6',
   };
   const extra = icon === 'eye' ? <circle cx="12" cy="12" r="3" /> : null;
+  const danger = icon === 'trash';
   return (
-    <button onClick={onClick} title={label} aria-label={label} className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 transition">
+    <button onClick={onClick} title={label} aria-label={label} className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition ${danger ? 'border-red-200 text-red-400 hover:bg-red-50 hover:text-red-500' : 'border-slate-300 text-slate-500 hover:bg-slate-50'}`}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={paths[icon]} />{extra}</svg>
     </button>
+  );
+}
+
+// Bulk action modal: move stage, assign recruiter, or reject (with reason).
+function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
+  const [stage, setStage] = useState('');
+  const [recruiterId, setRecruiterId] = useState('');
+  const [reason, setReason] = useState('');
+  const [reasons, setReasons] = useState([]);
+  const [emps, setEmps] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (action === 'reject') hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {});
+    if (action === 'assign') hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {});
+  }, [action]);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const body = { ids, action };
+      if (action === 'move') body.stage = stage;
+      if (action === 'assign') body.recruiterId = Number(recruiterId);
+      if (action === 'reject') body.reason = reason;
+      await hrApi('/candidates/bulk', { method: 'POST', body: JSON.stringify(body) });
+      onDone();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  const disabled = (action === 'move' && !stage) || (action === 'assign' && !recruiterId) || (action === 'reject' && !reason);
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const title = action === 'move' ? 'Move to stage' : action === 'assign' ? 'Assign recruiter' : 'Reject candidates';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100"><div className="text-lg font-extrabold text-[#050A1F]">{title}</div><div className="text-xs text-slate-400">{ids.length} candidate(s)</div></div>
+        <div className="p-6">
+          {action === 'move' && (
+            <select className={inp2} value={stage} onChange={(e) => setStage(e.target.value)}>
+              <option value="">Choose a stage…</option>
+              {stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          )}
+          {action === 'assign' && (
+            <select className={inp2} value={recruiterId} onChange={(e) => setRecruiterId(e.target.value)}>
+              <option value="">Choose a recruiter…</option>
+              {emps.map((e) => <option key={e._id} value={e._id}>{e.name}{e.department ? ` · ${e.department}` : ''}</option>)}
+            </select>
+          )}
+          {action === 'reject' && (
+            <div>
+              <select className={inp2} value={reason} onChange={(e) => setReason(e.target.value)}>
+                <option value="">Choose a reason…</option>
+                {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <div className="text-[11px] text-slate-400 mt-1">A reason is required before rejecting.</div>
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={run} disabled={busy || disabled} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: action === 'reject' ? '#DC2626' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Working…' : 'Apply'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -761,6 +848,7 @@ function RecruitPipeline({ jobs }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [dragId, setDragId] = useState(null);
+  const [moveFor, setMoveFor] = useState(null); // candidate to move via popup
   const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
   useEffect(() => { load(); }, [jobId]);
   const job = jobs.find((j) => j._id === jobId);
@@ -779,7 +867,7 @@ function RecruitPipeline({ jobs }) {
         <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
           {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
         </select>
-        <div className="text-sm text-slate-400">{cands.length} candidates · drag a card to move it between stages</div>
+        <div className="text-sm text-slate-400">{cands.length} candidates · drag a card, or use the ⇄ button to move</div>
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
@@ -802,21 +890,25 @@ function RecruitPipeline({ jobs }) {
                   return (
                     <div key={c._id} draggable
                       onDragStart={() => setDragId(c._id)}
-                      onClick={() => setViewId(c._id)}
-                      className="bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all">
-                      <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: c.source === 'public_form' ? '#E7F6EF' : '#EEF2FF', color: c.source === 'public_form' ? '#0F9D58' : '#4F46E5' }}>{c.source === 'public_form' ? 'Applied' : 'Sourced'}</span>
-                      <div className="font-extrabold text-sm text-[#050A1F] leading-snug">{c.name}</div>
-                      {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
-                      <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-500">
-                        {totalExperience(c) !== '—' && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{totalExperience(c)}</span>}
-                        {a.currentCtc && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{a.currentCtc}</span>}
-                      </div>
-                      <div className="flex items-center justify-between mt-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center">{(c.recruiterName || c.name || '?').trim()[0]?.toUpperCase()}</span>
-                          <span className="text-[10px] text-slate-400">{c.recruiterName || ''}</span>
+                      className="group bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all relative">
+                      <button onClick={(e) => { e.stopPropagation(); setMoveFor(c); }} title="Move to stage" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
+                      </button>
+                      <div onClick={() => setViewId(c._id)}>
+                        <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: c.source === 'public_form' ? '#E7F6EF' : '#EEF2FF', color: c.source === 'public_form' ? '#0F9D58' : '#4F46E5' }}>{c.source === 'public_form' ? 'Applied' : 'Sourced'}</span>
+                        <div className="font-extrabold text-sm text-[#050A1F] leading-snug pr-6">{c.name}</div>
+                        {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
+                        <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-500">
+                          {totalExperience(c) !== '—' && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{totalExperience(c)}</span>}
+                          {a.currentCtc && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-semibold">{a.currentCtc}</span>}
                         </div>
-                        <span className="text-[10px] text-slate-400">{timeAgo(c.updatedAt)}</span>
+                        <div className="flex items-center justify-between mt-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold flex items-center justify-center">{(c.recruiterName || c.name || '?').trim()[0]?.toUpperCase()}</span>
+                            <span className="text-[10px] text-slate-400">{c.recruiterName || ''}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400">{timeAgo(c.updatedAt)}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -825,6 +917,32 @@ function RecruitPipeline({ jobs }) {
             </div>
           );
         })}
+      </div>
+      {moveFor && <MoveStageModal candidate={moveFor} stages={stages} onClose={() => setMoveFor(null)} onMoved={(stage) => { move(moveFor, stage); setMoveFor(null); }} />}
+    </div>
+  );
+}
+
+// Single-click stage move — a popup that lists all stages (handy when there are
+// many stages and dragging across columns is fiddly).
+function MoveStageModal({ candidate, stages, onClose, onMoved }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <div className="text-base font-extrabold text-[#050A1F]">Move candidate</div>
+          <div className="text-xs text-slate-400">{candidate.name} — pick a stage</div>
+        </div>
+        <div className="p-3 max-h-80 overflow-auto">
+          {stages.map((s) => (
+            <button key={s.id} onClick={() => onMoved(s.id)} disabled={s.id === candidate.stage}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left mb-1 ${s.id === candidate.stage ? 'bg-slate-50 cursor-default' : 'hover:bg-slate-50'}`}>
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: s.color }} />
+              <span className="text-sm font-semibold text-slate-700 flex-1">{s.label}</span>
+              {s.id === candidate.stage && <span className="text-[10px] font-bold text-slate-400">Current</span>}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -870,23 +988,91 @@ function MyInterviews() {
   );
 }
 
-// Email templates & signature live behind the user menu. Full management ships
-// in the next phase; these give the menu real destinations now.
+// Email templates & signature live behind the user menu.
 function EmailTemplatesPage() {
+  const [templates, setTemplates] = useState([]);
+  const [editing, setEditing] = useState(null); // template being edited/created
+  const load = () => hrApi('/email-templates').then((r) => setTemplates(r.templates || [])).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const del = async (id) => { if (!window.confirm('Delete this template?')) return; await hrApi(`/email-templates/${id}`, { method: 'DELETE' }); load(); };
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Templates</h1>
-      <p className="text-sm text-slate-500 mb-6">Reusable recruitment email templates (offer, rejection, interview invite) will be managed here.</p>
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Template management is coming in the next update.</div>
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Email Templates</h1>
+        <button onClick={() => setEditing({ name: '', subject: '', body: '' })} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ New template</button>
+      </div>
+      <p className="text-sm text-slate-500 mb-6">Reusable recruitment emails. Use placeholders like <code className="bg-slate-100 px-1 rounded">{'{{candidate_name}}'}</code> and <code className="bg-slate-100 px-1 rounded">{'{{role}}'}</code> — they're filled in when you use the template in the candidate mail composer.</p>
+      {templates.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No templates yet.</div>
+      ) : (
+        <div className="space-y-2">
+          {templates.map((t) => (
+            <div key={t.id} className="bg-white rounded-xl border border-slate-200/70 p-4 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="font-bold text-slate-700">{t.name}</div>
+                <div className="text-xs text-slate-400 truncate">{t.subject}</div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => setEditing(t)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
+                <button onClick={() => del(t.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && <TemplateEditor tpl={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );
 }
+
+function TemplateEditor({ tpl, onClose, onSaved }) {
+  const [name, setName] = useState(tpl.name || '');
+  const [subject, setSubject] = useState(tpl.subject || '');
+  const [body, setBody] = useState(tpl.body || '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!name.trim()) { alert('Give the template a name.'); return; }
+    setBusy(true);
+    try { await hrApi('/email-templates', { method: 'POST', body: JSON.stringify({ id: tpl.id, name, subject, body }) }); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 text-lg font-extrabold text-[#050A1F]">{tpl.id ? 'Edit template' : 'New template'}</div>
+        <div className="p-6 space-y-3 overflow-auto">
+          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Name</div><input className={inp2} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interview invite" /></div>
+          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Subject</div><input className={inp2} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Interview for {{role}}" /></div>
+          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Body</div><div className="rounded-lg border border-slate-300 min-h-[200px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+          <div className="text-[11px] text-slate-400">Placeholders: {'{{candidate_name}}'}, {'{{role}}'}, {'{{company}}'}.</div>
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save template'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmailSignaturePage() {
+  const [sig, setSig] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { hrApi('/signature').then((r) => setSig(r.signature || '')).catch(() => {}); }, []);
+  const save = async () => { setBusy(true); setSaved(false); try { await hrApi('/signature', { method: 'POST', body: JSON.stringify({ signature: sig }) }); setSaved(true); } catch (e) { alert(e.message); } finally { setBusy(false); } };
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Signature</h1>
-      <p className="text-sm text-slate-500 mb-6">Your personal signature appended to recruitment emails will be managed here.</p>
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Signature management is coming in the next update.</div>
+      <p className="text-sm text-slate-500 mb-6">Your personal signature, appended to recruitment emails you send.</p>
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="rounded-lg border border-slate-300 min-h-[160px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setSig(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: sig }} />
+        <div className="flex items-center gap-3 mt-4">
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save signature'}</button>
+          {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓</span>}
+        </div>
+      </div>
     </div>
   );
 }

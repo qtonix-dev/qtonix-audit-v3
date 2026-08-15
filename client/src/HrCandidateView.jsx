@@ -17,17 +17,25 @@ const DEFAULT_ATTRS = ['Communication skills', 'Technical skill', 'Ability to le
 // WhatsApp glyph.
 const WA_PATH = 'M12 2a10 10 0 0 0-8.5 15.2L2 22l4.9-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-4-4.7-4.2-.1-.2-1-1.4-1-2.6s.6-1.8.9-2.1c.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.3 0 .5l-.4.5-.3.3c-.1.1-.2.3-.1.5.1.2.6 1 1.3 1.6.9.8 1.6 1 1.8 1.1.2.1.4.1.5-.1l.6-.8c.2-.2.4-.2.5-.1l1.8.9c.2.1.4.2.4.3.1.2.1.6 0 1z';
 
-export default function HrCandidateView({ candidateId, onBack, onClose }) {
+export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose, onDeleted }) {
   const [c, setC] = useState(null);
   const [tab, setTab] = useState('resume');
   const [err, setErr] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
   const [showInterview, setShowInterview] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [activityModal, setActivityModal] = useState(null); // 'task' | 'call'
+  const [showReject, setShowReject] = useState(false);
   const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [candidateId]);
+
+  const delCandidate = async () => {
+    if (!window.confirm('Delete this candidate permanently? This cannot be undone.')) return;
+    try { await hrApi(`/candidates/${candidateId}`, { method: 'DELETE' }); (onDeleted || back)(); }
+    catch (e) { setErr(e.message); }
+  };
 
   if (!c) return <div className="py-20 text-center text-slate-400 text-sm">{err || 'Loading…'}</div>;
 
@@ -40,9 +48,9 @@ export default function HrCandidateView({ candidateId, onBack, onClose }) {
 
   const act = async (fn) => { try { const updated = await fn(); if (updated) setC((s) => ({ ...updated, job: s.job })); } catch (e) { setErr(e.message); } };
   const moveNext = () => nextStage && act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: nextStage.id }) }));
-  const reject = () => { if (window.confirm('Reject this candidate?')) act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify({}) })); };
+  const reject = () => setShowReject(true);
 
-  const TABS = [['resume', 'Resume'], ['application', 'Application Form'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Attachments']];
+  const TABS = [['resume', 'Resume'], ['application', 'Application Form'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ['offer', 'Offer'], ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Attachments']];
 
   return (
     <div>
@@ -80,12 +88,17 @@ export default function HrCandidateView({ candidateId, onBack, onClose }) {
                 </div>
               </div>
             </div>
-            <button onClick={() => setShowEdit(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 shrink-0">✎ Edit</button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setShowEdit(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✎ Edit</button>
+              {isAdmin && <button onClick={delCandidate} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">🗑 Delete</button>}
+            </div>
           </div>
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2 mt-4">
             <button onClick={() => setShowFeedback(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">💬 Add Feedback</button>
+            <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
+            <button onClick={() => setActivityModal('call')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📞 Add Call</button>
             <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule Interview</button>
             <button onClick={reject} disabled={c.rejected} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">⛔ Reject</button>
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
@@ -109,9 +122,11 @@ export default function HrCandidateView({ candidateId, onBack, onClose }) {
           {tab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
           {tab === 'comments' && <CommentsTab c={c} reload={load} />}
           {tab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
+          {tab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} />}
+          {tab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
           {tab === 'mail' && <MailTab c={c} />}
           {tab === 'timeline' && <TimelineTab c={c} />}
-          {tab === 'attachments' && <AttachmentsTab c={c} />}
+          {tab === 'attachments' && <AttachmentsTab c={c} reload={load} />}
         </div>
       </div>
 
@@ -119,6 +134,8 @@ export default function HrCandidateView({ candidateId, onBack, onClose }) {
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify(payload) })); setShowFeedback(false); setTab('feedback'); }} />}
       {showInterview && <InterviewModal candidateId={c.id} stages={stages} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
+      {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
+      {showReject && <RejectModal onClose={() => setShowReject(false)} onReject={async (reason) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) })); setShowReject(false); }} />}
     </div>
   );
 }
@@ -480,6 +497,21 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
   const [aiMode, setAiMode] = useState('interview_invite');
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [signature, setSignature] = useState('');
+  useEffect(() => {
+    hrApi('/email-templates').then((r) => setTemplates(r.templates || [])).catch(() => {});
+    hrApi('/signature').then((r) => setSignature(r.signature || '')).catch(() => {});
+  }, []);
+  const fillPlaceholders = (str) => (str || '')
+    .replace(/\{\{\s*candidate_name\s*\}\}/gi, candidate.name || '')
+    .replace(/\{\{\s*role\s*\}\}/gi, (candidate.job && candidate.job.title) || '')
+    .replace(/\{\{\s*company\s*\}\}/gi, 'Qtonix');
+  const applyTemplate = (t) => {
+    if (!t) return;
+    if (t.subject) setSubject(fillPlaceholders(t.subject));
+    setBody(fillPlaceholders(t.body) + (signature ? `<br><br>${signature}` : ''));
+  };
 
   const runAi = async () => {
     setAiBusy(true); setErr('');
@@ -520,6 +552,15 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
           </div>
           {showCc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Cc</span><div className="flex-1"><ChipInput value={cc} onChange={setCc} placeholder="Cc" /></div></div>}
           {showBcc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Bcc</span><div className="flex-1"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc" /></div></div>}
+          {templates.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <span className="text-xs text-slate-400 w-12">Template</span>
+              <select className="flex-1 text-sm text-slate-700 outline-none bg-transparent" defaultValue="" onChange={(e) => { const t = templates.find((x) => x.id === e.target.value); applyTemplate(t); e.target.value = ''; }}>
+                <option value="">Insert a template…</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="border-b border-slate-100 pb-2">
             <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="w-full text-sm text-slate-700 outline-none" />
           </div>
@@ -581,14 +622,140 @@ function TimelineTab({ c }) {
 }
 
 // ---------- Attachments ----------
-function AttachmentsTab({ c }) {
+function AttachmentsTab({ c, reload }) {
   const list = c.attachments || [];
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const ref = useRef(null);
+  const upload = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setErr('File too large (max 10MB).'); return; }
+    setBusy(true); setErr('');
+    try { const base64 = await fileToBase64(file); await hrApi(`/candidates/${c.id}/attachments`, { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); reload(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const del = async (id) => { if (!window.confirm('Remove this attachment?')) return; try { await hrApi(`/candidates/${c.id}/attachments/${id}`, { method: 'DELETE' }); reload(); } catch {} };
   return (
     <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-sm text-slate-500">Resume, offer letters and any other documents.</div>
+        <button onClick={() => !busy && ref.current?.click()} disabled={busy} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Uploading…' : '⬆ Upload file'}</button>
+        <input ref={ref} type="file" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
+      </div>
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       {c.resumeUrl && <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50"><span>📄</span><span className="text-sm font-semibold text-slate-700">Resume</span></a>}
-      {list.map((f) => <a key={f.id} href={f.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50"><span>📎</span><span className="text-sm font-semibold text-slate-700">{f.name}</span></a>)}
-      {!c.resumeUrl && !list.length && <Empty>No attachments.</Empty>}
+      {list.map((f) => (
+        <div key={f.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50">
+          <a href={f.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 min-w-0"><span>📎</span><span className="text-sm font-semibold text-slate-700 truncate">{f.name}</span></a>
+          <div className="flex items-center gap-3 shrink-0"><span className="text-xs text-slate-400">{fmt(f.at)}</span><button onClick={() => del(f.id)} className="text-xs font-bold text-red-500">Remove</button></div>
+        </div>
+      ))}
+      {!c.resumeUrl && !list.length && <Empty>No attachments yet.</Empty>}
     </div>
+  );
+}
+
+// ---------- Activity (tasks & calls) ----------
+function ActivityTab({ c, reload, onAddTask, onAddCall }) {
+  const list = c.activities || [];
+  const del = async (id) => { if (!window.confirm('Delete this activity?')) return; try { await hrApi(`/candidates/${c.id}/activities/${id}`, { method: 'DELETE' }); reload(); } catch {} };
+  const toggleDone = async (a) => { try { await hrApi(`/candidates/${c.id}/activities/${a.id}`, { method: 'PATCH', body: JSON.stringify({ done: !a.done, mode: !a.done ? 'done' : 'scheduled' }) }); reload(); } catch {} };
+  const prColor = (p) => p === 'High' ? '#DC2626' : p === 'Low' ? '#64748B' : '#F59E0B';
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-sm text-slate-500">Tasks and calls for this candidate.</div>
+        <div className="flex gap-2">
+          <button onClick={onAddTask} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
+          <button onClick={onAddCall} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>📞 Add Call</button>
+        </div>
+      </div>
+      {list.length === 0 ? <Empty>No tasks or calls yet.</Empty> : (
+        <div className="space-y-2">
+          {list.map((a) => (
+            <div key={a.id} className="rounded-lg border border-slate-200 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  {a.kind === 'task' && <input type="checkbox" checked={!!a.done} onChange={() => toggleDone(a)} className="mt-1" />}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: a.kind === 'call' ? '#2563EB' : '#7C3AED' }}>{a.kind === 'call' ? '📞 Call' : '✅ Task'}</span>
+                      <span className={`text-sm font-semibold ${a.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{a.kind === 'call' ? a.agenda : a.title}</span>
+                      {a.kind === 'task' && a.priority && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: prColor(a.priority) + '18', color: prColor(a.priority) }}>{a.priority}</span>}
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${a.mode === 'done' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{a.mode === 'done' ? 'Done' : 'Scheduled'}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {a.date && <span>{a.date}{a.time ? ` ${a.time}` : ''}</span>}
+                      {a.assignedToName && <span> · → {a.assignedToName}</span>}
+                      {a.reminderOn && <span> · 🔔 Reminder</span>}
+                      {a.by && <span> · by {a.by}</span>}
+                    </div>
+                    {(a.description) && <div className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">{a.description}</div>}
+                  </div>
+                </div>
+                <button onClick={() => del(a.id)} className="text-xs font-bold text-slate-300 hover:text-red-500 shrink-0">×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Task/Call modal mirroring the Sales CRM (scheduled/done tabs).
+function ActivityModal({ kind, candidateId, onClose, onSaved }) {
+  const isCall = kind === 'call';
+  const [mode, setMode] = useState('scheduled');
+  const [f, setF] = useState({ title: '', agenda: '', date: '', time: '', description: '', priority: 'Medium', assignedToId: '', reminderOn: false });
+  const [emps, setEmps] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  useEffect(() => { if (!isCall) hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, [isCall]);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const assignedTo = emps.find((e) => e._id === Number(f.assignedToId));
+      const body = isCall
+        ? { kind: 'call', mode, agenda: f.agenda, date: f.date, time: f.time, note: f.description, reminderOn: mode === 'scheduled' && f.reminderOn }
+        : { kind: 'task', mode, title: f.title, date: f.date, description: f.description, priority: f.priority, assignedToId: f.assignedToId || null, assignedToName: assignedTo ? assignedTo.name : '' };
+      await hrApi(`/candidates/${candidateId}/activities`, { method: 'POST', body: JSON.stringify(body) });
+      onSaved();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title={isCall ? '📞 Add Call' : '✅ Add Task'} onClose={onClose}>
+      <div className="flex gap-2 mb-4">
+        {['scheduled', 'done'].map((m) => (
+          <button key={m} onClick={() => setMode(m)} className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-bold border capitalize ${mode === m ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{m}</button>
+        ))}
+      </div>
+      {isCall ? (
+        <div className="space-y-3">
+          <div><Lbl>Call agenda</Lbl><input className={inp} value={f.agenda} onChange={(e) => set('agenda', e.target.value)} placeholder="What's the call about?" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Lbl>Date</Lbl><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
+            <div><Lbl>Time</Lbl><input type="time" className={inp} value={f.time} onChange={(e) => set('time', e.target.value)} /></div>
+          </div>
+          <div><Lbl>Note</Lbl><textarea rows={2} className={inp} value={f.description} onChange={(e) => set('description', e.target.value)} /></div>
+          {mode === 'scheduled' && <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.reminderOn} onChange={(e) => set('reminderOn', e.target.checked)} /> 🔔 Remind me (in-app)</label>}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div><Lbl>Task name</Lbl><input className={inp} value={f.title} onChange={(e) => set('title', e.target.value)} /></div>
+          <div><Lbl>Date</Lbl><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
+          <div><Lbl>Description</Lbl><textarea rows={2} className={inp} value={f.description} onChange={(e) => set('description', e.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Lbl>Priority</Lbl><select className={inp} value={f.priority} onChange={(e) => set('priority', e.target.value)}>{['High', 'Medium', 'Low'].map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+            <div><Lbl>Assign to</Lbl><select className={inp} value={f.assignedToId} onChange={(e) => set('assignedToId', e.target.value)}><option value="">Unassigned</option>{emps.map((e) => <option key={e._id} value={e._id}>{e.name}{e.department ? ` · ${e.department}` : ''}</option>)}</select></div>
+          </div>
+        </div>
+      )}
+      <div className="flex justify-end gap-2 mt-5">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -746,6 +913,259 @@ function EditModal({ c, onClose, onSaved }) {
       <div className="flex justify-end gap-2 mt-5">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
         <button onClick={save} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------- Offer management (3-step) ----------
+function OfferTab({ c, isAdmin, reload }) {
+  const offer = c.offer;
+  const [modal, setModal] = useState(null); // 'discussion' | 'approval' | 'loi' | 'letter'
+  const op = async (body) => { try { await hrApi(`/candidates/${c.id}/offer`, { method: 'POST', body: JSON.stringify(body) }); reload(); } catch (e) { alert(e.message); } };
+  const decide = async (approvalId, decision, counterOffer) => { try { await hrApi(`/candidates/${c.id}/offer/approve`, { method: 'POST', body: JSON.stringify({ approvalId, decision, counterOffer }) }); reload(); } catch (e) { alert(e.message); } };
+
+  if (!offer || !offer.active) {
+    return (
+      <div className="text-center py-10">
+        <div className="text-sm text-slate-500 mb-3">No offer in progress for this candidate.</div>
+        <button onClick={() => op({ op: 'add_discussion', mode: 'phone', notes: 'Offer process started.' })} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Start offer process</button>
+      </div>
+    );
+  }
+  const STATUS = { discussion: 'Salary discussion', approval_pending: 'Awaiting approval', loi_sent: 'LOI sent', offer_sent: 'Offer sent', accepted: 'Accepted', declined: 'Declined' };
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-slate-700">Status:</span>
+          <span className="rounded-full bg-orange-100 text-orange-700 px-2.5 py-0.5 text-xs font-bold">{STATUS[offer.status] || offer.status}</span>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => op({ op: 'set_status', status: 'accepted' })} className="rounded-lg border border-green-200 text-green-600 px-3 py-1.5 text-xs font-bold">Mark accepted</button>
+          <button onClick={() => op({ op: 'set_status', status: 'declined' })} className="rounded-lg border border-red-200 text-red-500 px-3 py-1.5 text-xs font-bold">Mark declined</button>
+        </div>
+      </div>
+
+      <Card title="1 · Salary discussion" action={<button onClick={() => setModal('discussion')} className="text-xs font-bold text-orange-600">+ Log discussion</button>}>
+        {(offer.salaryDiscussions || []).length === 0 ? <div className="text-sm text-slate-400">No discussions logged yet.</div> : (
+          <div className="space-y-2">
+            {offer.salaryDiscussions.map((d) => (
+              <div key={d.id} className="text-sm border-b border-slate-50 pb-2 last:border-0">
+                <div className="flex items-center justify-between"><span className="font-semibold text-slate-700 capitalize">{d.mode}{d.meetLink ? ' · Meet' : ''}</span><span className="text-xs text-slate-400">{fmt(d.at)}</span></div>
+                <div className="text-slate-600">{d.offered && <span>Offered: <b>{d.offered}</b> </span>}{d.candidateAsk && <span>· Asked: <b>{d.candidateAsk}</b></span>}</div>
+                {d.meetLink && <a href={d.meetLink} target="_blank" rel="noreferrer" className="text-xs text-orange-600 font-semibold">{d.meetLink}</a>}
+                {d.notes && <div className="text-slate-500 text-xs mt-0.5">{d.notes}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => setModal('approval')} className="mt-3 rounded-lg border border-amber-200 text-amber-700 px-3 py-1.5 text-xs font-bold">⤴ Request management approval</button>
+      </Card>
+
+      {(offer.approvals || []).length > 0 && (
+        <Card title="Management approvals">
+          <div className="space-y-2">
+            {offer.approvals.map((a) => (
+              <div key={a.id} className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-slate-700">Candidate asked: {a.candidateAsk || '—'}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${a.status === 'pending' ? 'bg-amber-100 text-amber-700' : a.status === 'approved' ? 'bg-green-100 text-green-700' : a.status === 'countered' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-600'}`}>{a.status}</span>
+                </div>
+                {a.justification && <div className="text-xs text-slate-500 mt-0.5">{a.justification}</div>}
+                {a.counterOffer && <div className="text-sm text-slate-700 mt-1">Counter-offer: <b>{a.counterOffer}</b> {a.decidedBy ? `(by ${a.decidedBy})` : ''}</div>}
+                {isAdmin && a.status === 'pending' && (
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => decide(a.id, 'approved')} className="rounded-lg bg-green-600 text-white px-3 py-1 text-xs font-bold">Approve</button>
+                    <button onClick={() => { const co = window.prompt('Counter-offer amount:'); if (co) decide(a.id, 'countered', co); }} className="rounded-lg bg-blue-600 text-white px-3 py-1 text-xs font-bold">Counter</button>
+                    <button onClick={() => decide(a.id, 'rejected')} className="rounded-lg bg-red-500 text-white px-3 py-1 text-xs font-bold">Reject</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card title="2 · Letter of Intent" action={<button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button>}>
+        {offer.loi ? <div className="text-sm text-slate-600">Sent {fmt(offer.loi.sentAt)} by {offer.loi.by}. <span className="text-xs text-slate-400">({offer.loi.status})</span></div> : <div className="text-sm text-slate-400">Not sent yet.</div>}
+      </Card>
+
+      <Card title="3 · Offer Letter" action={<button onClick={() => setModal('letter')} className="text-xs font-bold text-orange-600">{offer.offerLetter ? 'Resend' : 'Send offer letter'}</button>}>
+        {offer.offerLetter ? (
+          <div className="text-sm text-slate-600">
+            Sent {fmt(offer.offerLetter.sentAt)} by {offer.offerLetter.by}.
+            {offer.offerLetter.fileUrl && <a href={offer.offerLetter.fileUrl} target="_blank" rel="noreferrer" className="text-orange-600 font-semibold ml-1">{offer.offerLetter.fileName || 'View letter'}</a>}
+            <div className="mt-1 text-slate-700">{offer.finalCtc && <span>Final CTC: <b>{offer.finalCtc}</b> </span>}{offer.joiningDate && <span>· Joining: <b>{offer.joiningDate}</b></span>}</div>
+          </div>
+        ) : <div className="text-sm text-slate-400">Not sent yet.</div>}
+      </Card>
+
+      {modal === 'discussion' && <DiscussionModal candidateId={c.id} onClose={() => setModal(null)} onSaved={() => { setModal(null); reload(); }} />}
+      {modal === 'approval' && <ApprovalModal onClose={() => setModal(null)} onSubmit={async (b) => { await op({ op: 'request_approval', ...b }); setModal(null); }} />}
+      {modal === 'loi' && <LoiModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
+      {modal === 'letter' && <OfferLetterModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
+    </div>
+  );
+}
+
+function DiscussionModal({ candidateId, onClose, onSaved }) {
+  const [f, setF] = useState({ mode: 'phone', offered: '', candidateAsk: '', notes: '', at: '', durationMins: 30 });
+  const [meet, setMeet] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const createMeet = async () => { if (!f.at) return alert('Pick a date & time first.'); setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/offer-meet`, { method: 'POST', body: JSON.stringify({ start: f.at, durationMins: f.durationMins, notes: f.notes }) }); setMeet(r.meetLink); } catch (e) { alert(e.message); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  return (
+    <Modal title="Log salary discussion" onClose={onClose}>
+      <div className="space-y-3">
+        <div><Lbl>Mode</Lbl><select className={inp} value={f.mode} onChange={(e) => set('mode', e.target.value)}><option value="phone">Phone</option><option value="meet">Google Meet</option><option value="in_person">In person</option></select></div>
+        {f.mode === 'meet' && (
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Lbl>Date &amp; time</Lbl><input type="datetime-local" className={inp} value={f.at} onChange={(e) => set('at', e.target.value)} /></div>
+              <div><Lbl>Duration (mins)</Lbl><input type="number" className={inp} value={f.durationMins} onChange={(e) => set('durationMins', e.target.value)} /></div>
+            </div>
+            {meet ? <a href={meet} target="_blank" rel="noreferrer" className="text-xs text-orange-600 font-semibold block mt-2">{meet}</a>
+              : <button onClick={createMeet} disabled={busy} className="mt-2 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Create Meet link</button>}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Offered</Lbl><input className={inp} value={f.offered} onChange={(e) => set('offered', e.target.value)} placeholder="e.g. 8L" /></div>
+          <div><Lbl>Candidate asked</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
+        </div>
+        <div><Lbl>Notes</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ApprovalModal({ onClose, onSubmit }) {
+  const [candidateAsk, setAsk] = useState('');
+  const [justification, setJust] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title="Request management approval" onClose={onClose}>
+      <div className="space-y-3">
+        <div><Lbl>Candidate's asking package</Lbl><input className={inp} value={candidateAsk} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. 10L" /></div>
+        <div><Lbl>Justification for management</Lbl><textarea rows={3} className={inp} value={justification} onChange={(e) => setJust(e.target.value)} placeholder="Why this candidate is worth it…" /></div>
+        <div className="text-[11px] text-slate-400">Admins will see this request and respond with an approval or counter-offer.</div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={async () => { setBusy(true); await onSubmit({ candidateAsk, justification }); }} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send request'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function LoiModal({ candidate, onClose, onSent }) {
+  const [subject, setSubject] = useState(`Letter of Intent — ${candidate.name}`);
+  const [body, setBody] = useState(`<p>Dear ${candidate.name.split(' ')[0]},</p><p>We are pleased to confirm our intent to offer you a position. A formal offer letter will follow.</p>`);
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    try {
+      await hrApi(`/candidates/${candidate.id}/offer-email`, { method: 'POST', body: JSON.stringify({ subject, body }) });
+      await hrApi(`/candidates/${candidate.id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'send_loi', subject, body, emailSent: true }) });
+      onSent();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title="Send Letter of Intent" onClose={onClose} wide>
+      <div className="space-y-3">
+        <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+        <div><Lbl>Message</Lbl><div className="rounded-lg border border-slate-300 min-h-[160px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+        <div className="text-[11px] text-slate-400">Sent from the shared recruitment mailbox. No attachment for the LOI.</div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={send} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send LOI'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function OfferLetterModal({ candidate, onClose, onSent }) {
+  const [subject, setSubject] = useState(`Offer Letter — ${candidate.name}`);
+  const [body, setBody] = useState(`<p>Dear ${candidate.name.split(' ')[0]},</p><p>Congratulations! Please find your offer letter attached.</p>`);
+  const [finalCtc, setCtc] = useState('');
+  const [joiningDate, setJoin] = useState('');
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+  const send = async () => {
+    if (!file) return alert('Attach the offer letter PDF.');
+    setBusy(true);
+    try {
+      const base64 = await fileToBase64(file);
+      const up = await hrApi(`/candidates/${candidate.id}/attachments`, { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) });
+      const att = (up.attachments || [])[0];
+      await hrApi(`/candidates/${candidate.id}/offer-email`, { method: 'POST', body: JSON.stringify({ subject, body, attachmentBase64: base64, attachmentName: file.name }) });
+      await hrApi(`/candidates/${candidate.id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'send_offer_letter', fileUrl: att ? att.url : '', fileName: file.name, finalCtc, joiningDate, emailSent: true }) });
+      onSent();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title="Send Offer Letter" onClose={onClose} wide>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Final CTC</Lbl><input className={inp} value={finalCtc} onChange={(e) => setCtc(e.target.value)} placeholder="e.g. 9L" /></div>
+          <div><Lbl>Joining date</Lbl><input type="date" className={inp} value={joiningDate} onChange={(e) => setJoin(e.target.value)} /></div>
+        </div>
+        <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+        <div><Lbl>Message</Lbl><div className="rounded-lg border border-slate-300 min-h-[120px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+        <div>
+          <Lbl>Offer letter (PDF)</Lbl>
+          <button onClick={() => ref.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">{file ? `📎 ${file.name}` : 'Attach PDF'}</button>
+          <input ref={ref} type="file" accept=".pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0])} />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={send} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send offer letter'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Reject with a required reason (HR picks from configured reasons or adds one).
+function RejectModal({ onClose, onReject }) {
+  const [reasons, setReasons] = useState([]);
+  const [picked, setPicked] = useState('');
+  const [custom, setCustom] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {}); }, []);
+  const addReason = async () => {
+    const v = custom.trim(); if (!v) return;
+    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { alert(e.message); }
+  };
+  const submit = async () => { if (!picked) return; setBusy(true); await onReject(picked); };
+  return (
+    <Modal title="Reject candidate" onClose={onClose}>
+      <div className="text-sm text-slate-500 mb-3">Pick a reason before sending the rejection. This is recorded on the candidate.</div>
+      <div className="space-y-2 max-h-64 overflow-auto">
+        {reasons.map((r) => (
+          <label key={r} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+            <input type="radio" name="reason" checked={picked === r} onChange={() => setPicked(r)} />
+            <span className="text-slate-700">{r}</span>
+          </label>
+        ))}
+      </div>
+      {adding ? (
+        <div className="flex gap-2 mt-2">
+          <input className={inp} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
+          <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>Add</button>
+        </div>
+      ) : <button onClick={() => setAdding(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
+      <div className="flex justify-end gap-2 mt-5">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={submit} disabled={busy || !picked} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : 'Reject candidate'}</button>
       </div>
     </Modal>
   );

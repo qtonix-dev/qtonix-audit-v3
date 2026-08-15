@@ -200,4 +200,50 @@ ${b.notes ? `<p>${b.notes}</p>` : ''}
   } catch (e) { next(e); }
 });
 
+// Create a lightweight Google Meet for a salary discussion (Offer tab).
+router.post('/candidates/:id/offer-meet', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const { s, token } = await hrMailbox();
+    if (!token) return res.status(400).json({ error: 'The recruitment mailbox isn’t linked yet.' });
+    const cand = await HrCandidate.findByPk(req.params.id);
+    if (!cand) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    if (!b.start) return res.status(400).json({ error: 'Pick a date and time.' });
+    const start = new Date(b.start);
+    const end = new Date(start.getTime() + (Number(b.durationMins) || 30) * 60000);
+    let event = {};
+    try {
+      event = await gmail.createCalendarEvent(s, token, {
+        summary: `Salary discussion — ${cand.name}`,
+        description: b.notes || 'Salary discussion.',
+        start: start.toISOString(), end: end.toISOString(),
+        attendees: [cand.email].filter(Boolean),
+        timeZone: b.timeZone || 'Asia/Kolkata',
+      });
+    } catch (ex) { return res.status(502).json({ error: 'Could not create the Meet. The mailbox may need re-linking for Calendar access.' }); }
+    res.json({ ok: true, meetLink: event.meetLink, eventLink: event.htmlLink });
+  } catch (e) { next(e); }
+});
+
+// Send an offer-related email (LOI or offer letter) from the shared mailbox,
+// optionally with an attachment (offer letter PDF).
+router.post('/candidates/:id/offer-email', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const { s, token, email } = await hrMailbox();
+    if (!token) return res.status(400).json({ error: 'The recruitment mailbox isn’t linked yet.' });
+    const cand = await HrCandidate.findByPk(req.params.id);
+    if (!cand) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    if (!cand.email) return res.status(400).json({ error: 'Candidate has no email.' });
+    const attachments = [];
+    if (b.attachmentBase64 && b.attachmentName) {
+      const raw = String(b.attachmentBase64).replace(/^data:[^;]+;base64,/, '');
+      const mime = (String(b.attachmentBase64).match(/^data:([^;]+);base64,/) || [])[1] || 'application/pdf';
+      attachments.push({ filename: b.attachmentName, mimeType: mime, contentBase64: raw });
+    }
+    await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: b.subject || 'Regarding your offer', bodyHtml: b.body || '', attachments });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
