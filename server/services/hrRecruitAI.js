@@ -267,4 +267,59 @@ async function draftRecruitmentEmail(apiKey, { mode, prompt, candidateName, role
   return { subject: parsed.subject || '', body: parsed.body || '' };
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate, draftRecruitmentEmail };
+/**
+ * Resume Match — a fast, HR-friendly High/Medium/Low signal of how well a
+ * candidate fits the role, based on the resume/application vs the JD (experience,
+ * skills, education). Re-scored when feedback arrives, so notes and interviewer
+ * feedback are folded in. Returns { level: high|medium|low, score, reason }.
+ * If there's nothing to go on (no resume/skills/work), the caller marks it
+ * "not_available" instead of calling this.
+ */
+async function scoreResumeMatch(apiKey, { candidate, job }) {
+  const a = candidate.answers || {};
+  const skills = (a.skills || []).join(', ');
+  const work = (a.work || []).map((w) => `${w.title || ''} @ ${w.company || ''} (${w.start || ''}–${w.current ? 'present' : (w.end || '')})`).join('; ');
+  const edu = (a.education || []).map((e) => `${e.course || ''} ${e.specialization || ''} @ ${e.institute || ''}`).join('; ');
+  const jobSkills = job ? (job.skills || []).map((s) => (typeof s === 'string' ? s : s.name)).join(', ') : '';
+  const jobDesc = job ? String(job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 2000) : '';
+  const resumeText = String(candidate.resumeText || '').slice(0, 3500);
+  // Fold in notes + feedback so the score reflects human signal over time.
+  const notes = (candidate.comments || []).map((c) => c.text).filter(Boolean).slice(0, 20).join(' | ').slice(0, 1500);
+  const feedback = (candidate.feedback || []).map((f) => {
+    const sk = (f.skills || []).map((s) => `${s.name}:${s.rating}/5`).join(', ');
+    return `[${f.verdict || ''}] ${sk} ${f.note || ''}`;
+  }).slice(0, 20).join(' | ').slice(0, 1500);
+
+  const out = await callClaude(apiKey, {
+    system: 'You are an expert technical recruiter judging how well a candidate matches a role. Weigh experience, skills and education against the job. If interviewer feedback or recruiter notes are present, weight them heavily (they are real signal). Return ONLY JSON, no prose.',
+    maxTokens: 500,
+    messages: [{
+      role: 'user',
+      content: `Judge the match and return exactly:
+{"score": 0-100, "level": "high | medium | low", "reason": "one short sentence"}
+
+Guidance: high = strong fit (roughly 70-100), medium = partial fit (40-69), low = weak fit (0-39). Make "level" consistent with "score".
+
+ROLE
+Title: ${job ? job.title : 'N/A'}
+Required skills: ${jobSkills}
+Experience wanted: ${job ? `${job.expMin || 0}-${job.expMax || 0} years` : 'N/A'}
+Description: ${jobDesc}
+
+CANDIDATE
+Skills: ${skills}
+Work: ${work}
+Education: ${edu}
+Resume excerpt: ${resumeText}
+${notes ? `Recruiter notes: ${notes}` : ''}
+${feedback ? `Interview feedback: ${feedback}` : ''}`,
+    }],
+  });
+  const data = parseJson(out);
+  let level = String(data.level || '').toLowerCase();
+  const score = Math.max(0, Math.min(100, Number(data.score) || 0));
+  if (!['high', 'medium', 'low'].includes(level)) level = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
+  return { level, score, reason: String(data.reason || '').slice(0, 200), scoredAt: new Date().toISOString() };
+}
+
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate, draftRecruitmentEmail, scoreResumeMatch };

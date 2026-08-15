@@ -1229,7 +1229,11 @@ const HrUser = sequelize.define('HrUser', {
   // without a migration for each one.
   profile: { type: DataTypes.JSON, defaultValue: {} },
   shiftId: { type: DataTypes.INTEGER, allowNull: true }, // assigned HrShift
-  emailSignature: { type: DataTypes.TEXT, defaultValue: '' }, // personal recruitment-email signature (HTML)
+  emailSignature: { type: DataTypes.TEXT, defaultValue: '' }, // personal recruitment-email signature (HTML) [legacy single]
+  emailSignatures: { type: DataTypes.JSON, defaultValue: [] }, // [{ id, name, body, isDefault }]
+  birthday: { type: DataTypes.DATEONLY, allowNull: true },
+  maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // single | married
+  anniversary: { type: DataTypes.DATEONLY, allowNull: true },
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1360,6 +1364,7 @@ const HrCandidate = sequelize.define('HrCandidate', {
   //   offerLetter:{...}, finalCtc, joiningDate, status }
   offer: { type: DataTypes.JSON, defaultValue: null },
   aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
+  resumeMatch: { type: DataTypes.JSON, defaultValue: null }, // { level:'high'|'medium'|'low', score, reason, scoredAt }
 }, { tableName: 'hr_candidates' });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 

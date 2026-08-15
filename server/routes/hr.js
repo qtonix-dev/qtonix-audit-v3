@@ -371,6 +371,12 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
 
     if (b.avatar !== undefined) row.avatar = b.avatar;
     if (b.phone !== undefined) row.phone = b.phone;
+    if (b.birthday !== undefined) row.birthday = b.birthday || null;
+    if (b.maritalStatus !== undefined) {
+      row.maritalStatus = ['single', 'married'].includes(b.maritalStatus) ? b.maritalStatus : null;
+      if (row.maritalStatus !== 'married') row.anniversary = null;
+    }
+    if (b.anniversary !== undefined && row.maritalStatus === 'married') row.anniversary = b.anniversary || null;
 
     if (b.profile !== undefined && b.profile && typeof b.profile === 'object') {
       const current = row.profile || {};
@@ -502,6 +508,33 @@ async function anthropicKey() {
   const key = s && s.getKey ? s.getKey('anthropic') : null;
   if (!key) { const e = new Error('AI is not configured. Add an Anthropic API key in the CRM admin settings.'); e.status = 400; throw e; }
   return key;
+}
+
+// Whether a candidate has enough to score (else "not available").
+function scorable(row) {
+  const a = row.answers || {};
+  return !!(row.resumeText || row.resumeUrl || (a.skills || []).length || (a.work || []).length || (a.education || []).length);
+}
+
+// Score (or re-score) a candidate's resume match in the background. Never throws
+// to the caller — logs and moves on so the main request isn't blocked/broken.
+async function scoreResumeMatchBg(candidateId) {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('anthropic') : null;
+    if (!key) return;
+    const row = await HrCandidate.findByPk(candidateId);
+    if (!row) return;
+    if (!scorable(row)) { row.resumeMatch = { level: 'not_available', score: 0, reason: 'No resume or profile data.', scoredAt: new Date().toISOString() }; row.changed('resumeMatch', true); await row.save(); return; }
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const { scoreResumeMatch } = require('../services/hrRecruitAI');
+    const result = await scoreResumeMatch(key, { candidate: row.toJSON(), job: job ? job.toJSON() : null });
+    // Re-fetch to avoid clobbering concurrent edits, then persist just the match.
+    const fresh = await HrCandidate.findByPk(candidateId);
+    if (!fresh) return;
+    fresh.resumeMatch = result; fresh.changed('resumeMatch', true);
+    await fresh.save();
+  } catch (e) { console.error('[resumeMatch] scoring failed:', e.message); }
 }
 
 router.get('/job-posts', requireHrAccess, async (req, res, next) => {
@@ -724,6 +757,8 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
     const job = b.jobPostId ? await HrJobPost.findByPk(b.jobPostId) : null;
     const firstStage = (job && job.stages && job.stages[0] && job.stages[0].id) || 'applied';
     const now = new Date().toISOString();
+    const VALID_SOURCES = ['manual', 'linkedin', 'naukri', 'indeed', 'referral', 'careers_page', 'public_form'];
+    const source = VALID_SOURCES.includes(b.source) ? b.source : 'manual';
     const row = await HrCandidate.create({
       name,
       email: String(b.email || '').slice(0, 160),
@@ -737,13 +772,15 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
       tags: Array.isArray(b.tags) ? b.tags.slice(0, 20).map((t) => String(t).slice(0, 40)) : [],
       currentLocation: String(b.currentLocation || '').slice(0, 160),
       answers: (b.answers && typeof b.answers === 'object') ? b.answers : {},
-      source: 'manual',
+      source,
       timeline: [
         { id: `t${Date.now()}`, type: 'assigned', text: `${req.hrActor.name} assigned as the recruiter.`, by: req.hrActor.name, at: now },
-        { id: `t${Date.now() + 1}`, type: 'imported', text: `Added by ${req.hrActor.name}${job ? ` to ${job.title}` : ''}.`, by: req.hrActor.name, at: now },
+        { id: `t${Date.now() + 1}`, type: 'imported', text: `Added by ${req.hrActor.name}${job ? ` to ${job.title}` : ''}${source !== 'manual' ? ` (source: ${source})` : ''}.`, by: req.hrActor.name, at: now },
       ],
     });
     res.json(row.toJSON());
+    // Score the resume match in the background (auto on add).
+    scoreResumeMatchBg(row.id);
   } catch (e) { next(e); }
 });
 
@@ -891,7 +928,29 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
     pushTimeline(row, { type: 'feedback', text: `${req.hrActor.name} submitted feedback${entry.roundLabel ? ` for ${entry.roundLabel}` : ''} (${entry.verdict.replace('_', ' ')}).`, by: req.hrActor.name });
     await row.save();
     res.json(row.toJSON());
+    // Re-score the resume match, folding in the new feedback + all notes.
+    scoreResumeMatchBg(row.id);
   } catch (e) { next(e); }
+});
+
+// Manually (re)score a candidate's resume match on demand.
+router.post('/candidates/:id/resume-match', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    if (!scorable(row)) {
+      row.resumeMatch = { level: 'not_available', score: 0, reason: 'No resume or profile data.', scoredAt: new Date().toISOString() };
+      row.changed('resumeMatch', true); await row.save();
+      return res.json(row.toJSON());
+    }
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const { scoreResumeMatch } = require('../services/hrRecruitAI');
+    const result = await scoreResumeMatch(key, { candidate: row.toJSON(), job: job ? job.toJSON() : null });
+    row.resumeMatch = result; row.changed('resumeMatch', true);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
 // A panelist's own interview assignments, grouped by job. Any HR user (incl.
@@ -1184,4 +1243,118 @@ router.get('/offer-approvals', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- Self profile (the logged-in employee) ----
+router.get('/profile-me', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ isAdmin: true, name: req.hrActor.name });
+    const u = req.hrUser;
+    res.json({ ...u.toJSON(), completion: profileCompletion(u) });
+  } catch (e) { next(e); }
+});
+
+router.put('/profile-me', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(400).json({ error: 'Admins manage their profile in the CRM.' });
+    const u = req.hrUser; const b = req.body || {};
+    if (b.phone !== undefined) u.phone = String(b.phone).slice(0, 40);
+    if (b.avatar !== undefined) u.avatar = b.avatar || null;
+    if (b.birthday !== undefined) u.birthday = b.birthday || null;
+    if (b.maritalStatus !== undefined) {
+      u.maritalStatus = ['single', 'married'].includes(b.maritalStatus) ? b.maritalStatus : null;
+      if (u.maritalStatus !== 'married') u.anniversary = null;
+    }
+    if (b.anniversary !== undefined && u.maritalStatus === 'married') u.anniversary = b.anniversary || null;
+    await u.save();
+    res.json(u.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Change own password (needs current password).
+router.post('/profile-me/password', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(400).json({ error: 'Admins change their password in the CRM.' });
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+    const ok = await bcrypt.compare(String(currentPassword || ''), req.hrUser.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
+    req.hrUser.passwordHash = await bcrypt.hash(String(newPassword), 10);
+    await req.hrUser.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Upload an avatar/profile picture to ImageKit → returns the URL.
+router.post('/profile-me/avatar', requireHrAccess, async (req, res, next) => {
+  try {
+    const { base64, fileName } = req.body || {};
+    if (!base64) return res.status(400).json({ error: 'No image provided.' });
+    const out = await imagekit.uploadFile({ base64, fileName: fileName || 'avatar', folder: 'HRMS/Avatars' });
+    if (req.hrActor.kind === 'hr') { req.hrUser.avatar = out.url; await req.hrUser.save(); }
+    res.json({ url: out.url });
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'ImageKit is not configured. Add ImageKit keys in admin settings.' });
+    next(e);
+  }
+});
+
+// ---- Signature templates (named, like the CRM) ----
+router.get('/signatures', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ signatures: [] });
+    res.json({ signatures: req.hrUser.emailSignatures || [] });
+  } catch (e) { next(e); }
+});
+
+router.post('/signatures', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(400).json({ error: 'Only employees have signatures.' });
+    const u = req.hrUser; const b = req.body || {};
+    const list = Array.isArray(u.emailSignatures) ? u.emailSignatures.slice() : [];
+    if (b.id) {
+      const idx = list.findIndex((s) => s.id === b.id);
+      if (idx >= 0) list[idx] = { ...list[idx], name: String(b.name || '').slice(0, 120), body: String(b.body || '').slice(0, 8000) };
+    } else {
+      list.push({ id: `sig${Date.now()}`, name: String(b.name || 'Signature').slice(0, 120), body: String(b.body || '').slice(0, 8000), isDefault: list.length === 0 });
+    }
+    if (b.isDefault && b.id) list.forEach((s) => { s.isDefault = s.id === b.id; });
+    u.emailSignatures = list; u.changed('emailSignatures', true);
+    await u.save();
+    res.json({ signatures: list });
+  } catch (e) { next(e); }
+});
+
+router.delete('/signatures/:sigId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(400).json({ error: 'Only employees have signatures.' });
+    const u = req.hrUser;
+    u.emailSignatures = (u.emailSignatures || []).filter((s) => s.id !== req.params.sigId); u.changed('emailSignatures', true);
+    await u.save();
+    res.json({ signatures: u.emailSignatures });
+  } catch (e) { next(e); }
+});
+
+// ---- Admin user management (activate/deactivate, reset password) ----
+router.post('/users/:id/reset-password', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const u = await HrUser.findByPk(req.params.id);
+    if (!u) return res.status(404).json({ error: 'User not found.' });
+    const np = String((req.body && req.body.newPassword) || '');
+    if (np.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    u.passwordHash = await bcrypt.hash(np, 10);
+    await u.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.post('/users/:id/active', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const u = await HrUser.findByPk(req.params.id);
+    if (!u) return res.status(404).json({ error: 'User not found.' });
+    u.active = !!req.body.active;
+    await u.save();
+    res.json({ ok: true, active: u.active });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
+module.exports.scoreResumeMatchBg = scoreResumeMatchBg;

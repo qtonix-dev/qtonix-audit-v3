@@ -62,15 +62,21 @@ router.post('/:token/apply', async (req, res, next) => {
     if (missing.length) return res.status(400).json({ error: `Please complete: ${missing.join(', ')}` });
 
     const firstStage = (job.stages && job.stages[0] && job.stages[0].id) || 'applied';
+    // Pull resume text for keyword search + resume-match scoring, if a resume was uploaded.
+    let resumeText = '';
+    if (b.resumeText) resumeText = String(b.resumeText).slice(0, 50000);
     const row = await HrCandidate.create({
       name, email: String(b.email).slice(0, 160), phone: String(b.phone || '').slice(0, 40),
       jobPostId: job.id, stage: firstStage,
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
+      resumeText,
       currentLocation: String(b.currentLocation || '').slice(0, 160),
-      answers, source: 'public_form',
-      timeline: [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the public form to ${job.title}.`, by: name, at: new Date().toISOString() }],
+      answers, source: 'careers_page',
+      timeline: [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the careers page to ${job.title}.`, by: name, at: new Date().toISOString() }],
     });
     res.json({ ok: true, id: row.id });
+    // Score the resume match in the background.
+    try { const { scoreResumeMatchBg } = require('./hr'); if (scoreResumeMatchBg) scoreResumeMatchBg(row.id); } catch {}
   } catch (e) { next(e); }
 });
 

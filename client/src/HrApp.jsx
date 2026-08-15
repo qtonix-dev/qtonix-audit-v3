@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
@@ -395,7 +395,7 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th className="px-4 py-3"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
                 <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
-                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Resume Match</th><th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
               </tr></thead>
               <tbody>
@@ -420,6 +420,7 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
                       <td className="px-4 py-3 text-slate-500">{job(c.jobPostId).title || '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{totalExperience(c)}</td>
                       <td className="px-4 py-3 text-slate-500">{a.currentCtc || '—'}</td>
+                      <td className="px-4 py-3"><ResumeMatchBadge match={c.resumeMatch} /></td>
                       <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
                       <td className="px-4 py-3 text-slate-500">{c.recruiterName || '—'}</td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{timeAgo(c.updatedAt)}</td>
@@ -441,6 +442,24 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
       {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(q); }} />}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
+  );
+}
+
+// Resume Match badge with the exact colour treatments Adam specified.
+export function ResumeMatchBadge({ match, size = 'sm' }) {
+  const level = match && match.level ? match.level : 'not_available';
+  const styles = {
+    high: { bg: '#DCFCE7', fg: '#15803D', label: 'High' },
+    medium: { bg: '#FEF9C3', fg: '#A16207', label: 'Medium' },
+    low: { bg: '#FEE2E2', fg: '#B91C1C', label: 'Low' },
+    not_available: { bg: '#F1F5F9', fg: '#64748B', label: 'Not available' },
+  };
+  const s = styles[level] || styles.not_available;
+  const pad = size === 'lg' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[11px]';
+  return (
+    <span className={`inline-flex items-center rounded-full font-bold ${pad}`} style={{ background: s.bg, color: s.fg }} title={match && match.reason ? match.reason : (level === 'not_available' ? 'No resume or profile data to score.' : '')}>
+      {s.label}{match && typeof match.score === 'number' && level !== 'not_available' ? ` · ${match.score}` : ''}
+    </span>
   );
 }
 
@@ -466,6 +485,12 @@ function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
   const [recruiterId, setRecruiterId] = useState('');
   const [reason, setReason] = useState('');
   const [reasons, setReasons] = useState([]);
+  const [addingReason, setAddingReason] = useState(false);
+  const [newReason, setNewReason] = useState('');
+  const addReason = async () => {
+    const v = newReason.trim(); if (!v) return;
+    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setReason(v); setNewReason(''); setAddingReason(false); } catch (e) { alert(e.message); }
+  };
   const [emps, setEmps] = useState([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -509,6 +534,12 @@ function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
                 <option value="">Choose a reason…</option>
                 {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
+              {addingReason ? (
+                <div className="flex gap-2 mt-2">
+                  <input className={inp2} value={newReason} onChange={(e) => setNewReason(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
+                  <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Add</button>
+                </div>
+              ) : <button onClick={() => setAddingReason(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
               <div className="text-[11px] text-slate-400 mt-1">A reason is required before rejecting.</div>
             </div>
           )}
@@ -627,6 +658,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
   const [prog, setProg] = useState(null); // {pct,label} during resume autofill
   const [dups, setDups] = useState([]); // existing candidates with same email/phone
   const [resumeText, setResumeText] = useState('');
+  const [source, setSource] = useState('manual');
   const autofillRef = React.useRef(null);
   const set = (patch) => setC((s) => ({ ...s, ...patch }));
 
@@ -682,7 +714,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
     try {
       await hrApi('/candidates', { method: 'POST', body: JSON.stringify({
         firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone,
-        jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address, resumeText,
+        jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address, resumeText, source,
         answers: {
           ...c.answers,
           currentCtc: c.currentCtc, expectedCtc: c.expectedCtc, noticePeriod: c.noticePeriod,
@@ -753,6 +785,15 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                   <div><L>Current CTC (Annual)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 4,50,000" /></div>
                   <div><L>Expected CTC (Annual)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 8,50,000" /></div>
                   <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
+                  <div><L>Source</L>
+                    <select className={inp} value={source} onChange={(e) => setSource(e.target.value)}>
+                      <option value="manual">Manual</option>
+                      <option value="linkedin">LinkedIn</option>
+                      <option value="naukri">Naukri</option>
+                      <option value="indeed">Indeed</option>
+                      <option value="referral">Referral</option>
+                    </select>
+                  </div>
                   <div className="col-span-2"><L>Resume</L>
                     <ResumeUpload jobPostId={job._id} value={c.resumeUrl} onChange={(url) => set({ resumeUrl: url })} />
                   </div>
@@ -1056,21 +1097,232 @@ function TemplateEditor({ tpl, onClose, onSaved }) {
   );
 }
 
+// Named signature templates (like the Sales CRM). Create/edit/delete; one default.
 function EmailSignaturePage() {
-  const [sig, setSig] = useState('');
+  const [sigs, setSigs] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const load = () => hrApi('/signatures').then((r) => setSigs(r.signatures || [])).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const del = async (id) => { if (!window.confirm('Delete this signature?')) return; await hrApi(`/signatures/${id}`, { method: 'DELETE' }); load(); };
+  const makeDefault = async (s) => { await hrApi('/signatures', { method: 'POST', body: JSON.stringify({ id: s.id, name: s.name, body: s.body, isDefault: true }) }); load(); };
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Email Signatures</h1>
+        <button onClick={() => setEditing({ name: '', body: '' })} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ New signature</button>
+      </div>
+      <p className="text-sm text-slate-500 mb-6">Named signatures you can insert into recruitment emails. Your default is appended when you use a template.</p>
+      {sigs.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No signatures yet.</div>
+      ) : (
+        <div className="space-y-2">
+          {sigs.map((s) => (
+            <div key={s.id} className="bg-white rounded-xl border border-slate-200/70 p-4 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2"><span className="font-bold text-slate-700">{s.name}</span>{s.isDefault && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Default</span>}</div>
+                <div className="text-xs text-slate-400 mt-1" dangerouslySetInnerHTML={{ __html: s.body }} />
+              </div>
+              <div className="flex gap-2 shrink-0">
+                {!s.isDefault && <button onClick={() => makeDefault(s)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Make default</button>}
+                <button onClick={() => setEditing(s)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Edit</button>
+                <button onClick={() => del(s.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && <SignatureEditor sig={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+    </div>
+  );
+}
+
+function SignatureEditor({ sig, onClose, onSaved }) {
+  const [name, setName] = useState(sig.name || '');
+  const [body, setBody] = useState(sig.body || '');
   const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!name.trim()) { alert('Give the signature a name.'); return; }
+    setBusy(true);
+    try { await hrApi('/signatures', { method: 'POST', body: JSON.stringify({ id: sig.id, name, body }) }); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 text-lg font-extrabold text-[#050A1F]">{sig.id ? 'Edit signature' : 'New signature'}</div>
+        <div className="p-6 space-y-3">
+          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Name</div><input className={inp2} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Formal" /></div>
+          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Signature</div><div className="rounded-lg border border-slate-300 min-h-[140px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// My Profile — self-service (avatar, phone, birthday, marital status, password).
+function MyProfilePage({ user, onUpdated }) {
+  const [p, setP] = useState(null);
   const [saved, setSaved] = useState(false);
-  useEffect(() => { hrApi('/signature').then((r) => setSig(r.signature || '')).catch(() => {}); }, []);
-  const save = async () => { setBusy(true); setSaved(false); try { await hrApi('/signature', { method: 'POST', body: JSON.stringify({ signature: sig }) }); setSaved(true); } catch (e) { alert(e.message); } finally { setBusy(false); } };
+  const [busy, setBusy] = useState(false);
+  const avatarRef = useRef(null);
+  const load = () => hrApi('/profile-me').then(setP).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const set = (patch) => setP((s) => ({ ...s, ...patch }));
+  if (!p) return <div className="text-slate-400 text-sm">Loading…</div>;
+  if (p.isAdmin) return <div className="max-w-2xl"><h1 className="text-2xl font-extrabold text-[#050A1F] mb-2">My Profile</h1><div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Admins manage their profile in the Sales CRM.</div></div>;
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { alert('Image too large (max 5MB).'); return; }
+    try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); set({ avatar: r.url }); onUpdated && onUpdated(); } catch (e) { alert(e.message); }
+  };
+  const save = async () => {
+    setBusy(true); setSaved(false);
+    try { await hrApi('/profile-me', { method: 'PUT', body: JSON.stringify({ phone: p.phone, avatar: p.avatar, birthday: p.birthday, maritalStatus: p.maritalStatus, anniversary: p.anniversary }) }); setSaved(true); onUpdated && onUpdated(); }
+    catch (e) { alert(e.message); } finally { setBusy(false); }
+  };
+  const L = 'text-[11px] font-bold text-slate-500 mb-1';
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   return (
     <div className="max-w-2xl">
-      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Email Signature</h1>
-      <p className="text-sm text-slate-500 mb-6">Your personal signature, appended to recruitment emails you send.</p>
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-        <div className="rounded-lg border border-slate-300 min-h-[160px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setSig(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: sig }} />
-        <div className="flex items-center gap-3 mt-4">
-          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save signature'}</button>
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">My Profile</h1>
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-6 space-y-5">
+        {/* Avatar */}
+        <div className="flex items-center gap-4">
+          <div className="w-20 h-20 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-2xl font-extrabold overflow-hidden">
+            {p.avatar ? <img src={p.avatar} alt="" className="w-full h-full object-cover" /> : (p.name || '?')[0]?.toUpperCase()}
+          </div>
+          <div>
+            <div className="font-bold text-slate-700">{p.name}</div>
+            <div className="text-xs text-slate-400 mb-2">{p.email}{p.designation ? ` · ${p.designation}` : ''}</div>
+            <button onClick={() => avatarRef.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Upload photo</button>
+            <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files?.[0])} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div><div className={L}>Phone number</div><input className={inp2} value={p.phone || ''} onChange={(e) => set({ phone: e.target.value })} /></div>
+          <div><div className={L}>Birthday</div><input type="date" className={inp2} value={p.birthday || ''} onChange={(e) => set({ birthday: e.target.value })} /></div>
+          <div>
+            <div className={L}>Marital status</div>
+            <select className={inp2} value={p.maritalStatus || ''} onChange={(e) => set({ maritalStatus: e.target.value, ...(e.target.value !== 'married' ? { anniversary: '' } : {}) })}>
+              <option value="">Prefer not to say</option>
+              <option value="single">Unmarried</option>
+              <option value="married">Married</option>
+            </select>
+          </div>
+          {p.maritalStatus === 'married' && <div><div className={L}>Anniversary date</div><input type="date" className={inp2} value={p.anniversary || ''} onChange={(e) => set({ anniversary: e.target.value })} /></div>}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save profile'}</button>
           {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓</span>}
+        </div>
+      </div>
+
+      <ChangePasswordCard />
+    </div>
+  );
+}
+
+function ChangePasswordCard() {
+  const [cur, setCur] = useState('');
+  const [nw, setNw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const save = async () => {
+    setMsg(''); if (nw.length < 8) { setMsg('New password must be at least 8 characters.'); return; }
+    setBusy(true);
+    try { await hrApi('/profile-me/password', { method: 'POST', body: JSON.stringify({ currentPassword: cur, newPassword: nw }) }); setMsg('Password changed ✓'); setCur(''); setNw(''); }
+    catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-6 mt-4">
+      <div className="text-lg font-extrabold text-[#050A1F] mb-3">Reset password</div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><div className="text-[11px] font-bold text-slate-500 mb-1">Current password</div><input type="password" className={inp2} value={cur} onChange={(e) => setCur(e.target.value)} /></div>
+        <div><div className="text-[11px] font-bold text-slate-500 mb-1">New password</div><input type="password" className={inp2} value={nw} onChange={(e) => setNw(e.target.value)} /></div>
+      </div>
+      <div className="flex items-center gap-3 mt-4">
+        <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Change password'}</button>
+        {msg && <span className={`text-sm font-semibold ${msg.includes('✓') ? 'text-green-600' : 'text-red-500'}`}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Admin user management — mirrors the CRM's user table (deactivate, reset pw).
+function HrUserManagement() {
+  const [users, setUsers] = useState([]);
+  const [resetFor, setResetFor] = useState(null);
+  const load = () => hrApi('/employees').then(setUsers).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const toggleActive = async (u) => { if (!window.confirm(`${u.active ? 'Deactivate' : 'Reactivate'} ${u.name}?`)) return; await hrApi(`/users/${u._id}/active`, { method: 'POST', body: JSON.stringify({ active: !u.active }) }); load(); };
+  return (
+    <div>
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Users</h1>
+      <p className="text-sm text-slate-500 mb-6">Manage employee accounts — reset passwords or deactivate access. Deactivated users can't log in but their records are preserved.</p>
+      <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+            <th className="px-4 py-3">Name</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th>
+            <th className="px-4 py-3">Department</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+          </tr></thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u._id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex items-center justify-center overflow-hidden">{u.avatar ? <img src={u.avatar} alt="" className="w-full h-full object-cover" /> : (u.name || '?')[0]?.toUpperCase()}</span>
+                    <span className="font-semibold text-slate-700">{u.name}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-slate-500">{u.email}</td>
+                <td className="px-4 py-3 text-slate-500 capitalize">{u.type}</td>
+                <td className="px-4 py-3 text-slate-500">{u.department || '—'}</td>
+                <td className="px-4 py-3">{u.active ? <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Active</span> : <span className="rounded-full bg-slate-200 text-slate-500 px-2 py-0.5 text-[10px] font-bold">Deactivated</span>}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-2">
+                    <button onClick={() => setResetFor(u)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Reset password</button>
+                    <button onClick={() => toggleActive(u)} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${u.active ? 'border-red-200 text-red-500' : 'border-green-200 text-green-600'}`}>{u.active ? 'Deactivate' : 'Reactivate'}</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => setResetFor(null)} onDone={() => setResetFor(null)} />}
+    </div>
+  );
+}
+
+function ResetPasswordModal({ user, onClose, onDone }) {
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+    setBusy(true);
+    try { await hrApi(`/users/${user._id}/reset-password`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) }); alert('Password reset.'); onDone(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 text-lg font-extrabold text-[#050A1F]">Reset password</div>
+        <div className="p-6">
+          <div className="text-sm text-slate-500 mb-2">Set a new password for <b>{user.name}</b>.</div>
+          <input type="text" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password (min 8 chars)" />
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Reset'}</button>
         </div>
       </div>
     </div>
@@ -1475,6 +1727,7 @@ export default function HrApp() {
   const [checking, setChecking] = useState(true);
   const [view, setView] = useState('dashboard');
   const [profileTarget, setProfileTarget] = useState(null);
+  const [navKey, setNavKey] = useState(0); // bump to force a fresh sub-view on nav
 
   // Restore session.
   useEffect(() => {
@@ -1483,6 +1736,7 @@ export default function HrApp() {
     hrApi('/me').then((u) => setUser(u)).catch(() => localStorage.removeItem(HR_TOKEN_KEY)).finally(() => setChecking(false));
   }, []);
 
+  const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
   const logout = () => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = '/hr/login'; };
 
   if (checking) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
@@ -1494,7 +1748,7 @@ export default function HrApp() {
     { id: 'recruitment', label: 'Recruitment' },
     { id: 'interview', label: 'Interview' },
     { id: 'employees', label: 'Employee' },
-    ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
+    ...(isAdmin ? [{ id: 'users', label: 'Users' }, { id: 'admin', label: 'Admin' }] : []),
   ];
 
   return (
@@ -1505,17 +1759,17 @@ export default function HrApp() {
             <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span> <span className="text-slate-400 font-bold text-sm">HR</span></div>
             <nav className="flex gap-0.5">
               {nav.map((n) => (
-                <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); }}
+                <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setNavKey((k) => k + 1); }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${view === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                   {n.label}
                 </button>
               ))}
             </nav>
           </div>
-          <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); }} onLogout={logout} isAdmin={isAdmin} />
+          <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={logout} isAdmin={isAdmin} />
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8" key={`${view}-${navKey}`}>
         {view === 'dashboard' && <HrDashboard user={user} />}
         {view === 'recruitment' && <HrRecruitment isAdmin={isAdmin} />}
         {view === 'interview' && <MyInterviews />}
@@ -1524,9 +1778,10 @@ export default function HrApp() {
             ? <div><button onClick={() => setProfileTarget(null)} className="text-xs font-bold text-slate-400 mb-3">← Back to employees</button><ProfilePage me={user} targetId={profileTarget} /></div>
             : <EmployeeDirectory isAdmin={isAdmin} onOpenProfile={(id) => setProfileTarget(id)} />
         )}
-        {view === 'profile' && <ProfilePage me={user} />}
+        {view === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
         {view === 'templates' && <EmailTemplatesPage />}
         {view === 'signature' && <EmailSignaturePage />}
+        {view === 'users' && isAdmin && <HrUserManagement />}
         {view === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
     </div>

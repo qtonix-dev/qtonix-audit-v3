@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { hrApi, fileToBase64 } from './HrApp.jsx';
+import { hrApi, fileToBase64, ResumeMatchBadge } from './HrApp.jsx';
 import { MailEditor, ChipInput } from './Leads.jsx';
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
@@ -26,10 +26,17 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [showEdit, setShowEdit] = useState(false);
   const [activityModal, setActivityModal] = useState(null); // 'task' | 'call'
   const [showReject, setShowReject] = useState(false);
+  const [rescoring, setRescoring] = useState(false);
   const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [candidateId]);
+
+  const rescoreMatch = async () => {
+    setRescoring(true);
+    try { const updated = await hrApi(`/candidates/${candidateId}/resume-match`, { method: 'POST' }); setC(updated); }
+    catch (e) { setErr(e.message); } finally { setRescoring(false); }
+  };
 
   const delCandidate = async () => {
     if (!window.confirm('Delete this candidate permanently? This cannot be undone.')) return;
@@ -68,6 +75,10 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
                   <div className="text-xl font-extrabold text-[#050A1F]">{c.name}</div>
                   {a.age && <span className="text-slate-400 text-sm">{a.age}</span>}
                   {wa && <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" title="Message on WhatsApp" className="text-[#25D366]"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d={WA_PATH} /></svg></a>}
+                  <ResumeMatchBadge match={c.resumeMatch} size="lg" />
+                  <button onClick={rescoreMatch} disabled={rescoring} title="Re-score resume match" className="text-slate-300 hover:text-orange-500 disabled:opacity-40">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={rescoring ? 'animate-spin' : ''}><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+                  </button>
                   {c.rejected && <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Rejected</span>}
                   {curStage && !c.rejected && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: curStage.color + '18', color: curStage.color }}>{curStage.label}</span>}
                 </div>
@@ -78,7 +89,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
                     {c.phone && <span>📞 {c.phone}</span>}
                   </div>
                   <div className="flex flex-wrap gap-x-4 text-xs text-slate-400 pt-1">
-                    <span>Source: <b className="text-slate-600">{c.source === 'public_form' ? 'Application form' : 'Manual'}</b></span>
+                    <span>Source: <b className="text-slate-600">{({ manual: 'Manual', linkedin: 'LinkedIn', naukri: 'Naukri', indeed: 'Indeed', referral: 'Referral', careers_page: 'Careers page', public_form: 'Careers page' })[c.source] || 'Manual'}</b></span>
                     {c.recruiterName && <span>Recruiter: <b className="text-slate-600">{c.recruiterName}</b></span>}
                   </div>
                   <div className="flex flex-wrap items-center gap-3 pt-2">
@@ -498,10 +509,11 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [templates, setTemplates] = useState([]);
-  const [signature, setSignature] = useState('');
+  const [signatures, setSignatures] = useState([]);
+  const signature = (signatures.find((s) => s.isDefault) || signatures[0] || {}).body || '';
   useEffect(() => {
     hrApi('/email-templates').then((r) => setTemplates(r.templates || [])).catch(() => {});
-    hrApi('/signature').then((r) => setSignature(r.signature || '')).catch(() => {});
+    hrApi('/signatures').then((r) => setSignatures(r.signatures || [])).catch(() => {});
   }, []);
   const fillPlaceholders = (str) => (str || '')
     .replace(/\{\{\s*candidate_name\s*\}\}/gi, candidate.name || '')
@@ -512,6 +524,7 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
     if (t.subject) setSubject(fillPlaceholders(t.subject));
     setBody(fillPlaceholders(t.body) + (signature ? `<br><br>${signature}` : ''));
   };
+  const applySignature = (sig) => { if (sig) setBody((b) => `${b || ''}<br><br>${sig.body}`); };
 
   const runAi = async () => {
     setAiBusy(true); setErr('');
@@ -558,6 +571,15 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
               <select className="flex-1 text-sm text-slate-700 outline-none bg-transparent" defaultValue="" onChange={(e) => { const t = templates.find((x) => x.id === e.target.value); applyTemplate(t); e.target.value = ''; }}>
                 <option value="">Insert a template…</option>
                 {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+          {signatures.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <span className="text-xs text-slate-400 w-12">Signature</span>
+              <select className="flex-1 text-sm text-slate-700 outline-none bg-transparent" defaultValue="" onChange={(e) => { const sg = signatures.find((x) => x.id === e.target.value); applySignature(sg); e.target.value = ''; }}>
+                <option value="">Insert a signature…</option>
+                {signatures.map((s) => <option key={s.id} value={s.id}>{s.name}{s.isDefault ? ' (default)' : ''}</option>)}
               </select>
             </div>
           )}
