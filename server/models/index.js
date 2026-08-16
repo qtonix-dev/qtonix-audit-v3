@@ -1250,6 +1250,10 @@ const HrUser = sequelize.define('HrUser', {
   anniversary: { type: DataTypes.DATEONLY, allowNull: true },
   // Permission: may post to the company notice board (admins always can).
   canPostAnnouncements: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // HR Manager: a branch-scoped admin-lite role. Within their branch they can
+  // add/edit employees, create job posts, add candidates, assign unassigned
+  // candidates to other HR, and post announcements. Admin remains global.
+  isHrManager: { type: DataTypes.BOOLEAN, defaultValue: false },
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1416,6 +1420,9 @@ const HrAnnouncement = sequelize.define('HrAnnouncement', {
   title: { type: DataTypes.STRING(200), allowNull: false },
   body: { type: DataTypes.TEXT, allowNull: false, defaultValue: '' },
   pinned: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Audience: 'all' or a specific branch name (e.g. 'Bhubaneswar'). Employees
+  // see an announcement when it's 'all' or matches their branch.
+  audience: { type: DataTypes.STRING(80), defaultValue: 'all' },
   authorId: { type: DataTypes.INTEGER, allowNull: true },
   authorName: { type: DataTypes.STRING(120), allowNull: true },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },

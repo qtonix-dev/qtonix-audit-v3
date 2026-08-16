@@ -65,14 +65,26 @@ router.post('/:token/apply', async (req, res, next) => {
     // Pull resume text for keyword search + resume-match scoring, if a resume was uploaded.
     let resumeText = '';
     if (b.resumeText) resumeText = String(b.resumeText).slice(0, 50000);
+    // Auto-assign to the job's HR: if exactly one HR is assigned, credit them as
+    // the recruiter. If multiple (or none), leave unassigned for an HR manager or
+    // admin to distribute.
+    const assignedIds = Array.isArray(job.assignedHrIds) ? job.assignedHrIds : [];
+    let recruiterId = null, recruiterName = '';
+    if (assignedIds.length === 1) {
+      const hr = await HrUser.findByPk(assignedIds[0]);
+      if (hr) { recruiterId = hr.id; recruiterName = hr.name; }
+    }
+    const tl = [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the careers page to ${job.title}.`, by: name, at: new Date().toISOString() }];
+    if (recruiterId) tl.push({ id: `t${Date.now() + 1}`, type: 'assigned', text: `Auto-assigned to ${recruiterName} (job's HR).`, by: 'System', at: new Date().toISOString() });
     const row = await HrCandidate.create({
       name, email: String(b.email).slice(0, 160), phone: String(b.phone || '').slice(0, 40),
       jobPostId: job.id, stage: firstStage,
+      recruiterId, recruiterName,
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
       resumeText,
       currentLocation: String(b.currentLocation || '').slice(0, 160),
       answers, source: 'careers_page',
-      timeline: [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the careers page to ${job.title}.`, by: name, at: new Date().toISOString() }],
+      timeline: tl,
     });
     res.json({ ok: true, id: row.id });
     // Score the resume match in the background.

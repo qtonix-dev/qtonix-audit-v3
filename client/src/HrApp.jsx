@@ -135,12 +135,15 @@ function AnnouncementModal({ onClose, onSaved }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [pinned, setPinned] = useState(false);
+  const [audience, setAudience] = useState('all');
+  const [branches, setBranches] = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  useEffect(() => { hrApi('/branches').then((r) => setBranches(Array.isArray(r) ? r : (r.branches || []))).catch(() => {}); }, []);
   const save = async () => {
     if (!title.trim()) return setErr('A title is required.');
     setSaving(true); setErr('');
-    try { await hrApi('/announcements', { method: 'POST', body: JSON.stringify({ title, body, pinned }) }); onSaved(); }
+    try { await hrApi('/announcements', { method: 'POST', body: JSON.stringify({ title, body, pinned, audience }) }); onSaved(); }
     catch (e) { setErr(e.message); setSaving(false); }
   };
   return (
@@ -153,7 +156,14 @@ function AnnouncementModal({ onClose, onSaved }) {
         <div className="p-6 space-y-3">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className={inputCls} />
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Write your announcement… (visible to all staff)" className={inputCls} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Write your announcement…" className={inputCls} />
+          <div>
+            <div className="text-xs font-bold text-slate-500 mb-1">Audience</div>
+            <select value={audience} onChange={(e) => setAudience(e.target.value)} className={inputCls}>
+              <option value="all">All employees</option>
+              {branches.map((b) => <option key={b._id || b.name} value={b.name}>{b.name} employees</option>)}
+            </select>
+          </div>
           <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} /> Pin to top</label>
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
@@ -228,7 +238,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
             {announcements.slice(0, 4).map((a) => (
               <div key={a._id} className="bg-white rounded-lg border border-amber-100 px-3 py-2 group">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-1.5">{a.pinned && <span title="Pinned">📌</span>}{a.title}</div>
+                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-1.5">{a.pinned && <span title="Pinned">📌</span>}{a.title}{a.audience && a.audience !== 'all' && <span className="text-[9px] font-bold rounded px-1.5 py-0.5 bg-blue-100 text-blue-600">{a.audience}</span>}</div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] text-slate-400">{a.authorName} · {new Date(a.createdAt).toLocaleDateString()}</span>
                     {annCanPost && <button title="Remove" onClick={async () => { if (!window.confirm('Remove this announcement?')) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { alert(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
@@ -502,7 +512,7 @@ function HrRecruitment({ isAdmin, me }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
-        {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
+        {tab === 'jobs' && (isAdmin || (me && me.isHrManager)) && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
       </div>
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
@@ -512,7 +522,7 @@ function HrRecruitment({ isAdmin, me }) {
         ))}
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} initialJobFilter={candFilterJob} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -529,6 +539,15 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants }) {
   const [assignFor, setAssignFor] = useState(null); // job to assign HR to
   const [scope, setScope] = useState('all'); // all | mine
   const myId = me && (me._id || me.id);
+  const isMgr = !!(me && me.isHrManager);
+  // Restrictive: only assigned HR (or admin / branch HR-manager) can add candidates.
+  const canAddTo = (j) => {
+    if (isAdmin) return true;
+    const assigned = (Array.isArray(j.assignedHrIds) ? j.assignedHrIds : []).map(Number);
+    if (assigned.includes(Number(myId))) return true;
+    if (isMgr && (!j.branch || !me.branch || j.branch === me.branch)) return true;
+    return false;
+  };
   const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
   const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
@@ -584,12 +603,12 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants }) {
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <JobIconBtn onClick={() => setAssignFor(j)} icon="users" label="Assign HR" />
-            {live && <JobIconBtn primary onClick={() => setAddFor(j)} icon="user-plus" label="Add candidate" />}
+            {(isAdmin || isMgr) && <JobIconBtn onClick={() => setAssignFor(j)} icon="users" label="Assign HR" />}
+            {live && canAddTo(j) && <JobIconBtn primary onClick={() => setAddFor(j)} icon="user-plus" label="Add candidate" />}
             {j.status === 'published' && <JobIconBtn onClick={() => setShareFor(j)} icon="link" label="Share / embed" />}
-            <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit job post" />
-            {live && <JobIconBtn onClick={() => pause(j)} icon={j.status === 'paused' ? 'play' : 'pause'} label={j.status === 'paused' ? 'Resume job' : 'Pause job'} />}
-            {j.status !== 'closed' && <JobIconBtn onClick={() => close(j)} icon="close" label="Close job" />}
+            {(isAdmin || isMgr) && <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit job post" />}
+            {(isAdmin || isMgr) && live && <JobIconBtn onClick={() => pause(j)} icon={j.status === 'paused' ? 'play' : 'pause'} label={j.status === 'paused' ? 'Resume job' : 'Pause job'} />}
+            {(isAdmin || isMgr) && j.status !== 'closed' && <JobIconBtn onClick={() => close(j)} icon="close" label="Close job" />}
             {isAdmin && <JobIconBtn danger onClick={() => del(j)} icon="trash" label="Delete job post" />}
           </div>
         </div>
@@ -732,7 +751,7 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, initialJobFilter }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
@@ -820,7 +839,7 @@ function CandidateList({ jobs, isAdmin, initialJobFilter }) {
           <span className="text-sm font-bold">{sel.length} selected</span>
           <div className="flex-1" />
           <button onClick={() => setBulkModal('move')} className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-bold">Move stage</button>
-          <button onClick={() => setBulkModal('assign')} className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-bold">Assign recruiter</button>
+          {(isAdmin || (me && me.isHrManager)) && <button onClick={() => setBulkModal('assign')} className="rounded-lg bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-bold">Assign recruiter</button>}
           <button onClick={() => setBulkModal('reject')} className="rounded-lg bg-red-500/80 hover:bg-red-500 px-3 py-1.5 text-xs font-bold">Reject</button>
           <button onClick={() => setSel([])} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white">Clear</button>
         </div>
@@ -2622,7 +2641,7 @@ export default function HrApp() {
         {effectiveView === 'employees' && (
           profileTarget
             ? <div><button onClick={() => setProfileTarget(null)} className="text-xs font-bold text-slate-400 mb-3">← Back to employees</button><ProfilePage me={user} targetId={profileTarget} /></div>
-            : <EmployeeDirectory isAdmin={isAdmin} onOpenProfile={(id) => setProfileTarget(id)} />
+            : <EmployeeDirectory isAdmin={isAdmin} me={user} onOpenProfile={(id) => setProfileTarget(id)} />
         )}
         {effectiveView === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
         {effectiveView === 'templates' && <EmailTemplatesPage />}

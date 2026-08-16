@@ -5,7 +5,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, User, AuditLog, Settings } = require('../models');
-const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
+const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
 const router = express.Router();
@@ -69,7 +69,7 @@ router.post('/auth/login', async (req, res) => {
     const jwt = require('jsonwebtoken');
     const token = jwt.sign({ id: u.id, role: u.role, name: u.name }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '12h' });
     await AuditLog.create({ userId: u.id, userName: u.name, action: 'hr.login', target: 'HR portal (admin)', ip: req.ip }).catch(() => {});
-    res.json({ token, user: { _id: u.id, id: u.id, name: u.name, email: u.email, role: 'admin', portal: 'hr', isAdmin: true } });
+    res.json({ token, user: { _id: u.id, id: u.id, name: u.name, email: u.email, role: 'admin', portal: 'hr', isAdmin: true, isHrManager: false } });
   } catch (e) {
     console.error('[hr] login error', e.message);
     res.status(500).json({ error: 'Something went wrong signing in.' });
@@ -85,7 +85,7 @@ router.post('/auth/logout', requireHrAccess, async (req, res) => {
 /** GET /api/hr/me — the signed-in HR actor (staff or admin), for the greeting. */
 router.get('/me', requireHrAccess, (req, res) => {
   if (req.hrActor.kind === 'admin') {
-    return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true });
+    return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true, isHrManager: false });
   }
   res.json({ ...req.hrUser.toJSON(), isAdmin: false, completion: profileCompletion(req.hrUser) });
 });
@@ -425,7 +425,7 @@ router.post('/profile/:id/timeline', requireHrAccess, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
-router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const b = req.body || {};
     const name = String(b.name || '').trim();
@@ -434,6 +434,9 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are all required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     const type = USER_TYPES.includes(b.type) ? b.type : 'employee';
+    // An HR Manager can only add employees to their own branch.
+    const branch = b.branch || (req.isHrManager ? req.hrBranch : '') || 'Bhubaneswar';
+    if (!canManageBranch(req, branch)) return res.status(403).json({ error: `You can only add employees to your branch (${req.hrBranch}).` });
 
     const exists = await HrUser.findOne({ where: { email } });
     if (exists) return res.status(409).json({ error: 'An HR user with that email already exists.' });
@@ -444,11 +447,14 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
       employeeId: b.employeeId || null,
       phone: b.phone || '+91 ',
       designation: b.designation || '',
-      branch: b.branch || 'Bhubaneswar',
+      branch,
       department: b.department || '',
       joiningDate: b.joiningDate || null,
       shiftId: b.shiftId ? Number(b.shiftId) : null,
       branchIncharge: !!b.branchIncharge,
+      // Only an admin may grant the HR-Manager role or the announce permission.
+      isHrManager: req.isHrAdmin ? !!b.isHrManager : false,
+      canPostAnnouncements: req.isHrAdmin ? !!b.canPostAnnouncements : false,
       avatar: b.avatar || null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
       reportsToAdminId: b.reportsToAdminId ? Number(b.reportsToAdminId) : null,
@@ -462,11 +468,15 @@ router.post('/users', requireHrAccess, requireHrAdmin, async (req, res, next) =>
   } catch (e) { next(e); }
 });
 
-router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrUser.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'HR user not found.' });
+    // HR Managers can only edit employees in their own branch, and cannot move
+    // someone out of their branch.
+    if (!canManageBranch(req, row.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
+    if (b.branch !== undefined && !canManageBranch(req, b.branch)) return res.status(403).json({ error: 'You can only assign employees to your branch.' });
     if (b.name !== undefined) row.name = String(b.name).trim();
     if (b.employeeId !== undefined) row.employeeId = b.employeeId || null;
     if (b.phone !== undefined) row.phone = b.phone;
@@ -481,6 +491,9 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
     if (b.reportsToAdminId !== undefined) row.reportsToAdminId = b.reportsToAdminId ? Number(b.reportsToAdminId) : null;
     if (b.active !== undefined) row.active = !!b.active;
     if (b.avatar !== undefined) row.avatar = b.avatar;
+    // HR-Manager role and the announce permission are admin-granted only.
+    if (b.isHrManager !== undefined && req.isHrAdmin) row.isHrManager = !!b.isHrManager;
+    if (b.canPostAnnouncements !== undefined && req.isHrAdmin) row.canPostAnnouncements = !!b.canPostAnnouncements;
     if (b.birthday !== undefined) row.birthday = b.birthday || null;
     if (b.maritalStatus !== undefined) row.maritalStatus = b.maritalStatus || null;
     if (b.anniversary !== undefined) row.anniversary = b.anniversary || null;
@@ -499,10 +512,13 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
 });
 
 // Delete an employee (admin only). Blocks self-deletion.
-router.delete('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.delete('/users/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrUser.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, row.branch)) return res.status(403).json({ error: 'You can only delete employees in your branch.' });
+    // An HR Manager cannot delete another manager or an admin-level record.
+    if (!req.isHrAdmin && row.isHrManager) return res.status(403).json({ error: 'Only an admin can remove an HR manager.' });
     const nm = row.name;
     await row.destroy();
     hrLog(req, 'user.delete', nm);
@@ -592,7 +608,7 @@ router.get('/job-posts/:id', requireHrAccess, async (req, res, next) => {
 });
 
 // Assign / update the HR team on a job post (from the job list or builder).
-router.put('/job-posts/:id/assigned-hr', requireHrAccess, requireScheduler, async (req, res, next) => {
+router.put('/job-posts/:id/assigned-hr', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -607,7 +623,7 @@ router.put('/job-posts/:id/assigned-hr', requireHrAccess, requireScheduler, asyn
 });
 
 // Set the default interview panel for a stage on a job post.
-router.put('/job-posts/:id/round-panels', requireHrAccess, requireScheduler, async (req, res, next) => {
+router.put('/job-posts/:id/round-panels', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -623,7 +639,8 @@ router.put('/job-posts/:id/round-panels', requireHrAccess, requireScheduler, asy
 });
 
 // Create or update a draft (the builder auto-saves as the HR moves through steps).
-router.post('/job-posts', requireHrAccess, async (req, res, next) => {
+// Only admins and HR managers create job posts.
+router.post('/job-posts', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'Job title is required.' });
@@ -638,7 +655,7 @@ router.post('/job-posts', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.put('/job-posts/:id', requireHrAccess, async (req, res, next) => {
+router.put('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -652,7 +669,7 @@ router.put('/job-posts/:id', requireHrAccess, async (req, res, next) => {
 });
 
 // Publish: mint a public token (if not already) and flip status to published.
-router.post('/job-posts/:id/publish', requireHrAccess, async (req, res, next) => {
+router.post('/job-posts/:id/publish', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -665,7 +682,7 @@ router.post('/job-posts/:id/publish', requireHrAccess, async (req, res, next) =>
   } catch (e) { next(e); }
 });
 
-router.post('/job-posts/:id/close', requireHrAccess, async (req, res, next) => {
+router.post('/job-posts/:id/close', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -676,7 +693,7 @@ router.post('/job-posts/:id/close', requireHrAccess, async (req, res, next) => {
 
 // Toggle a published job between Live and Paused (paused hides the public form
 // but keeps the post and its candidates).
-router.post('/job-posts/:id/pause', requireHrAccess, async (req, res, next) => {
+router.post('/job-posts/:id/pause', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -688,7 +705,7 @@ router.post('/job-posts/:id/pause', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.delete('/job-posts/:id', requireHrAccess, async (req, res, next) => {
+router.delete('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a job post.' });
     const row = await HrJobPost.findByPk(req.params.id);
@@ -758,6 +775,24 @@ function pickJobFields(b) {
   return out;
 }
 
+// Whether the actor may add candidates to a specific job post.
+//  - Admin: any job.
+//  - HR Manager: any job they're assigned to; if unassigned, only admin/HR
+//    manager whose branch matches the job location may add (managers help staff
+//    unassigned jobs in their branch).
+//  - HR/recruiter/etc: only if they're in the job's assignedHrIds.
+//  - Unassigned job: admin only (or a branch HR manager).
+function candidateAddGate(req, job) {
+  if (req.isHrAdmin) return { ok: true };
+  const assigned = (Array.isArray(job.assignedHrIds) ? job.assignedHrIds : []).map(Number);
+  const meId = Number(req.hrActor.id);
+  if (assigned.includes(meId)) return { ok: true };
+  // HR Manager for the job's branch can add even when not personally assigned.
+  if (req.isHrManager && canManageBranch(req, job.branch)) return { ok: true };
+  if (assigned.length === 0) return { ok: false, error: 'This job has no HR assigned yet. An admin or HR manager must assign it before candidates can be added.' };
+  return { ok: false, error: 'You are not assigned to this job. Ask an admin or HR manager to assign you before adding candidates.' };
+}
+
 router.get('/candidates', requireHrAccess, async (req, res, next) => {
   try {
     const where = {};
@@ -825,6 +860,15 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
     const name = b.name || `${(b.firstName || '').trim()} ${(b.lastName || '').trim()}`.trim();
     if (!name) return res.status(400).json({ error: 'Candidate name is required.' });
     const job = b.jobPostId ? await HrJobPost.findByPk(b.jobPostId) : null;
+    // Restrictive assignment: only HR assigned to this job may add candidates to
+    // it. Admins add to any job; an unassigned job is admin-only. Candidates with
+    // no job (general pool) are allowed for any scheduler.
+    if (job) {
+      const gate = candidateAddGate(req, job);
+      if (!gate.ok) return res.status(403).json({ error: gate.error });
+    } else if (!canViewInternal(req)) {
+      return res.status(403).json({ error: 'Only HR can add candidates.' });
+    }
     const firstStage = (job && job.stages && job.stages[0] && job.stages[0].id) || 'applied';
     const now = new Date().toISOString();
     const VALID_SOURCES = ['manual', 'linkedin', 'naukri', 'indeed', 'referral', 'careers_page', 'public_form'];
@@ -1344,7 +1388,10 @@ router.post('/candidates/bulk', requireHrAccess, async (req, res, next) => {
     for (const row of rows) {
       if (b.action === 'move' && b.stage) { row.stage = String(b.stage); row.rejected = false; pushTimeline(row, { type: 'stage', text: `Moved to ${b.stage} (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); }
       else if (b.action === 'reject') { row.rejected = true; row.stage = 'rejected'; row.rejectionReason = String(b.reason || '').slice(0, 300); pushTimeline(row, { type: 'reject', text: `Rejected (bulk) by ${req.hrActor.name}${b.reason ? ` — ${b.reason}` : ''}.`, by: req.hrActor.name }); }
-      else if (b.action === 'assign' && b.recruiterId) { const u = await HrUser.findByPk(b.recruiterId); if (u) { row.recruiterId = u.id; row.recruiterName = u.name; pushTimeline(row, { type: 'assigned', text: `${u.name} assigned as recruiter (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); } }
+      else if (b.action === 'assign' && b.recruiterId) {
+        if (!req.isHrAdmin && !req.isHrManager) return res.status(403).json({ error: 'Only an admin or HR manager can reassign candidates.' });
+        const u = await HrUser.findByPk(b.recruiterId); if (u) { row.recruiterId = u.id; row.recruiterName = u.name; pushTimeline(row, { type: 'assigned', text: `${u.name} assigned as recruiter (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); }
+      }
       await row.save();
     }
     res.json({ ok: true, count: rows.length });
@@ -1549,10 +1596,11 @@ router.delete('/signatures/:sigId', requireHrAccess, async (req, res, next) => {
 });
 
 // ---- Admin user management (activate/deactivate, reset password) ----
-router.post('/users/:id/reset-password', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/users/:id/reset-password', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const u = await HrUser.findByPk(req.params.id);
     if (!u) return res.status(404).json({ error: 'User not found.' });
+    if (!canManageBranch(req, u.branch)) return res.status(403).json({ error: 'You can only reset passwords for employees in your branch.' });
     const np = String((req.body && (req.body.password || req.body.newPassword)) || '');
     if (np.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     u.passwordHash = await bcrypt.hash(np, 10);
@@ -1957,25 +2005,33 @@ router.get('/celebrations', requireHrAccess, async (req, res, next) => {
 // ---- Announcements / notice board ----
 router.get('/announcements', requireHrAccess, async (req, res, next) => {
   try {
-    const rows = await HrAnnouncement.findAll({ where: { active: true }, order: [['pinned', 'DESC'], ['createdAt', 'DESC']], limit: 100 });
-    const canPost = !!req.isHrAdmin || !!(req.hrUser && req.hrUser.canPostAnnouncements);
-    res.json({ announcements: rows.map((r) => r.toJSON()), canPost });
+    const rows = await HrAnnouncement.findAll({ where: { active: true }, order: [['pinned', 'DESC'], ['createdAt', 'DESC']], limit: 200 });
+    // An employee sees 'all' plus announcements targeted at their branch. Admins
+    // and HR managers see everything (so they can manage it).
+    const myBranch = req.hrUser ? req.hrUser.branch : '';
+    const canSeeAll = !!req.isHrAdmin || !!req.isHrManager;
+    const visible = rows.filter((r) => canSeeAll || r.audience === 'all' || r.audience === myBranch);
+    const canPost = !!req.isHrAdmin || !!req.isHrManager || !!(req.hrUser && req.hrUser.canPostAnnouncements);
+    res.json({ announcements: visible.map((r) => r.toJSON()), canPost, myBranch, isManager: !!req.isHrManager, isAdmin: !!req.isHrAdmin });
   } catch (e) { next(e); }
 });
-// Admins, and HR granted the permission, may post.
+// Admins, HR managers, and HR granted the permission may post.
 function requireAnnouncer(req, res, next) {
-  if (req.isHrAdmin || (req.hrUser && req.hrUser.canPostAnnouncements)) return next();
+  if (req.isHrAdmin || req.isHrManager || (req.hrUser && req.hrUser.canPostAnnouncements)) return next();
   return res.status(403).json({ error: 'You don’t have permission to post announcements.' });
 }
 router.post('/announcements', requireHrAccess, requireAnnouncer, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'A title is required.' });
-    const row = await HrAnnouncement.create({ title: String(b.title).slice(0, 200), body: String(b.body || ''), pinned: !!b.pinned, authorId: req.hrActor.id, authorName: req.hrActor.name });
-    hrLog(req, 'announcement.create', row.title);
-    // Notify all active HR staff of the new announcement.
+    const audience = String(b.audience || 'all').slice(0, 80);
+    const row = await HrAnnouncement.create({ title: String(b.title).slice(0, 200), body: String(b.body || ''), pinned: !!b.pinned, audience, authorId: req.hrActor.id, authorName: req.hrActor.name });
+    hrLog(req, 'announcement.create', `${row.title} (${audience})`);
+    // Notify the targeted staff of the new announcement.
     try {
-      const staff = await HrUser.findAll({ where: { active: true }, attributes: ['id'] });
+      const where = { active: true };
+      if (audience !== 'all') where.branch = audience;
+      const staff = await HrUser.findAll({ where, attributes: ['id'] });
       for (const u of staff) await notify(u.id, { type: 'info', text: `📢 New announcement: ${row.title}` });
     } catch {}
     res.json(row.toJSON());

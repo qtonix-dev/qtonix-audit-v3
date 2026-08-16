@@ -39,6 +39,8 @@ async function requireHrAccess(req, res, next) {
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
+    req.isHrManager = !!hr.isHrManager; // branch-scoped admin-lite
+    req.hrBranch = hr.branch || '';
     return next();
   }
 
@@ -51,6 +53,8 @@ async function requireHrAccess(req, res, next) {
   req.adminUser = user;
   req.hrActor = { kind: 'admin', id: user.id, name: user.name };
   req.isHrAdmin = true; // only the shared admin can manage HR users/branches
+  req.isHrManager = false;
+  req.hrBranch = '';
   next();
 }
 
@@ -58,6 +62,22 @@ async function requireHrAccess(req, res, next) {
 function requireHrAdmin(req, res, next) {
   if (!req.isHrAdmin) return res.status(403).json({ error: 'Admin access required.' });
   next();
+}
+
+// Admin OR HR Manager. Use for branch-scoped management (employees, job posts,
+// applicant assignment, announcements). Route handlers still enforce that an HR
+// Manager acts only within their own branch.
+function requireHrManager(req, res, next) {
+  if (req.isHrAdmin || req.isHrManager) return next();
+  return res.status(403).json({ error: 'Only an admin or HR manager can do this.' });
+}
+
+// True when the actor may manage records for the given branch: admins anywhere;
+// an HR Manager only within their own branch. Others never.
+function canManageBranch(req, branch) {
+  if (req.isHrAdmin) return true;
+  if (req.isHrManager) return !branch || !req.hrBranch || String(branch) === String(req.hrBranch);
+  return false;
 }
 
 // Guards recruiting-management routes (scheduling interviews, assigning
@@ -76,4 +96,4 @@ function canViewInternal(req) {
   return !!req.isHrAdmin || (req.hrType && SCHEDULER_TYPES.includes(req.hrType));
 }
 
-module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, canViewInternal };
+module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch };

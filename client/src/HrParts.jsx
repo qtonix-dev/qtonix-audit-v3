@@ -65,11 +65,12 @@ export function Avatar({ name, src, size = 48 }) {
 // ---------------------------------------------------------------------------
 // Create-user popup (modal), mirroring the CRM "Add lead" popup pattern.
 // ---------------------------------------------------------------------------
-export function AddUserModal({ presetType, branches, departments, reportingOptions, shifts = [], imagekitReady, onClose, onCreated }) {
+export function AddUserModal({ presetType, branches, departments, reportingOptions, shifts = [], imagekitReady, isAdmin, lockBranch, onClose, onCreated }) {
   const blank = {
     name: '', employeeId: '', email: '', password: '', phone: '+91 ', designation: '',
-    type: presetType || 'employee', branch: branches[0]?.name || 'Bhubaneswar', department: '', joiningDate: '',
+    type: presetType || 'employee', branch: lockBranch || branches[0]?.name || 'Bhubaneswar', department: '', joiningDate: '',
     reportsTo: '', branchIncharge: false, avatar: '', shiftId: '', targets: { dailyInterviews: 0, monthlyOnboarding: 0 },
+    isHrManager: false, canPostAnnouncements: false,
   };
   const [f, setF] = useState(blank);
   const [err, setErr] = useState('');
@@ -135,9 +136,9 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
           <Field label="Role"><select className={inputCls} value={f.type} onChange={(e) => set({ type: e.target.value })}>
             {ROLE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select></Field>
-          <Field label="Branch"><select className={inputCls} value={f.branch} onChange={(e) => set({ branch: e.target.value })}>
+          <Field label="Branch"><select className={inputCls} value={f.branch} onChange={(e) => set({ branch: e.target.value })} disabled={!!lockBranch}>
             {branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}
-          </select></Field>
+          </select>{lockBranch && <div className="text-[10px] text-slate-400 mt-1">Locked to your branch.</div>}</Field>
           <Field label="Department"><select className={inputCls} value={f.department} onChange={(e) => set({ department: e.target.value })}>
             <option value="">— select —</option>
             {departments.map((d) => <option key={d._id} value={d.name}>{d.name}</option>)}
@@ -164,6 +165,13 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
               <Field label="Daily scheduling target"><input type="number" min="0" className={inputCls} value={f.targets.dailyInterviews} onChange={(e) => set({ targets: { ...f.targets, dailyInterviews: e.target.value } })} /></Field>
               <Field label="Monthly hiring target"><input type="number" min="0" className={inputCls} value={f.targets.monthlyOnboarding} onChange={(e) => set({ targets: { ...f.targets, monthlyOnboarding: e.target.value } })} /></Field>
             </div>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div className="mt-4 space-y-2">
+            <label className="flex items-center gap-2 text-sm text-slate-600 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set({ isHrManager: e.target.checked })} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>
+            <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set({ canPostAnnouncements: e.target.checked })} /> Can post announcements to the notice board</label>
           </div>
         )}
 
@@ -570,7 +578,10 @@ function OnboardingChecklist({ employeeId, canEdit }) {
   );
 }
 
-export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
+export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
+  const isHrManager = !!(me && me.isHrManager);
+  const canManage = isAdmin || isHrManager;
+  const myBranch = me && me.branch;
   const [rows, setRows] = useState([]);
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -590,14 +601,14 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
   const load = () => hrApi('/employees').then(setRows).catch(() => {});
   useEffect(() => {
     load();
-    if (isAdmin) {
+    if (canManage) {
       hrApi('/branches').then(setBranches).catch(() => {});
       hrApi('/departments').then(setDepartments).catch(() => {});
       hrApi('/reporting-options').then(setReporting).catch(() => {});
       hrApi('/shifts').then(setShifts).catch(() => {});
       hrApi('/imagekit').then((c) => setImagekitReady(c.configured)).catch(() => {});
     }
-  }, [isAdmin]);
+  }, [canManage]);
   const reportingOptions = [
     ...reporting.hr.map((h) => ({ value: `hr:${h.id}`, label: `${h.name}${h.designation ? ` · ${h.designation}` : ''} (HR)` })),
     ...reporting.admins.map((a) => ({ value: `admin:${a.id}`, label: `${a.name} (Admin)` })),
@@ -633,8 +644,9 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Employees</h1>
-        {isAdmin && <button onClick={() => setShow(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add employee</button>}
+        {canManage && <button onClick={() => setShow(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add employee</button>}
       </div>
+      {isHrManager && !isAdmin && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">As HR Manager you manage employees in the <b>{myBranch}</b> branch.</div>}
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
       {/* Filters */}
@@ -668,7 +680,7 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  {isAdmin && (
+                  {canManage && (isAdmin || u.branch === myBranch) ? (
                     <div className="flex items-center justify-end gap-0.5">
                       <IconBtn title="View profile" onClick={() => onOpenProfile(u._id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></IconBtn>
                       <IconBtn title="Edit" onClick={() => setEditing(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
@@ -680,7 +692,7 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
                       </IconBtn>
                       <IconBtn title="Delete" onClick={() => del(u)} color="text-slate-400 hover:text-red-600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13" /></svg></IconBtn>
                     </div>
-                  )}
+                  ) : (canManage ? <div className="text-right text-[10px] text-slate-300">Other branch</div> : null)}
                 </td>
               </tr>
             ))}
@@ -688,8 +700,8 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
           </tbody>
         </table>
       </div>
-      {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
-      {editing && <EditEmployeeModal user={editing} branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setMsg('Employee updated.'); load(); }} />}
+      {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} isAdmin={isAdmin} lockBranch={!isAdmin && isHrManager ? myBranch : ''} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
+      {editing && <EditEmployeeModal user={editing} branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} isAdmin={isAdmin} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setMsg('Employee updated.'); load(); }} />}
       {resetting && <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onDone={() => { setResetting(null); setMsg('Password reset.'); }} />}
     </div>
   );
@@ -733,13 +745,13 @@ export function ResetPasswordModal({ user, onClose, onDone }) {
 }
 
 // Edit core employee fields (admin). Reuses the same field set as add.
-export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, onClose, onSaved }) {
+export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, isAdmin, onClose, onSaved }) {
   const [f, setF] = useState({
     name: user.name || '', employeeId: user.employeeId || '', phone: user.phone || '', designation: user.designation || '',
     type: user.type || 'employee', branch: user.branch || '', department: user.department || '',
     joiningDate: user.joiningDate || '', birthday: user.birthday || '', maritalStatus: user.maritalStatus || '', anniversary: user.anniversary || '',
     reportsTo: user.reportsToId ? `hr:${user.reportsToId}` : (user.reportsToAdminId ? `admin:${user.reportsToAdminId}` : ''),
-    shiftId: user.shiftId || '', canPostAnnouncements: !!user.canPostAnnouncements, active: user.active !== false,
+    shiftId: user.shiftId || '', canPostAnnouncements: !!user.canPostAnnouncements, isHrManager: !!user.isHrManager, active: user.active !== false,
     dailyInterviews: (user.targets && user.targets.dailyInterviews) || 0, monthlyOnboarding: (user.targets && user.targets.monthlyOnboarding) || 0,
   });
   const [busy, setBusy] = useState(false);
@@ -756,7 +768,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
         branch: f.branch, department: f.department, joiningDate: f.joiningDate || null, birthday: f.birthday || null,
         maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
         reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
-        shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, active: f.active,
+        shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, isHrManager: f.isHrManager, active: f.active,
         targets: isHrRole ? { dailyInterviews: Number(f.dailyInterviews) || 0, monthlyOnboarding: Number(f.monthlyOnboarding) || 0 } : undefined,
       }) });
       onSaved();
@@ -786,7 +798,8 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           {f.maritalStatus === 'married' && <label className="text-xs font-bold text-slate-500">Anniversary<input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => set('anniversary', e.target.value)} /></label>}
           {isHrRole && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
           {isHrRole && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
-          <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>
+          {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set('isHrManager', e.target.checked)} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>}
+          {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>}
           <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} /> Active</label>
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
