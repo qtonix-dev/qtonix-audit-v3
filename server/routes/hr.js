@@ -2177,8 +2177,34 @@ router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
 // respond; results are analysed monthly with Claude.
 
 const DEFAULT_MOOD_QUESTIONS = [
-  { id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true },
+  { id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] },
 ];
+
+const SURVEY_Q_TYPES = ['scale5', 'single_choice', 'multi_choice', 'short_answer'];
+// Normalise an admin-supplied questions array into the stored shape. Each:
+//   { id, text, type, comment(bool), options:[string] (choice types only) }
+function sanitizeQuestions(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((q, i) => {
+    const type = SURVEY_Q_TYPES.includes(q.type) ? q.type : 'scale5';
+    const isChoice = type === 'single_choice' || type === 'multi_choice';
+    const options = isChoice && Array.isArray(q.options)
+      ? q.options.map((o) => String(o).slice(0, 160)).filter((o) => o.trim()).slice(0, 12)
+      : [];
+    return {
+      id: q.id || `q${i + 1}`,
+      text: String(q.text || '').slice(0, 300),
+      type,
+      comment: q.comment === true, // opt-in note box (default off for new types)
+      options,
+    };
+  }).filter((q) => {
+    if (!q.text.trim()) return false;
+    // Choice questions must have at least two options to be usable.
+    if ((q.type === 'single_choice' || q.type === 'multi_choice') && q.options.length < 2) return false;
+    return true;
+  });
+}
 
 // Current period key for a survey's frequency.
 function surveyPeriodKey(frequency, d = new Date()) {
@@ -2227,7 +2253,7 @@ router.post('/surveys', requireHrAccess, requireHrAdmin, async (req, res, next) 
     const template = b.template === 'employee_mood' ? 'employee_mood' : 'employee_mood';
     const frequency = ['one_time', 'weekly', 'monthly'].includes(b.frequency) ? b.frequency : 'one_time';
     const questions = Array.isArray(b.questions) && b.questions.length
-      ? b.questions.map((q, i) => ({ id: q.id || `q${i + 1}`, text: String(q.text || '').slice(0, 300), type: 'scale5', comment: q.comment !== false }))
+      ? (sanitizeQuestions(b.questions).length ? sanitizeQuestions(b.questions) : DEFAULT_MOOD_QUESTIONS)
       : DEFAULT_MOOD_QUESTIONS;
     const row = await HrSurvey.create({
       name: String(b.name).slice(0, 160), description: String(b.description || '').slice(0, 2000),
@@ -2250,7 +2276,7 @@ router.put('/surveys/:id', requireHrAccess, requireHrAdmin, async (req, res, nex
     if (b.name !== undefined) row.name = String(b.name).slice(0, 160);
     if (b.description !== undefined) row.description = String(b.description).slice(0, 2000);
     if (b.frequency !== undefined && ['one_time', 'weekly', 'monthly'].includes(b.frequency)) row.frequency = b.frequency;
-    if (Array.isArray(b.questions)) { row.questions = b.questions.map((q, i) => ({ id: q.id || `q${i + 1}`, text: String(q.text || '').slice(0, 300), type: 'scale5', comment: q.comment !== false })); row.changed('questions', true); }
+    if (Array.isArray(b.questions)) { row.questions = sanitizeQuestions(b.questions); row.changed('questions', true); }
     if (b.status !== undefined && ['active', 'closed'].includes(b.status)) row.status = b.status;
     await row.save();
     res.json(row.toJSON());
@@ -2310,10 +2336,22 @@ router.post('/surveys/:id/respond', requireHrAccess, async (req, res, next) => {
     if (already) return res.status(409).json({ error: 'You’ve already responded to this survey for this period.' });
 
     const b = req.body || {};
-    const answers = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    const raw = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    // Normalise each answer to its question type so storage stays clean.
+    const answers = {};
+    for (const q of (survey.questions || [])) {
+      const a = raw[q.id] || {};
+      const entry = {};
+      if (q.type === 'scale5') { const n = Number(a.score); if (Number.isFinite(n)) entry.score = n; }
+      else if (q.type === 'single_choice') { if (a.choice != null) entry.choice = String(a.choice).slice(0, 160); }
+      else if (q.type === 'multi_choice') { entry.choices = Array.isArray(a.choices) ? a.choices.map((c) => String(c).slice(0, 160)).slice(0, 12) : []; }
+      else if (q.type === 'short_answer') { if (a.text != null) entry.text = String(a.text).slice(0, 2000); }
+      if (q.comment && a.comment != null) entry.comment = String(a.comment).slice(0, 2000);
+      answers[q.id] = entry;
+    }
     const followups = Array.isArray(b.followups) ? b.followups.map((f) => ({ question: String(f.question || '').slice(0, 240), answer: String(f.answer || '').slice(0, 20) })) : [];
-    // Average of the scale scores.
-    const scores = (survey.questions || []).map((q) => Number((answers[q.id] || {}).score)).filter((n) => Number.isFinite(n));
+    // Average of the scale scores only (choice/short-answer have no numeric value).
+    const scores = (survey.questions || []).filter((q) => q.type === 'scale5').map((q) => Number((answers[q.id] || {}).score)).filter((n) => Number.isFinite(n));
     const avgScore = scores.length ? scores.reduce((a, c) => a + c, 0) / scores.length : null;
     const hasLow = scores.some((n) => n <= 3);
 
@@ -2404,7 +2442,15 @@ router.post('/surveys/:id/analyze', requireHrAccess, requireHrAdmin, async (req,
     }
     // 2) Aggregate good/improve/summary.
     const blobs = responses.map((r) => {
-      const txt = (survey.questions || []).map((q) => { const a = (r.answers || {})[q.id] || {}; return `${q.text}: ${a.score != null ? a.score : '—'}/5${a.comment ? ` — "${a.comment}"` : ''}`; }).join('; ');
+      const txt = (survey.questions || []).map((q) => {
+        const a = (r.answers || {})[q.id] || {};
+        let ans = '—';
+        if (q.type === 'scale5') ans = a.score != null ? `${a.score}/5` : '—';
+        else if (q.type === 'single_choice') ans = a.choice != null ? a.choice : '—';
+        else if (q.type === 'multi_choice') ans = Array.isArray(a.choices) && a.choices.length ? a.choices.join(', ') : '—';
+        else if (q.type === 'short_answer') ans = a.text || '—';
+        return `${q.text}: ${ans}${a.comment ? ` — "${a.comment}"` : ''}`;
+      }).join('; ');
       const fu = (r.followups || []).map((f) => `${f.question} → ${f.answer}`).join('; ');
       return { department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, text: txt + (fu ? ` | Follow-ups: ${fu}` : '') };
     });

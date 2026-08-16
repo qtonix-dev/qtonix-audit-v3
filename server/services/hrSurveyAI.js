@@ -23,12 +23,20 @@ function parseJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-// Build a compact text view of a submission for prompting.
+// Build a compact text view of a submission for prompting. Handles every
+// question type (scale, single/multi choice, short answer) plus optional notes.
 function describeSubmission({ questions, answers, followups }) {
   const lines = [];
   for (const q of (questions || [])) {
     const a = (answers || {})[q.id] || {};
-    lines.push(`Q: ${q.text}\n  score: ${a.score != null ? a.score : '—'}/5${a.comment ? `\n  comment: ${a.comment}` : ''}`);
+    let ans = '—';
+    if (q.type === 'scale5') ans = a.score != null ? `${a.score}/5` : '—';
+    else if (q.type === 'single_choice') ans = a.choice != null ? `"${a.choice}"` : '—';
+    else if (q.type === 'multi_choice') ans = Array.isArray(a.choices) && a.choices.length ? a.choices.map((c) => `"${c}"`).join(', ') : '—';
+    else if (q.type === 'short_answer') ans = a.text ? `"${a.text}"` : '—';
+    let line = `Q: ${q.text}\n  answer: ${ans}`;
+    if (a.comment) line += `\n  comment: ${a.comment}`;
+    lines.push(line);
   }
   for (const f of (followups || [])) lines.push(`Follow-up: ${f.question}\n  answer: ${f.answer}`);
   return lines.join('\n');

@@ -2079,27 +2079,40 @@ function SurveyCreate({ surveys, reload, setErr }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [frequency, setFrequency] = useState('one_time');
-  const [questions, setQuestions] = useState([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true }]);
+  const [questions, setQuestions] = useState([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
-  const addQ = () => setQuestions((qs) => [...qs, { id: `q${qs.length + 1}`, text: '', type: 'scale5', comment: true }]);
-  const setQ = (i, text) => setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, text } : q));
+  const Q_TYPES = [['scale5', 'Rating scale (1–5)'], ['single_choice', 'Multiple choice (pick one)'], ['multi_choice', 'Multiple choice (pick many)'], ['short_answer', 'Short answer']];
+  const addQ = () => setQuestions((qs) => [...qs, { id: `q${Date.now()}`, text: '', type: 'scale5', comment: false, options: [] }]);
+  const patchQ = (i, patch) => setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, ...patch } : q));
   const delQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
+  const setOpt = (qi, oi, val) => setQuestions((qs) => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.map((o, j) => j === oi ? val : o) } : q));
+  const addOpt = (qi) => setQuestions((qs) => qs.map((q, idx) => idx === qi ? { ...q, options: [...(q.options || []), ''] } : q));
+  const delOpt = (qi, oi) => setQuestions((qs) => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
+
+  const validQuestions = () => questions.filter((q) => {
+    if (!q.text.trim()) return false;
+    if ((q.type === 'single_choice' || q.type === 'multi_choice') && (q.options || []).filter((o) => o.trim()).length < 2) return false;
+    return true;
+  });
 
   const launch = async () => {
-    if (!name.trim()) { setMsg(''); setErr && setErr('Survey name is required.'); return; }
-    const qs = questions.filter((q) => q.text.trim());
-    if (!qs.length) { setErr && setErr('Add at least one question.'); return; }
+    setMsg('');
+    if (!name.trim()) { setErr && setErr('Survey name is required.'); return; }
+    const qs = validQuestions();
+    if (!qs.length) { setErr && setErr('Add at least one complete question (choice questions need 2+ options).'); return; }
     setBusy(true);
     try {
       await hrApi('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
-      setName(''); setDescription(''); setFrequency('one_time'); setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true }]);
+      setName(''); setDescription(''); setFrequency('one_time'); setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
       setMsg('Survey launched — employees will be prompted to respond.'); reload();
     } catch (e) { setErr && setErr(e.message); } finally { setBusy(false); }
   };
   const closeSurvey = async (s) => { if (!window.confirm(`Close "${s.name}"? It will stop accepting responses.`)) return; try { await hrApi(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); } catch (e) { alert(e.message); } };
   const del = async (s) => { if (!window.confirm(`Delete "${s.name}"?`)) return; try { await hrApi(`/surveys/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
+
+  const isChoice = (t) => t === 'single_choice' || t === 'multi_choice';
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
@@ -2129,18 +2142,46 @@ function SurveyCreate({ surveys, reload, setErr }) {
               ))}
             </div>
           </div>
+
           <div>
-            <div className="text-xs font-bold text-slate-500 mb-1">Questions <span className="font-normal text-slate-400">(1–5 agreement scale, with a comment box)</span></div>
-            <div className="space-y-2">
+            <div className="text-xs font-bold text-slate-500 mb-2">Questions</div>
+            <div className="space-y-3">
               {questions.map((q, i) => (
-                <div key={q.id} className="flex items-start gap-2">
-                  <span className="text-slate-300 text-sm pt-2.5">{i + 1}.</span>
-                  <textarea className={inputCls} rows={1} value={q.text} onChange={(e) => setQ(i, e.target.value)} placeholder="Statement employees rate from Strongly Disagree to Strongly Agree" />
-                  {questions.length > 1 && <button onClick={() => delQ(i)} className="text-slate-300 hover:text-red-500 pt-2"><Icon.Trash size={16} /></button>}
+                <div key={q.id} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-slate-300 text-sm pt-2.5 font-bold">{i + 1}.</span>
+                    <div className="flex-1 space-y-2">
+                      <textarea className={inputCls} rows={1} value={q.text} onChange={(e) => patchQ(i, { text: e.target.value })} placeholder="Question text" />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <select className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600" value={q.type} onChange={(e) => patchQ(i, { type: e.target.value, options: isChoice(e.target.value) && !(q.options || []).length ? ['', ''] : q.options })}>
+                          {Q_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500"><input type="checkbox" checked={!!q.comment} onChange={(e) => patchQ(i, { comment: e.target.checked })} /> Ask for a comment/note</label>
+                        {q.type === 'scale5' && <span className="text-[10px] text-slate-400">Low scores (≤3) trigger AI follow-ups</span>}
+                      </div>
+
+                      {isChoice(q.type) && (
+                        <div className="rounded-lg bg-slate-50 border border-slate-100 p-2.5">
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Options</div>
+                          <div className="space-y-1.5">
+                            {(q.options || []).map((o, oi) => (
+                              <div key={oi} className="flex items-center gap-2">
+                                <span className="text-slate-300 text-xs">{q.type === 'multi_choice' ? '☐' : '○'}</span>
+                                <input className={inputCls + ' py-1.5'} value={o} onChange={(e) => setOpt(i, oi, e.target.value)} placeholder={`Option ${oi + 1}`} />
+                                <button onClick={() => delOpt(i, oi)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={14} /></button>
+                              </div>
+                            ))}
+                          </div>
+                          <button onClick={() => addOpt(i)} className="text-[11px] font-bold text-[#FF4500] mt-1.5">+ Add option</button>
+                        </div>
+                      )}
+                    </div>
+                    {questions.length > 1 && <button onClick={() => delQ(i)} className="text-slate-300 hover:text-red-500 pt-2"><Icon.Trash size={16} /></button>}
+                  </div>
                 </div>
               ))}
             </div>
-            <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-2">+ Add question</button>
+            <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-3">+ Add question</button>
           </div>
           <div className="pt-1"><button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Launching…' : 'Launch Survey'}</button></div>
         </div>
@@ -2156,7 +2197,7 @@ function SurveyCreate({ surveys, reload, setErr }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {s.status === 'active' ? <span className="text-green-600 font-bold">Active</span> : <span className="text-slate-400">Closed</span>} · {s.responseCount || 0} responses this period</div>
+                    <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'} · {s.status === 'active' ? <span className="text-green-600 font-bold">Active</span> : <span className="text-slate-400">Closed</span>} · {s.responseCount || 0} responses this period</div>
                   </div>
                   <div className="flex items-center gap-1.5">
                     {s.status === 'active' && <button onClick={() => closeSurvey(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Close</button>}
@@ -2820,23 +2861,31 @@ function SurveyGate() {
 }
 
 function SurveyTakeModal({ survey, onClose, onDone }) {
-  const [answers, setAnswers] = useState({}); // qid -> { score, comment }
+  const [answers, setAnswers] = useState({}); // qid -> {score|choice|choices|text, comment}
   const [phase, setPhase] = useState('main'); // main | followups | done
   const [followupQs, setFollowupQs] = useState([]);
   const [followupA, setFollowupA] = useState({}); // fid -> 'Yes'|'No'
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const setScore = (qid, score) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), score } }));
-  const setComment = (qid, comment) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), comment } }));
+  const patch = (qid, p) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), ...p } }));
+  const toggleChoice = (qid, opt) => setAnswers((a) => { const cur = (a[qid] && a[qid].choices) || []; const next = cur.includes(opt) ? cur.filter((c) => c !== opt) : [...cur, opt]; return { ...a, [qid]: { ...(a[qid] || {}), choices: next } }; });
 
-  const allAnswered = (survey.questions || []).every((q) => answers[q.id] && answers[q.id].score);
-  const anyLow = (survey.questions || []).some((q) => (answers[q.id] || {}).score && answers[q.id].score <= 3);
+  const isAnswered = (q) => {
+    const a = answers[q.id] || {};
+    if (q.type === 'scale5') return !!a.score;
+    if (q.type === 'single_choice') return a.choice != null && a.choice !== '';
+    if (q.type === 'multi_choice') return Array.isArray(a.choices) && a.choices.length > 0;
+    if (q.type === 'short_answer') return !!(a.text && a.text.trim());
+    return true;
+  };
+  const allAnswered = (survey.questions || []).every(isAnswered);
+  const anyLow = (survey.questions || []).some((q) => q.type === 'scale5' && (answers[q.id] || {}).score && answers[q.id].score <= 3);
 
   const proceed = async () => {
     setErr('');
-    if (!allAnswered) { setErr('Please rate every statement.'); return; }
-    // If any low score → fetch adaptive follow-ups (once).
+    if (!allAnswered) { setErr('Please answer every question.'); return; }
+    // After all questions, if any 1–5 answer is low, fetch adaptive follow-ups.
     if (anyLow && phase === 'main') {
       setBusy(true);
       try {
@@ -2857,6 +2906,58 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
+  const renderQuestion = (q, i) => {
+    const a = answers[q.id] || {};
+    return (
+      <div key={q.id} className="mb-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-2">{i + 1}. {q.text}</div>
+
+        {q.type === 'scale5' && (
+          <>
+            <div className="flex items-center gap-1.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} onClick={() => patch(q.id, { score: n })}
+                  className={`w-11 h-11 rounded-lg font-extrabold text-white transition ${a.score === n ? 'ring-2 ring-offset-2 ring-slate-400 scale-105' : 'opacity-80 hover:opacity-100'}`}
+                  style={{ background: SCALE_COLORS[n - 1] }}>{n}</button>
+              ))}
+            </div>
+            <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-1"><span>Strongly Disagree</span><span>Strongly Agree</span></div>
+          </>
+        )}
+
+        {q.type === 'single_choice' && (
+          <div className="space-y-1.5">
+            {(q.options || []).map((opt) => (
+              <button key={opt} onClick={() => patch(q.id, { choice: opt })}
+                className={`w-full text-left flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm ${a.choice === opt ? 'border-[#FF6A00] bg-orange-50 text-orange-700 font-bold' : 'border-slate-200 text-slate-600'}`}>
+                <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${a.choice === opt ? 'border-[#FF6A00]' : 'border-slate-300'}`}>{a.choice === opt && <span className="w-2 h-2 rounded-full bg-[#FF6A00]" />}</span>{opt}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {q.type === 'multi_choice' && (
+          <div className="space-y-1.5">
+            {(q.options || []).map((opt) => { const on = ((a.choices) || []).includes(opt); return (
+              <button key={opt} onClick={() => toggleChoice(q.id, opt)}
+                className={`w-full text-left flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm ${on ? 'border-[#FF6A00] bg-orange-50 text-orange-700 font-bold' : 'border-slate-200 text-slate-600'}`}>
+                <span className={`w-4 h-4 rounded border-2 flex items-center justify-center ${on ? 'border-[#FF6A00] bg-[#FF6A00]' : 'border-slate-300'}`}>{on && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><path d="M20 6L9 17l-5-5" /></svg>}</span>{opt}
+              </button>
+            ); })}
+          </div>
+        )}
+
+        {q.type === 'short_answer' && (
+          <textarea className={inputCls} rows={2} placeholder="Your answer" value={a.text || ''} onChange={(e) => patch(q.id, { text: e.target.value })} />
+        )}
+
+        {q.comment && q.type !== 'short_answer' && (
+          <textarea className={inputCls + ' mt-2'} rows={2} placeholder="Write your comment (optional)" value={a.comment || ''} onChange={(e) => patch(q.id, { comment: e.target.value })} />
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
@@ -2871,20 +2972,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
         <div className="p-6 overflow-y-auto">
           {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
 
-          {phase === 'main' && (survey.questions || []).map((q, i) => (
-            <div key={q.id} className="mb-5">
-              <div className="text-sm font-bold text-[#050A1F] mb-2">{i + 1}. {q.text}</div>
-              <div className="flex items-center gap-1.5">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button key={n} onClick={() => setScore(q.id, n)}
-                    className={`w-11 h-11 rounded-lg font-extrabold text-white transition ${answers[q.id]?.score === n ? 'ring-2 ring-offset-2 ring-slate-400 scale-105' : 'opacity-80 hover:opacity-100'}`}
-                    style={{ background: SCALE_COLORS[n - 1] }}>{n}</button>
-                ))}
-              </div>
-              <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-1"><span>Strongly Disagree</span><span>Strongly Agree</span></div>
-              {q.comment !== false && <textarea className={inputCls + ' mt-2'} rows={2} placeholder="Write your comment (optional)" value={answers[q.id]?.comment || ''} onChange={(e) => setComment(q.id, e.target.value)} />}
-            </div>
-          ))}
+          {phase === 'main' && (survey.questions || []).map((q, i) => renderQuestion(q, i))}
 
           {phase === 'followups' && (
             <div>
