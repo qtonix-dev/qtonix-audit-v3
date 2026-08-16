@@ -52,6 +52,7 @@ router.post('/auth/login', async (req, res) => {
       if (!hr.active) return res.status(403).json({ error: 'This account is no longer active.' });
       const ok = await bcrypt.compare(password, hr.passwordHash);
       if (!ok) return res.status(401).json({ error: 'Incorrect email or password.' });
+      await AuditLog.create({ userId: hr.id, userName: hr.name, action: 'hr.login', target: 'HR portal', ip: req.ip }).catch(() => {});
       return res.json({ token: signHr(hr), user: { ...hr.toJSON(), portal: 'hr', isAdmin: false } });
     }
 
@@ -67,11 +68,18 @@ router.post('/auth/login', async (req, res) => {
     // Sign a normal CRM admin token (same shape auth.js uses).
     const jwt = require('jsonwebtoken');
     const token = jwt.sign({ id: u.id, role: u.role, name: u.name }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '12h' });
+    await AuditLog.create({ userId: u.id, userName: u.name, action: 'hr.login', target: 'HR portal (admin)', ip: req.ip }).catch(() => {});
     res.json({ token, user: { _id: u.id, id: u.id, name: u.name, email: u.email, role: 'admin', portal: 'hr', isAdmin: true } });
   } catch (e) {
     console.error('[hr] login error', e.message);
     res.status(500).json({ error: 'Something went wrong signing in.' });
   }
+});
+
+/** POST /api/hr/auth/logout — records the logout event (best-effort). */
+router.post('/auth/logout', requireHrAccess, async (req, res) => {
+  try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'hr.logout', target: 'HR portal', ip: req.ip }); } catch {}
+  res.json({ ok: true });
 });
 
 /** GET /api/hr/me — the signed-in HR actor (staff or admin), for the greeting. */
@@ -481,6 +489,7 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
       row.passwordHash = await bcrypt.hash(String(b.password), 10);
     }
     await row.save();
+    hrLog(req, 'user.update', row.name);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -570,6 +579,7 @@ router.post('/job-posts', requireHrAccess, async (req, res, next) => {
     if (!fields.stages || !fields.stages.length) fields.stages = DEFAULT_STAGES;
     if (!fields.formFields || !Object.keys(fields.formFields).length) fields.formFields = DEFAULT_FORM_FIELDS;
     const row = await HrJobPost.create(fields);
+    hrLog(req, 'job.create', row.title);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -594,6 +604,7 @@ router.post('/job-posts/:id/publish', requireHrAccess, async (req, res, next) =>
     row.status = 'published';
     row.publishedAt = new Date();
     await row.save();
+    hrLog(req, 'job.publish', row.title);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -626,7 +637,9 @@ router.delete('/job-posts/:id', requireHrAccess, async (req, res, next) => {
     if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a job post.' });
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    const jt = row.title;
     await row.destroy();
+    hrLog(req, 'job.delete', jt);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -780,6 +793,7 @@ router.post('/candidates', requireHrAccess, async (req, res, next) => {
       ],
     });
     res.json(row.toJSON());
+    hrLog(req, 'candidate.create', row.name);
     // Score the resume match in the background (auto on add).
     scoreResumeMatchBg(row.id);
   } catch (e) { next(e); }
@@ -835,6 +849,7 @@ router.patch('/candidates/:id', requireHrAccess, async (req, res, next) => {
       }
     }
     await row.save();
+    hrLog(req, 'candidate.update', row.name);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -857,6 +872,13 @@ router.get('/candidates/:id', requireHrAccess, async (req, res, next) => {
     res.json(out);
   } catch (e) { next(e); }
 });
+
+// Best-effort audit log for an HR action. Never throws.
+async function hrLog(req, action, target) {
+  try {
+    await AuditLog.create({ userId: req.hrActor && req.hrActor.id, userName: req.hrActor && req.hrActor.name, action: `hr.${action}`, target: target ? String(target).slice(0, 200) : null, ip: req.ip });
+  } catch (e) { /* non-fatal */ }
+}
 
 // Create an in-app notification for an HR user (best-effort, never throws).
 async function notify(userId, { type, text, candidateId }) {
@@ -899,6 +921,7 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
     if (row.jobPostId) { const j = await HrJobPost.findByPk(row.jobPostId); const st = (j && j.stages || []).find((s) => s.id === row.stage); if (st) label = st.label; }
     pushTimeline(row, { type: 'stage', text: `Moved to ${label}.`, by: req.hrActor.name });
     await row.save();
+    hrLog(req, 'candidate.stage', `${row.name} → ${label}`);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -912,6 +935,7 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
     row.rejectionReason = String(req.body.reason || '').slice(0, 300);
     pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 200)}` : ''}.`, by: req.hrActor.name });
     await row.save();
+    hrLog(req, 'candidate.reject', `${row.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 120)}` : ''}`);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -1136,7 +1160,9 @@ router.delete('/candidates/:id', requireHrAccess, async (req, res, next) => {
     if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a candidate.' });
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const nm = row.name;
     await row.destroy();
+    hrLog(req, 'candidate.delete', nm);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -1309,6 +1335,7 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
     }
     row.offer = offer; row.changed('offer', true);
     await row.save();
+    hrLog(req, 'offer.' + (b.op || 'update'), `${row.name}${b.status ? ` — ${b.status}` : ''}`);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -1681,6 +1708,7 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
       s.changed('hrCareers', true);
     }
     await s.save();
+    hrLog(req, 'settings.update', b.careers ? 'careers page' : (b.autoScore !== undefined ? `auto-score ${b.autoScore ? 'on' : 'off'}` : 'settings'));
     res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
   } catch (e) { next(e); }
 });
@@ -1688,9 +1716,19 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
 // ---- Audit logs (HR-scoped view) + API usage ----
 router.get('/logs', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const limit = Math.min(500, Number(req.query.limit) || 200);
-    const logs = await AuditLog.findAll({ where: { action: { [Op.like]: 'hr.%' } }, order: [['createdAt', 'DESC']], limit });
-    res.json({ logs: logs.map((l) => l.toJSON ? l.toJSON() : l) });
+    const limit = Math.min(1000, Number(req.query.limit) || 300);
+    const where = {};
+    // Optional filter by a specific actor.
+    if (req.query.userId) where.userId = Number(req.query.userId);
+    if (req.query.userName) where.userName = req.query.userName;
+    // Optional action-category filter (e.g. 'hr' or 'auth').
+    if (req.query.category === 'hr') where.action = { [Op.like]: 'hr.%' };
+    else if (req.query.category === 'auth') where.action = { [Op.in]: ['login', 'logout', 'hr.login', 'hr.logout'] };
+    const logs = await AuditLog.findAll({ where, order: [['createdAt', 'DESC']], limit });
+    // Distinct actors present in the log, for the filter dropdown.
+    const all = await AuditLog.findAll({ attributes: ['userId', 'userName'], group: ['userId', 'userName'], order: [['userName', 'ASC']] });
+    const users = all.map((r) => ({ userId: r.userId, userName: r.userName })).filter((u) => u.userName);
+    res.json({ logs: logs.map((l) => l.toJSON ? l.toJSON() : l), users });
   } catch (e) { next(e); }
 });
 router.get('/api-usage', requireHrAccess, requireHrAdmin, async (req, res, next) => {
@@ -1700,6 +1738,140 @@ router.get('/api-usage', requireHrAccess, requireHrAdmin, async (req, res, next)
     const usage = {};
     rows.forEach((r) => { usage[r.provider] = (usage[r.provider] || 0) + r.count; });
     res.json({ usage });
+  } catch (e) { next(e); }
+});
+
+// ---- Dashboard: missed commitments (HR + admin) ----
+// Surfaces things HR/panelists agreed to do but didn't, past their time:
+//  • interview feedback not submitted (per missing panelist)
+//  • overdue calls / tasks (candidate.activities)
+//  • candidate in an interview stage with no upcoming interview booked
+//  • self-schedule link sent but the candidate never booked (past a grace window)
+// Scoped to the logged-in HR user; admins see everyone (with per-owner rollup).
+router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canViewInternal(req)) return res.json({ stillOpen: 0, items: [], byOwner: [] });
+    const isAdmin = !!req.isHrAdmin;
+    const meId = req.hrActor.id;
+    const meName = req.hrActor.name;
+    const now = Date.now();
+    const GRACE = 60 * 60 * 1000; // 1h past agreed time
+    const NO_INTERVIEW_GRACE = 48 * 60 * 60 * 1000; // 48h in an interview stage w/o a booking
+    const SELF_SCHED_GRACE = (2 * 24 + 0) * 60 * 60 * 1000; // 2 days & 0 hours (X days & X hours)
+
+    const rows = await HrCandidate.findAll({ where: { rejected: false } });
+    const jobsCache = {};
+    const jobFor = async (id) => { if (!id) return null; if (jobsCache[id] === undefined) jobsCache[id] = await HrJobPost.findByPk(id); return jobsCache[id]; };
+    const items = [];
+    const byOwner = {};
+    const bump = (ownerId, ownerName) => { const k = ownerId || 0; byOwner[k] = byOwner[k] || { ownerId: ownerId || null, ownerName: ownerName || 'Unassigned', missed: 0 }; byOwner[k].missed++; };
+    // Is this item relevant to the current viewer (when not admin)?
+    const mineOwner = (c) => c.recruiterId === meId || c.recruiterName === meName;
+
+    for (const c of rows) {
+      const dismissed = Array.isArray(c.dismissedMissed) ? c.dismissedMissed : [];
+      const ownerName = c.recruiterName || 'Unassigned';
+      const ownerId = c.recruiterId || null;
+
+      // 1) Interview feedback not submitted by a panelist after the interview time.
+      for (const iv of (c.interviews || [])) {
+        const at = iv.at ? new Date(iv.at).getTime() : 0;
+        if (!at || now < at + GRACE) continue; // not yet past the interview + grace
+        const fb = iv.feedbackByPanelist || {};
+        for (const p of (iv.panelists || [])) {
+          if (fb[p.id]) continue; // submitted
+          const aid = `fb-${c.id}-${iv.id}-${p.id}`;
+          if (dismissed.includes(aid)) continue;
+          // Visibility: admin sees all; a panelist sees their own missing feedback;
+          // the assigned recruiter sees it for their candidate.
+          const relevant = isAdmin || p.id === meId || mineOwner(c);
+          if (!relevant) continue;
+          items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: 'feedback',
+            title: `Interview feedback pending — ${iv.roundLabel || iv.round || 'interview'}`,
+            ownerId: p.id, ownerName: p.name || ownerName, dueAt: new Date(at).toISOString(),
+            hoursLate: Math.max(0, Math.round((now - at) / 3600000)) });
+          bump(p.id, p.name || ownerName);
+        }
+      }
+
+      // 2) Overdue calls / tasks.
+      for (const a of (c.activities || [])) {
+        if (a.done || a.status === 'done') continue;
+        const dueRaw = a.dueDate ? `${a.dueDate}T${a.time || (a.kind === 'call' ? '09:00' : '17:00')}` : (a.at || '');
+        const due = dueRaw ? new Date(dueRaw).getTime() : 0;
+        if (!due || now < due + GRACE) continue;
+        const aid = `act-${c.id}-${a.id}`;
+        if (dismissed.includes(aid)) continue;
+        const relevant = isAdmin || mineOwner(c) || a.byId === meId;
+        if (!relevant) continue;
+        items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: a.kind === 'call' ? 'call' : 'task',
+          title: a.title || (a.kind === 'call' ? 'Scheduled call' : 'Task'),
+          ownerId, ownerName, dueAt: new Date(due).toISOString(),
+          hoursLate: Math.max(0, Math.round((now - due) / 3600000)) });
+        bump(ownerId, ownerName);
+      }
+
+      // 3) Candidate sat in an interview-type stage with no upcoming interview booked.
+      const job = await jobFor(c.jobPostId);
+      const stage = (job && job.stages || []).find((s) => s.id === c.stage);
+      const looksInterview = stage && /interview|screen|round|technical|hr round/i.test(stage.label || '');
+      if (looksInterview) {
+        const hasUpcoming = (c.interviews || []).some((iv) => iv.at && new Date(iv.at).getTime() > now - GRACE);
+        const enteredStageAt = (() => {
+          const tl = (c.timeline || []).filter((t) => t.type === 'stage');
+          const last = tl[tl.length - 1];
+          return last && last.at ? new Date(last.at).getTime() : new Date(c.updatedAt).getTime();
+        })();
+        if (!hasUpcoming && now > enteredStageAt + NO_INTERVIEW_GRACE) {
+          const aid = `noiv-${c.id}-${c.stage}`;
+          if (!dismissed.includes(aid) && (isAdmin || mineOwner(c))) {
+            items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: 'schedule',
+              title: `No interview scheduled — ${stage.label}`,
+              ownerId, ownerName, dueAt: new Date(enteredStageAt + NO_INTERVIEW_GRACE).toISOString(),
+              hoursLate: Math.max(0, Math.round((now - enteredStageAt - NO_INTERVIEW_GRACE) / 3600000)) });
+            bump(ownerId, ownerName);
+          }
+        }
+      }
+
+      // 4) Self-schedule link sent but candidate never booked (past grace).
+      const ss = c.selfSchedule;
+      if (ss && ss.active && !ss.booked && ss.createdAt) {
+        const sentAt = new Date(ss.createdAt).getTime();
+        if (now > sentAt + SELF_SCHED_GRACE) {
+          const aid = `ss-${c.id}`;
+          if (!dismissed.includes(aid) && (isAdmin || mineOwner(c))) {
+            items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: 'selfschedule',
+              title: `Self-schedule link unbooked — ${ss.roundLabel || 'interview'}`,
+              ownerId, ownerName, dueAt: new Date(sentAt + SELF_SCHED_GRACE).toISOString(),
+              hoursLate: Math.max(0, Math.round((now - sentAt - SELF_SCHED_GRACE) / 3600000)) });
+            bump(ownerId, ownerName);
+          }
+        }
+      }
+    }
+
+    items.sort((a, b) => b.hoursLate - a.hoursLate);
+    res.json({
+      stillOpen: items.length,
+      items: items.slice(0, 100),
+      byOwner: Object.values(byOwner).sort((a, b) => b.missed - a.missed),
+    });
+  } catch (e) { next(e); }
+});
+
+// Admin clears a missed-commitment item.
+router.post('/missed-commitments/:candidateId/dismiss', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.candidateId);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const aid = String((req.body || {}).activityId || '');
+    if (!aid) return res.status(400).json({ error: 'activityId is required.' });
+    const list = Array.isArray(row.dismissedMissed) ? row.dismissedMissed.slice() : [];
+    if (!list.includes(aid)) list.push(aid);
+    row.dismissedMissed = list; row.changed('dismissedMissed', true);
+    await row.save();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

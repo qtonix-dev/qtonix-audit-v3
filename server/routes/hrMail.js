@@ -8,15 +8,39 @@
  * and the address in Settings.hrMailbox.email.
  */
 const router = require('express').Router();
-const { Settings, HrCandidate, HrJobPost, HrUser } = require('../models');
+const { Op, Settings, HrCandidate, HrJobPost, HrUser } = require('../models');
 const gmail = require('../services/gmail');
-const { requireHrAccess, requireScheduler } = require('../middleware/hrAuth');
+const { requireHrAccess, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
 
 async function hrMailbox() {
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
   const token = s.getKey('hrMailboxToken');
   const email = (s.hrMailbox && s.hrMailbox.email) || '';
   return { s, token, email };
+}
+
+// The full list of shared HR mailboxes: the legacy "default" one (if linked)
+// plus any additional mailboxes in Settings.hrMailboxes. Each carries its own
+// decrypted refresh token.
+function hrMailboxList(s) {
+  const out = [];
+  const defToken = s.getKey('hrMailboxToken');
+  const defEmail = (s.hrMailbox && s.hrMailbox.email) || '';
+  if (defEmail) out.push({ id: 'default', email: defEmail, label: 'Careers', connectedAt: (s.hrMailbox && s.hrMailbox.connectedAt) || null, token: defToken, isDefault: true });
+  for (const m of (Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [])) {
+    if (m.id === 'default') continue; // already covered by legacy fields
+    const token = s.getKey(`hrMailboxToken:${m.id}`);
+    out.push({ id: m.id, email: m.email, label: m.label || (m.email || '').split('@')[0], connectedAt: m.connectedAt || null, token, isDefault: false });
+  }
+  return out;
+}
+
+// Resolve one mailbox by id (defaults to the first connected mailbox).
+async function resolveHrMailbox(mailboxId) {
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  const list = hrMailboxList(s).filter((m) => m.token);
+  const mb = mailboxId ? list.find((m) => m.id === mailboxId) : list[0];
+  return { s, mb: mb || null, list };
 }
 
 // Connection status (any HR user can see whether the shared inbox is linked).
@@ -242,6 +266,244 @@ router.post('/candidates/:id/offer-email', requireHrAccess, requireScheduler, as
       attachments.push({ filename: b.attachmentName, mimeType: mime, contentBase64: raw });
     }
     await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: b.subject || 'Regarding your offer', bodyHtml: b.body || '', attachments });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Dashboard: unread / unreplied incoming mail (HR + admin only) ----
+// Searches the shared recruitment inbox for the most recent inbound messages,
+// groups by thread, and surfaces those whose latest message is inbound (nobody
+// replied yet). Each is matched to a candidate and attributed to that
+// candidate's assigned HR (falling back to "Unassigned"). Split into awaiting
+// (<24h) and missed (>=24h). Cached ~60s so the dashboard stays snappy.
+let _unreadCache = { at: 0, data: null };
+router.get('/unread-mail', requireHrAccess, async (req, res, next) => {
+  try {
+    const { canViewInternal } = require('../middleware/hrAuth');
+    if (!canViewInternal(req)) return res.json({ awaiting: [], missed: [] });
+    // Serve from cache when fresh (shared inbox is the same for everyone).
+    if (_unreadCache.data && Date.now() - _unreadCache.at < 60 * 1000) {
+      return res.json(_unreadCache.data);
+    }
+    const { s, token, email } = await hrMailbox();
+    if (!token) return res.json({ connected: false, awaiting: [], missed: [] });
+
+    // Pull the last ~50 inbound messages from the shared inbox.
+    const raw = await gmail.searchMessages(s, token, email, 'in:inbox -in:chats newer_than:30d', 50);
+    // Group by thread; keep only threads whose newest message is inbound.
+    const byThread = new Map();
+    for (const m of raw) {
+      const key = m.threadId || `single:${m.gmailMessageId}`;
+      if (!byThread.has(key)) byThread.set(key, []);
+      byThread.get(key).push(m);
+    }
+    const pending = [];
+    for (const [, msgs] of byThread) {
+      msgs.sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt));
+      const latest = msgs[0];
+      if (!latest || latest.direction !== 'inbound') continue; // already replied
+      pending.push(latest);
+    }
+    // Match each pending inbound to a candidate by the sender address.
+    const cands = await HrCandidate.findAll({ attributes: ['id', 'name', 'email', 'recruiterId', 'recruiterName'] });
+    const byEmail = new Map();
+    cands.forEach((c) => { if (c.email) byEmail.set(c.email.toLowerCase(), c); });
+    const now = Date.now();
+    const items = pending.map((m) => {
+      const from = (m.fromEmail || '').toLowerCase();
+      const cand = byEmail.get(from) || null;
+      const ageMs = now - new Date(m.sentAt).getTime();
+      return {
+        emailId: m.gmailMessageId, threadId: m.threadId,
+        candidateId: cand ? cand.id : null,
+        candidateName: cand ? cand.name : (m.fromName || m.fromEmail || 'Unknown'),
+        ownerName: cand ? (cand.recruiterName || 'Unassigned') : 'Unassigned',
+        ownerId: cand ? (cand.recruiterId || null) : null,
+        fromName: m.fromName, fromEmail: m.fromEmail,
+        subject: m.subject, snippet: m.snippet,
+        receivedAt: m.sentAt ? new Date(m.sentAt).toISOString() : null, ageMs,
+        hoursWaiting: Math.max(0, Math.round(ageMs / 3600000)),
+      };
+    }).sort((a, b) => b.ageMs - a.ageMs);
+    const DAY = 24 * 60 * 60 * 1000;
+    const data = {
+      connected: true, mailbox: email,
+      awaiting: items.filter((i) => i.ageMs < DAY),
+      missed: items.filter((i) => i.ageMs >= DAY),
+    };
+    _unreadCache = { at: Date.now(), data };
+    res.json(data);
+  } catch (e) { next(e); }
+});
+
+// ---- Multi-mailbox management (HR admin) ----
+
+// List all shared HR mailboxes (metadata only, no tokens).
+router.get('/mailboxes', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const list = hrMailboxList(s).map((m) => ({ id: m.id, email: m.email, label: m.label, connectedAt: m.connectedAt, isDefault: m.isDefault, connected: !!m.token }));
+    res.json({ mailboxes: list, configured: gmail.isConfigured(s) });
+  } catch (e) { next(e); }
+});
+
+// Begin linking an ADDITIONAL mailbox (HR admin only). Mints a fresh id.
+router.get('/mailboxes/connect', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can add a mailbox.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!gmail.isConfigured(s)) return res.status(400).json({ error: 'Google isn’t set up yet. Add the app credentials in CRM Admin → API keys.' });
+    if (!gmail.hasValidBaseUrl()) return res.status(400).json({ error: 'The server’s public URL (APP_URL) isn’t configured.' });
+    // If the default mailbox isn't linked yet, link that first; else a new id.
+    const hasDefault = !!s.getKey('hrMailboxToken');
+    const mbId = hasDefault ? `mb${Date.now().toString(36)}` : 'default';
+    const jwt = require('jsonwebtoken');
+    const state = jwt.sign({ hrMailbox: true, hrMailboxId: mbId, label: (req.query.label || '').slice(0, 40) }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });
+    res.json({ url: gmail.authUrl(s, state) });
+  } catch (e) { next(e); }
+});
+
+// Disconnect a specific mailbox by id (HR admin only).
+router.post('/mailboxes/:id/disconnect', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can remove a mailbox.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const id = req.params.id;
+    const keys = { ...(s.apiKeys || {}) };
+    if (id === 'default') { keys.hrMailboxToken = ''; s.hrMailbox = { email: '', connectedAt: null }; }
+    else { delete keys[`hrMailboxToken:${id}`]; }
+    s.apiKeys = keys; s.changed('apiKeys', true);
+    s.hrMailboxes = (Array.isArray(s.hrMailboxes) ? s.hrMailboxes : []).filter((m) => m.id !== id);
+    s.changed('hrMailboxes', true);
+    await s.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- All-email view (replicates the CRM All Email UI). HR + admin only. ----
+// Only schedulers (hr/recruiter/manager/tl) and admins may browse the inbox.
+function requireMailViewer(req, res, next) {
+  if (!canViewInternal(req)) return res.status(403).json({ error: 'Not allowed.' });
+  next();
+}
+
+// The list of mailboxes the Email tab can switch between (for the picker).
+router.get('/all/mailboxes', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const list = hrMailboxList(s).filter((m) => m.token).map((m) => ({ value: m.id, email: m.email, label: m.label }));
+    res.json({ mailboxes: list, isAdmin: !!req.isHrAdmin, canSwitch: list.length > 1 });
+  } catch (e) { next(e); }
+});
+
+// List a folder/label of a mailbox. Query: box, labelId, q, pageToken, as (mailbox id).
+router.get('/all/folder', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox(req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox is linked. Add one in HR Admin → Settings.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const out = await gmail.listFolder(s, mb.token, mb.email, {
+      box: String(req.query.box || 'INBOX').toUpperCase(),
+      labelId: req.query.labelId || null, q: req.query.q || '',
+      max: Math.min(50, Number(req.query.max) || 25), pageToken: req.query.pageToken || null,
+    });
+    // Tag which messages tie to a candidate (by counterparty email).
+    const emails = [...new Set(out.messages.map((m) => (m.direction === 'inbound' ? m.fromEmail : m.toEmail)).filter(Boolean).map((e) => e.toLowerCase()))];
+    const cands = emails.length ? await HrCandidate.findAll({ where: { email: { [Op.in]: emails } }, attributes: ['id', 'name', 'email'] }) : [];
+    const byEmail = new Map(cands.map((c) => [(c.email || '').toLowerCase(), c]));
+    out.messages.forEach((m) => { const key = (m.direction === 'inbound' ? m.fromEmail : m.toEmail || '').toLowerCase(); const c = byEmail.get(key); m.candidateId = c ? c.id : null; m.candidateName = c ? c.name : null; });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.get('/all/labels', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox(req.query.as);
+    if (!mb) return res.json({ labels: [] });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ labels: await gmail.listLabels(s, mb.token) });
+  } catch (e) { next(e); }
+});
+
+router.get('/all/thread/:threadId', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox(req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const messages = await gmail.getThread(s, mb.token, mb.email, req.params.threadId);
+    // Best-effort mark the thread read.
+    try { await gmail.markRead(s, mb.token, req.params.threadId); } catch {}
+    res.json({ messages });
+  } catch (e) { next(e); }
+});
+
+router.post('/all/send', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const { mb } = await resolveHrMailbox(b.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const attachments = Array.isArray(b.attachments) ? b.attachments : [];
+    await gmail.sendMessage(s, mb.token, mb.email, {
+      from: mb.email, to: b.to, cc: b.cc, bcc: b.bcc, subject: b.subject || '',
+      bodyHtml: b.body || '', threadId: b.threadId || null, inReplyTo: b.inReplyTo || null, attachments,
+    });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Star / unstar (matches CRM contract: POST {starred, as}).
+router.post('/all/message/:id/star', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox((req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    await gmail.setStar(s, mb.token, req.params.id, !!(req.body || {}).starred);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Apply / remove labels (matches CRM contract: POST {add, remove, as}).
+router.post('/all/message/:id/labels', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const { mb } = await resolveHrMailbox(b.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    await gmail.modifyMessageLabels(s, mb.token, req.params.id, { add: b.add || [], remove: b.remove || [] });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Trash a message (matches CRM contract: DELETE /all/message/:id?as=).
+router.delete('/all/message/:id', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox(req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    await gmail.trashMessage(s, mb.token, req.params.id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Create / delete custom labels (matches CRM contract).
+router.post('/all/labels', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const { mb } = await resolveHrMailbox(b.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const label = await gmail.createLabel(s, mb.token, b.name, b.color);
+    res.json({ label });
+  } catch (e) { next(e); }
+});
+
+router.delete('/all/labels/:id', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const { mb } = await resolveHrMailbox(req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No recruitment mailbox linked.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    await gmail.deleteLabel(s, mb.token, req.params.id);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

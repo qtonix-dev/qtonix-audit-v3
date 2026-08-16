@@ -3,6 +3,8 @@ import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
+import { AppSwitcher } from './AppSwitcher.jsx';
+import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 
 const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -87,18 +89,34 @@ function HrLogin({ onSignIn }) {
 
 // --- Dashboard --------------------------------------------------------------
 
-function HrDashboard({ user }) {
+const MISSED_ICON = { feedback: '📝', call: '📞', task: '✅', schedule: '📅', selfschedule: '🔗' };
+// Compact age like "3h", "2d 4h".
+function fmtAgeH(ms) {
+  const h = Math.floor(ms / 3600000);
+  if (h < 1) return '<1h';
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24); const rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
+}
+
+function HrDashboard({ user, isAdmin, onOpenCandidate }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [targets, setTargets] = useState([]);
+  const [missed, setMissed] = useState(null);
+  const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
+  const [mail, setMail] = useState(null);
+  const [mailTab, setMailTab] = useState('new');
   useEffect(() => {
     hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} }));
     hrApi('/dashboard-stats').then(setStats).catch(() => {});
     hrApi('/job-posts').then(setJobs).catch(() => {});
     hrApi('/source-analytics').then((r) => setAnalytics(r.sources || [])).catch(() => {});
     hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
+    hrApi('/missed-commitments').then(setMissed).catch(() => {});
+    hrApi('/unread-mail').then(setMail).catch(() => {});
   }, []);
   const m = (data && data.metrics) || {};
   const stageLabels = {}; jobs.forEach((j) => (j.stages || []).forEach((s) => { stageLabels[s.id] = s.label; }));
@@ -118,6 +136,72 @@ function HrDashboard({ user }) {
         <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
         <p className="text-slate-500 text-sm mt-1">Here's your recruitment overview.</p>
       </div>
+
+      {/* Missed commitments — feedback, calls, scheduling that slipped past time. */}
+      {missed && missed.stillOpen > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wide text-red-700">⚠️ Missed commitments · {missed.stillOpen}</div>
+              <div className="text-[11px] text-red-600">Interview feedback, calls, tasks and scheduling more than an hour past their agreed time.</div>
+            </div>
+            {isAdmin && missed.byOwner.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {missed.byOwner.slice(0, 5).map((o) => (
+                  <button key={o.ownerId || 'un'} onClick={() => setMissedModal({ ownerId: o.ownerId, ownerName: o.ownerName })}
+                    className="rounded-md bg-white border border-red-200 px-2 py-1 text-[10px] font-bold text-red-700 hover:bg-red-100 transition-colors">{o.ownerName} · {o.missed}</button>
+                ))}
+                <button onClick={() => setMissedModal({ ownerId: null })} className="rounded-md bg-red-600 text-white px-2.5 py-1 text-[10px] font-bold hover:bg-red-700 transition-colors">View all →</button>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {missed.items.slice(0, 8).map((i) => (
+              <div key={i.activityId} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-red-50 transition-colors group">
+                <span className="cursor-pointer" onClick={() => onOpenCandidate && onOpenCandidate(i.candidateId)}>{MISSED_ICON[i.kind] || '✅'}</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => onOpenCandidate && onOpenCandidate(i.candidateId)}>{i.candidateName}</span>
+                <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => onOpenCandidate && onOpenCandidate(i.candidateId)}>{i.title}</span>
+                {isAdmin && <span className="text-slate-400 shrink-0">{i.ownerName}</span>}
+                <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+                {isAdmin && (
+                  <button title="Clear from missed commitments" onClick={async (e) => { e.stopPropagation(); try { await hrApi(`/missed-commitments/${i.candidateId}/dismiss`, { method: 'POST', body: JSON.stringify({ activityId: i.activityId }) }); setMissed((prev) => prev ? { ...prev, items: prev.items.filter((x) => x.activityId !== i.activityId), stillOpen: Math.max(0, prev.stillOpen - 1) } : prev); } catch {} }}
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unread incoming mail (shared recruitment inbox) — HR & admin only. */}
+      {mail && (() => {
+        const newItems = [...((mail.missed) || []), ...((mail.awaiting) || [])];
+        if (newItems.length === 0) return null;
+        const overdueCount = (mail.missed || []).length;
+        return (
+          <div className="rounded-2xl border border-blue-200 bg-white p-4">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Unread candidate mail</span>
+              <span className="rounded-full bg-blue-600 text-white px-2 py-0.5 text-[10px] font-extrabold">{newItems.length} awaiting reply</span>
+              {overdueCount > 0 && <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-extrabold">{overdueCount} over 24h</span>}
+            </div>
+            <div className="space-y-1 max-h-52 overflow-auto">
+              {newItems.slice(0, 12).map((i) => {
+                const overdue = i.ageMs >= 24 * 3600000;
+                return (
+                  <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group cursor-pointer" onClick={() => i.candidateId && onOpenCandidate && onOpenCandidate(i.candidateId)}>
+                    <span>{overdue ? '⚠️' : '✉️'}</span>
+                    <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.candidateName}</span>
+                    <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
+                    {isAdmin && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                    <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAgeH(i.ageMs)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Accent stat cards, CRM-style */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -195,6 +279,30 @@ function HrDashboard({ user }) {
           )}
         </div>
       </div>
+
+      {missedModal && missed && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-y-auto" onClick={() => setMissedModal(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="text-lg font-extrabold text-[#050A1F]">Missed commitments{missedModal.ownerId != null ? ` — ${missedModal.ownerName || ''}` : ' — everyone'}</div>
+              <button onClick={() => setMissedModal(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+            </div>
+            <div className="p-4 max-h-[60vh] overflow-auto space-y-1">
+              {missed.items.filter((i) => missedModal.ownerId == null || i.ownerId === missedModal.ownerId).map((i) => (
+                <div key={i.activityId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 text-[11px]">
+                  <span className="cursor-pointer" onClick={() => { setMissedModal(null); onOpenCandidate && onOpenCandidate(i.candidateId); }}>{MISSED_ICON[i.kind] || '✅'}</span>
+                  <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.candidateName}</span>
+                  <span className="text-slate-500 truncate flex-1">{i.title}</span>
+                  <span className="text-slate-400 shrink-0">{i.ownerName}</span>
+                  <span className="font-bold text-red-600 shrink-0">{i.hoursLate}h late</span>
+                  <button title="Clear" onClick={async () => { try { await hrApi(`/missed-commitments/${i.candidateId}/dismiss`, { method: 'POST', body: JSON.stringify({ activityId: i.activityId }) }); setMissed((prev) => prev ? { ...prev, items: prev.items.filter((x) => x.activityId !== i.activityId), stillOpen: Math.max(0, prev.stillOpen - 1) } : prev); } catch {} }}
+                    className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1611,37 +1719,58 @@ function ResetPasswordModal({ user, onClose, onDone }) {
   );
 }
 function RecruitmentMailbox({ isAdmin, setErr }) {
-  const [status, setStatus] = useState(null);
-  const load = () => hrApi('/mailbox/status').then(setStatus).catch((e) => setErr(e.message));
+  const [data, setData] = useState(null);
+  const load = () => hrApi('/mailboxes').then(setData).catch((e) => setErr && setErr(e.message));
   useEffect(() => { load(); }, []);
   const connect = async () => {
     try {
-      const { url } = await hrApi('/mailbox/connect');
+      const { url } = await hrApi('/mailboxes/connect');
       const w = window.open(url, 'hrmail', 'width=520,height=640');
       const onMsg = (e) => { if (e.data && e.data.gmail) { window.removeEventListener('message', onMsg); setTimeout(load, 800); try { w && w.close(); } catch {} } };
       window.addEventListener('message', onMsg);
-    } catch (e) { setErr(e.message); }
+      // Fallback: poll in case the popup can't postMessage back.
+      const poll = setInterval(() => { if (w && w.closed) { clearInterval(poll); setTimeout(load, 500); } }, 1200);
+    } catch (e) { setErr ? setErr(e.message) : alert(e.message); }
   };
-  const disconnect = async () => { if (!window.confirm('Unlink the recruitment mailbox? Recruiters will no longer be able to email candidates until it is reconnected.')) return; try { await hrApi('/mailbox/disconnect', { method: 'POST' }); load(); } catch (e) { setErr(e.message); } };
-  if (!status) return <Empty>Loading…</Empty>;
+  const disconnect = async (mb) => {
+    if (!window.confirm(`Unlink ${mb.email}? Recruiters will no longer be able to use this inbox.`)) return;
+    try { await hrApi(`/mailboxes/${mb.id}/disconnect`, { method: 'POST' }); load(); } catch (e) { setErr ? setErr(e.message) : alert(e.message); }
+  };
+  if (!data) return <Empty>Loading…</Empty>;
+  const boxes = data.mailboxes || [];
   return (
-    <div className="max-w-xl">
+    <div className="max-w-2xl">
       <div className="rounded-2xl border border-slate-200 p-6">
-        <div className="text-base font-extrabold text-[#050A1F] mb-1">Recruitment mailbox</div>
-        <p className="text-sm text-slate-500 mb-4">One shared inbox (e.g. career@qtonix.com) that every recruiter sends from and reads. Candidates always correspond with this single address.</p>
-        {status.connected ? (
-          <div className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-4 py-3">
-            <div><div className="text-sm font-bold text-green-700">✓ Connected</div><div className="text-xs text-slate-500">{status.email}</div></div>
-            {isAdmin && <button onClick={disconnect} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Disconnect</button>}
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-base font-extrabold text-[#050A1F]">Recruitment mailboxes</div>
+          {isAdmin && data.configured && (
+            <button onClick={connect} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg> Add mailbox
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-slate-500 mb-4">Shared inboxes (e.g. career@qtonix.com) that every recruiter reads and sends from. Add more to run multiple hiring addresses through one platform.</p>
+
+        {!data.configured && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2 mb-3">Google credentials aren't set up yet. Add them in CRM Admin → API keys first.</div>}
+
+        {boxes.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
+            <div className="text-sm text-slate-500 mb-2">No recruitment mailbox linked yet.</div>
+            {isAdmin ? (
+              <button onClick={connect} disabled={!data.configured} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Connect a mailbox</button>
+            ) : <div className="text-xs text-slate-400">Ask an admin to link the shared recruitment mailbox.</div>}
           </div>
         ) : (
-          <div>
-            {!status.configured && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2 mb-3">Google credentials aren't set up yet. Add them in CRM Admin → API keys first.</div>}
-            {isAdmin ? (
-              <button onClick={connect} disabled={!status.configured} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Connect recruitment mailbox</button>
-            ) : (
-              <div className="text-sm text-slate-500">Not connected. Ask an admin to link the shared recruitment mailbox.</div>
-            )}
+          <div className="space-y-2">
+            {boxes.map((mb) => (
+              <div key={mb.id} className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-green-700 flex items-center gap-2">✓ {mb.email}{mb.isDefault && <span className="text-[9px] bg-white text-green-600 border border-green-200 rounded px-1.5 py-0.5">PRIMARY</span>}</div>
+                  <div className="text-xs text-slate-500">{mb.label}{mb.connectedAt ? ` · linked ${new Date(mb.connectedAt).toLocaleDateString()}` : ''}</div>
+                </div>
+                {isAdmin && <button onClick={() => disconnect(mb)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 shrink-0">Disconnect</button>}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -1657,15 +1786,47 @@ function IconBtn({ title, onClick, children, danger }) {
 }
 
 // API tab — ImageKit config + Claude/OpenAI usage tracking.
-function HrApiTab() {
+// Settings tab — auto-scoring toggle + recruitment mailbox + API (usage + ImageKit).
+function HrSettingsTab({ isAdmin, setErr }) {
+  const [s, setS] = useState(null);
+  const [saved, setSaved] = useState(false);
   const [usage, setUsage] = useState(null);
-  useEffect(() => { hrApi('/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({})); }, []);
+  useEffect(() => {
+    hrApi('/settings').then(setS).catch(() => {});
+    hrApi('/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({}));
+  }, []);
+  const toggle = async (v) => { setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ autoScore: v }) }); setS((x) => ({ ...x, autoScore: r.autoScore })); setSaved(true); } catch (e) { alert(e.message); } };
   const providers = [['anthropic', 'Claude (Anthropic)'], ['openai', 'OpenAI (email drafts)']];
+  if (!s) return <div className="text-slate-400 text-sm">Loading…</div>;
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Auto-scoring */}
+      <div className="max-w-2xl">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Recruitment</div>
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-bold text-[#050A1F]">Auto-score resume match</div>
+              <div className="text-xs text-slate-500 mt-1 max-w-md">When on, Claude scores each candidate's resume match automatically on add, on application, and when feedback is submitted. Turn off to save API credits — you can still score manually from each candidate.</div>
+            </div>
+            <button onClick={() => toggle(!s.autoScore)} className={`relative w-12 h-6 rounded-full transition shrink-0 ${s.autoScore ? 'bg-green-500' : 'bg-slate-300'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition ${s.autoScore ? 'translate-x-6' : ''}`} />
+            </button>
+          </div>
+          {saved && <div className="text-sm text-green-600 font-semibold mt-3">Saved ✓</div>}
+        </div>
+      </div>
+
+      {/* Recruitment mailbox */}
       <div>
-        <div className="text-sm font-bold text-[#050A1F] mb-3">API usage</div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Recruitment mailbox</div>
+        <RecruitmentMailbox isAdmin={isAdmin} setErr={setErr} />
+      </div>
+
+      {/* API */}
+      <div>
+        <div className="text-sm font-bold text-[#050A1F] mb-3">API</div>
+        <div className="grid grid-cols-2 gap-4 max-w-2xl">
           {providers.map(([id, label]) => (
             <div key={id} className="bg-white rounded-2xl border border-slate-200/70 p-5">
               <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
@@ -1674,70 +1835,71 @@ function HrApiTab() {
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-400 mt-2">API keys are managed in the Sales CRM admin (shared across the product). Resume-match scoring uses Claude; email drafts use OpenAI.</p>
-      </div>
-      <div>
-        <div className="text-sm font-bold text-[#050A1F] mb-2">ImageKit (image hosting)</div>
+        <p className="text-xs text-slate-400 mt-2 mb-4">API keys are managed in the Sales CRM admin (shared across the product). Resume-match scoring uses Claude; email drafts use OpenAI.</p>
+        <div className="text-xs font-bold text-slate-500 mb-2">ImageKit (image hosting)</div>
         <ImageKitSection />
       </div>
     </div>
   );
 }
 
-// Settings tab — auto-scoring toggle.
-function HrSettingsTab() {
-  const [s, setS] = useState(null);
-  const [saved, setSaved] = useState(false);
-  useEffect(() => { hrApi('/settings').then(setS).catch(() => {}); }, []);
-  const toggle = async (v) => { setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ autoScore: v }) }); setS((x) => ({ ...x, autoScore: r.autoScore })); setSaved(true); } catch (e) { alert(e.message); } };
-  if (!s) return <div className="text-slate-400 text-sm">Loading…</div>;
-  return (
-    <div className="max-w-xl space-y-4">
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-bold text-[#050A1F]">Auto-score resume match</div>
-            <div className="text-xs text-slate-500 mt-1 max-w-md">When on, Claude scores each candidate's resume match automatically on add, on application, and when feedback is submitted. Turn off to save API credits — you can still score manually from each candidate.</div>
-          </div>
-          <button onClick={() => toggle(!s.autoScore)} className={`relative w-12 h-6 rounded-full transition ${s.autoScore ? 'bg-green-500' : 'bg-slate-300'}`}>
-            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition ${s.autoScore ? 'translate-x-6' : ''}`} />
-          </button>
-        </div>
-        {saved && <div className="text-sm text-green-600 font-semibold mt-3">Saved ✓</div>}
-      </div>
-    </div>
-  );
-}
-
-// Logs tab — HR-scoped audit log (same UI as the CRM).
+// Logs tab — full activity audit across all users, filterable by user.
 function HrLogsTab() {
-  const [logs, setLogs] = useState(null);
-  useEffect(() => { hrApi('/logs').then((r) => setLogs(r.logs || [])).catch(() => setLogs([])); }, []);
-  if (!logs) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const [data, setData] = useState(null);
+  const [userFilter, setUserFilter] = useState('');
+  const [category, setCategory] = useState('');
+  const load = () => {
+    const qs = new URLSearchParams();
+    if (userFilter) qs.set('userName', userFilter);
+    if (category) qs.set('category', category);
+    hrApi('/logs' + (qs.toString() ? `?${qs}` : '')).then(setData).catch(() => setData({ logs: [], users: [] }));
+  };
+  useEffect(() => { load(); }, [userFilter, category]);
+  const logs = (data && data.logs) || [];
+  const users = (data && data.users) || [];
+  // Friendly labels + colour by action family.
+  const family = (a) => a.startsWith('hr.login') || a === 'login' ? 'auth-in' : a.startsWith('hr.logout') || a === 'logout' ? 'auth-out' : a.includes('delete') ? 'danger' : a.includes('create') || a.includes('publish') ? 'create' : 'default';
+  const famClass = { 'auth-in': 'bg-green-50 text-green-600', 'auth-out': 'bg-slate-100 text-slate-500', danger: 'bg-red-50 text-red-600', create: 'bg-blue-50 text-blue-600', default: 'bg-slate-100 text-slate-600' };
+  const pretty = (a) => a.replace(/^hr\./, '').replace(/\./g, ' · ').replace(/_/g, ' ');
   return (
     <div>
-      <div className="text-sm font-bold text-[#050A1F] mb-3">Activity logs</div>
-      {logs.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No HR activity logged yet.</div>
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div className="text-sm font-bold text-[#050A1F]">Activity logs</div>
+        <div className="flex items-center gap-2">
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600">
+            <option value="">All events</option>
+            <option value="auth">Login / logout</option>
+            <option value="hr">HR actions</option>
+          </select>
+          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 max-w-[200px]">
+            <option value="">All users</option>
+            {users.map((u) => <option key={`${u.userId}-${u.userName}`} value={u.userName}>{u.userName}</option>)}
+          </select>
+        </div>
+      </div>
+      {!data ? <div className="text-slate-400 text-sm">Loading…</div> : logs.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No activity logged{userFilter ? ` for ${userFilter}` : ''} yet.</div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-              <th className="px-4 py-3">When</th><th className="px-4 py-3">User</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Target</th>
+              <th className="px-4 py-3">When</th><th className="px-4 py-3">User</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Details</th><th className="px-4 py-3">IP</th>
             </tr></thead>
             <tbody>
               {logs.map((l) => (
-                <tr key={l.id} className="border-b border-slate-50">
+                <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                   <td className="px-4 py-2.5 text-slate-400 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{l.userName || '—'}</td>
-                  <td className="px-4 py-2.5"><span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{l.action}</span></td>
+                  <td className="px-4 py-2.5 text-slate-700 font-semibold">{l.userName || '—'}</td>
+                  <td className="px-4 py-2.5"><span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${famClass[family(l.action)]}`}>{pretty(l.action)}</span></td>
                   <td className="px-4 py-2.5 text-slate-500 text-xs">{l.target || '—'}</td>
+                  <td className="px-4 py-2.5 text-slate-300 text-[11px]">{l.ip || '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <div className="text-[11px] text-slate-400 mt-2">Showing the most recent {logs.length} events. Includes logins, logouts, and every recruitment action.</div>
     </div>
   );
 }
@@ -1855,7 +2017,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['users', 'Users'], ['org', 'Organization Chart'], ['branches', 'Branches & Departments'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['mailbox', 'Recruitment Mailbox'], ['api', 'API'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['users', 'Users'], ['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -1934,34 +2096,41 @@ function HrAdmin({ user }) {
       )}
 
       {/* ORG CHART TAB */}
-      {tab === 'org' && <HrOrgChart users={users} reporting={reporting} />}
-
-      {/* BRANCHES & DEPARTMENTS TAB */}
-      {tab === 'branches' && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
-            <div className="space-y-1.5 mb-3">
-              {branches.map((b) => (
-                <div key={b._id} className="flex items-center justify-between text-sm group">
-                  <span className="font-semibold text-slate-600">{b.name}</span>
-                  <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} /><button onClick={addBranch} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+      {/* ORGANIZATION TAB (org chart + branches & departments) */}
+      {tab === 'org' && (
+        <div className="space-y-6">
+          <div>
+            <div className="text-sm font-bold text-[#050A1F] mb-3">Organization chart</div>
+            <HrOrgChart users={users} reporting={reporting} />
           </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="text-sm font-bold text-[#050A1F] mb-3">Departments</div>
-            <div className="space-y-1.5 mb-3">
-              {departments.map((d) => (
-                <div key={d._id} className="flex items-center justify-between text-sm group">
-                  <span className="font-semibold text-slate-600">{d.name}</span>
-                  <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editDept(d)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delDept(d)}><Icon.Trash size={14} /></IconBtn></span>
+          <div>
+            <div className="text-sm font-bold text-[#050A1F] mb-3">Branches &amp; departments</div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
+                <div className="space-y-1.5 mb-3">
+                  {branches.map((b) => (
+                    <div key={b._id} className="flex items-center justify-between text-sm group">
+                      <span className="font-semibold text-slate-600">{b.name}</span>
+                      <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+                <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} /><button onClick={addBranch} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+              </div>
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <div className="text-sm font-bold text-[#050A1F] mb-3">Departments</div>
+                <div className="space-y-1.5 mb-3">
+                  {departments.map((d) => (
+                    <div key={d._id} className="flex items-center justify-between text-sm group">
+                      <span className="font-semibold text-slate-600">{d.name}</span>
+                      <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editDept(d)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delDept(d)}><Icon.Trash size={14} /></IconBtn></span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New department" value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} /><button onClick={addDept} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+              </div>
             </div>
-            <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New department" value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} /><button onClick={addDept} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
           </div>
         </div>
       )}
@@ -1972,10 +2141,8 @@ function HrAdmin({ user }) {
       {/* HOLIDAYS TAB */}
       {tab === 'holidays' && <HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} />}
 
-      {/* IMAGEKIT TAB */}
-      {tab === 'mailbox' && <RecruitmentMailbox isAdmin={!!user.isAdmin} setErr={setErr} />}
-      {tab === 'api' && <HrApiTab />}
-      {tab === 'settings' && <HrSettingsTab />}
+      {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
+      {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
 
@@ -2151,30 +2318,40 @@ export default function HrApp() {
   }, []);
 
   const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
-  const logout = () => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = '/hr/login'; };
+  const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = '/hr/login'; }); };
 
   if (checking) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
   if (!user) return <HrLogin onSignIn={(u) => setUser(u)} />;
 
   const isAdmin = !!user.isAdmin;
+  // Schedulers (hr/recruiter/manager/tl) + admins get the full dashboard and
+  // the unread-mail box; pure interview panelists / plain employees do not.
+  const SCHEDULER_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
+  const isScheduler = isAdmin || (user.type && SCHEDULER_TYPES.includes(user.type));
   const nav = [
-    { id: 'dashboard', label: 'Dashboard' },
+    ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
     { id: 'recruitment', label: 'Recruitment' },
     { id: 'interview', label: 'Interview' },
+    ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     { id: 'employees', label: 'Employee' },
     ...(isAdmin ? [{ id: 'users', label: 'Users' }, { id: 'admin', label: 'Admin' }] : []),
   ];
+  // Land non-schedulers on their interviews rather than an empty dashboard.
+  const effectiveView = (view === 'dashboard' && !isScheduler) ? 'interview' : view;
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <header className="bg-[#050A1F] text-white">
         <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
           <div className="flex items-center gap-6">
-            <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span> <span className="text-slate-400 font-bold text-sm">HR</span></div>
+          <div className="flex items-center gap-3">
+            <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span></div>
+            <AppSwitcher current="hr" />
+          </div>
             <nav className="flex gap-0.5">
               {nav.map((n) => (
                 <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setNavKey((k) => k + 1); }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${view === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
+                  className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${effectiveView === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                   {n.label}
                 </button>
               ))}
@@ -2186,20 +2363,23 @@ export default function HrApp() {
           </div>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-4 py-8" key={`${view}-${navKey}`}>
-        {view === 'dashboard' && <HrDashboard user={user} />}
-        {view === 'recruitment' && <HrRecruitment isAdmin={isAdmin} />}
-        {view === 'interview' && <MyInterviews />}
-        {view === 'employees' && (
+      <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
+        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />}
+        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} />}
+        {effectiveView === 'interview' && <MyInterviews />}
+        {effectiveView === 'email' && isScheduler && (
+          <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: false, leadLinks: false }} />
+        )}
+        {effectiveView === 'employees' && (
           profileTarget
             ? <div><button onClick={() => setProfileTarget(null)} className="text-xs font-bold text-slate-400 mb-3">← Back to employees</button><ProfilePage me={user} targetId={profileTarget} /></div>
             : <EmployeeDirectory isAdmin={isAdmin} onOpenProfile={(id) => setProfileTarget(id)} />
         )}
-        {view === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
-        {view === 'templates' && <EmailTemplatesPage />}
-        {view === 'signature' && <EmailSignaturePage />}
-        {view === 'users' && isAdmin && <HrUserManagement />}
-        {view === 'admin' && isAdmin && <HrAdmin user={user} />}
+        {effectiveView === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
+        {effectiveView === 'templates' && <EmailTemplatesPage />}
+        {effectiveView === 'signature' && <EmailSignaturePage />}
+        {effectiveView === 'users' && isAdmin && <HrUserManagement />}
+        {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
     </div>
   );

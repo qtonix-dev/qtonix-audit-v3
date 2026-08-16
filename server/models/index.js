@@ -439,6 +439,11 @@ const Settings = sequelize.define(
     // recruiters send from and see. Refresh token lives in apiKeys.hrMailboxToken
     // (encrypted); this holds the address and connection metadata.
     hrMailbox: { type: DataTypes.JSON, defaultValue: { email: '', connectedAt: null } },
+    // Additional shared HR mailboxes (multi-inbox). Each: { id, email, label,
+    // connectedAt }. Its refresh token is stored in apiKeys as
+    // `hrMailboxToken:<id>` (encrypted). The legacy single hrMailbox above is
+    // migrated in as the mailbox with id 'default'.
+    hrMailboxes: { type: DataTypes.JSON, defaultValue: [] },
 
     // Shared recruitment email templates and rejection reasons (HR-managed).
     hrEmailTemplates: { type: DataTypes.JSON, defaultValue: [] }, // [{ id, name, subject, body }]
@@ -1368,6 +1373,8 @@ const HrCandidate = sequelize.define('HrCandidate', {
   //   slots:[{ id, at, confirmedBy:[panelistId] }], questions:[{ id, type:'text'|'task', prompt }],
   //   booked:{ slotId, at, meetLink, eventLink, answers:{qid:val}, phone, email } , createdBy, createdAt }
   selfSchedule: { type: DataTypes.JSON, defaultValue: null },
+  // Ids of missed-commitment items an admin has cleared from the HR dashboard.
+  dismissedMissed: { type: DataTypes.JSON, defaultValue: [] },
   // offer: { active, salaryDiscussions:[...], approvals:[...], loi:{...},
   //   offerLetter:{...}, finalCtc, joiningDate, status }
   offer: { type: DataTypes.JSON, defaultValue: null },

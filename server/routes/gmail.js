@@ -128,11 +128,24 @@ router.get('/callback', async (req, res) => {
     const { refreshToken, email } = await gmail.exchangeCode(s, code);
     if (!refreshToken) return done('Google did not return a refresh token. Remove the app’s access in your Google account and try again.', false);
     if (payload.hrMailbox) {
-      // Link the shared HR recruitment mailbox (stored in Settings, used by all
-      // recruiters). No specific user is required.
-      const keys = { ...(s.apiKeys || {}) }; keys.hrMailboxToken = refreshToken;
+      // Link a shared HR recruitment mailbox (stored in Settings, used by all
+      // recruiters). `hrMailboxId` distinguishes additional mailboxes; when it's
+      // 'default' (or missing) we keep the legacy single-mailbox fields in sync.
+      const mbId = payload.hrMailboxId || 'default';
+      const keys = { ...(s.apiKeys || {}) };
+      if (mbId === 'default') {
+        keys.hrMailboxToken = refreshToken;
+        s.hrMailbox = { email, connectedAt: new Date() };
+      } else {
+        keys[`hrMailboxToken:${mbId}`] = refreshToken;
+      }
       s.apiKeys = keys; s.changed('apiKeys', true);
-      s.hrMailbox = { email, connectedAt: new Date() };
+      // Upsert into the hrMailboxes list (metadata; token lives in apiKeys).
+      const list = Array.isArray(s.hrMailboxes) ? s.hrMailboxes.slice() : [];
+      const idx = list.findIndex((m) => m.id === mbId);
+      const entry = { id: mbId, email, label: payload.label || email.split('@')[0], connectedAt: new Date() };
+      if (idx >= 0) list[idx] = { ...list[idx], ...entry }; else list.push(entry);
+      s.hrMailboxes = list; s.changed('hrMailboxes', true);
       await s.save();
       return done(`Recruitment mailbox linked: ${email}.`, true);
     }

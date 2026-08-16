@@ -1,17 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { api } from './App.jsx';
+import { api as _crmApi } from './App.jsx';
 import { MailEditor } from './Leads.jsx';
 
 // System folders shown in the left rail, in Gmail's order.
-const FOLDERS = [
+const FOLDERS_BASE = [
   { id: 'INBOX', label: 'Inbox', icon: 'M3 7l9 6 9-6M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7l9 6 9-6' },
   { id: 'STARRED', label: 'Starred', icon: 'M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z' },
   { id: 'SENT', label: 'Sent', icon: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z' },
   { id: 'SPAM', label: 'Spam', icon: 'M12 2l9 4v6c0 5-3.8 8.7-9 10-5.2-1.3-9-5-9-10V6z' },
   { id: 'TRASH', label: 'Trash', icon: 'M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13' },
   { id: 'ALL', label: 'All Mail', icon: 'M3 5h18v14H3zM3 5l9 8 9-8' },
-  { id: 'SCHEDULED', label: 'Scheduled', icon: 'M12 8v4l3 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z' },
 ];
+const SCHEDULED_FOLDER = { id: 'SCHEDULED', label: 'Scheduled', icon: 'M12 8v4l3 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z' };
 
 // Gmail label-color swatches (a subset of the palette Gmail accepts).
 const LABEL_COLORS = [
@@ -45,7 +45,13 @@ const fmtDate = (d) => {
   return sameDay ? dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-export default function AllEmailPage({ user }) {
+// `apiFn`/`base` let this component power both the CRM All-Email view
+// (apiFn=api, base='/gmail') and the HRMS Email tab (apiFn=hrApi, base='').
+// `features` toggles CRM-only bits (scheduled sends, label CRUD, lead links).
+export default function AllEmailPage({ user, apiFn, base = '/gmail', features }) {
+  const api = apiFn || _crmApi;
+  const feat = { scheduled: true, labels: true, leadLinks: true, ...(features || {}) };
+  const FOLDERS = feat.scheduled ? [...FOLDERS_BASE, SCHEDULED_FOLDER] : FOLDERS_BASE;
   const [mailboxes, setMailboxes] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [canSwitch, setCanSwitch] = useState(false);
@@ -71,7 +77,7 @@ export default function AllEmailPage({ user }) {
 
   const loadMailboxes = useCallback(async () => {
     try {
-      const d = await api('/gmail/all/mailboxes');
+      const d = await api(`${base}/all/mailboxes`);
       setMailboxes(d.mailboxes || []); setIsAdmin(d.isAdmin); setCanSwitch(!!d.canSwitch);
       if (!d.mailboxes || d.mailboxes.length === 0) setNotConnected(true);
     } catch (e) { setErr(e.message); }
@@ -79,7 +85,7 @@ export default function AllEmailPage({ user }) {
 
   const loadLabels = useCallback(async () => {
     try {
-      const d = await api(`/gmail/all/labels?1=1${asParam}`);
+      const d = await api(`${base}/all/labels?1=1${asParam}`);
       // Custom labels only (system ones are the folders in the rail).
       setLabels((d.labels || []).filter((l) => l.type === 'user'));
     } catch (e) { /* labels are best-effort */ }
@@ -102,7 +108,7 @@ export default function AllEmailPage({ user }) {
       if (q) params.set('q', q);
       if (as) params.set('as', as);
       if (!reset && nextPage) params.set('pageToken', nextPage);
-      const d = await api(`/gmail/all/folder?${params.toString()}`);
+      const d = await api(`${base}/all/folder?${params.toString()}`);
       setMessages((prev) => reset ? (d.messages || []) : [...prev, ...(d.messages || [])]);
       setNextPage(d.nextPageToken || null);
     } catch (e) { setErr(e.message); if (/connected mailbox/i.test(e.message)) setNotConnected(true); }
@@ -118,19 +124,19 @@ export default function AllEmailPage({ user }) {
 
   const createLabel = async (name, color) => {
     try {
-      await api('/gmail/all/labels', { method: 'POST', body: JSON.stringify({ name, color: color ? { backgroundColor: color.bg, textColor: color.fg } : undefined, as }) });
+      await api(`${base}/all/labels`, { method: 'POST', body: JSON.stringify({ name, color: color ? { backgroundColor: color.bg, textColor: color.fg } : undefined, as }) });
       setShowNewLabel(false); loadLabels();
     } catch (e) { setErr(e.message); }
   };
   const deleteLabel = async (id) => {
     if (!confirm('Delete this label? It will be removed from all emails in Gmail.')) return;
-    try { await api(`/gmail/all/labels/${id}?${as ? `as=${as}` : ''}`, { method: 'DELETE' }); if (labelId === id) pickFolder('INBOX'); loadLabels(); }
+    try { await api(`${base}/all/labels/${id}?${as ? `as=${as}` : ''}`, { method: 'DELETE' }); if (labelId === id) pickFolder('INBOX'); loadLabels(); }
     catch (e) { setErr(e.message); }
   };
 
   const applyLabel = async (msg, lid, has) => {
     try {
-      await api(`/gmail/all/message/${msg.gmailMessageId}/labels`, { method: 'POST', body: JSON.stringify({ add: has ? [] : [lid], remove: has ? [lid] : [], as }) });
+      await api(`${base}/all/message/${msg.gmailMessageId}/labels`, { method: 'POST', body: JSON.stringify({ add: has ? [] : [lid], remove: has ? [lid] : [], as }) });
       setMessages((prev) => prev.map((m) => m.gmailMessageId === msg.gmailMessageId
         ? { ...m, labelIds: has ? m.labelIds.filter((x) => x !== lid) : [...(m.labelIds || []), lid] } : m));
     } catch (e) { setErr(e.message); }
@@ -139,7 +145,7 @@ export default function AllEmailPage({ user }) {
   const toggleStar = async (msg) => {
     const starred = !msg.starred;
     try {
-      await api(`/gmail/all/message/${msg.gmailMessageId}/star`, { method: 'POST', body: JSON.stringify({ starred, as }) });
+      await api(`${base}/all/message/${msg.gmailMessageId}/star`, { method: 'POST', body: JSON.stringify({ starred, as }) });
       setMessages((prev) => prev.map((m) => m.gmailMessageId === msg.gmailMessageId ? { ...m, starred } : m));
     } catch (e) { setErr(e.message); }
   };
@@ -151,7 +157,7 @@ export default function AllEmailPage({ user }) {
   const doDeleteMessage = async () => {
     const msg = confirmDel; if (!msg) return;
     try {
-      await api(`/gmail/all/message/${msg.gmailMessageId}?${as ? `as=${as}` : ''}`, { method: 'DELETE' });
+      await api(`${base}/all/message/${msg.gmailMessageId}?${as ? `as=${as}` : ''}`, { method: 'DELETE' });
       setMessages((prev) => prev.filter((m) => m.gmailMessageId !== msg.gmailMessageId));
     } catch (e) { setErr(e.message); }
     setConfirmDel(null);
@@ -297,7 +303,7 @@ export default function AllEmailPage({ user }) {
 
       {reschedule && <RescheduleModal row={reschedule} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadFolder(true); }} />}
 
-      {openThread && <AllEmailThread threadId={openThread.threadId} subject={openThread.subject} as={as} onClose={() => setOpenThread(null)}
+      {openThread && <AllEmailThread threadId={openThread.threadId} subject={openThread.subject} as={as} apiFn={api} base={base} onClose={() => setOpenThread(null)}
         onReply={(payload) => setComposer(payload)} />}
       {showNewLabel && <NewLabelModal onClose={() => setShowNewLabel(false)} onCreate={createLabel} />}
 
@@ -324,7 +330,7 @@ export default function AllEmailPage({ user }) {
           </div>
         </div>
       )}
-      {composer && <AllEmailComposer initial={composer} as={as}
+      {composer && <AllEmailComposer initial={composer} as={as} apiFn={api} base={base} feat={feat}
         signature={(mailboxes.find((m) => (m.value === (as || String(user.id))))?.signature) || ''}
         onClose={() => setComposer(null)}
         onSent={() => { setComposer(null); loadFolder(true); }} />}
@@ -333,13 +339,14 @@ export default function AllEmailPage({ user }) {
 }
 
 // Read-only thread viewer for All Email (fetched live from the browsed mailbox).
-function AllEmailThread({ threadId, subject, as, onClose, onReply }) {
+function AllEmailThread({ threadId, subject, as, apiFn, base = '/gmail', onClose, onReply }) {
+  const api = apiFn || _crmApi;
   const [messages, setMessages] = useState(null);
   const [err, setErr] = useState('');
   const [expanded, setExpanded] = useState({});
 
   useEffect(() => {
-    api(`/gmail/all/thread/${threadId}?${as ? `as=${as}` : ''}`).then((d) => {
+    api(`${base}/all/thread/${threadId}?${as ? `as=${as}` : ''}`).then((d) => {
       const msgs = d.messages || [];
       setMessages(msgs);
       const exp = {}; msgs.forEach((m, i) => { exp[m.gmailMessageId || i] = i === msgs.length - 1; });
@@ -445,7 +452,9 @@ function AllEmailThread({ threadId, subject, as, onClose, onReply }) {
 }
 
 // Full compose/reply/forward for All Email — sends from the browsed mailbox.
-function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
+function AllEmailComposer({ initial, as, signature, apiFn, base = '/gmail', feat, onClose, onSent }) {
+  const api = apiFn || _crmApi;
+  const F = { scheduled: true, templates: true, ai: true, leadLinks: true, ...(feat || {}) };
   const [to, setTo] = useState(initial.to || []);
   const [cc, setCc] = useState(initial.cc || []);
   const [bcc, setBcc] = useState(initial.bcc || []);
@@ -474,7 +483,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
 
-  useEffect(() => { api('/gmail/templates').then(setTemplates).catch(() => {}); }, []);
+  useEffect(() => { if (F.templates) api(`${base}/templates`).then(setTemplates).catch(() => {}); }, []);
 
   const onFile = (e) => {
     const files = Array.from(e.target.files || []);
@@ -498,7 +507,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
     if (scheduled && !sendAt) return setErr('Pick a date and time to schedule.');
     setSending(true);
     try {
-      await api('/gmail/all/send', { method: 'POST', body: JSON.stringify({
+      await api(`${base}/all/send`, { method: 'POST', body: JSON.stringify({
         to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
         threadId: initial.threadId || undefined, inReplyTo: initial.inReplyTo || undefined,
         attachments, as: as || undefined,
@@ -516,11 +525,13 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
       const firstTo = (to[0] || '').trim();
       // Try to resolve variables via the server (needs a lead); fall back to raw.
       let res = null;
-      try {
-        const leadLookup = firstTo ? await api(`/leads?q=${encodeURIComponent(firstTo)}&perPage=1`).catch(() => null) : null;
-        const leadId = leadLookup && (leadLookup.leads || leadLookup.items || [])[0]?._id;
-        if (leadId) res = await api(`/gmail/templates/${tpl._id}/apply`, { method: 'POST', body: JSON.stringify({ leadId }) });
-      } catch (e) { /* fall back to raw */ }
+      if (F.leadLinks) {
+        try {
+          const leadLookup = firstTo ? await api(`/leads?q=${encodeURIComponent(firstTo)}&perPage=1`).catch(() => null) : null;
+          const leadId = leadLookup && (leadLookup.leads || leadLookup.items || [])[0]?._id;
+          if (leadId) res = await api(`${base}/templates/${tpl._id}/apply`, { method: 'POST', body: JSON.stringify({ leadId }) });
+        } catch (e) { /* fall back to raw */ }
+      }
       if (res) { if (res.subject) setSubject(res.subject); if (res.body) setBody((b) => (b ? `${b}<br>${res.body}` : res.body)); }
       else { if (tpl.subject && !subject) setSubject(tpl.subject); setBody((b) => (b ? `${b}<br>${tpl.bodyHtml || ''}` : (tpl.bodyHtml || ''))); }
     } catch (e) { setErr(e.message); }
@@ -533,7 +544,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
     try {
       const firstTo = (to[0] || '').trim();
       let leadId = null;
-      if (firstTo) {
+      if (F.leadLinks && firstTo) {
         const lk = await api(`/leads/search?q=${encodeURIComponent(firstTo)}`).catch(() => null);
         leadId = lk && (lk.leads || [])[0]?._id;
       }
@@ -543,7 +554,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
       const payload = leadId
         ? { leadId, mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly email.' }
         : { mode: 'custom', prompt: aiPrompt || 'Write a professional, friendly introduction email.', to, subject };
-      const res = await api('/gmail/ai-draft', { method: 'POST', body: JSON.stringify(payload) });
+      const res = await api(`${base}/ai-draft`, { method: 'POST', body: JSON.stringify(payload) });
       if (res.subject) setSubject(res.subject);
       if (res.body) {
         // On a reply/forward, keep the existing signature + quoted chain (the
@@ -583,7 +594,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
           </div>
           <div className="py-1">
             <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={200} maxHeight={340}
-              onAttach={() => fileInput.current?.click()} onAiDraft={() => setShowAi(true)}
+              onAttach={() => fileInput.current?.click()} onAiDraft={F.ai ? () => setShowAi(true) : undefined}
               onInsertSignature={signature ? insertSignature : undefined} />
           </div>
           {attachments.length > 0 && (
@@ -601,7 +612,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
               <div className="text-xs font-bold text-[#050A1F] mb-1.5">AI draft</div>
               <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={2} placeholder="What should this email say? (leave blank for a friendly default)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" />
-              <div className="text-[10px] text-slate-400 mb-2">If the recipient matches a CRM lead, uses their brief and history for context. Otherwise drafts from your prompt.</div>
+              <div className="text-[10px] text-slate-400 mb-2">{F.leadLinks ? 'If the recipient matches a CRM lead, uses their brief and history for context. Otherwise drafts from your prompt.' : 'Drafts a professional email from your prompt.'}</div>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setShowAi(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
                 <button onClick={runAi} disabled={aiBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{aiBusy ? 'Drafting…' : 'Generate'}</button>
@@ -611,16 +622,19 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
         </div>
         <div className="flex items-center gap-2 px-5 py-3 flex-shrink-0 border-t border-slate-100 bg-white rounded-b-xl relative">
           <div className="flex">
-            <button onClick={() => send(false)} disabled={sending} className="rounded-l-full px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
-            <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} title="Schedule send" className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-            </button>
+            <button onClick={() => send(false)} disabled={sending} className={`px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50 ${F.scheduled ? 'rounded-l-full' : 'rounded-full'}`} style={{ background: '#1A73E8' }}>{sending ? 'Sending…' : 'Send'}</button>
+            {F.scheduled && (
+              <button onClick={() => setShowSchedule((v) => !v)} disabled={sending} title="Schedule send" className="rounded-r-full px-2 py-2.5 text-white border-l border-white/20" style={{ background: '#1A73E8' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+              </button>
+            )}
           </div>
           <button onClick={() => fileInput.current?.click()} title="Attach file" className="p-2 rounded-full hover:bg-slate-100 text-slate-500">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>
           </button>
           <input ref={fileInput} type="file" multiple className="hidden" onChange={onFile} />
           {/* Template picker */}
+          {F.templates && (
           <div className="relative">
             <button onClick={() => setShowTemplates((v) => !v)} title="Use a template" className="p-2 rounded-full hover:bg-slate-100 text-slate-500 flex items-center gap-1">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
@@ -639,6 +653,7 @@ function AllEmailComposer({ initial, as, signature, onClose, onSent }) {
               </div>
             )}
           </div>
+          )}
           {showSchedule && (
             <div className="absolute bottom-14 left-4 w-80 bg-white rounded-xl border border-slate-200 shadow-xl p-4 z-50">
               <div className="text-sm font-bold text-[#050A1F] mb-2">Schedule send</div>
