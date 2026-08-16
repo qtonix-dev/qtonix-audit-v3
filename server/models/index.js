@@ -444,10 +444,15 @@ const Settings = sequelize.define(
     // `hrMailboxToken:<id>` (encrypted). The legacy single hrMailbox above is
     // migrated in as the mailbox with id 'default'.
     hrMailboxes: { type: DataTypes.JSON, defaultValue: [] },
+    // Gmail message IDs an admin dismissed from the dashboard "Unread email" box.
+    hrDismissedUnread: { type: DataTypes.JSON, defaultValue: [] },
 
     // Shared recruitment email templates and rejection reasons (HR-managed).
     hrEmailTemplates: { type: DataTypes.JSON, defaultValue: [] }, // [{ id, name, subject, body }]
     hrRejectionReasons: { type: DataTypes.JSON, defaultValue: ['Position filled', 'Skills mismatch', 'Salary expectations', 'Location constraints', 'Did not clear interview'] },
+    // Onboarding checklist template — the default tasks seeded for each new
+    // employee (admin-editable under HR Admin → Settings).
+    hrOnboardingTasks: { type: DataTypes.JSON, defaultValue: ['Collect ID & address proof', 'Sign employment contract', 'Issue laptop / equipment', 'Create email & system accounts', 'Add to payroll', 'Share employee handbook', 'Assign onboarding buddy'] },
     // Resume-match auto-scoring on add/apply/feedback (admins can turn off to save API credits).
     hrAutoScore: { type: DataTypes.BOOLEAN, defaultValue: true },
     // Public careers page branding.
@@ -1243,6 +1248,8 @@ const HrUser = sequelize.define('HrUser', {
   birthday: { type: DataTypes.DATEONLY, allowNull: true },
   maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // single | married
   anniversary: { type: DataTypes.DATEONLY, allowNull: true },
+  // Permission: may post to the company notice board (admins always can).
+  canPostAnnouncements: { type: DataTypes.BOOLEAN, defaultValue: false },
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1329,6 +1336,12 @@ const HrJobPost = sequelize.define('HrJobPost', {
   questions: { type: DataTypes.JSON, defaultValue: [] },    // [{ id, type, question, mandatory, options:[] }]
   // --- Hiring flow (per-post, editable) ---
   stages: { type: DataTypes.JSON, defaultValue: [] },       // [{ id, label, color }]
+  // HR/recruiters assigned to this job (advisory — powers "my jobs" filtering
+  // and shows ownership). Any scheduler can still add candidates.
+  assignedHrIds: { type: DataTypes.JSON, defaultValue: [] }, // [hrUserId, ...]
+  // Default interview panel per stage — pre-fills the panelist picker when
+  // scheduling for that round. { [stageId]: [hrUserId, ...] }
+  roundPanels: { type: DataTypes.JSON, defaultValue: {} },
   // --- Public embed ---
   publicToken: { type: DataTypes.STRING(40), allowNull: true, unique: true },
   publishedAt: { type: DataTypes.DATE, allowNull: true },
@@ -1397,9 +1410,34 @@ const HrNotification = sequelize.define('HrNotification', {
 });
 HrNotification.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Company-wide announcements / notice board, shown to all HR staff.
+const HrAnnouncement = sequelize.define('HrAnnouncement', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  title: { type: DataTypes.STRING(200), allowNull: false },
+  body: { type: DataTypes.TEXT, allowNull: false, defaultValue: '' },
+  pinned: { type: DataTypes.BOOLEAN, defaultValue: false },
+  authorId: { type: DataTypes.INTEGER, allowNull: true },
+  authorName: { type: DataTypes.STRING(120), allowNull: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'hr_announcements', indexes: [{ name: 'idx_hr_ann_active', fields: ['active'] }] });
+HrAnnouncement.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Per-employee onboarding checklist. Each row is one task for one employee,
+// seeded from the admin-configured template (Settings.hrOnboardingTasks).
+const HrOnboarding = sequelize.define('HrOnboarding', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false }, // HrUser id
+  task: { type: DataTypes.STRING(200), allowNull: false },
+  done: { type: DataTypes.BOOLEAN, defaultValue: false },
+  doneAt: { type: DataTypes.DATE, allowNull: true },
+  doneById: { type: DataTypes.INTEGER, allowNull: true },
+  order: { type: DataTypes.INTEGER, defaultValue: 0 },
+}, { tableName: 'hr_onboarding', indexes: [{ name: 'idx_hr_onboard_emp', fields: ['employeeId'] }] });
+HrOnboarding.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

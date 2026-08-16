@@ -517,27 +517,77 @@ function QuestionModal({ draft, onCancel, onSave }) {
 function FlowStep({ job, set }) {
   const stages = job.stages && job.stages.length ? job.stages : DEFAULT_STAGES;
   const [label, setLabel] = useState('');
+  const [emps, setEmps] = useState([]);
+  const [panelFor, setPanelFor] = useState(null); // stage id whose panel picker is open
+  useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active !== false))).catch(() => {}); }, []);
   const update = (i, patch) => set({ stages: stages.map((s, idx) => idx === i ? { ...s, ...patch } : s) });
   const remove = (i) => set({ stages: stages.filter((_, idx) => idx !== i) });
   const add = () => { const l = label.trim(); if (!l) return; set({ stages: [...stages, { id: `st_${Date.now()}`, label: l, color: '#64748B' }] }); setLabel(''); };
   const move = (i, dir) => { const j = i + dir; if (j < 0 || j >= stages.length) return; const copy = [...stages]; [copy[i], copy[j]] = [copy[j], copy[i]]; set({ stages: copy }); };
+  const assigned = (job.assignedHrIds || []).map(Number);
+  const toggleAssigned = (id) => { const s = assigned.includes(id) ? assigned.filter((x) => x !== id) : [...assigned, id]; set({ assignedHrIds: s }); };
+  const panels = job.roundPanels || {};
+  const togglePanel = (stageId, id) => {
+    const cur = Array.isArray(panels[stageId]) ? panels[stageId] : [];
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    set({ roundPanels: { ...panels, [stageId]: next } });
+  };
+  const nameOf = (id) => { const e = emps.find((x) => x._id === id); return e ? e.name : ''; };
+  const hrEmps = emps.filter((e) => ['hr', 'recruiter', 'manager', 'tl'].includes(e.type));
 
   return (
     <div className="max-w-2xl">
-      <div className="text-base font-extrabold text-[#050A1F] mb-1">Hiring Flow</div>
-      <p className="text-sm text-slate-500 mb-4">These are the stages candidates move through for this job. Reorder, rename, recolour or remove them — each job post can have its own flow.</p>
-      <div className="space-y-2 mb-4">
-        {stages.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2.5">
-            <div className="flex flex-col">
-              <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs leading-none">▲</button>
-              <button onClick={() => move(i, 1)} disabled={i === stages.length - 1} className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs leading-none">▼</button>
-            </div>
-            <input type="color" value={s.color} onChange={(e) => update(i, { color: e.target.value })} className="w-7 h-7 rounded cursor-pointer border-0 bg-transparent" />
-            <input className={inp + ' flex-1'} value={s.label} onChange={(e) => update(i, { label: e.target.value })} />
-            <button onClick={() => remove(i)} className="text-slate-400 hover:text-red-500 px-2" title="Remove">🗑</button>
-          </div>
+      {/* Assigned HR */}
+      <div className="text-base font-extrabold text-[#050A1F] mb-1">Assigned HR</div>
+      <p className="text-sm text-slate-500 mb-3">Which recruiters own this job. They'll see it under “My jobs” and can start adding candidates. (Everyone can still add candidates — this shows ownership.)</p>
+      <div className="flex flex-wrap gap-2 mb-6">
+        {hrEmps.map((e) => (
+          <button key={e._id} onClick={() => toggleAssigned(e._id)}
+            className={`flex items-center gap-1.5 rounded-full pl-1 pr-3 py-1 text-xs font-bold border transition ${assigned.includes(e._id) ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+            <span className="w-5 h-5 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center text-[9px]">{e.avatar ? <img src={e.avatar} alt="" className="w-full h-full object-cover" /> : (e.name || '?')[0]}</span>
+            {e.name}
+          </button>
         ))}
+        {hrEmps.length === 0 && <span className="text-sm text-slate-400">No HR staff yet.</span>}
+      </div>
+
+      <div className="text-base font-extrabold text-[#050A1F] mb-1">Hiring Flow</div>
+      <p className="text-sm text-slate-500 mb-4">Stages candidates move through. Set a <b>default interview panel</b> per round — it pre-fills when scheduling an interview for that stage (still editable each time).</p>
+      <div className="space-y-2 mb-4">
+        {stages.map((s, i) => {
+          const panel = Array.isArray(panels[s.id]) ? panels[s.id] : [];
+          return (
+          <div key={s.id} className="rounded-xl border border-slate-200 p-2.5">
+            <div className="flex items-center gap-2">
+              <div className="flex flex-col">
+                <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs leading-none">▲</button>
+                <button onClick={() => move(i, 1)} disabled={i === stages.length - 1} className="text-slate-300 hover:text-slate-600 disabled:opacity-30 text-xs leading-none">▼</button>
+              </div>
+              <input type="color" value={s.color} onChange={(e) => update(i, { color: e.target.value })} className="w-7 h-7 rounded cursor-pointer border-0 bg-transparent" />
+              <input className={inp + ' flex-1'} value={s.label} onChange={(e) => update(i, { label: e.target.value })} />
+              <button onClick={() => setPanelFor(panelFor === s.id ? null : s.id)} className={`text-xs font-bold px-2 py-1.5 rounded-lg border ${panel.length ? 'border-blue-200 text-blue-600 bg-blue-50' : 'border-slate-200 text-slate-500'}`} title="Default interview panel">👥 {panel.length || 'Panel'}</button>
+              <button onClick={() => remove(i)} className="text-slate-400 hover:text-red-500 px-2" title="Remove">🗑</button>
+            </div>
+            {panel.length > 0 && panelFor !== s.id && (
+              <div className="text-[11px] text-slate-400 mt-1.5 ml-9">Default panel: {panel.map(nameOf).filter(Boolean).join(', ')}</div>
+            )}
+            {panelFor === s.id && (
+              <div className="mt-2 ml-9 rounded-lg bg-slate-50 border border-slate-100 p-2.5">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Default panel for “{s.label}”</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {emps.map((e) => (
+                    <button key={e._id} onClick={() => togglePanel(s.id, e._id)}
+                      className={`flex items-center gap-1 rounded-full pl-1 pr-2.5 py-0.5 text-[11px] font-bold border transition ${panel.includes(e._id) ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                      <span className="w-4 h-4 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center text-[8px]">{e.avatar ? <img src={e.avatar} alt="" className="w-full h-full object-cover" /> : (e.name || '?')[0]}</span>
+                      {e.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          );
+        })}
       </div>
       <div className="flex gap-2">
         <input className={inp} value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Add a stage…" />

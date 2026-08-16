@@ -129,8 +129,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             <button onClick={() => setShowFeedback(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">💬 Add Feedback</button>
             <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
             <button onClick={() => setActivityModal('call')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📞 Add Call</button>
-            <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule Interview</button>
-            {c.canViewInternal !== false && <button onClick={() => setShowSelfSchedule(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">🔗 Self-schedule</button>}
+            <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule Meeting</button>
+            {c.canViewInternal !== false && <button onClick={() => setShowSelfSchedule(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">🗓️ Schedule Interview</button>}
             <button onClick={reject} disabled={c.rejected} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">⛔ Reject</button>
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
@@ -168,7 +168,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)}
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify(payload) })); setShowFeedback(false); setTab('feedback'); }} />}
-      {showInterview && <InterviewModal candidateId={c.id} stages={stages} onClose={() => setShowInterview(false)} onDone={load} />}
+      {showInterview && <InterviewModal candidateId={c.id} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
       {showReject && <RejectModal onClose={() => setShowReject(false)} onReject={async (reason) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) })); setShowReject(false); }} />}
@@ -522,7 +522,13 @@ function MailTab({ c }) {
       <div className="text-xs text-slate-400">Ask an admin to connect it in HR Admin → Recruitment mailbox.</div>
     </div>
   );
-  const replyTo = (m) => setCompose({ mode: 'reply', to: [c.email], subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId });
+  const replyTo = (m) => {
+    const when = m.date ? new Date(m.date).toLocaleString() : '';
+    const who = `${m.fromName || ''} <${m.fromEmail || m.from || ''}>`.trim();
+    const inner = m.bodyHtml || `<div style="white-space:pre-wrap">${(m.snippet || '')}</div>`;
+    const quoted = `<br><br><div style="border-left:2px solid #ccc;padding-left:10px;color:#555"><div>On ${when}, ${who} wrote:</div>${inner}</div>`;
+    setCompose({ mode: 'reply', to: [c.email], subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId, body: quoted });
+  };
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -599,9 +605,11 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [subject, setSubject] = useState(initial.subject || '');
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState(initial.body || '');
+  const [attachments, setAttachments] = useState([]); // {filename,mimeType,contentBase64}
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
+  const fileInput = React.useRef(null);
   const [showAi, setShowAi] = useState(false);
   const [aiMode, setAiMode] = useState('interview_invite');
   const [aiPrompt, setAiPrompt] = useState('');
@@ -634,6 +642,15 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
     setBody(fillPlaceholders(t.body) + (signature ? `<br><br>${signature}` : ''));
   };
   const applySignature = (sig) => { if (sig) setBody((b) => `${b || ''}<br><br>${sig.body}`); };
+  const insertDefaultSignature = () => { const sg = signatures.find((s) => s.isDefault) || signatures[0]; if (sg) applySignature(sg); };
+  const onFile = async (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const f of files) {
+      try { const b64 = await fileToBase64(f); setAttachments((prev) => [...prev, { filename: f.name, mimeType: f.type || 'application/octet-stream', contentBase64: String(b64).split(',').pop() }]); } catch {}
+    }
+    e.target.value = '';
+  };
+  const removeAtt = (i) => setAttachments((prev) => prev.filter((_, idx) => idx !== i));
 
   const runAi = async () => {
     setAiBusy(true); setErr('');
@@ -650,7 +667,7 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
     if (!subject.trim()) return setErr('Add a subject.');
     setSending(true);
     try {
-      await hrApi(`/candidates/${candidate.id}/emails/send`, { method: 'POST', body: JSON.stringify({ to: to.join(', '), cc: cc.join(', '), bcc: bcc.join(', '), subject, body, inReplyTo: initial.inReplyTo, threadId: initial.threadId }) });
+      await hrApi(`/candidates/${candidate.id}/emails/send`, { method: 'POST', body: JSON.stringify({ to: to.join(', '), cc: cc.join(', '), bcc: bcc.join(', '), subject, body, inReplyTo: initial.inReplyTo, threadId: initial.threadId, attachments }) });
       onSent();
     } catch (e) { setErr(e.message); setSending(false); }
   };
@@ -711,7 +728,20 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
           )}
           <div className="py-1">
             <MailEditor value={body} onChange={setBody} placeholder="Write your message…" minHeight={200} maxHeight={340}
-              onAiDraft={() => setShowAi((v) => !v)} />
+              onAiDraft={() => setShowAi((v) => !v)}
+              onAttach={() => fileInput.current?.click()}
+              onInsertSignature={signatures.length ? insertDefaultSignature : undefined} />
+            <input ref={fileInput} type="file" multiple className="hidden" onChange={onFile} />
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {attachments.map((a, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                    {a.filename}<button onClick={() => removeAtt(i)} className="text-slate-400 hover:text-red-500 ml-1">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 px-5 py-3 flex-shrink-0 border-t border-slate-100 bg-white rounded-b-xl">
@@ -931,7 +961,7 @@ function FeedbackModal({ onClose, onSubmit }) {
 }
 
 // ---------- Interview modal (calendar + Meet) ----------
-function InterviewModal({ candidateId, stages, onClose, onDone }) {
+function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
   const [at, setAt] = useState('');
   const [duration, setDuration] = useState(30);
   const [mode, setMode] = useState('online');
@@ -945,10 +975,18 @@ function InterviewModal({ candidateId, stages, onClose, onDone }) {
   const [emps, setEmps] = useState([]);
   const [dept, setDept] = useState('');
   const [picked, setPicked] = useState([]); // employee ids
+  const [autoFilled, setAutoFilled] = useState(false);
   useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
+  // When the round changes, pre-fill the panel from the job's default for that
+  // round (unless the user has already hand-picked panelists).
+  const onRoundChange = (rid) => {
+    setRound(rid);
+    const def = (roundPanels && Array.isArray(roundPanels[rid])) ? roundPanels[rid] : [];
+    if (def.length && (picked.length === 0 || autoFilled)) { setPicked(def.map(Number)); setAutoFilled(true); }
+  };
   const depts = Array.from(new Set(emps.map((e) => e.department).filter(Boolean))).sort();
   const shown = emps.filter((e) => !dept || e.department === dept);
-  const toggle = (id) => setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  const toggle = (id) => { setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]); setAutoFilled(false); };
 
   const schedule = async () => {
     if (!at) { setErr('Pick a date and time.'); return; }
@@ -957,7 +995,7 @@ function InterviewModal({ candidateId, stages, onClose, onDone }) {
     catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title="Schedule Interview" onClose={onClose} wide>
+    <Modal title="Schedule Meeting" onClose={onClose} wide>
       {result ? (
         <div className="text-center py-4">
           <div className="text-3xl mb-2">✅</div>
@@ -972,10 +1010,11 @@ function InterviewModal({ candidateId, stages, onClose, onDone }) {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs font-bold text-slate-500 mb-1">Round</div>
-                <select className={inp} value={round} onChange={(e) => setRound(e.target.value)}>
+                <select className={inp} value={round} onChange={(e) => onRoundChange(e.target.value)}>
                   <option value="">General interview</option>
                   {(stages || []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                 </select>
+                {round && roundPanels && (roundPanels[round] || []).length > 0 && autoFilled && <div className="text-[10px] text-blue-500 mt-1">Panel pre-filled from this round's default.</div>}
               </div>
               <div><div className="text-xs font-bold text-slate-500 mb-1">Mode</div><select className={inp} value={mode} onChange={(e) => setMode(e.target.value)}><option value="online">Online (Google Meet)</option><option value="in_person">In person</option><option value="phone">Phone</option></select></div>
             </div>
@@ -1310,7 +1349,7 @@ function SelfScheduleModal({ candidate, onClose, onSaved }) {
   const toLocalInput = (iso) => { if (!iso) return ''; const d = new Date(iso); const pad = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
   return (
-    <Modal title="Self-schedule interview" onClose={onClose} wide>
+    <Modal title="Schedule Interview" onClose={onClose} wide>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div><Lbl>Round label</Lbl><input className={inp} value={roundLabel} onChange={(e) => setRoundLabel(e.target.value)} /></div>

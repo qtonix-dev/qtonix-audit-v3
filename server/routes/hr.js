@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
@@ -481,6 +481,10 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
     if (b.reportsToAdminId !== undefined) row.reportsToAdminId = b.reportsToAdminId ? Number(b.reportsToAdminId) : null;
     if (b.active !== undefined) row.active = !!b.active;
     if (b.avatar !== undefined) row.avatar = b.avatar;
+    if (b.birthday !== undefined) row.birthday = b.birthday || null;
+    if (b.maritalStatus !== undefined) row.maritalStatus = b.maritalStatus || null;
+    if (b.anniversary !== undefined) row.anniversary = b.anniversary || null;
+    if (b.canPostAnnouncements !== undefined) row.canPostAnnouncements = !!b.canPostAnnouncements;
     if (b.targets !== undefined) {
       row.targets = { dailyInterviews: Number(b.targets.dailyInterviews || 0), monthlyOnboarding: Number(b.targets.monthlyOnboarding || 0) };
     }
@@ -491,6 +495,18 @@ router.put('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next)
     await row.save();
     hrLog(req, 'user.update', row.name);
     res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Delete an employee (admin only). Blocks self-deletion.
+router.delete('/users/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrUser.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Employee not found.' });
+    const nm = row.name;
+    await row.destroy();
+    hrLog(req, 'user.delete', nm);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -556,7 +572,14 @@ router.get('/job-posts', requireHrAccess, async (req, res, next) => {
       group: ['jobPostId'], raw: true,
     });
     const byJob = {}; counts.forEach((c) => { byJob[c.jobPostId] = Number(c.n); });
-    res.json(rows.map((r) => ({ ...r.toJSON(), applicantCount: byJob[r.id] || 0 })));
+    // Resolve assigned-HR names for display.
+    const allIds = [...new Set(rows.flatMap((r) => Array.isArray(r.assignedHrIds) ? r.assignedHrIds : []))];
+    const hrById = {};
+    if (allIds.length) { const hrs = await HrUser.findAll({ where: { id: allIds }, attributes: ['id', 'name', 'avatar'] }); hrs.forEach((h) => { hrById[h.id] = { id: h.id, name: h.name, avatar: h.avatar }; }); }
+    res.json(rows.map((r) => ({
+      ...r.toJSON(), applicantCount: byJob[r.id] || 0,
+      assignedHr: (Array.isArray(r.assignedHrIds) ? r.assignedHrIds : []).map((id) => hrById[id]).filter(Boolean),
+    })));
   } catch (e) { next(e); }
 });
 
@@ -564,6 +587,37 @@ router.get('/job-posts/:id', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Assign / update the HR team on a job post (from the job list or builder).
+router.put('/job-posts/:id/assigned-hr', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    const ids = Array.isArray((req.body || {}).assignedHrIds) ? req.body.assignedHrIds.map(Number).filter(Boolean) : [];
+    row.assignedHrIds = ids; row.changed('assignedHrIds', true);
+    await row.save();
+    hrLog(req, 'job.assign-hr', `${row.title} → ${ids.length} HR`);
+    // Notify newly assigned HR.
+    try { for (const id of ids) await notify(id, { type: 'info', text: `You were assigned to the job “${row.title}”.` }); } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Set the default interview panel for a stage on a job post.
+router.put('/job-posts/:id/round-panels', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrJobPost.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Job post not found.' });
+    const panels = (req.body && typeof req.body.roundPanels === 'object') ? req.body.roundPanels : {};
+    // Sanitize: stageId -> array of numeric HR ids.
+    const clean = {};
+    for (const k of Object.keys(panels)) clean[k] = Array.isArray(panels[k]) ? panels[k].map(Number).filter(Boolean) : [];
+    row.roundPanels = clean; row.changed('roundPanels', true);
+    await row.save();
+    hrLog(req, 'job.round-panels', row.title);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -590,6 +644,8 @@ router.put('/job-posts/:id', requireHrAccess, async (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
     const fields = pickJobFields(req.body || {});
     Object.assign(row, fields);
+    // Ensure JSON columns persist (Sequelize needs an explicit change flag).
+    ['locations', 'skills', 'formFields', 'questions', 'stages', 'assignedHrIds', 'roundPanels'].forEach((k) => { if (fields[k] !== undefined) row.changed(k, true); });
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -692,7 +748,7 @@ function pickJobFields(b) {
   const str = ['title', 'branch', 'description', 'department', 'workMode', 'salaryPeriod',
     'salaryCurrency', 'experienceType', 'employmentType', 'employmentLevel', 'education', 'status'];
   const num = ['salaryMin', 'salaryMax', 'expMin', 'expMax', 'openings'];
-  const json = ['locations', 'skills', 'formFields', 'questions', 'stages'];
+  const json = ['locations', 'skills', 'formFields', 'questions', 'stages', 'assignedHrIds', 'roundPanels'];
   for (const k of str) if (b[k] !== undefined) out[k] = String(b[k]).slice(0, 20000);
   for (const k of num) if (b[k] !== undefined && b[k] !== '' && b[k] !== null) out[k] = Number(b[k]);
   for (const k of json) if (b[k] !== undefined) out[k] = b[k];
@@ -1497,10 +1553,11 @@ router.post('/users/:id/reset-password', requireHrAccess, requireHrAdmin, async 
   try {
     const u = await HrUser.findByPk(req.params.id);
     if (!u) return res.status(404).json({ error: 'User not found.' });
-    const np = String((req.body && req.body.newPassword) || '');
+    const np = String((req.body && (req.body.password || req.body.newPassword)) || '');
     if (np.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     u.passwordHash = await bcrypt.hash(np, 10);
     await u.save();
+    hrLog(req, 'user.reset-password', u.name);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -1842,7 +1899,7 @@ router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
           const aid = `ss-${c.id}`;
           if (!dismissed.includes(aid) && (isAdmin || mineOwner(c))) {
             items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: 'selfschedule',
-              title: `Self-schedule link unbooked — ${ss.roundLabel || 'interview'}`,
+              title: `Interview booking link unbooked — ${ss.roundLabel || 'interview'}`,
               ownerId, ownerName, dueAt: new Date(sentAt + SELF_SCHED_GRACE).toISOString(),
               hoursLate: Math.max(0, Math.round((now - sentAt - SELF_SCHED_GRACE) / 3600000)) });
             bump(ownerId, ownerName);
@@ -1872,6 +1929,190 @@ router.post('/missed-commitments/:candidateId/dismiss', requireHrAccess, require
     row.dismissedMissed = list; row.changed('dismissedMissed', true);
     await row.save();
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Dashboard: birthdays & work anniversaries (this week) ----
+// Mirrors the CRM celebrations widget, over the HR employee roster.
+router.get('/celebrations', requireHrAccess, async (req, res, next) => {
+  try {
+    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'birthday', 'joiningDate', 'anniversary', 'designation'] });
+    const now = new Date();
+    const mmdd = (d) => { if (!d) return null; const x = new Date(d); return `${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+    const today = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+    const items = [];
+    users.forEach((u) => {
+      if (mmdd(u.birthday) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'birthday' });
+      if (mmdd(u.joiningDate) === today) {
+        const years = u.joiningDate ? (now.getFullYear() - new Date(u.joiningDate).getFullYear()) : 0;
+        if (years > 0) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'work', years, yearsLabel: ordinal(years) });
+      }
+      if (mmdd(u.anniversary) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'anniversary' });
+    });
+    res.json({ items });
+  } catch (e) { next(e); }
+});
+
+// ---- Announcements / notice board ----
+router.get('/announcements', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrAnnouncement.findAll({ where: { active: true }, order: [['pinned', 'DESC'], ['createdAt', 'DESC']], limit: 100 });
+    const canPost = !!req.isHrAdmin || !!(req.hrUser && req.hrUser.canPostAnnouncements);
+    res.json({ announcements: rows.map((r) => r.toJSON()), canPost });
+  } catch (e) { next(e); }
+});
+// Admins, and HR granted the permission, may post.
+function requireAnnouncer(req, res, next) {
+  if (req.isHrAdmin || (req.hrUser && req.hrUser.canPostAnnouncements)) return next();
+  return res.status(403).json({ error: 'You don’t have permission to post announcements.' });
+}
+router.post('/announcements', requireHrAccess, requireAnnouncer, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'A title is required.' });
+    const row = await HrAnnouncement.create({ title: String(b.title).slice(0, 200), body: String(b.body || ''), pinned: !!b.pinned, authorId: req.hrActor.id, authorName: req.hrActor.name });
+    hrLog(req, 'announcement.create', row.title);
+    // Notify all active HR staff of the new announcement.
+    try {
+      const staff = await HrUser.findAll({ where: { active: true }, attributes: ['id'] });
+      for (const u of staff) await notify(u.id, { type: 'info', text: `📢 New announcement: ${row.title}` });
+    } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.put('/announcements/:id', requireHrAccess, requireAnnouncer, async (req, res, next) => {
+  try {
+    const row = await HrAnnouncement.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Announcement not found.' });
+    if (!req.isHrAdmin && row.authorId !== req.hrActor.id) return res.status(403).json({ error: 'You can only edit your own announcements.' });
+    const b = req.body || {};
+    if (b.title !== undefined) row.title = String(b.title).slice(0, 200);
+    if (b.body !== undefined) row.body = String(b.body);
+    if (b.pinned !== undefined) row.pinned = !!b.pinned;
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/announcements/:id', requireHrAccess, requireAnnouncer, async (req, res, next) => {
+  try {
+    const row = await HrAnnouncement.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Announcement not found.' });
+    if (!req.isHrAdmin && row.authorId !== req.hrActor.id) return res.status(403).json({ error: 'You can only delete your own announcements.' });
+    row.active = false; await row.save();
+    hrLog(req, 'announcement.delete', row.title);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Onboarding checklist ----
+// The admin-configured template (task names) lives in Settings.
+router.get('/onboarding-template', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ tasks: Array.isArray(s.hrOnboardingTasks) ? s.hrOnboardingTasks : [] });
+  } catch (e) { next(e); }
+});
+router.put('/onboarding-template', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const tasks = Array.isArray((req.body || {}).tasks) ? req.body.tasks.map((t) => String(t).slice(0, 200)).filter(Boolean) : [];
+    s.hrOnboardingTasks = tasks; s.changed('hrOnboardingTasks', true);
+    await s.save();
+    hrLog(req, 'onboarding.template.update', `${tasks.length} tasks`);
+    res.json({ tasks });
+  } catch (e) { next(e); }
+});
+// Per-employee checklist: auto-seeds from the template on first view.
+router.get('/employees/:id/onboarding', requireHrAccess, async (req, res, next) => {
+  try {
+    const empId = Number(req.params.id);
+    let rows = await HrOnboarding.findAll({ where: { employeeId: empId }, order: [['order', 'ASC'], ['id', 'ASC']] });
+    if (rows.length === 0) {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const tmpl = Array.isArray(s.hrOnboardingTasks) ? s.hrOnboardingTasks : [];
+      if (tmpl.length) {
+        await HrOnboarding.bulkCreate(tmpl.map((task, i) => ({ employeeId: empId, task, order: i })));
+        rows = await HrOnboarding.findAll({ where: { employeeId: empId }, order: [['order', 'ASC'], ['id', 'ASC']] });
+      }
+    }
+    const list = rows.map((r) => r.toJSON());
+    const done = list.filter((r) => r.done).length;
+    res.json({ tasks: list, done, total: list.length, percent: list.length ? Math.round((done / list.length) * 100) : 0 });
+  } catch (e) { next(e); }
+});
+router.post('/employees/:id/onboarding', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const empId = Number(req.params.id);
+    const task = String((req.body || {}).task || '').slice(0, 200).trim();
+    if (!task) return res.status(400).json({ error: 'Task text is required.' });
+    const max = await HrOnboarding.max('order', { where: { employeeId: empId } });
+    const row = await HrOnboarding.create({ employeeId: empId, task, order: (Number.isFinite(max) ? max : 0) + 1 });
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.patch('/employees/:id/onboarding/:taskId', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrOnboarding.findByPk(req.params.taskId);
+    if (!row || row.employeeId !== Number(req.params.id)) return res.status(404).json({ error: 'Task not found.' });
+    if ((req.body || {}).done !== undefined) { row.done = !!req.body.done; row.doneAt = row.done ? new Date() : null; row.doneById = row.done ? req.hrActor.id : null; }
+    if ((req.body || {}).task !== undefined) row.task = String(req.body.task).slice(0, 200);
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/employees/:id/onboarding/:taskId', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const row = await HrOnboarding.findByPk(req.params.taskId);
+    if (!row || row.employeeId !== Number(req.params.id)) return res.status(404).json({ error: 'Task not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Reset an employee's password (admin only) ----
+// ---- Dashboard: HR leaderboard ----
+// Per-HR productivity: interviews scheduled ("candidates added") and candidates
+// joined ("monthly hiring") — for today and this month — ranked, so the team
+// can see who's leading.
+router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
+  try {
+    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'designation', 'type'] });
+    const cands = await HrCandidate.findAll();
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const stat = new Map(); // id -> counters
+    users.forEach((u) => stat.set(u.id, { id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '', scheduledToday: 0, scheduledMonth: 0, joinedToday: 0, joinedMonth: 0 }));
+    const bump = (id, key) => { const s = stat.get(id); if (s) s[key] += 1; };
+    const nameToId = new Map(users.map((u) => [u.name, u.id]));
+    cands.forEach((c) => {
+      // Interviews scheduled ("candidate added = scheduling").
+      (c.interviews || []).forEach((iv) => {
+        const at = iv.createdAt || iv.at;
+        const id = iv.scheduledById || nameToId.get(iv.createdBy) || nameToId.get(iv.by);
+        if (!id || !at) return;
+        const ts = new Date(at).getTime();
+        if (ts >= startOfMonth) bump(id, 'scheduledMonth');
+        if (ts >= startOfDay) bump(id, 'scheduledToday');
+      });
+      // Candidates joined (accepted offer), credited to the recruiter.
+      if (c.offer && c.offer.status === 'accepted') {
+        const id = c.recruiterId || nameToId.get(c.recruiterName);
+        const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
+        if (id && doneAt) {
+          const ts = new Date(doneAt).getTime();
+          if (ts >= startOfMonth) bump(id, 'joinedMonth');
+          if (ts >= startOfDay) bump(id, 'joinedToday');
+        }
+      }
+    });
+    // Only include HR who scheduled or hired at least once this month (keeps it tidy).
+    let rows = Array.from(stat.values()).filter((r) => r.scheduledMonth > 0 || r.joinedMonth > 0);
+    // Rank by month scheduled, then month joined.
+    rows.sort((a, b) => (b.scheduledMonth - a.scheduledMonth) || (b.joinedMonth - a.joinedMonth) || a.name.localeCompare(b.name));
+    rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+    res.json({ rows, leader: rows[0] || null });
   } catch (e) { next(e); }
 });
 

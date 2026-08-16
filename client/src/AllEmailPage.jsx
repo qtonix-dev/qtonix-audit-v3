@@ -331,7 +331,7 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
         </div>
       )}
       {composer && <AllEmailComposer initial={composer} as={as} apiFn={api} base={base} feat={feat}
-        signature={(mailboxes.find((m) => (m.value === (as || String(user.id))))?.signature) || ''}
+        signature={(mailboxes.find((m) => m.value === (as || String(user.id)))?.signature) || (mailboxes[0] && mailboxes[0].signature) || ''}
         onClose={() => setComposer(null)}
         onSent={() => { setComposer(null); loadFolder(true); }} />}
     </div>

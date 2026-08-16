@@ -122,13 +122,14 @@ router.post('/candidates/:id/emails/send', requireHrAccess, async (req, res, nex
     const b = req.body || {};
     const to = b.to || cand.email;
     if (!to) return res.status(400).json({ error: 'No recipient email.' });
+    const attachments = Array.isArray(b.attachments) ? b.attachments : [];
     const sent = await gmail.sendMessage(s, token, email, {
       from: email, to, cc: b.cc, bcc: b.bcc,
       subject: b.subject || `Regarding your application`,
       bodyHtml: b.body || '',
       inReplyTo: b.inReplyTo || null,
       threadId: b.threadId || null,
-      attachments: [],
+      attachments,
     });
     // Log to the candidate timeline.
     const t = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
@@ -174,9 +175,14 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     const end = new Date(start.getTime() + (Number(b.durationMins) || 30) * 60000);
     // Resolve panelists from the Employee list (HrUser). Only their emails are
     // added to the calendar invite; their identity is stored for feedback.
+    // If none are passed, fall back to the job's default panel for this round.
+    let panelIds = Array.isArray(b.panelistIds) ? b.panelistIds : [];
+    if (!panelIds.length && job && job.roundPanels && b.round && Array.isArray(job.roundPanels[b.round])) {
+      panelIds = job.roundPanels[b.round];
+    }
     let panelists = [];
-    if (Array.isArray(b.panelistIds) && b.panelistIds.length) {
-      const emps = await HrUser.findAll({ where: { id: b.panelistIds } });
+    if (panelIds.length) {
+      const emps = await HrUser.findAll({ where: { id: panelIds } });
       panelists = emps.map((e) => ({ id: e.id, name: e.name, department: e.department || '', email: e.email }));
     }
     const roundLabel = (() => { const st = (job && job.stages || []).find((x) => x.id === b.round); return st ? st.label : (b.round || ''); })();
@@ -309,7 +315,8 @@ router.get('/unread-mail', requireHrAccess, async (req, res, next) => {
     const byEmail = new Map();
     cands.forEach((c) => { if (c.email) byEmail.set(c.email.toLowerCase(), c); });
     const now = Date.now();
-    const items = pending.map((m) => {
+    const dismissed = new Set(Array.isArray(s.hrDismissedUnread) ? s.hrDismissedUnread : []);
+    const items = pending.filter((m) => !dismissed.has(m.gmailMessageId)).map((m) => {
       const from = (m.fromEmail || '').toLowerCase();
       const cand = byEmail.get(from) || null;
       const ageMs = now - new Date(m.sentAt).getTime();
@@ -333,6 +340,20 @@ router.get('/unread-mail', requireHrAccess, async (req, res, next) => {
     };
     _unreadCache = { at: Date.now(), data };
     res.json(data);
+  } catch (e) { next(e); }
+});
+
+// Admin dismisses an unread-email item (hidden from the dashboard box).
+router.post('/unread-mail/:emailId/dismiss', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can dismiss.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const list = Array.isArray(s.hrDismissedUnread) ? s.hrDismissedUnread.slice() : [];
+    if (!list.includes(req.params.emailId)) list.push(req.params.emailId);
+    s.hrDismissedUnread = list.slice(-1000); s.changed('hrDismissedUnread', true);
+    await s.save();
+    _unreadCache = { at: 0, data: null }; // bust cache so it refreshes
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -391,7 +412,14 @@ function requireMailViewer(req, res, next) {
 router.get('/all/mailboxes', requireHrAccess, requireMailViewer, async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const list = hrMailboxList(s).filter((m) => m.token).map((m) => ({ value: m.id, email: m.email, label: m.label }));
+    // The composer signature comes from the logged-in HR user's own default
+    // signature (the shared inbox has no per-user signature of its own).
+    let sig = '';
+    if (req.hrUser && Array.isArray(req.hrUser.emailSignatures)) {
+      const def = req.hrUser.emailSignatures.find((x) => x.isDefault) || req.hrUser.emailSignatures[0];
+      sig = def ? def.body : '';
+    }
+    const list = hrMailboxList(s).filter((m) => m.token).map((m) => ({ value: m.id, userId: m.id, email: m.email, label: m.label, signature: sig }));
     res.json({ mailboxes: list, isAdmin: !!req.isHrAdmin, canSwitch: list.length > 1 });
   } catch (e) { next(e); }
 });
@@ -506,6 +534,29 @@ router.delete('/all/labels/:id', requireHrAccess, requireMailViewer, async (req,
     await gmail.deleteLabel(s, mb.token, req.params.id);
     res.json({ ok: true });
   } catch (e) { next(e); }
+});
+
+// AI draft for the shared Email tab (generic, prompt-based).
+router.post('/all/ai-draft', requireHrAccess, requireMailViewer, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s.getKey('anthropic');
+    if (!key) return res.status(400).json({ error: 'AI isn’t configured. Add an Anthropic API key in CRM Admin → API keys.' });
+    const b = req.body || {};
+    // Try to match a candidate by the first recipient for a friendlier draft.
+    let candidateName = '';
+    const firstTo = Array.isArray(b.to) ? (b.to[0] || '') : String(b.to || '').split(',')[0];
+    if (firstTo) { const cand = await HrCandidate.findOne({ where: { email: String(firstTo).trim().toLowerCase() }, attributes: ['name'] }); if (cand) candidateName = cand.name; }
+    const { draftRecruitmentEmail } = require('../services/hrRecruitAI');
+    const out = await draftRecruitmentEmail(key, {
+      mode: 'custom',
+      prompt: b.prompt || 'Write a professional, friendly email.',
+      candidateName: candidateName || 'there',
+      roleTitle: b.roleTitle || 'the role',
+      recruiterName: req.hrActor.name,
+    });
+    res.json(out);
+  } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
 module.exports = router;

@@ -99,6 +99,72 @@ function fmtAgeH(ms) {
   return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
+// Rotating birthday / work-anniversary banner (mirrors the CRM CelebrationSlider).
+function HrCelebrations({ celebrations, user }) {
+  const [idx, setIdx] = useState(0);
+  const slides = celebrations || [];
+  useEffect(() => { if (slides.length <= 1) return; const t = setInterval(() => setIdx((n) => (n + 1) % slides.length), 10000); return () => clearInterval(t); }, [slides.length]);
+  useEffect(() => { if (idx >= slides.length) setIdx(0); }, [slides.length, idx]);
+  if (slides.length === 0) return null;
+  const c = slides[Math.min(idx, slides.length - 1)];
+  const msg = c.type === 'birthday' ? '🎂 Happy Birthday' : c.type === 'work' ? `🏆 Happy ${c.yearsLabel ? `${c.yearsLabel} ` : ''}Work Anniversary` : '💍 Happy Anniversary';
+  const sub = c.type === 'birthday' ? 'Wishing you a wonderful day!' : c.type === 'work' ? `Thank you for ${c.years ? `${c.years} year${c.years === 1 ? '' : 's'} of ` : ''}being with us!` : 'Congratulations on your special day!';
+  return (
+    <div className="relative">
+      <div className="rounded-2xl overflow-hidden shadow-sm border border-pink-200">
+        <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FDF2F8,#FFF7ED)' }}>
+          <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>{c.type === 'birthday' ? '🎂' : c.type === 'work' ? '🏆' : '💍'}</div>
+          <Avatar name={c.name} src={c.avatar} size={56} />
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-extrabold text-[#050A1F]">{msg}, {(c.name || '').split(' ')[0]}!</div>
+            <div className="text-[11px] text-pink-600 font-semibold">{c.name} · {sub}</div>
+          </div>
+        </div>
+      </div>
+      {slides.length > 1 && (
+        <div className="flex items-center justify-center gap-1.5 mt-2">
+          {slides.map((s, i) => <button key={`${s.id}-${s.type}-${i}`} onClick={() => setIdx(i)} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5 bg-[#FF6A00]' : 'w-1.5 bg-slate-300 hover:bg-slate-400'}`} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Post a company announcement (admins + permitted HR).
+function AnnouncementModal({ onClose, onSaved }) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [pinned, setPinned] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    if (!title.trim()) return setErr('A title is required.');
+    setSaving(true); setErr('');
+    try { await hrApi('/announcements', { method: 'POST', body: JSON.stringify({ title, body, pinned }) }); onSaved(); }
+    catch (e) { setErr(e.message); setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">📢 Post announcement</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className={inputCls} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Write your announcement… (visible to all staff)" className={inputCls} />
+          <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} /> Pin to top</label>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{saving ? 'Posting…' : 'Post to notice board'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HrDashboard({ user, isAdmin, onOpenCandidate }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
@@ -109,6 +175,11 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
   const [mail, setMail] = useState(null);
   const [mailTab, setMailTab] = useState('new');
+  const [celebrations, setCelebrations] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [annCanPost, setAnnCanPost] = useState(false);
+  const [showAnnModal, setShowAnnModal] = useState(false);
+  const [board, setBoard] = useState(null);
   useEffect(() => {
     hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} }));
     hrApi('/dashboard-stats').then(setStats).catch(() => {});
@@ -117,7 +188,11 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
     hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
     hrApi('/missed-commitments').then(setMissed).catch(() => {});
     hrApi('/unread-mail').then(setMail).catch(() => {});
+    hrApi('/celebrations').then((r) => setCelebrations(r.items || [])).catch(() => {});
+    hrApi('/leaderboard').then(setBoard).catch(() => {});
+    loadAnnouncements();
   }, []);
+  const loadAnnouncements = () => hrApi('/announcements').then((r) => { setAnnouncements(r.announcements || []); setAnnCanPost(!!r.canPost); }).catch(() => {});
   const m = (data && data.metrics) || {};
   const stageLabels = {}; jobs.forEach((j) => (j.stages || []).forEach((s) => { stageLabels[s.id] = s.label; }));
   const byStage = (stats && stats.byStage) || {};
@@ -132,10 +207,39 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
   const softTint = (hex) => `${hex}0F`;
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
-        <p className="text-slate-500 text-sm mt-1">Here's your recruitment overview.</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
+          <p className="text-slate-500 text-sm mt-1">Here's your recruitment overview.</p>
+        </div>
+        {annCanPost && <button onClick={() => setShowAnnModal(true)} className="rounded-lg px-3 py-2 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: '#050A1F' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 11l18-5v12L3 14v-3zM11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg> Post announcement
+        </button>}
       </div>
+
+      {/* Celebrations — birthdays & work anniversaries (CRM-style slider) */}
+      <HrCelebrations celebrations={celebrations} user={user} />
+
+      {/* Announcements / notice board */}
+      {announcements.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-2">📢 Announcements</div>
+          <div className="space-y-2">
+            {announcements.slice(0, 4).map((a) => (
+              <div key={a._id} className="bg-white rounded-lg border border-amber-100 px-3 py-2 group">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-1.5">{a.pinned && <span title="Pinned">📌</span>}{a.title}</div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] text-slate-400">{a.authorName} · {new Date(a.createdAt).toLocaleDateString()}</span>
+                    {annCanPost && <button title="Remove" onClick={async () => { if (!window.confirm('Remove this announcement?')) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { alert(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
+                  </div>
+                </div>
+                {a.body && <div className="text-xs text-slate-500 mt-0.5 whitespace-pre-wrap">{a.body}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Missed commitments — feedback, calls, scheduling that slipped past time. */}
       {missed && missed.stillOpen > 0 && (
@@ -172,36 +276,6 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
           </div>
         </div>
       )}
-
-      {/* Unread incoming mail (shared recruitment inbox) — HR & admin only. */}
-      {mail && (() => {
-        const newItems = [...((mail.missed) || []), ...((mail.awaiting) || [])];
-        if (newItems.length === 0) return null;
-        const overdueCount = (mail.missed || []).length;
-        return (
-          <div className="rounded-2xl border border-blue-200 bg-white p-4">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Unread candidate mail</span>
-              <span className="rounded-full bg-blue-600 text-white px-2 py-0.5 text-[10px] font-extrabold">{newItems.length} awaiting reply</span>
-              {overdueCount > 0 && <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-extrabold">{overdueCount} over 24h</span>}
-            </div>
-            <div className="space-y-1 max-h-52 overflow-auto">
-              {newItems.slice(0, 12).map((i) => {
-                const overdue = i.ageMs >= 24 * 3600000;
-                return (
-                  <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group cursor-pointer" onClick={() => i.candidateId && onOpenCandidate && onOpenCandidate(i.candidateId)}>
-                    <span>{overdue ? '⚠️' : '✉️'}</span>
-                    <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.candidateName}</span>
-                    <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
-                    {isAdmin && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                    <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAgeH(i.ageMs)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Accent stat cards, CRM-style */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -280,6 +354,80 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
         </div>
       </div>
 
+      {/* Unread email (shared recruitment inbox) — HR & admin only. Placed after the funnel/analytics. */}
+      {mail && (() => {
+        const newItems = [...((mail.missed) || []), ...((mail.awaiting) || [])];
+        if (newItems.length === 0) return null;
+        const overdueCount = (mail.missed || []).length;
+        const dismiss = async (emailId) => { try { await hrApi(`/unread-mail/${encodeURIComponent(emailId)}/dismiss`, { method: 'POST' }); setMail((prev) => prev ? { ...prev, awaiting: (prev.awaiting || []).filter((x) => x.emailId !== emailId), missed: (prev.missed || []).filter((x) => x.emailId !== emailId) } : prev); } catch (e) { alert(e.message); } };
+        return (
+          <div className="rounded-2xl border border-blue-200 bg-white p-4">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Unread email</span>
+              <span className="rounded-full bg-blue-600 text-white px-2 py-0.5 text-[10px] font-extrabold">{newItems.length} awaiting reply</span>
+              {overdueCount > 0 && <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-extrabold">{overdueCount} over 24h</span>}
+            </div>
+            <div className="space-y-1 max-h-52 overflow-auto">
+              {newItems.slice(0, 12).map((i) => {
+                const overdue = i.ageMs >= 24 * 3600000;
+                return (
+                  <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group">
+                    <span className="cursor-pointer" onClick={() => i.candidateId && onOpenCandidate && onOpenCandidate(i.candidateId)}>{overdue ? '⚠️' : '✉️'}</span>
+                    <span className="font-bold text-[#050A1F] truncate max-w-[150px] cursor-pointer" onClick={() => i.candidateId && onOpenCandidate && onOpenCandidate(i.candidateId)}>{i.candidateName}</span>
+                    <span className="text-slate-500 truncate flex-1 cursor-pointer" onClick={() => i.candidateId && onOpenCandidate && onOpenCandidate(i.candidateId)}>{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
+                    {isAdmin && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
+                    <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAgeH(i.ageMs)}</span>
+                    {isAdmin && <button title="Dismiss" onClick={(e) => { e.stopPropagation(); dismiss(i.emailId); }} className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-600">×</button>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* HR leaderboard — candidates added (scheduled) & joined, today + month */}
+      {board && board.rows && board.rows.length > 0 && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-extrabold text-[#050A1F]">🏆 HR leaderboard</div>
+            {board.leader && <div className="text-xs text-slate-500">Leading: <b className="text-[#050A1F]">{board.leader.name}</b></div>}
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400">
+                <th className="pb-2">#</th><th className="pb-2">HR</th>
+                <th className="pb-2 text-center" colSpan={2}>Candidates added</th>
+                <th className="pb-2 text-center" colSpan={2}>Joined</th>
+              </tr>
+              <tr className="text-left text-[9px] uppercase tracking-wide text-slate-300">
+                <th></th><th></th><th className="pb-1 text-center">Today</th><th className="pb-1 text-center">Month</th><th className="pb-1 text-center">Today</th><th className="pb-1 text-center">Month</th>
+              </tr>
+            </thead>
+            <tbody>
+              {board.rows.map((r) => (
+                <tr key={r.id} className="border-t border-slate-50">
+                  <td className="py-2 w-8"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
+                  <td className="py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                      <span className="font-bold text-[#050A1F] truncate">{r.name}</span>
+                    </div>
+                  </td>
+                  <td className="py-2 text-center font-semibold text-slate-500">{r.scheduledToday}</td>
+                  <td className="py-2 text-center font-extrabold text-[#2563EB]">{r.scheduledMonth}</td>
+                  <td className="py-2 text-center font-semibold text-slate-500">{r.joinedToday}</td>
+                  <td className="py-2 text-center font-extrabold text-[#16A34A]">{r.joinedMonth}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-[10px] text-slate-400 mt-2">Candidates added = interviews scheduled. Joined = candidates who accepted an offer, credited to the recruiter.</div>
+        </div>
+      )}
+
+      {showAnnModal && <AnnouncementModal onClose={() => setShowAnnModal(false)} onSaved={() => { setShowAnnModal(false); loadAnnouncements(); }} />}
+
       {missedModal && missed && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-y-auto" onClick={() => setMissedModal(null)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
@@ -323,7 +471,7 @@ function TargetBar({ label, done, target, color }) {
 
 // --- Recruitment -----------------------------------------------------------
 
-function HrRecruitment({ isAdmin }) {
+function HrRecruitment({ isAdmin, me }) {
   const [tab, setTab] = useState('jobs');
   const [mode, setMode] = useState('list'); // list | choose | build
   const [builderSeed, setBuilderSeed] = useState(null);
@@ -363,7 +511,7 @@ function HrRecruitment({ isAdmin }) {
             className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
         ))}
       </div>
-      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
+      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
       {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} initialJobFilter={candFilterJob} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
@@ -375,9 +523,12 @@ export function fileToBase64(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
 }
 
-function JobList({ jobs, isAdmin, onEdit, reload, onViewApplicants }) {
+function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const [shareFor, setShareFor] = useState(null); // job to share
+  const [assignFor, setAssignFor] = useState(null); // job to assign HR to
+  const [scope, setScope] = useState('all'); // all | mine
+  const myId = me && (me._id || me.id);
   const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
   const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
@@ -388,13 +539,21 @@ function JobList({ jobs, isAdmin, onEdit, reload, onViewApplicants }) {
     return { label: 'Draft', cls: 'bg-slate-100 text-slate-500' };
   };
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+  const mineOf = (j) => (Array.isArray(j.assignedHrIds) ? j.assignedHrIds : []).map(Number).includes(Number(myId));
+  const shown = scope === 'mine' ? jobs.filter(mineOf) : jobs;
   if (!jobs.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No job posts yet. Click “Post a Job” to create one.</div>;
   return (
     <div className="space-y-3">
-      {jobs.map((j) => {
+      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-1">
+        <button onClick={() => setScope('all')} className={`px-3 py-1 rounded-md text-xs font-bold ${scope === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All jobs</button>
+        <button onClick={() => setScope('mine')} className={`px-3 py-1 rounded-md text-xs font-bold ${scope === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My jobs</button>
+      </div>
+      {shown.length === 0 && <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No jobs assigned to you yet.</div>}
+      {shown.map((j) => {
         const sp = statusPill(j.status);
         const live = j.status === 'published' || j.status === 'paused';
         const published = fmtDate(j.publishedAt);
+        const assigned = j.assignedHr || [];
         return (
         <div key={j._id} className="bg-white rounded-2xl border border-slate-200/70 p-4 flex items-center justify-between">
           <div className="min-w-0">
@@ -403,14 +562,29 @@ function JobList({ jobs, isAdmin, onEdit, reload, onViewApplicants }) {
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${sp.cls}`}>{sp.label}</span>
             </div>
             <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
-            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
+            <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 flex-wrap">
               {published && <span>Published {published}</span>}
               <button onClick={() => onViewApplicants(j._id)} className="font-bold text-orange-600 hover:text-orange-700 hover:underline">
                 {j.applicantCount || 0} candidate{(j.applicantCount || 0) === 1 ? '' : 's'} applied
               </button>
+              {/* Assigned HR */}
+              {assigned.length > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-slate-400">·</span>
+                  <span className="flex -space-x-2">
+                    {assigned.slice(0, 4).map((h) => (
+                      <span key={h.id} title={h.name} className="w-5 h-5 rounded-full bg-slate-200 border border-white overflow-hidden flex items-center justify-center text-[9px] font-bold text-slate-600">
+                        {h.avatar ? <img src={h.avatar} alt="" className="w-full h-full object-cover" /> : (h.name || '?')[0]}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="text-slate-500 font-semibold">{assigned.map((h) => h.name.split(' ')[0]).slice(0, 3).join(', ')}{assigned.length > 3 ? ` +${assigned.length - 3}` : ''}</span>
+                </span>
+              ) : <span className="text-slate-300 italic">Unassigned</span>}
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <JobIconBtn onClick={() => setAssignFor(j)} icon="users" label="Assign HR" />
             {live && <JobIconBtn primary onClick={() => setAddFor(j)} icon="user-plus" label="Add candidate" />}
             {j.status === 'published' && <JobIconBtn onClick={() => setShareFor(j)} icon="link" label="Share / embed" />}
             <JobIconBtn onClick={() => onEdit(j)} icon="edit" label="Edit job post" />
@@ -423,6 +597,49 @@ function JobList({ jobs, isAdmin, onEdit, reload, onViewApplicants }) {
       })}
       {addFor && <AddCandidateModal job={addFor} onClose={() => setAddFor(null)} onSaved={() => { setAddFor(null); reload(); }} />}
       {shareFor && <ShareJobModal job={shareFor} onClose={() => setShareFor(null)} />}
+      {assignFor && <AssignHrModal job={assignFor} onClose={() => setAssignFor(null)} onSaved={() => { setAssignFor(null); reload(); }} />}
+    </div>
+  );
+}
+
+// Assign one or more HR/recruiters to a job post.
+function AssignHrModal({ job, onClose, onSaved }) {
+  const [emps, setEmps] = useState([]);
+  const [sel, setSel] = useState((job.assignedHrIds || []).map(Number));
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState('');
+  useEffect(() => { hrApi('/employees').then((rows) => setEmps(rows.filter((e) => ['hr', 'recruiter', 'manager', 'tl'].includes(e.type) && e.active !== false))).catch(() => {}); }, []);
+  const toggle = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const save = async () => { setBusy(true); try { await hrApi(`/job-posts/${job._id}/assigned-hr`, { method: 'PUT', body: JSON.stringify({ assignedHrIds: sel }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  const filtered = emps.filter((e) => !q || e.name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">Assign HR</div><div className="text-xs text-slate-400">{job.title}</div></div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-4">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search HR / recruiters…" className={inputCls + ' mb-3'} />
+          <div className="max-h-72 overflow-auto space-y-1">
+            {filtered.length === 0 && <div className="text-sm text-slate-400 py-4 text-center">No HR staff found.</div>}
+            {filtered.map((e) => (
+              <label key={e._id} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={sel.includes(e._id)} onChange={() => toggle(e._id)} />
+                <Avatar name={e.name} src={e.avatar} size={28} />
+                <div className="min-w-0"><div className="text-sm font-bold text-[#050A1F] truncate">{e.name}</div><div className="text-[11px] text-slate-400">{ROLE_LABELS[e.type] || e.type}{e.department ? ` · ${e.department}` : ''}</div></div>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+          <span className="text-xs text-slate-400">{sel.length} selected</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -437,6 +654,7 @@ function JobIconBtn({ icon, label, onClick, primary, danger }) {
     play: 'M8 5v14l11-7z',
     close: 'M18 6L6 18M6 6l12 12',
     trash: 'M3 6h18M8 6V4h8v2m-9 0v14h10V6',
+    users: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
   };
   const base = 'inline-flex items-center justify-center w-8 h-8 rounded-lg border transition';
   const cls = primary ? 'bg-orange-500 border-orange-500 text-white hover:bg-orange-600'
@@ -1787,6 +2005,31 @@ function IconBtn({ title, onClick, children, danger }) {
 
 // API tab — ImageKit config + Claude/OpenAI usage tracking.
 // Settings tab — auto-scoring toggle + recruitment mailbox + API (usage + ImageKit).
+// Admin editor for the default onboarding checklist (seeds each new employee).
+function OnboardingTemplateEditor() {
+  const [tasks, setTasks] = useState(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { hrApi('/onboarding-template').then((r) => setTasks(r.tasks || [])).catch(() => setTasks([])); }, []);
+  const save = async (next) => { setSaved(false); try { await hrApi('/onboarding-template', { method: 'PUT', body: JSON.stringify({ tasks: next }) }); setTasks(next); setSaved(true); } catch (e) { alert(e.message); } };
+  if (!tasks) return <div className="text-slate-400 text-sm">Loading…</div>;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="text-xs text-slate-500 mb-3">These tasks are copied onto each new employee's onboarding checklist. Editing this list doesn't change checklists already created.</div>
+      <div className="space-y-2 mb-3">
+        {tasks.map((t, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input className={inputCls} value={t} onChange={(e) => { const n = tasks.slice(); n[i] = e.target.value; setTasks(n); }} onBlur={() => save(tasks)} />
+            <button onClick={() => save(tasks.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={16} /></button>
+          </div>
+        ))}
+        {tasks.length === 0 && <div className="text-sm text-slate-400">No tasks yet.</div>}
+      </div>
+      <button onClick={() => setTasks([...tasks, ''])} className="text-xs font-bold text-[#FF4500]">+ Add task</button>
+      {saved && <span className="text-sm text-green-600 font-semibold ml-3">Saved ✓</span>}
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -1821,6 +2064,12 @@ function HrSettingsTab({ isAdmin, setErr }) {
       <div>
         <div className="text-sm font-bold text-[#050A1F] mb-3">Recruitment mailbox</div>
         <RecruitmentMailbox isAdmin={isAdmin} setErr={setErr} />
+      </div>
+
+      {/* Onboarding checklist template */}
+      <div className="max-w-2xl">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Onboarding checklist template</div>
+        <OnboardingTemplateEditor />
       </div>
 
       {/* API */}
@@ -1948,7 +2197,7 @@ function HrCareersTab() {
 }
 
 function HrAdmin({ user }) {
-  const [tab, setTab] = useState('users');
+  const [tab, setTab] = useState('org');
   const [users, setUsers] = useState([]);
   const [branches, setBranches] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -2017,7 +2266,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['users', 'Users'], ['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -2365,10 +2614,10 @@ export default function HrApp() {
       </header>
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />}
-        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} />}
+        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
-          <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: false, leadLinks: false }} />
+          <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: true, leadLinks: false }} />
         )}
         {effectiveView === 'employees' && (
           profileTarget

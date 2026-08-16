@@ -228,6 +228,7 @@ const PROFILE_TAB_ICONS = {
   payroll: 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
   education: 'M22 10L12 5 2 10l10 5 10-5z M6 12v5c0 1 2 3 6 3s6-2 6-3v-5',
   employment: 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z',
+  onboarding: 'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
 };
 function ProfileTabIcon({ name }) {
   const d = PROFILE_TAB_ICONS[name]; if (!d) return null;
@@ -245,6 +246,7 @@ export function ProfilePage({ me, targetId }) {
   const [saving, setSaving] = useState(false);
   const [ikReady, setIkReady] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
 
   const canEditLocked = !!(row && row.canEditLocked); // HR/Admin viewing
   const isSelf = !targetId;
@@ -297,12 +299,24 @@ export function ProfilePage({ me, targetId }) {
 
   const roleLabel = ROLE_LABELS[row.type] || row.type;
   const reportsToName = row.reportsToAdminId ? '(Admin)' : (row.reportsToId ? `HR #${row.reportsToId}` : '—');
-  const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['employment', 'Previous Employment']];
+  const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['employment', 'Previous Employment'], ['onboarding', 'Onboarding']];
 
   // A read-only identity field for the header meta rows.
   const initials = (row.name || '?').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
   const comp = row.completion || 0;
   const compColor = comp >= 100 ? '#059669' : comp >= 50 ? '#FF6A00' : '#EF4444';
+  // Tenure (how long with the company) from the joining date.
+  const tenure = (() => {
+    if (!row.joiningDate) return null;
+    const j = new Date(row.joiningDate); const n = new Date();
+    let months = (n.getFullYear() - j.getFullYear()) * 12 + (n.getMonth() - j.getMonth());
+    if (n.getDate() < j.getDate()) months -= 1;
+    if (months < 0) return null;
+    const y = Math.floor(months / 12); const m = months % 12;
+    if (y === 0 && m === 0) return 'New this month';
+    return [y ? `${y} yr${y === 1 ? '' : 's'}` : '', m ? `${m} mo${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ');
+  })();
+  const fmtDM = (d) => { if (!d) return null; const x = new Date(d); return x.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 
   return (
     <div>
@@ -331,7 +345,13 @@ export function ProfilePage({ me, targetId }) {
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600">{roleLabel}</span>
                   {row.active === false && <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Inactive</span>}
                 </div>
-                <div className="mt-1 text-sm text-slate-500 space-y-0.5">
+                {/* Quick-glance chips: tenure + birthday */}
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  {tenure && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-[11px] font-bold">🗓️ {tenure} with company</span>}
+                  {row.birthday && <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 text-pink-600 px-2.5 py-1 text-[11px] font-bold">🎂 {fmtDM(row.birthday)}</span>}
+                  {row.maritalStatus === 'married' && row.anniversary && <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 text-purple-600 px-2.5 py-1 text-[11px] font-bold">💍 {fmtDM(row.anniversary)}</span>}
+                </div>
+                <div className="mt-2 text-sm text-slate-500 space-y-0.5">
                   {row.email && <div>✉️ {row.email}</div>}
                   <div className="flex flex-wrap gap-x-4">
                     {row.branch && <span>📍 {row.branch}</span>}
@@ -350,6 +370,11 @@ export function ProfilePage({ me, targetId }) {
                 </div>
               </div>
             </div>
+            {canEditLocked && !isSelf && (
+              <button onClick={() => setResetOpen(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5 shrink-0">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg> Reset password
+              </button>
+            )}
           </div>
           {isSelf && <p className="text-[11px] text-slate-400 mt-3">These details are managed by HR. Contact your HR team for corrections.</p>}
         </div>
@@ -492,9 +517,55 @@ export function ProfilePage({ me, targetId }) {
                 <div className="flex justify-end mt-4"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
               </div>
             )}
+
+            {/* ONBOARDING CHECKLIST */}
+            {tab === 'onboarding' && <OnboardingChecklist employeeId={id} canEdit={canEditLocked} />}
           </div>
         </div>
       </div>
+      {resetOpen && <ResetPasswordModal user={{ _id: id, name: row.name }} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); setMsg('Password reset.'); }} />}
+    </div>
+  );
+}
+
+// Per-employee onboarding checklist (seeds from the admin template on first view).
+function OnboardingChecklist({ employeeId, canEdit }) {
+  const [data, setData] = useState(null);
+  const [newTask, setNewTask] = useState('');
+  const load = () => hrApi(`/employees/${employeeId}/onboarding`).then(setData).catch(() => setData({ tasks: [], percent: 0 }));
+  useEffect(() => { load(); }, [employeeId]);
+  const toggle = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'PATCH', body: JSON.stringify({ done: !t.done }) }); load(); } catch (e) { alert(e.message); } };
+  const add = async () => { if (!newTask.trim()) return; try { await hrApi(`/employees/${employeeId}/onboarding`, { method: 'POST', body: JSON.stringify({ task: newTask }) }); setNewTask(''); load(); } catch (e) { alert(e.message); } };
+  const del = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const tasks = data.tasks || [];
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="text-sm font-bold text-[#050A1F]">Onboarding progress</div>
+        <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden max-w-xs"><div className="h-full" style={{ width: `${data.percent}%`, background: data.percent >= 100 ? '#059669' : '#FF6A00' }} /></div>
+        <span className="text-xs font-bold" style={{ color: data.percent >= 100 ? '#059669' : '#FF6A00' }}>{data.done}/{data.total} · {data.percent}%</span>
+      </div>
+      {tasks.length === 0 ? <div className="text-sm text-slate-400 mb-3">No onboarding tasks. {canEdit ? 'Add the first below, or set a default template in Admin → Settings.' : ''}</div> : (
+        <div className="space-y-1.5 mb-4">
+          {tasks.map((t) => (
+            <div key={t._id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2 group">
+              <button onClick={() => canEdit && toggle(t)} disabled={!canEdit} className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${t.done ? 'bg-green-500 border-green-500 text-white' : 'border-slate-300'}`}>
+                {t.done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>}
+              </button>
+              <span className={`text-sm flex-1 ${t.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{t.task}</span>
+              {t.done && t.doneAt && <span className="text-[10px] text-slate-400">{new Date(t.doneAt).toLocaleDateString()}</span>}
+              {canEdit && <button onClick={() => del(t)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500"><Icon.Trash size={14} /></button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {canEdit && (
+        <div className="flex gap-2 max-w-md">
+          <input className={inputCls} placeholder="Add a task…" value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+          <button onClick={add} className="rounded-lg px-4 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ background: '#050A1F' }}>Add task</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -502,12 +573,20 @@ export function ProfilePage({ me, targetId }) {
 export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
   const [rows, setRows] = useState([]);
   const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [resetting, setResetting] = useState(null);
   const [msg, setMsg] = useState('');
   const [branches, setBranches] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [reporting, setReporting] = useState({ hr: [], admins: [] });
   const [shifts, setShifts] = useState([]);
   const [imagekitReady, setImagekitReady] = useState(false);
+  // Filters
+  const [q, setQ] = useState('');
+  const [fDept, setFDept] = useState('');
+  const [fBranch, setFBranch] = useState('');
+  const [fRole, setFRole] = useState('');
+  const [fStatus, setFStatus] = useState('active');
   const load = () => hrApi('/employees').then(setRows).catch(() => {});
   useEffect(() => {
     load();
@@ -524,6 +603,32 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
     ...reporting.admins.map((a) => ({ value: `admin:${a.id}`, label: `${a.name} (Admin)` })),
   ];
 
+  const filtered = rows.filter((u) => {
+    if (fStatus === 'active' && u.active === false) return false;
+    if (fStatus === 'inactive' && u.active !== false) return false;
+    if (fDept && u.department !== fDept) return false;
+    if (fBranch && u.branch !== fBranch) return false;
+    if (fRole && u.type !== fRole) return false;
+    if (q) { const s = q.toLowerCase(); if (!(`${u.name} ${u.email || ''} ${u.employeeId || ''}`.toLowerCase().includes(s))) return false; }
+    return true;
+  });
+
+  const del = async (u) => {
+    if (!window.confirm(`Delete ${u.name}? This removes their employee & login record permanently.`)) return;
+    try { await hrApi(`/users/${u._id}`, { method: 'DELETE' }); setMsg(`Deleted ${u.name}.`); load(); } catch (e) { alert(e.message); }
+  };
+  const toggleActive = async (u) => {
+    try { await hrApi(`/users/${u._id}`, { method: 'PUT', body: JSON.stringify({ active: !(u.active !== false) }) }); load(); } catch (e) { alert(e.message); }
+  };
+
+  const IconBtn = ({ title, onClick, color, children }) => (
+    <button title={title} onClick={onClick} className={`w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-slate-100 ${color || 'text-slate-400 hover:text-slate-600'}`}>{children}</button>
+  );
+
+  const deptOptions = [...new Set(rows.map((u) => u.department).filter(Boolean))];
+  const branchOptions = [...new Set(rows.map((u) => u.branch).filter(Boolean))];
+  const roleOptions = [...new Set(rows.map((u) => u.type).filter(Boolean))];
+
   return (
     <div>
       <div className="flex items-center justify-between mb-5">
@@ -531,16 +636,27 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
         {isAdmin && <button onClick={() => setShow(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add employee</button>}
       </div>
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, ID…" className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm w-56" />
+        <select value={fDept} onChange={(e) => setFDept(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><option value="">All departments</option>{deptOptions.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+        <select value={fBranch} onChange={(e) => setFBranch(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><option value="">All branches</option>{branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}</select>
+        <select value={fRole} onChange={(e) => setFRole(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><option value="">All roles</option>{roleOptions.map((r) => <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>)}</select>
+        <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option></select>
+        <span className="text-xs text-slate-400 ml-auto">{filtered.length} of {rows.length}</span>
+      </div>
+
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
             <th className="px-4 py-3">Name</th><th className="px-4 py-3">Emp ID</th><th className="px-4 py-3">Role</th>
-            <th className="px-4 py-3">Department</th><th className="px-4 py-3">Branch</th><th className="px-4 py-3">Profile</th><th className="px-4 py-3"></th>
+            <th className="px-4 py-3">Department</th><th className="px-4 py-3">Branch</th><th className="px-4 py-3">Profile</th><th className="px-4 py-3 text-right">Actions</th>
           </tr></thead>
           <tbody>
-            {rows.map((u) => (
-              <tr key={u._id} className={`border-t border-slate-100 ${u.active ? '' : 'opacity-50'}`}>
-                <td className="px-4 py-3"><div className="flex items-center gap-2"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F]">{u.name}</span></div></td>
+            {filtered.map((u) => (
+              <tr key={u._id} className={`border-t border-slate-100 ${u.active === false ? 'opacity-60' : ''}`}>
+                <td className="px-4 py-3"><button onClick={() => isAdmin && onOpenProfile(u._id)} className="flex items-center gap-2 text-left"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F] hover:text-[#FF4500]">{u.name}</span>{u.active === false && <span className="text-[9px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-bold">Inactive</span>}</button></td>
                 <td className="px-4 py-3 text-slate-500">{u.employeeId || '—'}</td>
                 <td className="px-4 py-3"><span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">{ROLE_LABELS[u.type] || u.type}</span></td>
                 <td className="px-4 py-3 text-slate-500">{u.department || '—'}</td>
@@ -551,14 +667,133 @@ export function EmployeeDirectory({ isAdmin, onOpenProfile }) {
                     <span className="text-[11px] font-bold text-slate-500">{u.completion}%</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-right">{isAdmin && <button onClick={() => onOpenProfile(u._id)} className="text-xs font-bold text-blue-500">View profile</button>}</td>
+                <td className="px-4 py-3">
+                  {isAdmin && (
+                    <div className="flex items-center justify-end gap-0.5">
+                      <IconBtn title="View profile" onClick={() => onOpenProfile(u._id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></IconBtn>
+                      <IconBtn title="Edit" onClick={() => setEditing(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
+                      <IconBtn title="Reset password" onClick={() => setResetting(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg></IconBtn>
+                      <IconBtn title={u.active === false ? 'Reactivate' : 'Deactivate'} onClick={() => toggleActive(u)} color={u.active === false ? 'text-green-500 hover:text-green-600' : 'text-amber-500 hover:text-amber-600'}>
+                        {u.active === false
+                          ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4L12 14.01l-3-3" /></svg>
+                          : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M8 12h8" /></svg>}
+                      </IconBtn>
+                      <IconBtn title="Delete" onClick={() => del(u)} color="text-slate-400 hover:text-red-600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13" /></svg></IconBtn>
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">No employees yet.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">No employees match these filters.</td></tr>}
           </tbody>
         </table>
       </div>
       {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
+      {editing && <EditEmployeeModal user={editing} branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setMsg('Employee updated.'); load(); }} />}
+      {resetting && <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onDone={() => { setResetting(null); setMsg('Password reset.'); }} />}
+    </div>
+  );
+}
+
+// Reset an employee's password (admin).
+export function ResetPasswordModal({ user, onClose, onDone }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const gen = () => { const s = Math.random().toString(36).slice(2, 10) + 'A1!'; setPw(s); setPw2(s); };
+  const submit = async () => {
+    if (pw.length < 8) return setErr('Password must be at least 8 characters.');
+    if (pw !== pw2) return setErr('Passwords don’t match.');
+    setBusy(true); setErr('');
+    try { await hrApi(`/users/${user._id}/reset-password`, { method: 'POST', body: JSON.stringify({ password: pw }) }); onDone(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">Reset password</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-3">
+          <div className="text-sm text-slate-500">Set a new password for <b className="text-[#050A1F]">{user.name}</b>.</div>
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <input type="text" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password" className={inputCls} />
+          <input type="text" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Confirm password" className={inputCls} />
+          <button onClick={gen} className="text-xs font-bold text-[#FF4500]">Generate strong password</button>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Reset password'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Edit core employee fields (admin). Reuses the same field set as add.
+export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, onClose, onSaved }) {
+  const [f, setF] = useState({
+    name: user.name || '', employeeId: user.employeeId || '', phone: user.phone || '', designation: user.designation || '',
+    type: user.type || 'employee', branch: user.branch || '', department: user.department || '',
+    joiningDate: user.joiningDate || '', birthday: user.birthday || '', maritalStatus: user.maritalStatus || '', anniversary: user.anniversary || '',
+    reportsTo: user.reportsToId ? `hr:${user.reportsToId}` : (user.reportsToAdminId ? `admin:${user.reportsToAdminId}` : ''),
+    shiftId: user.shiftId || '', canPostAnnouncements: !!user.canPostAnnouncements, active: user.active !== false,
+    dailyInterviews: (user.targets && user.targets.dailyInterviews) || 0, monthlyOnboarding: (user.targets && user.targets.monthlyOnboarding) || 0,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const isHrRole = ['hr', 'recruiter', 'manager', 'tl'].includes(f.type);
+  const save = async () => {
+    if (!f.name.trim()) return setErr('Name is required.');
+    setBusy(true); setErr('');
+    const [kind, id] = (f.reportsTo || '').split(':');
+    try {
+      await hrApi(`/users/${user._id}`, { method: 'PUT', body: JSON.stringify({
+        name: f.name, employeeId: f.employeeId, phone: f.phone, designation: f.designation, type: f.type,
+        branch: f.branch, department: f.department, joiningDate: f.joiningDate || null, birthday: f.birthday || null,
+        maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
+        reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
+        shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, active: f.active,
+        targets: isHrRole ? { dailyInterviews: Number(f.dailyInterviews) || 0, monthlyOnboarding: Number(f.monthlyOnboarding) || 0 } : undefined,
+      }) });
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">Edit employee</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 grid grid-cols-2 gap-3">
+          {err && <div className="col-span-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <label className="text-xs font-bold text-slate-500">Name<input className={inputCls} value={f.name} onChange={(e) => set('name', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Employee ID<input className={inputCls} value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Phone<input className={inputCls} value={f.phone} onChange={(e) => set('phone', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Designation<input className={inputCls} value={f.designation} onChange={(e) => set('designation', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Role<select className={inputCls} value={f.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Department<select className={inputCls} value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">—</option>{departments.map((d) => <option key={d._id} value={d.name}>{d.name}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Branch<select className={inputCls} value={f.branch} onChange={(e) => set('branch', e.target.value)}><option value="">—</option>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Reports to<select className={inputCls} value={f.reportsTo} onChange={(e) => set('reportsTo', e.target.value)}><option value="">—</option>{reportingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Shift<select className={inputCls} value={f.shiftId} onChange={(e) => set('shiftId', e.target.value)}><option value="">—</option>{shifts.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Joining date<input type="date" className={inputCls} value={f.joiningDate || ''} onChange={(e) => set('joiningDate', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Birthday<input type="date" className={inputCls} value={f.birthday || ''} onChange={(e) => set('birthday', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Marital status<select className={inputCls} value={f.maritalStatus || ''} onChange={(e) => set('maritalStatus', e.target.value)}><option value="">—</option><option value="single">Single</option><option value="married">Married</option></select></label>
+          {f.maritalStatus === 'married' && <label className="text-xs font-bold text-slate-500">Anniversary<input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => set('anniversary', e.target.value)} /></label>}
+          {isHrRole && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
+          {isHrRole && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
+          <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>
+          <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} /> Active</label>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </div>
     </div>
   );
 }
