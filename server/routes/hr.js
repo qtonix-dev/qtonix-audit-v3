@@ -817,6 +817,23 @@ router.patch('/candidates/:id', requireHrAccess, async (req, res, next) => {
     if (b.rating !== undefined) row.rating = Math.max(0, Math.min(5, Number(b.rating) || 0));
     if (b.tags !== undefined && Array.isArray(b.tags)) { row.tags = b.tags.slice(0, 20).map((t) => String(t).slice(0, 40)); row.changed('tags', true); }
     if (b.answers && typeof b.answers === 'object') { row.answers = { ...(row.answers || {}), ...b.answers }; row.changed('answers', true); }
+    // Assign / reassign the recruiter (HR owner). Any HR/admin can do this.
+    if (b.recruiterId !== undefined) {
+      if (!b.recruiterId) {
+        row.recruiterId = null; row.recruiterName = '';
+        pushTimeline(row, { type: 'assigned', text: `${req.hrActor.name} unassigned the recruiter.`, by: req.hrActor.name });
+      } else {
+        const u = await HrUser.findByPk(b.recruiterId);
+        if (u) {
+          const changed = row.recruiterId !== u.id;
+          row.recruiterId = u.id; row.recruiterName = u.name;
+          if (changed) {
+            pushTimeline(row, { type: 'assigned', text: `${req.hrActor.name} assigned ${u.name} as the recruiter.`, by: req.hrActor.name });
+            if (u.id !== req.hrActor.id) notify(u.id, { type: 'info', text: `You were assigned to candidate ${row.name} by ${req.hrActor.name}.`, candidateId: row.id });
+          }
+        }
+      }
+    }
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }

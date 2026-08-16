@@ -470,6 +470,21 @@ export function Pagination({ page, pages, total, perPage, onPage, onPerPage, lab
  * font/size/style/color/alignment/list/quote actions; the row also exposes AI
  * draft (placeholder), attachment, hyperlink and signature actions via props.
  */
+// Give block elements explicit inline bottom-margins so paragraph gaps survive
+// in the sent email (where our editor CSS isn't present). Empty <p> become a
+// spacer so a blank line the user typed still shows.
+function normalizeSpacing(html) {
+  if (!html) return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('p, div').forEach((el) => {
+    const isEmpty = !el.textContent.trim() && !el.querySelector('img');
+    const cur = el.getAttribute('style') || '';
+    if (isEmpty) { el.innerHTML = '<br>'; }
+    if (!/margin/i.test(cur)) el.setAttribute('style', `${cur ? cur + ';' : ''}margin:0 0 1em`.replace(/^;/, ''));
+  });
+  return doc.body.innerHTML;
+}
+
 export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxHeight, onAttach, onAiDraft, onInsertSignature, extraTools }) {
   const ref = useRef(null);
   const [focused, setFocused] = useState(false);
@@ -479,6 +494,46 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxH
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || '';
   }, [value]);
+
+  // Make Enter produce <p> blocks (which we space out via CSS + inline styles),
+  // like Gmail — so hitting Enter gives a real visual gap.
+  useEffect(() => {
+    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
+  }, []);
+
+  // Clean pasted HTML (from Word/Docs/web) so it keeps paragraph spacing and
+  // drops junk. Word/Docs paste as <p> or <div> with zero margins and lots of
+  // inline cruft; we strip styling that kills spacing and enforce block gaps.
+  const onPaste = (e) => {
+    const cb = e.clipboardData;
+    if (!cb) return;
+    const html = cb.getData('text/html');
+    const plain = cb.getData('text/plain');
+    e.preventDefault();
+    let out = '';
+    if (html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      doc.querySelectorAll('script,style,meta,link,title,o\\:p').forEach((n) => n.remove());
+      // Strip margin:0 / mso styles that collapse spacing; keep basic formatting.
+      doc.querySelectorAll('*').forEach((el) => {
+        el.removeAttribute('class');
+        el.removeAttribute('lang');
+        const st = el.getAttribute('style');
+        if (st) {
+          // Drop margin/padding/mso/line-height declarations that flatten spacing.
+          const cleaned = st.split(';').filter((d) => d && !/^\s*(margin|padding|mso-|line-height|font-family)/i.test(d)).join(';');
+          if (cleaned.trim()) el.setAttribute('style', cleaned); else el.removeAttribute('style');
+        }
+      });
+      out = doc.body.innerHTML;
+      out = normalizeSpacing(out);
+    } else {
+      // Plain text → paragraphs on blank lines, <br> on single newlines.
+      out = plain.split(/\n{2,}/).map((para) => `<p style="margin:0 0 1em">${para.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>`).join('');
+    }
+    document.execCommand('insertHTML', false, out);
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
 
   const exec = (cmd, arg) => {
     ref.current && ref.current.focus();
@@ -504,6 +559,7 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxH
         {isEmpty && !focused && placeholder && <div className="absolute top-2 left-3 text-sm text-slate-300 pointer-events-none">{placeholder}</div>}
         <div ref={ref} contentEditable suppressContentEditableWarning
           onInput={() => onChange(ref.current.innerHTML)}
+          onPaste={onPaste}
           onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
           onFocus={() => setFocused(true)}
           className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight, ...(maxHeight ? { maxHeight } : {}) }} />

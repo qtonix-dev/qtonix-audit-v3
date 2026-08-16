@@ -1030,16 +1030,16 @@ function RecruitPipeline({ jobs }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
             {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
           </select>
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
-            <button onClick={() => setMine(false)} className={`px-3 py-2 ${!mine ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500'}`}>All candidates</button>
-            <button onClick={() => setMine(true)} className={`px-3 py-2 ${mine ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500'}`}>My candidates</button>
+          <div className="inline-flex bg-slate-100 rounded-xl p-1">
+            <button onClick={() => setMine(false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition ${!mine ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All candidates</button>
+            <button onClick={() => setMine(true)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition ${mine ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>My candidates</button>
           </div>
         </div>
-        <div className="text-sm text-slate-400">{visible.length} candidates · drag a card, or use the ⇄ button to move</div>
+        <div className="text-sm text-slate-400">{visible.length} candidates · drag or use ⇄ to move</div>
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
@@ -2265,7 +2265,7 @@ function UserMenu({ user, onNavigate, onLogout, isAdmin }) {
       </button>
       {open && (
         <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50">
-          {!isAdmin && item('My Profile', () => onNavigate('profile'))}
+          {item('My Profile', () => onNavigate('profile'))}
           {item('Email Template', () => onNavigate('templates'))}
           {item('Email Signature', () => onNavigate('signature'))}
           <div className="border-t border-slate-100 my-1" />

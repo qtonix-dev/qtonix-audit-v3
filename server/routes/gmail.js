@@ -620,11 +620,28 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
       extras.forEach((m) => fromOptions.push({ value: `mailbox:${m.id}`, mailboxId: m.id, email: m.email, name: m.label || m.email, self: true, signature: m.signature || viewer.emailSignature || '' }));
     }
 
-    // Overlay signatures from the viewer's signature library: a mailbox-scoped
-    // signature wins for its target; otherwise the default 'all' signature.
+    // Overlay signatures. IMPORTANT: an option that sends AS ANOTHER USER (e.g.
+    // an admin picking an agent's mailbox) must carry THAT user's signature, not
+    // the viewer's — otherwise the admin's signature goes out under the agent's
+    // name. So: for other-user options, resolve their own default signature;
+    // only the viewer's own options get the viewer's signature library overlay.
     const sigs = await Signature.findAll({ where: { userId: viewer.id } });
     const allSig = sigs.find((x) => x.scope === 'all' && x.isDefault) || sigs.find((x) => x.scope === 'all');
+    // Batch-load default signatures for every other user represented in the options.
+    const otherUserIds = [...new Set(fromOptions.filter((o) => o.userId && o.userId !== viewer.id).map((o) => o.userId))];
+    const otherSigs = otherUserIds.length ? await Signature.findAll({ where: { userId: { [Op.in]: otherUserIds } } }) : [];
+    const defaultSigFor = (uid) => {
+      const owned = otherSigs.filter((x) => x.userId === uid);
+      const def = owned.find((x) => x.scope === 'all' && x.isDefault) || owned.find((x) => x.scope === 'all') || owned.find((x) => x.isDefault) || owned[0];
+      return def ? def.bodyHtml : '';
+    };
     fromOptions.forEach((o) => {
+      if (o.userId && o.userId !== viewer.id) {
+        // Another user's mailbox → their signature (default row, else legacy field).
+        o.signature = defaultSigFor(o.userId) || o.signature || '';
+        return;
+      }
+      // The viewer's own mailbox / extra mailbox → the viewer's library overlay.
       const specific = sigs.find((x) => x.scope === 'mailbox' && x.mailboxRef === o.value);
       if (specific) o.signature = specific.bodyHtml || o.signature;
       else if (allSig) o.signature = allSig.bodyHtml || o.signature;
@@ -1113,9 +1130,24 @@ router.get('/templates', requireAuth, async (req, res, next) => {
     const where = req.user.role === 'admin'
       ? {}
       : { [Op.or]: [{ userId: req.user.id }, { isGlobal: true }] };
-    const rows = await EmailTemplate.findAll({ where, order: [['isGlobal', 'DESC'], ['name', 'ASC']] });
-    // Tag ownership for the UI.
-    const out = rows.map((r) => { const o = r.toJSON(); o.mine = r.userId === req.user.id; return o; });
+    const rows = await EmailTemplate.findAll({ where, order: [['name', 'ASC']] });
+    // Resolve owner names so the UI can label whose draft each one is.
+    const ownerIds = [...new Set(rows.map((r) => r.userId).filter(Boolean))];
+    const owners = ownerIds.length ? await User.findAll({ where: { id: { [Op.in]: ownerIds } }, attributes: ['id', 'name'] }) : [];
+    const nameById = new Map(owners.map((u) => [u.id, u.name]));
+    const out = rows.map((r) => {
+      const o = r.toJSON();
+      o.mine = r.userId === req.user.id;
+      o.ownerName = o.mine ? '' : (nameById.get(r.userId) || '');
+      return o;
+    });
+    // Own drafts first, then global, then everyone else's — alphabetical within each.
+    out.sort((a, b) => {
+      const rank = (t) => t.mine ? 0 : (t.isGlobal ? 1 : 2);
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
     res.json(out);
   } catch (e) { next(e); }
 });
@@ -1463,16 +1495,26 @@ router.get('/all/mailboxes', requireAuth, async (req, res, next) => {
   try {
     const viewer = await User.findByPk(req.user.id);
     const list = [];
-    if (viewer.gmailRefreshToken && viewer.gmailConnectedEmail) list.push({ value: String(viewer.id), label: 'Me', email: viewer.gmailConnectedEmail, signature: viewer.emailSignature || '' });
+    if (viewer.gmailRefreshToken && viewer.gmailConnectedEmail) list.push({ value: String(viewer.id), userId: viewer.id, label: 'Me', email: viewer.gmailConnectedEmail, signature: viewer.emailSignature || '' });
     if (viewer.role === 'admin') {
       const users = await User.findAll({ where: { gmailRefreshToken: { [Op.ne]: null }, id: { [Op.ne]: viewer.id } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
-      users.forEach((u) => list.push({ value: String(u.id), label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
+      users.forEach((u) => list.push({ value: String(u.id), userId: u.id, label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
     } else if (viewer.role === 'manager') {
       // A manager can browse the connected mailboxes of the agents who report to
       // them (managerId === viewer.id), just like an admin sees everyone.
       const team = await User.findAll({ where: { managerId: viewer.id, gmailRefreshToken: { [Op.ne]: null } }, attributes: ['id', 'name', 'gmailConnectedEmail', 'emailSignature'] });
-      team.forEach((u) => list.push({ value: String(u.id), label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
+      team.forEach((u) => list.push({ value: String(u.id), userId: u.id, label: u.name, email: u.gmailConnectedEmail, signature: u.emailSignature || '' }));
     }
+    // Resolve each mailbox's signature from ITS OWN owner's signature library, so
+    // that sending as an agent uses the agent's signature — not the viewer's.
+    const uids = [...new Set(list.map((m) => m.userId))];
+    const allRows = uids.length ? await Signature.findAll({ where: { userId: { [Op.in]: uids } } }) : [];
+    const defFor = (uid) => {
+      const owned = allRows.filter((x) => x.userId === uid);
+      const def = owned.find((x) => x.scope === 'all' && x.isDefault) || owned.find((x) => x.scope === 'all') || owned.find((x) => x.isDefault) || owned[0];
+      return def ? def.bodyHtml : '';
+    };
+    list.forEach((m) => { m.signature = defFor(m.userId) || m.signature || ''; });
     res.json({ mailboxes: list, isAdmin: viewer.role === 'admin', canSwitch: viewer.role === 'admin' || viewer.role === 'manager' });
   } catch (e) { next(e); }
 });

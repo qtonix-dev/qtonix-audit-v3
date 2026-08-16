@@ -348,7 +348,7 @@ function AiTab({ c, reload, setErr }) {
   );
 }
 
-// ---------- Comments (editable) ----------
+// ---------- Comments (chat-style, editable) ----------
 function CommentsTab({ c, reload }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -359,39 +359,70 @@ function CommentsTab({ c, reload }) {
   const list = c.comments || [];
   const add = async () => { if (!text.trim()) return; setBusy(true); try { await hrApi(`/candidates/${c.id}/comments`, { method: 'POST', body: JSON.stringify({ text: text.trim(), internal: canInternal && internal }) }); setText(''); setInternal(false); await reload(); } finally { setBusy(false); } };
   const saveEdit = async (id) => { if (!editText.trim()) return; try { await hrApi(`/candidates/${c.id}/comments/${id}`, { method: 'PATCH', body: JSON.stringify({ text: editText.trim() }) }); setEditId(null); await reload(); } catch {} };
+  // Colour an avatar deterministically from the author's name.
+  const AV = ['#2563EB', '#7C3AED', '#DB2777', '#059669', '#D97706', '#0891B2', '#DC2626'];
+  const colorFor = (s) => AV[(String(s || '').split('').reduce((a, ch) => a + ch.charCodeAt(0), 0)) % AV.length];
+  const initials = (s) => String(s || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  // Highlight @mentions inside the comment text.
+  const renderText = (t) => String(t || '').split(/(@[\w.]+)/g).map((part, i) => /^@[\w.]+$/.test(part)
+    ? <span key={i} className="font-bold text-orange-600 bg-orange-50 rounded px-1">{part}</span>
+    : <span key={i}>{part}</span>);
   return (
     <div>
-      <div className="flex gap-2 mb-1">
-        <input className={inp} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note… use @name to notify a colleague" onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
-        <button onClick={add} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-white shrink-0 disabled:opacity-50" style={{ background: ORANGE }}>Post</button>
+      {/* Composer card */}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 mb-5">
+        <textarea
+          className="w-full bg-transparent text-sm outline-none resize-none placeholder:text-slate-400"
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Share an update or note… type @name to notify a colleague"
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) add(); }} />
+        <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200/70">
+          {canInternal ? (
+            <label className="flex items-center gap-2 text-xs text-slate-500 select-none cursor-pointer">
+              <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} className="rounded" />
+              <span className={internal ? 'text-amber-600 font-semibold' : ''}>🔒 Internal only</span>
+              <span className="text-slate-300">·</span>
+              <span className="text-[11px] text-slate-400">hidden from interview panel</span>
+            </label>
+          ) : <span className="text-[11px] text-slate-400">Press ⌘/Ctrl + Enter to post</span>}
+          <button onClick={add} disabled={busy || !text.trim()} className="rounded-lg px-4 py-1.5 text-sm font-bold text-white shrink-0 disabled:opacity-40" style={{ background: ORANGE }}>{busy ? 'Posting…' : 'Post'}</button>
+        </div>
       </div>
-      {canInternal && (
-        <label className="flex items-center gap-2 text-xs text-slate-500 mb-4 select-none">
-          <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
-          🔒 Internal only — visible to HR &amp; admins, hidden from interview panel
-        </label>
-      )}
-      {!canInternal && <div className="mb-4" />}
-      {list.length === 0 ? <Empty>No comments yet.</Empty> : (
-        <div className="space-y-3">
-          {list.map((cm) => (
-            <div key={cm.id} className={`rounded-lg border p-3 ${cm.internal ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'}`}>
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-bold text-slate-700 flex items-center gap-2">{cm.by}{cm.internal && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">🔒 Internal</span>}</div>
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <span>{fmt(cm.at)}{cm.edited ? ' · edited' : ''}</span>
-                  {editId !== cm.id && <button onClick={() => { setEditId(cm.id); setEditText(cm.text); }} className="font-bold text-orange-600">Edit</button>}
-                </div>
-              </div>
-              {editId === cm.id ? (
-                <div className="mt-2">
-                  <textarea className={inp} rows={2} value={editText} onChange={(e) => setEditText(e.target.value)} />
-                  <div className="flex justify-end gap-2 mt-1.5">
-                    <button onClick={() => setEditId(null)} className="text-xs font-bold text-slate-400">Cancel</button>
-                    <button onClick={() => saveEdit(cm.id)} className="text-xs font-bold text-orange-600">Save</button>
+
+      {/* Thread */}
+      {list.length === 0 ? (
+        <div className="text-center py-10">
+          <div className="text-4xl mb-2">💬</div>
+          <div className="text-sm text-slate-400">No comments yet — start the conversation.</div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {list.slice().reverse().map((cm) => (
+            <div key={cm.id} className="flex gap-3">
+              <span className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5" style={{ background: colorFor(cm.by) }}>{initials(cm.by)}</span>
+              <div className="flex-1 min-w-0">
+                <div className={`rounded-2xl rounded-tl-sm border p-3 ${cm.internal ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-white'}`}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="text-sm font-bold text-slate-700 flex items-center gap-2 min-w-0">
+                      <span className="truncate">{cm.by}</span>
+                      {cm.internal && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold shrink-0">🔒 Internal</span>}
+                    </div>
+                    {editId !== cm.id && <button onClick={() => { setEditId(cm.id); setEditText(cm.text); }} className="text-[11px] font-bold text-slate-400 hover:text-orange-600 shrink-0">Edit</button>}
                   </div>
+                  {editId === cm.id ? (
+                    <div>
+                      <textarea className={inp} rows={2} value={editText} onChange={(e) => setEditText(e.target.value)} />
+                      <div className="flex justify-end gap-2 mt-1.5">
+                        <button onClick={() => setEditId(null)} className="text-xs font-bold text-slate-400">Cancel</button>
+                        <button onClick={() => saveEdit(cm.id)} className="text-xs font-bold text-orange-600">Save</button>
+                      </div>
+                    </div>
+                  ) : <div className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{renderText(cm.text)}</div>}
                 </div>
-              ) : <div className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">{cm.text}</div>}
+                <div className="text-[11px] text-slate-400 mt-1 ml-1">{fmt(cm.at)}{cm.edited ? ' · edited' : ''}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -481,6 +512,7 @@ function FeedbackTab({ c, onAdd }) {
 function MailTab({ c }) {
   const [data, setData] = useState(null);
   const [compose, setCompose] = useState(null);
+  const [detail, setDetail] = useState(null); // full email being viewed
   const load = () => hrApi(`/candidates/${c.id}/emails`).then(setData).catch((e) => setData({ connected: false, error: e.message }));
   useEffect(() => { load(); }, [c.id]);
   if (!data) return <Empty>Loading…</Empty>;
@@ -490,6 +522,7 @@ function MailTab({ c }) {
       <div className="text-xs text-slate-400">Ask an admin to connect it in HR Admin → Recruitment mailbox.</div>
     </div>
   );
+  const replyTo = (m) => setCompose({ mode: 'reply', to: [c.email], subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId });
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -499,25 +532,55 @@ function MailTab({ c }) {
         </button>
       </div>
       {(data.messages || []).length === 0 ? <Empty>No emails with this candidate yet.</Empty> : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {data.messages.map((m) => (
-            <div key={m.id} className="rounded-lg border border-slate-200 p-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-bold text-slate-700">{m.direction === 'outbound' ? 'Us' : (m.fromName || m.from)}</div>
-                <div className="flex items-center gap-3">
-                  <div className="text-xs text-slate-400">{fmt(m.date)}</div>
-                  <button onClick={() => setCompose({ mode: 'reply', to: [c.email], subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId })} className="inline-flex items-center gap-1 text-xs font-bold text-orange-600">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 17l-5-5 5-5" /><path d="M4 12h11a4 4 0 0 1 4 4v2" /></svg>Reply
-                  </button>
+            <button key={m.id} onClick={() => setDetail(m)} className="w-full text-left rounded-xl border border-slate-200 p-3 hover:border-orange-200 hover:bg-orange-50/30 transition">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${m.direction === 'outbound' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                    {m.direction === 'outbound' ? '↑ Sent' : '↓ Received'}
+                  </span>
+                  <span className="text-sm font-bold text-slate-700 truncate">{m.direction === 'outbound' ? 'Us' : (m.fromName || m.from)}</span>
                 </div>
+                <div className="text-xs text-slate-400 shrink-0">{fmt(m.date)}</div>
               </div>
-              {m.subject && <div className="text-xs font-semibold text-slate-500 mt-0.5">{m.subject}</div>}
-              <div className="text-sm text-slate-600 mt-1 line-clamp-4" dangerouslySetInnerHTML={{ __html: m.bodyHtml || m.snippet || '' }} />
-            </div>
+              {m.subject && <div className="text-xs font-semibold text-slate-600 mt-1 truncate">{m.subject}</div>}
+              <div className="text-xs text-slate-400 mt-0.5 truncate">{(m.snippet || String(m.bodyHtml || '').replace(/<[^>]+>/g, ' ')).slice(0, 120)}</div>
+            </button>
           ))}
         </div>
       )}
+      {detail && <EmailDetailModal m={detail} candidateEmail={c.email} onClose={() => setDetail(null)} onReply={() => { const d = detail; setDetail(null); replyTo(d); }} />}
       {compose && <HrComposer candidate={c} initial={compose} onClose={() => setCompose(null)} onSent={() => { setCompose(null); load(); }} />}
+    </div>
+  );
+}
+
+// Full email viewer — headers + full HTML body, with a Reply action.
+function EmailDetailModal({ m, candidateEmail, onClose, onReply }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[120] p-4 overflow-y-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-lg font-extrabold text-[#050A1F] truncate">{m.subject || '(no subject)'}</div>
+            <div className="text-xs text-slate-400 mt-1">
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold mr-2 ${m.direction === 'outbound' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>{m.direction === 'outbound' ? 'Sent' : 'Received'}</span>
+              {fmt(m.date)}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none shrink-0">×</button>
+        </div>
+        <div className="px-6 py-3 border-b border-slate-50 text-xs text-slate-500 space-y-0.5">
+          <div><span className="font-bold text-slate-400">From:</span> {m.direction === 'outbound' ? 'Recruitment mailbox' : (m.fromName ? `${m.fromName} <${m.from || m.fromEmail || candidateEmail}>` : (m.from || m.fromEmail || candidateEmail))}</div>
+          <div><span className="font-bold text-slate-400">To:</span> {m.direction === 'outbound' ? (candidateEmail || m.to || m.toEmail || '') : 'Recruitment mailbox'}</div>
+        </div>
+        <div className="px-6 py-5 max-h-[55vh] overflow-auto text-sm text-slate-700 rich-text" dangerouslySetInnerHTML={{ __html: m.bodyHtml || m.snippet || '' }} />
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
+          <button onClick={onReply} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Reply</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -601,16 +664,16 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
         </div>
         <div className="px-5 pt-3 space-y-2 overflow-y-auto flex-1 min-h-0">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
-          <div className="flex items-start gap-2 border-b border-slate-100 pb-2">
-            <span className="text-xs text-slate-400 w-12 pt-1.5">To</span>
-            <div className="flex-1"><ChipInput value={to} onChange={setTo} placeholder="Recipients" /></div>
-            <div className="flex gap-2 pt-1.5 text-xs font-semibold text-slate-400">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+            <span className="text-xs font-bold text-slate-400 w-12 shrink-0">To</span>
+            <div className="flex-1 min-w-0"><ChipInput value={to} onChange={setTo} placeholder="Recipients" /></div>
+            <div className="flex gap-2 text-xs font-semibold text-slate-400 shrink-0">
               {!showCc && <button onClick={() => setShowCc(true)} className="hover:text-slate-600">Cc</button>}
               {!showBcc && <button onClick={() => setShowBcc(true)} className="hover:text-slate-600">Bcc</button>}
             </div>
           </div>
-          {showCc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Cc</span><div className="flex-1"><ChipInput value={cc} onChange={setCc} placeholder="Cc" /></div></div>}
-          {showBcc && <div className="flex items-start gap-2 border-b border-slate-100 pb-2"><span className="text-xs text-slate-400 w-12 pt-1.5">Bcc</span><div className="flex-1"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc" /></div></div>}
+          {showCc && <div className="flex items-center gap-2 border-b border-slate-100 pb-2"><span className="text-xs font-bold text-slate-400 w-12 shrink-0">Cc</span><div className="flex-1 min-w-0"><ChipInput value={cc} onChange={setCc} placeholder="Cc recipients" /></div></div>}
+          {showBcc && <div className="flex items-center gap-2 border-b border-slate-100 pb-2"><span className="text-xs font-bold text-slate-400 w-12 shrink-0">Bcc</span><div className="flex-1 min-w-0"><ChipInput value={bcc} onChange={setBcc} placeholder="Bcc recipients" /></div></div>}
           {templates.length > 0 && (
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
               <span className="text-xs text-slate-400 w-12">Template</span>
@@ -629,8 +692,9 @@ function HrComposer({ candidate, initial, onClose, onSent }) {
               </select>
             </div>
           )}
-          <div className="border-b border-slate-100 pb-2">
-            <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="w-full text-sm text-slate-700 outline-none" />
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+            <span className="text-xs font-bold text-slate-400 w-12 shrink-0">Subject</span>
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="flex-1 min-w-0 text-sm text-slate-700 outline-none bg-transparent" />
           </div>
           {showAi && (
             <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-3">
@@ -956,13 +1020,15 @@ function InterviewModal({ candidateId, stages, onClose, onDone }) {
 
 // ---------- Edit candidate modal (moved from list) ----------
 function EditModal({ c, onClose, onSaved }) {
-  const [d, setD] = useState({ name: c.name || '', email: c.email || '', phone: c.phone || '', currentLocation: c.currentLocation || '', ...(c.answers || {}) });
+  const [d, setD] = useState({ name: c.name || '', email: c.email || '', phone: c.phone || '', currentLocation: c.currentLocation || '', recruiterId: c.recruiterId || '', ...(c.answers || {}) });
+  const [emps, setEmps] = useState([]);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi('/employees').then((r) => setEmps((r || []).filter((e) => e.active))).catch(() => {}); }, []);
   const F = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   const save = async () => {
     setBusy(true);
     try {
-      await hrApi(`/candidates/${c.id}`, { method: 'PATCH', body: JSON.stringify({ name: d.name, email: d.email, phone: d.phone, currentLocation: d.currentLocation, answers: { currentCtc: d.currentCtc, expectedCtc: d.expectedCtc, noticePeriod: d.noticePeriod, portfolio: d.portfolio } }) });
+      await hrApi(`/candidates/${c.id}`, { method: 'PATCH', body: JSON.stringify({ name: d.name, email: d.email, phone: d.phone, currentLocation: d.currentLocation, recruiterId: d.recruiterId ? Number(d.recruiterId) : null, answers: { currentCtc: d.currentCtc, expectedCtc: d.expectedCtc, noticePeriod: d.noticePeriod, portfolio: d.portfolio } }) });
       onSaved();
     } catch { setBusy(false); }
   };
@@ -977,6 +1043,14 @@ function EditModal({ c, onClose, onSaved }) {
         <div><Lbl>Expected Salary</Lbl><input className={F} value={d.expectedCtc || ''} onChange={(e) => setD({ ...d, expectedCtc: e.target.value })} /></div>
         <div><Lbl>Notice Period (days)</Lbl><input className={F} value={d.noticePeriod || ''} onChange={(e) => setD({ ...d, noticePeriod: e.target.value })} /></div>
         <div><Lbl>Portfolio</Lbl><input className={F} value={d.portfolio || ''} onChange={(e) => setD({ ...d, portfolio: e.target.value })} /></div>
+        <div className="col-span-2">
+          <Lbl>Assigned HR / recruiter</Lbl>
+          <select className={F} value={d.recruiterId || ''} onChange={(e) => setD({ ...d, recruiterId: e.target.value })}>
+            <option value="">— Unassigned —</option>
+            {emps.map((e) => <option key={e._id} value={e._id}>{e.name}{e.designation ? ` · ${e.designation}` : ''}</option>)}
+          </select>
+          {c.recruiterName && <div className="text-[11px] text-slate-400 mt-1">Currently assigned to <b className="text-slate-500">{c.recruiterName}</b></div>}
+        </div>
       </div>
       <div className="flex justify-end gap-2 mt-5">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>

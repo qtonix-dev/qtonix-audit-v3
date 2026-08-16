@@ -194,18 +194,28 @@ function buildRaw({ from, to, cc, bcc, subject, bodyHtml, inReplyTo, attachments
   const headers = [`From: ${from}`, `To: ${asList(to)}`];
   if (asList(cc)) headers.push(`Cc: ${asList(cc)}`);
   if (asList(bcc)) headers.push(`Bcc: ${asList(bcc)}`);
-  headers.push(`Subject: ${subject || ''}`, 'MIME-Version: 1.0');
+  // RFC 2047 encoded-word for non-ASCII subjects (otherwise they mojibake too).
+  const encodeSubject = (sub) => {
+    const str = sub || '';
+    if (/^[\x00-\x7F]*$/.test(str)) return str; // pure ASCII — leave as-is
+    return `=?UTF-8?B?${Buffer.from(str, 'utf8').toString('base64')}?=`;
+  };
+  headers.push(`Subject: ${encodeSubject(subject)}`, 'MIME-Version: 1.0');
   if (inReplyTo) { headers.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`); }
 
+  // Encode the HTML body as base64 with an explicit transfer encoding. Without
+  // this, multibyte UTF-8 characters (en-dashes, curly quotes, emoji) can be
+  // re-interpreted by the mail transport and arrive mojibake'd (e.g. "–" → "Ã¢Â€Â“").
+  const htmlPartB64 = Buffer.from(bodyHtml || '', 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
   const list = Array.isArray(attachments) ? attachments.filter((a) => a && a.contentBase64) : [];
   if (list.length === 0) {
-    const msg = `${headers.join('\r\n')}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n${bodyHtml || ''}`;
-    return Buffer.from(msg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const msg = `${headers.join('\r\n')}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${htmlPartB64}`;
+    return Buffer.from(msg, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
   const boundary = `qtx_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
   let body = `${headers.join('\r\n')}\r\n\r\n`;
-  body += `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n${bodyHtml || ''}\r\n`;
+  body += `--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${htmlPartB64}\r\n`;
   for (const a of list) {
     body += `--${boundary}\r\n`;
     body += `Content-Type: ${a.mimeType || 'application/octet-stream'}; name="${a.filename}"\r\n`;
@@ -215,7 +225,7 @@ function buildRaw({ from, to, cc, bcc, subject, bodyHtml, inReplyTo, attachments
     body += `${String(a.contentBase64).replace(/(.{76})/g, '$1\r\n')}\r\n`;
   }
   body += `--${boundary}--`;
-  return Buffer.from(body).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return Buffer.from(body, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 async function sendMessage(settings, refreshToken, connectedEmail, opts) {

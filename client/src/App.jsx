@@ -1365,7 +1365,7 @@ function TemplatesModal({ user, onClose }) {
                   <div className="min-w-0">
                     <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{t.name}
                       {t.isGlobal && <span className="text-[9px] bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">GLOBAL</span>}
-                      {isAdmin && !t.mine && <span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">other user</span>}
+                      {isAdmin && !t.mine && t.ownerName && <span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">{t.ownerName}</span>}
                     </div>
                     {t.subject && <div className="text-[11px] text-slate-400 truncate">Subject: {t.subject}</div>}
                   </div>

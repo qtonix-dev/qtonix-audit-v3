@@ -9,6 +9,8 @@ body { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -a
 .rich-text ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0; }
 .rich-text ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25rem 0; }
 .rich-text li { margin: 0.125rem 0; }
+.rich-text p { margin: 0 0 1em; }
+.rich-text blockquote { border-left: 3px solid #e2e8f0; margin: 0.5rem 0; padding-left: 0.75rem; color: #475569; }
 .rich-text b, .rich-text strong { font-weight: 700; }
 .rich-text i, .rich-text em { font-style: italic; }
 .rich-text u { text-decoration: underline; }
