@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
@@ -2169,6 +2169,252 @@ router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
     rows.sort((a, b) => (b.scheduledMonth - a.scheduledMonth) || (b.joinedMonth - a.joinedMonth) || a.name.localeCompare(b.name));
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
     res.json({ rows, leader: rows[0] || null });
+  } catch (e) { next(e); }
+});
+
+// ============================ SURVEYS ==============================
+// Employee Mood pulse surveys. Admin creates/launches; all active employees
+// respond; results are analysed monthly with Claude.
+
+const DEFAULT_MOOD_QUESTIONS = [
+  { id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true },
+];
+
+// Current period key for a survey's frequency.
+function surveyPeriodKey(frequency, d = new Date()) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  if (frequency === 'weekly') {
+    // ISO-ish week: year + week number.
+    const oneJan = new Date(d.getFullYear(), 0, 1);
+    const week = Math.ceil((((d - oneJan) / 86400000) + oneJan.getDay() + 1) / 7);
+    return `${y}-W${String(week).padStart(2, '0')}`;
+  }
+  if (frequency === 'one_time') return 'once';
+  return `${y}-${m}`; // monthly (default)
+}
+
+// Roll a survey's period forward if its frequency window has elapsed. Returns
+// the (possibly updated) survey.
+async function ensureSurveyPeriod(survey) {
+  if (survey.status !== 'active') return survey;
+  const key = surveyPeriodKey(survey.frequency);
+  if (survey.period !== key) {
+    survey.period = key; survey.periodStartedAt = new Date();
+    await survey.save();
+  }
+  return survey;
+}
+
+// --- Admin: list / create / update / close ---
+router.get('/surveys', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await HrSurvey.findAll({ where: { active: true }, order: [['createdAt', 'DESC']] });
+    for (const s of rows) await ensureSurveyPeriod(s);
+    // Attach response counts for the current period.
+    const out = [];
+    for (const s of rows) {
+      const count = await HrSurveyResponse.count({ where: { surveyId: s.id, period: s.period } });
+      out.push({ ...s.toJSON(), responseCount: count });
+    }
+    res.json({ surveys: out });
+  } catch (e) { next(e); }
+});
+
+router.post('/surveys', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Survey name is required.' });
+    const template = b.template === 'employee_mood' ? 'employee_mood' : 'employee_mood';
+    const frequency = ['one_time', 'weekly', 'monthly'].includes(b.frequency) ? b.frequency : 'one_time';
+    const questions = Array.isArray(b.questions) && b.questions.length
+      ? b.questions.map((q, i) => ({ id: q.id || `q${i + 1}`, text: String(q.text || '').slice(0, 300), type: 'scale5', comment: q.comment !== false }))
+      : DEFAULT_MOOD_QUESTIONS;
+    const row = await HrSurvey.create({
+      name: String(b.name).slice(0, 160), description: String(b.description || '').slice(0, 2000),
+      template, frequency, questions, status: 'active',
+      period: surveyPeriodKey(frequency), periodStartedAt: new Date(),
+      createdById: req.hrActor.id, createdByName: req.hrActor.name,
+    });
+    hrLog(req, 'survey.launch', `${row.name} (${frequency})`);
+    // Notify all active employees to complete it.
+    try { const staff = await HrUser.findAll({ where: { active: true }, attributes: ['id'] }); for (const u of staff) await notify(u.id, { type: 'info', text: `📝 New survey: ${row.name} — please share your feedback.` }); } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.put('/surveys/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrSurvey.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Survey not found.' });
+    const b = req.body || {};
+    if (b.name !== undefined) row.name = String(b.name).slice(0, 160);
+    if (b.description !== undefined) row.description = String(b.description).slice(0, 2000);
+    if (b.frequency !== undefined && ['one_time', 'weekly', 'monthly'].includes(b.frequency)) row.frequency = b.frequency;
+    if (Array.isArray(b.questions)) { row.questions = b.questions.map((q, i) => ({ id: q.id || `q${i + 1}`, text: String(q.text || '').slice(0, 300), type: 'scale5', comment: q.comment !== false })); row.changed('questions', true); }
+    if (b.status !== undefined && ['active', 'closed'].includes(b.status)) row.status = b.status;
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+router.delete('/surveys/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrSurvey.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Survey not found.' });
+    row.active = false; row.status = 'closed'; await row.save();
+    hrLog(req, 'survey.delete', row.name);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// --- Employee: surveys pending for me (this period, not yet answered) ---
+router.get('/surveys/pending', requireHrAccess, async (req, res, next) => {
+  try {
+    // Admin viewing the portal isn't an employee; nothing pending.
+    if (req.hrActor.kind === 'admin') return res.json({ pending: [] });
+    const surveys = await HrSurvey.findAll({ where: { active: true, status: 'active' } });
+    const pending = [];
+    for (const s of surveys) {
+      await ensureSurveyPeriod(s);
+      const done = await HrSurveyResponse.count({ where: { surveyId: s.id, period: s.period, employeeId: req.hrActor.id } });
+      if (!done) pending.push({ _id: s.id, name: s.name, description: s.description, questions: s.questions, frequency: s.frequency, period: s.period });
+    }
+    res.json({ pending });
+  } catch (e) { next(e); }
+});
+
+// Generate adaptive follow-up questions mid-submission when the mood is low.
+router.post('/surveys/:id/followups', requireHrAccess, async (req, res, next) => {
+  try {
+    const survey = await HrSurvey.findByPk(req.params.id);
+    if (!survey) return res.status(404).json({ error: 'Survey not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('anthropic') : null;
+    if (!key) return res.json({ questions: [] }); // AI not configured → skip follow-ups gracefully
+    const answers = (req.body && req.body.answers) || {};
+    const { followUpQuestions } = require('../services/hrSurveyAI');
+    const questions = await followUpQuestions(key, { questions: survey.questions, answers });
+    res.json({ questions });
+  } catch (e) { res.json({ questions: [] }); }
+});
+
+// Submit my response. Computes avg, stores follow-ups, returns a personal
+// AI-written success message.
+router.post('/surveys/:id/respond', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind === 'admin') return res.status(400).json({ error: 'Admins don’t submit survey responses.' });
+    const survey = await HrSurvey.findByPk(req.params.id);
+    if (!survey || survey.status !== 'active') return res.status(404).json({ error: 'This survey is not accepting responses.' });
+    await ensureSurveyPeriod(survey);
+    const already = await HrSurveyResponse.findOne({ where: { surveyId: survey.id, period: survey.period, employeeId: req.hrActor.id } });
+    if (already) return res.status(409).json({ error: 'You’ve already responded to this survey for this period.' });
+
+    const b = req.body || {};
+    const answers = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    const followups = Array.isArray(b.followups) ? b.followups.map((f) => ({ question: String(f.question || '').slice(0, 240), answer: String(f.answer || '').slice(0, 20) })) : [];
+    // Average of the scale scores.
+    const scores = (survey.questions || []).map((q) => Number((answers[q.id] || {}).score)).filter((n) => Number.isFinite(n));
+    const avgScore = scores.length ? scores.reduce((a, c) => a + c, 0) / scores.length : null;
+    const hasLow = scores.some((n) => n <= 3);
+
+    const me = req.hrUser;
+    const row = await HrSurveyResponse.create({
+      surveyId: survey.id, period: survey.period, employeeId: me.id, employeeName: me.name,
+      department: me.department || '', branch: me.branch || '',
+      answers, followups, avgScore,
+    });
+
+    // Personal, AI-written thank-you (best-effort).
+    let message = `Thank you, ${(me.name || '').split(' ')[0]}. Your feedback truly helps us improve.`;
+    try {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const key = s && s.getKey ? s.getKey('anthropic') : null;
+      if (key) { const { successMessage } = require('../services/hrSurveyAI'); message = await successMessage(key, { employeeName: me.name, avgScore, sentimentLabel: hasLow ? 'low' : 'ok', hasLowScores: hasLow }); }
+    } catch {}
+    res.json({ ok: true, id: row.id, message });
+  } catch (e) { next(e); }
+});
+
+// --- Results & sentiment analysis (admin) ---
+// List the periods that have responses, for the period picker.
+router.get('/surveys/:id/periods', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await HrSurveyResponse.findAll({ where: { surveyId: req.params.id }, attributes: ['period'], group: ['period'], order: [['period', 'DESC']] });
+    res.json({ periods: rows.map((r) => r.period).filter(Boolean) });
+  } catch (e) { next(e); }
+});
+
+// Results for a survey + period: sentiment split, top points, dept/branch
+// breakdown. Pass ?analyze=1 to (re)run the AI; otherwise returns cached.
+router.get('/surveys/:id/results', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const survey = await HrSurvey.findByPk(req.params.id);
+    if (!survey) return res.status(404).json({ error: 'Survey not found.' });
+    const period = req.query.period || survey.period;
+    const responses = await HrSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+    const total = responses.length;
+    const analysis = (survey.analysis && survey.analysis[period]) || null;
+    // Sentiment split from stored per-response reads.
+    const tally = (list) => { const t = { positive: 0, neutral: 0, negative: 0 }; list.forEach((r) => { const l = r.sentiment && r.sentiment.label; if (t[l] != null) t[l] += 1; }); return t; };
+    const withSent = responses.filter((r) => r.sentiment && r.sentiment.label);
+    const counts = tally(withSent);
+    const pct = (n) => withSent.length ? Math.round((n / withSent.length) * 100) : 0;
+    // Group helper for dept/branch splits.
+    const groupBy = (keyFn) => {
+      const g = {};
+      responses.forEach((r) => { const k = keyFn(r) || '—'; (g[k] = g[k] || []).push(r); });
+      return Object.entries(g).map(([k, list]) => {
+        const c = tally(list.filter((r) => r.sentiment && r.sentiment.label));
+        const n = list.filter((r) => r.sentiment && r.sentiment.label).length;
+        const avg = list.filter((r) => r.avgScore != null);
+        return { key: k, count: list.length, avgScore: avg.length ? +(avg.reduce((a, r) => a + r.avgScore, 0) / avg.length).toFixed(2) : null,
+          positive: n ? Math.round(c.positive / n * 100) : 0, neutral: n ? Math.round(c.neutral / n * 100) : 0, negative: n ? Math.round(c.negative / n * 100) : 0 };
+      }).sort((a, b) => b.count - a.count);
+    };
+    res.json({
+      survey: { _id: survey.id, name: survey.name, frequency: survey.frequency, questions: survey.questions },
+      period, total, analysed: withSent.length,
+      sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
+      good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
+      byDepartment: groupBy((r) => r.department), byBranch: groupBy((r) => r.branch),
+      analysedAt: analysis ? analysis.at : null,
+    });
+  } catch (e) { next(e); }
+});
+
+// Run the AI analysis for a survey + period: per-response sentiment + aggregate.
+router.post('/surveys/:id/analyze', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const survey = await HrSurvey.findByPk(req.params.id);
+    if (!survey) return res.status(404).json({ error: 'Survey not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('anthropic') : null;
+    if (!key) return res.status(400).json({ error: 'AI isn’t configured. Add an Anthropic API key in CRM Admin → API keys.' });
+    const period = req.body && req.body.period ? req.body.period : survey.period;
+    const responses = await HrSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+    if (!responses.length) return res.status(400).json({ error: 'No responses to analyse for this period yet.' });
+    const { analyseResponse, aggregateAnalysis } = require('../services/hrSurveyAI');
+    // 1) Per-response sentiment (only those not yet analysed, to save calls).
+    for (const r of responses) {
+      if (r.sentiment && r.sentiment.label) continue;
+      try {
+        const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore });
+        r.sentiment = sent; r.changed('sentiment', true); await r.save();
+      } catch {}
+    }
+    // 2) Aggregate good/improve/summary.
+    const blobs = responses.map((r) => {
+      const txt = (survey.questions || []).map((q) => { const a = (r.answers || {})[q.id] || {}; return `${q.text}: ${a.score != null ? a.score : '—'}/5${a.comment ? ` — "${a.comment}"` : ''}`; }).join('; ');
+      const fu = (r.followups || []).map((f) => `${f.question} → ${f.answer}`).join('; ');
+      return { department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, text: txt + (fu ? ` | Follow-ups: ${fu}` : '') };
+    });
+    let agg = { good: [], improve: [], summary: '' };
+    try { agg = await aggregateAnalysis(key, { surveyName: survey.name, blobs }); } catch (e) { /* keep sentiment even if summary fails */ }
+    const nextAnalysis = { ...(survey.analysis || {}) };
+    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary };
+    survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
+    hrLog(req, 'survey.analyze', `${survey.name} (${period})`);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

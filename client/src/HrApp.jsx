@@ -2049,6 +2049,228 @@ function OnboardingTemplateEditor() {
   );
 }
 
+// ===== Survey admin: create surveys + view results & sentiment analysis =====
+const SURVEY_TEMPLATES = [
+  { id: 'employee_mood', name: 'Employee Mood', available: true, desc: 'A quick pulse on how the team is feeling, with adaptive follow-ups.' },
+  { id: 'employee_satisfaction', name: 'Employee Satisfaction', available: false, desc: 'Coming soon.' },
+  { id: 'work_culture', name: 'Work Culture', available: false, desc: 'Coming soon.' },
+];
+const SCALE_COLORS = ['#DC2626', '#F97316', '#CDDC39', '#84CC16', '#16A34A']; // 1..5
+
+function SurveyAdmin({ setErr }) {
+  const [tab, setTab] = useState('create'); // create | results
+  const [surveys, setSurveys] = useState([]);
+  const load = () => hrApi('/surveys').then((r) => setSurveys(r.surveys || [])).catch(() => {});
+  useEffect(() => { load(); }, []);
+  return (
+    <div>
+      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5 w-max">
+        <button onClick={() => setTab('create')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'create' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Create Survey</button>
+        <button onClick={() => setTab('results')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'results' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Comments &amp; Sentiment Analysis</button>
+      </div>
+      {tab === 'create' && <SurveyCreate surveys={surveys} reload={load} setErr={setErr} />}
+      {tab === 'results' && <SurveyResults surveys={surveys} />}
+    </div>
+  );
+}
+
+function SurveyCreate({ surveys, reload, setErr }) {
+  const [template, setTemplate] = useState('employee_mood');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [frequency, setFrequency] = useState('one_time');
+  const [questions, setQuestions] = useState([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true }]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const addQ = () => setQuestions((qs) => [...qs, { id: `q${qs.length + 1}`, text: '', type: 'scale5', comment: true }]);
+  const setQ = (i, text) => setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, text } : q));
+  const delQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
+
+  const launch = async () => {
+    if (!name.trim()) { setMsg(''); setErr && setErr('Survey name is required.'); return; }
+    const qs = questions.filter((q) => q.text.trim());
+    if (!qs.length) { setErr && setErr('Add at least one question.'); return; }
+    setBusy(true);
+    try {
+      await hrApi('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
+      setName(''); setDescription(''); setFrequency('one_time'); setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true }]);
+      setMsg('Survey launched — employees will be prompted to respond.'); reload();
+    } catch (e) { setErr && setErr(e.message); } finally { setBusy(false); }
+  };
+  const closeSurvey = async (s) => { if (!window.confirm(`Close "${s.name}"? It will stop accepting responses.`)) return; try { await hrApi(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); } catch (e) { alert(e.message); } };
+  const del = async (s) => { if (!window.confirm(`Delete "${s.name}"?`)) return; try { await hrApi(`/surveys/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
+
+  return (
+    <div className="grid lg:grid-cols-2 gap-6">
+      <div>
+        {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
+        <div className="text-sm font-bold text-[#050A1F] mb-2">Select a template</div>
+        <div className="space-y-2 mb-5">
+          {SURVEY_TEMPLATES.map((t) => (
+            <button key={t.id} disabled={!t.available} onClick={() => t.available && setTemplate(t.id)}
+              className={`w-full text-left rounded-xl border p-3 transition ${template === t.id && t.available ? 'border-orange-400 bg-orange-50' : 'border-slate-200'} ${!t.available ? 'opacity-60 cursor-not-allowed' : 'hover:border-slate-300'}`}>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#050A1F] text-sm">{t.name}</span>
+                {!t.available && <span className="text-[10px] font-bold rounded-full bg-slate-200 text-slate-500 px-2 py-0.5">Coming Soon</span>}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">{t.desc}</div>
+            </button>
+          ))}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-3">
+          <div><div className="text-xs font-bold text-slate-500 mb-1">Survey name</div><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. August Mood Check" /></div>
+          <div><div className="text-xs font-bold text-slate-500 mb-1">Survey description</div><textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="A short note shown to employees." /></div>
+          <div><div className="text-xs font-bold text-slate-500 mb-1">Frequency</div>
+            <div className="flex gap-2">
+              {[['one_time', 'One-time'], ['weekly', 'Weekly'], ['monthly', 'Monthly']].map(([v, l]) => (
+                <button key={v} onClick={() => setFrequency(v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${frequency === v ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold text-slate-500 mb-1">Questions <span className="font-normal text-slate-400">(1–5 agreement scale, with a comment box)</span></div>
+            <div className="space-y-2">
+              {questions.map((q, i) => (
+                <div key={q.id} className="flex items-start gap-2">
+                  <span className="text-slate-300 text-sm pt-2.5">{i + 1}.</span>
+                  <textarea className={inputCls} rows={1} value={q.text} onChange={(e) => setQ(i, e.target.value)} placeholder="Statement employees rate from Strongly Disagree to Strongly Agree" />
+                  {questions.length > 1 && <button onClick={() => delQ(i)} className="text-slate-300 hover:text-red-500 pt-2"><Icon.Trash size={16} /></button>}
+                </div>
+              ))}
+            </div>
+            <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-2">+ Add question</button>
+          </div>
+          <div className="pt-1"><button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Launching…' : 'Launch Survey'}</button></div>
+        </div>
+      </div>
+
+      {/* Live surveys */}
+      <div>
+        <div className="text-sm font-bold text-[#050A1F] mb-2">Active &amp; recent surveys</div>
+        {surveys.length === 0 ? <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No surveys yet.</div> : (
+          <div className="space-y-2">
+            {surveys.map((s) => (
+              <div key={s._id} className="bg-white rounded-xl border border-slate-200/70 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {s.status === 'active' ? <span className="text-green-600 font-bold">Active</span> : <span className="text-slate-400">Closed</span>} · {s.responseCount || 0} responses this period</div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {s.status === 'active' && <button onClick={() => closeSurvey(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Close</button>}
+                    <button onClick={() => del(s)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={16} /></button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SentimentCircle({ label, pct, color }) {
+  const r = 34, c = 2 * Math.PI * r, off = c - (pct / 100) * c;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5 flex flex-col items-center">
+      <svg width="90" height="90" viewBox="0 0 90 90" className="mb-2">
+        <circle cx="45" cy="45" r={r} fill="none" stroke="#F1F5F9" strokeWidth="9" />
+        <circle cx="45" cy="45" r={r} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off} transform="rotate(-90 45 45)" />
+        <text x="45" y="50" textAnchor="middle" className="font-extrabold" style={{ fontSize: 20, fill: '#050A1F' }}>{pct}%</text>
+      </svg>
+      <div className="text-sm font-bold text-[#050A1F]">{label}</div>
+    </div>
+  );
+}
+
+function SurveyResults({ surveys }) {
+  const [surveyId, setSurveyId] = useState('');
+  const [periods, setPeriods] = useState([]);
+  const [period, setPeriod] = useState('');
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  useEffect(() => { if (!surveyId && surveys.length) setSurveyId(String(surveys[0]._id)); }, [surveys]);
+  useEffect(() => { if (!surveyId) return; hrApi(`/surveys/${surveyId}/periods`).then((r) => { setPeriods(r.periods || []); setPeriod((r.periods && r.periods[0]) || ''); }).catch(() => {}); }, [surveyId]);
+  const loadResults = () => { if (!surveyId) return; setBusy(true); hrApi(`/surveys/${surveyId}/results${period ? `?period=${encodeURIComponent(period)}` : ''}`).then(setData).catch(() => {}).finally(() => setBusy(false)); };
+  useEffect(() => { loadResults(); }, [surveyId, period]);
+  const analyze = async () => { setAnalyzing(true); try { await hrApi(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
+
+  if (!surveys.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Create a survey first.</div>;
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <select value={surveyId} onChange={(e) => setSurveyId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">
+          {surveys.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
+        </select>
+        {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">
+          {periods.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>}
+        <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="ml-auto rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
+      </div>
+
+      {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : data.total === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No responses yet for this period.</div>
+      ) : (
+        <div className="space-y-6">
+          <div className="text-xs text-slate-400">{data.total} response{data.total === 1 ? '' : 's'} · {data.analysed} analysed{data.analysedAt ? ` · last analysed ${new Date(data.analysedAt).toLocaleString()}` : ''}</div>
+          {data.analysed === 0 && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-700">Click “Analyse with AI” to decode sentiment and surface themes from the responses.</div>}
+
+          {/* Sentiment circles */}
+          <div className="grid grid-cols-3 gap-4">
+            <SentimentCircle label="Positive Sentiment" pct={data.sentiment.positive} color="#16A34A" />
+            <SentimentCircle label="Neutral Sentiment" pct={data.sentiment.neutral} color="#F59E0B" />
+            <SentimentCircle label="Negative Sentiment" pct={data.sentiment.negative} color="#DC2626" />
+          </div>
+
+          {(data.summary || data.good.length || data.improve.length) && (
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl border border-green-100 p-5">
+                <div className="text-sm font-extrabold text-green-700 mb-2">Top 3 good points</div>
+                <ul className="space-y-1.5">{(data.good.length ? data.good : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-green-500">✔</span>{g}</li>)}</ul>
+              </div>
+              <div className="bg-white rounded-2xl border border-amber-100 p-5">
+                <div className="text-sm font-extrabold text-amber-700 mb-2">Top 3 to improve</div>
+                <ul className="space-y-1.5">{(data.improve.length ? data.improve : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-amber-500">▲</span>{g}</li>)}</ul>
+              </div>
+            </div>
+          )}
+          {data.summary && <div className="bg-white rounded-2xl border border-slate-200/70 p-5 text-sm text-slate-600"><b className="text-[#050A1F]">Overall mood:</b> {data.summary}</div>}
+
+          {/* Breakdowns */}
+          <SentimentBreakdown title="By department" rows={data.byDepartment} />
+          <SentimentBreakdown title="By branch" rows={data.byBranch} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SentimentBreakdown({ title, rows }) {
+  if (!rows || !rows.length) return null;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="text-sm font-extrabold text-[#050A1F] mb-3">{title}</div>
+      <div className="space-y-2.5">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-center gap-3">
+            <div className="w-32 truncate text-sm font-semibold text-slate-600">{r.key}</div>
+            <div className="flex-1 h-4 rounded-full overflow-hidden flex bg-slate-100">
+              <div style={{ width: `${r.positive}%`, background: '#16A34A' }} title={`Positive ${r.positive}%`} />
+              <div style={{ width: `${r.neutral}%`, background: '#F59E0B' }} title={`Neutral ${r.neutral}%`} />
+              <div style={{ width: `${r.negative}%`, background: '#DC2626' }} title={`Negative ${r.negative}%`} />
+            </div>
+            <div className="text-xs text-slate-400 w-24 text-right">{r.count} resp · {r.avgScore != null ? `${r.avgScore}/5` : '—'}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -2285,7 +2507,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['surveys', 'Survey'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -2410,6 +2632,7 @@ function HrAdmin({ user }) {
       {tab === 'holidays' && <HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} />}
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
+      {tab === 'surveys' && <SurveyAdmin setErr={setErr} />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
@@ -2571,6 +2794,133 @@ function HrOrgChart({ users, reporting }) {
   );
 }
 
+// Employee-facing survey prompt: a popup on load; if dismissed, a persistent
+// top banner until completed. Fills the pending survey via SurveyTakeModal.
+function SurveyGate() {
+  const [pending, setPending] = useState([]);
+  const [openIdx, setOpenIdx] = useState(-1);
+  const [popupShown, setPopupShown] = useState(false);
+  useEffect(() => { hrApi('/surveys/pending').then((r) => { setPending(r.pending || []); if ((r.pending || []).length && !popupShown) { setOpenIdx(0); setPopupShown(true); } }).catch(() => {}); }, []);
+  const current = openIdx >= 0 ? pending[openIdx] : null;
+  const done = (id) => { setPending((ps) => ps.filter((p) => p._id !== id)); setOpenIdx(-1); };
+  if (!pending.length) return null;
+  return (
+    <>
+      {openIdx < 0 && (
+        <div className="bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white">
+          <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold flex items-center gap-2">📝 You have {pending.length} pending survey{pending.length === 1 ? '' : 's'} to complete.</div>
+            <button onClick={() => setOpenIdx(0)} className="rounded-lg bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold">Complete now</button>
+          </div>
+        </div>
+      )}
+      {current && <SurveyTakeModal survey={current} onClose={() => setOpenIdx(-1)} onDone={() => done(current._id)} />}
+    </>
+  );
+}
+
+function SurveyTakeModal({ survey, onClose, onDone }) {
+  const [answers, setAnswers] = useState({}); // qid -> { score, comment }
+  const [phase, setPhase] = useState('main'); // main | followups | done
+  const [followupQs, setFollowupQs] = useState([]);
+  const [followupA, setFollowupA] = useState({}); // fid -> 'Yes'|'No'
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const setScore = (qid, score) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), score } }));
+  const setComment = (qid, comment) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), comment } }));
+
+  const allAnswered = (survey.questions || []).every((q) => answers[q.id] && answers[q.id].score);
+  const anyLow = (survey.questions || []).some((q) => (answers[q.id] || {}).score && answers[q.id].score <= 3);
+
+  const proceed = async () => {
+    setErr('');
+    if (!allAnswered) { setErr('Please rate every statement.'); return; }
+    // If any low score → fetch adaptive follow-ups (once).
+    if (anyLow && phase === 'main') {
+      setBusy(true);
+      try {
+        const r = await hrApi(`/surveys/${survey._id}/followups`, { method: 'POST', body: JSON.stringify({ answers }) });
+        if (r.questions && r.questions.length) { setFollowupQs(r.questions); setPhase('followups'); setBusy(false); return; }
+      } catch {}
+      setBusy(false);
+    }
+    submit();
+  };
+
+  const submit = async () => {
+    setBusy(true); setErr('');
+    const followups = followupQs.map((q) => ({ question: q.text, answer: followupA[q.id] || 'No answer' }));
+    try {
+      const r = await hrApi(`/surveys/${survey._id}/respond`, { method: 'POST', body: JSON.stringify({ answers, followups }) });
+      setSuccessMsg(r.message || 'Thank you for your feedback!'); setPhase('done');
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div>
+            <div className="text-lg font-extrabold text-[#050A1F]">{survey.name}</div>
+            {survey.description && phase !== 'done' && <div className="text-xs text-slate-400 mt-0.5">{survey.description}</div>}
+          </div>
+          {phase !== 'done' && <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>}
+        </div>
+
+        <div className="p-6 overflow-y-auto">
+          {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+
+          {phase === 'main' && (survey.questions || []).map((q, i) => (
+            <div key={q.id} className="mb-5">
+              <div className="text-sm font-bold text-[#050A1F] mb-2">{i + 1}. {q.text}</div>
+              <div className="flex items-center gap-1.5">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button key={n} onClick={() => setScore(q.id, n)}
+                    className={`w-11 h-11 rounded-lg font-extrabold text-white transition ${answers[q.id]?.score === n ? 'ring-2 ring-offset-2 ring-slate-400 scale-105' : 'opacity-80 hover:opacity-100'}`}
+                    style={{ background: SCALE_COLORS[n - 1] }}>{n}</button>
+                ))}
+              </div>
+              <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-1"><span>Strongly Disagree</span><span>Strongly Agree</span></div>
+              {q.comment !== false && <textarea className={inputCls + ' mt-2'} rows={2} placeholder="Write your comment (optional)" value={answers[q.id]?.comment || ''} onChange={(e) => setComment(q.id, e.target.value)} />}
+            </div>
+          ))}
+
+          {phase === 'followups' && (
+            <div>
+              <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700 mb-4">Thanks for your honesty. A couple of quick yes/no questions to help us understand better.</div>
+              {followupQs.map((q) => (
+                <div key={q.id} className="mb-4">
+                  <div className="text-sm font-bold text-[#050A1F] mb-2">{q.text}</div>
+                  <div className="flex gap-2">
+                    {['Yes', 'No'].map((opt) => (
+                      <button key={opt} onClick={() => setFollowupA((a) => ({ ...a, [q.id]: opt }))}
+                        className={`px-5 py-2 rounded-lg text-sm font-bold border ${followupA[q.id] === opt ? 'border-[#FF6A00] bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>{opt}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {phase === 'done' && (
+            <div className="text-center py-6">
+              <div className="text-4xl mb-3">💬</div>
+              <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{successMsg}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+          {phase === 'main' && <button onClick={proceed} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Please wait…' : 'Submit response'}</button>}
+          {phase === 'followups' && <button onClick={submit} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : 'Submit response'}</button>}
+          {phase === 'done' && <button onClick={onDone} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Close</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function HrApp() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -2631,6 +2981,7 @@ export default function HrApp() {
           </div>
         </div>
       </header>
+      {!isAdmin && <SurveyGate />}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} />}

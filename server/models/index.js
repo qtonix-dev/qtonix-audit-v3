@@ -1442,9 +1442,51 @@ const HrOnboarding = sequelize.define('HrOnboarding', {
 }, { tableName: 'hr_onboarding', indexes: [{ name: 'idx_hr_onboard_emp', fields: ['employeeId'] }] });
 HrOnboarding.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// A survey definition (admin-created from a template). Questions are a JSON
+// array of { id, text, type:'scale5', comment:true }. Frequency drives
+// auto-recurrence; `period` marks the current cycle (e.g. '2026-08').
+const HrSurvey = sequelize.define('HrSurvey', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(160), allowNull: false },
+  description: { type: DataTypes.TEXT, defaultValue: '' },
+  template: { type: DataTypes.STRING(60), defaultValue: 'employee_mood' },
+  questions: { type: DataTypes.JSON, defaultValue: [] },
+  frequency: { type: DataTypes.STRING(20), defaultValue: 'one_time' }, // one_time|weekly|monthly
+  status: { type: DataTypes.STRING(20), defaultValue: 'active' },       // active|closed
+  period: { type: DataTypes.STRING(20), defaultValue: '' },             // current cycle key
+  periodStartedAt: { type: DataTypes.DATE, allowNull: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), allowNull: true },
+  // Cached AI analysis per period: { [period]: { at, sentiment:{pos,neu,neg}, good:[], improve:[], byDept:{}, byBranch:{} } }
+  analysis: { type: DataTypes.JSON, defaultValue: {} },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'hr_surveys', indexes: [{ name: 'idx_hr_survey_active', fields: ['active'] }] });
+HrSurvey.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// One employee's submission for a given survey + period. `answers` maps
+// questionId -> { score, comment }. `followups` stores the adaptive Q&A.
+// `sentiment` is the per-response AI read (label + tone), filled on analysis.
+const HrSurveyResponse = sequelize.define('HrSurveyResponse', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  surveyId: { type: DataTypes.INTEGER, allowNull: false },
+  period: { type: DataTypes.STRING(20), defaultValue: '' },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  employeeName: { type: DataTypes.STRING(120), allowNull: true },
+  department: { type: DataTypes.STRING(120), allowNull: true },
+  branch: { type: DataTypes.STRING(120), allowNull: true },
+  answers: { type: DataTypes.JSON, defaultValue: {} },
+  followups: { type: DataTypes.JSON, defaultValue: [] }, // [{ question, answer }]
+  avgScore: { type: DataTypes.FLOAT, allowNull: true },
+  sentiment: { type: DataTypes.JSON, defaultValue: null }, // { label, tone, note }
+}, { tableName: 'hr_survey_responses', indexes: [
+  { name: 'idx_hr_sresp_survey', fields: ['surveyId'] },
+  { name: 'idx_hr_sresp_emp', fields: ['employeeId'] },
+] });
+HrSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
