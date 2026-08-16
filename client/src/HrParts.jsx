@@ -221,6 +221,19 @@ export function ImageKitSection() {
 // ---------------------------------------------------------------------------
 const DOC_TYPES = ['PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Driving License', 'Utility Bill'];
 
+// Icons for the user-detail tabs (stroke SVG paths), matching candidate detail.
+const PROFILE_TAB_ICONS = {
+  timeline: 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
+  personal: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  payroll: 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+  education: 'M22 10L12 5 2 10l10 5 10-5z M6 12v5c0 1 2 3 6 3s6-2 6-3v-5',
+  employment: 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z',
+};
+function ProfileTabIcon({ name }) {
+  const d = PROFILE_TAB_ICONS[name]; if (!d) return null;
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d.split(' M').map((seg, i) => <path key={i} d={(i ? 'M' : '') + seg} />)}</svg>;
+}
+
 export function ProfilePage({ me, targetId }) {
   const id = targetId || me._id || me.id;
   const [row, setRow] = useState(null);
@@ -286,54 +299,73 @@ export function ProfilePage({ me, targetId }) {
   const reportsToName = row.reportsToAdminId ? '(Admin)' : (row.reportsToId ? `HR #${row.reportsToId}` : '—');
   const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['employment', 'Previous Employment']];
 
-  // A read-only identity field for the header card.
-  const IdField = ({ label, value }) => (
-    <div><div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</div><div className="text-sm font-semibold text-[#050A1F] mt-0.5">{value || '—'}</div></div>
-  );
+  // A read-only identity field for the header meta rows.
+  const initials = (row.name || '?').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+  const comp = row.completion || 0;
+  const compColor = comp >= 100 ? '#059669' : comp >= 50 ? '#FF6A00' : '#EF4444';
 
   return (
-    <div className="max-w-5xl">
+    <div>
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>}
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
-      {/* LEFT/RIGHT split like the lead detail page: identity card + tabbed body */}
-      <div className="grid md:grid-cols-[300px_1fr] gap-5">
-        {/* Identity card (view-only for everyone; edited via Admin → Users) */}
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 h-fit">
-          <div className="flex flex-col items-center text-center mb-4">
-            <Avatar name={row.name} src={avatar} size={84} />
-            {(canEditLocked || isSelf) && (
-              <label className="mt-2 text-[11px] font-bold text-[#FF4500] cursor-pointer">Change photo<input type="file" accept="image/*" className="hidden" onChange={uploadAvatar} /></label>
-            )}
-            <div className="mt-2 text-lg font-extrabold text-[#050A1F]">{row.name}</div>
-            <div className="text-xs text-slate-400">{row.designation || roleLabel}</div>
-            <div className="mt-2 flex items-center gap-1.5">
-              <div className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full" style={{ width: `${row.completion || 0}%`, background: (row.completion||0)>=100?'#059669':(row.completion||0)>=50?'#FF6A00':'#EF4444' }} /></div>
-              <span className="text-[11px] font-bold text-slate-500">{row.completion || 0}%</span>
+      <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+        {/* Header banner (matches candidate detail page) */}
+        <div className="p-6 border-b border-slate-100" style={{ background: 'linear-gradient(180deg,#fafbff,#fff)' }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex gap-4">
+              <div className="relative shrink-0">
+                <div className="w-16 h-16 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center text-xl font-extrabold overflow-hidden">
+                  {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : initials}
+                </div>
+                {(canEditLocked || isSelf) && (
+                  <label className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#050A1F] text-white flex items-center justify-center cursor-pointer text-[10px] border-2 border-white" title="Change photo">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+                    <input type="file" accept="image/*" className="hidden" onChange={uploadAvatar} />
+                  </label>
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-xl font-extrabold text-[#050A1F]">{row.name}</div>
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600">{roleLabel}</span>
+                  {row.active === false && <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Inactive</span>}
+                </div>
+                <div className="mt-1 text-sm text-slate-500 space-y-0.5">
+                  {row.email && <div>✉️ {row.email}</div>}
+                  <div className="flex flex-wrap gap-x-4">
+                    {row.branch && <span>📍 {row.branch}</span>}
+                    {row.department && <span>🏢 {row.department}</span>}
+                    {row.employeeId && <span>🆔 {row.employeeId}</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 text-xs text-slate-400 pt-1">
+                    {row.joiningDate && <span>Joined: <b className="text-slate-600">{row.joiningDate}</b></span>}
+                    <span>Reports to: <b className="text-slate-600">{reportsToName}</b></span>
+                    {row.shift && <span>Shift: <b className="text-slate-600">{row.shift.name}</b></span>}
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <div className="w-28 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full" style={{ width: `${comp}%`, background: compColor }} /></div>
+                    <span className="text-[11px] font-bold" style={{ color: compColor }}>{comp}% profile complete</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="space-y-3 border-t border-slate-100 pt-4">
-            <IdField label="Employee ID" value={row.employeeId} />
-            <IdField label="Official email" value={row.email} />
-            <IdField label="Role" value={roleLabel} />
-            <IdField label="Branch" value={row.branch} />
-            <IdField label="Department" value={row.department} />
-            <IdField label="Joining date" value={row.joiningDate} />
-            <IdField label="Reporting to" value={reportsToName} />
-            <IdField label="Shift" value={row.shift ? `${row.shift.name}${row.shift.startTime ? ` · ${row.shift.startTime}–${row.shift.endTime}` : ''}` : '—'} />
-          </div>
-          {isSelf && <p className="text-[10px] text-slate-400 mt-4 leading-relaxed">These details are managed by HR. Contact your HR team for corrections.</p>}
+          {isSelf && <p className="text-[11px] text-slate-400 mt-3">These details are managed by HR. Contact your HR team for corrections.</p>}
         </div>
 
-        {/* Tabbed body */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-          <div className="flex border-b border-slate-100 flex-wrap">
-            {TABS.map(([t, l]) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`px-4 py-3 text-xs font-bold transition ${tab === t ? 'text-[#FF4500] border-b-2 border-[#FF4500]' : 'text-slate-400 hover:text-slate-600'}`}>{l}</button>
-            ))}
-          </div>
-          <div className="p-5 min-h-[320px]">
+        {/* Tabs (icons, matching candidate detail) */}
+        <div className="flex gap-0.5 px-3 border-b border-slate-100 overflow-x-auto">
+          {TABS.map(([t, l]) => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${tab === t ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+              <ProfileTabIcon name={t} />
+              <span>{l}</span>
+            </button>
+          ))}
+        </div>
+        <div className="p-6 min-h-[340px]">
+          <div>
             {/* TIMELINE */}
             {tab === 'timeline' && (
               <div>

@@ -2334,7 +2334,7 @@ export default function HrApp() {
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     { id: 'employees', label: 'Employee' },
-    ...(isAdmin ? [{ id: 'users', label: 'Users' }, { id: 'admin', label: 'Admin' }] : []),
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
   // Land non-schedulers on their interviews rather than an empty dashboard.
   const effectiveView = (view === 'dashboard' && !isScheduler) ? 'interview' : view;
@@ -2378,7 +2378,6 @@ export default function HrApp() {
         {effectiveView === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
         {effectiveView === 'templates' && <EmailTemplatesPage />}
         {effectiveView === 'signature' && <EmailSignaturePage />}
-        {effectiveView === 'users' && isAdmin && <HrUserManagement />}
         {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} />}
       </main>
     </div>
