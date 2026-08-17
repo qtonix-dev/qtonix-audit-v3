@@ -8,7 +8,32 @@
  * and the address in Settings.hrMailbox.email.
  */
 const router = require('express').Router();
-const { Op, Settings, HrCandidate, HrJobPost, HrUser } = require('../models');
+const { Op, Settings, HrCandidate, HrJobPost, HrUser, HrDirectorProfile, User } = require('../models');
+
+// Resolve a mixed list of panelist IDs (numeric HrUser ids and 'admin:<id>'
+// director ids) into { id, name, department, email } records for the invite and
+// feedback tracking. Directors use their HRMS overlay details when present.
+async function resolvePanelists(panelIds) {
+  if (!Array.isArray(panelIds) || !panelIds.length) return [];
+  const empIds = [], adminIds = [];
+  panelIds.forEach((pid) => {
+    const s = String(pid);
+    if (s.startsWith('admin:')) adminIds.push(Number(s.slice(6)));
+    else if (/^\d+$/.test(s)) empIds.push(Number(s));
+  });
+  const out = [];
+  if (empIds.length) {
+    const emps = await HrUser.findAll({ where: { id: empIds } });
+    emps.forEach((e) => out.push({ id: e.id, name: e.name, department: e.department || '', email: e.email }));
+  }
+  if (adminIds.length) {
+    const admins = await User.findAll({ where: { id: adminIds, role: 'admin' } });
+    const overlays = await HrDirectorProfile.findAll({ where: { userId: adminIds } });
+    const byUser = {}; overlays.forEach((o) => { byUser[o.userId] = o; });
+    admins.forEach((a) => { const o = byUser[a.id]; out.push({ id: `admin:${a.id}`, name: (o && o.name) || a.name, department: 'Leadership', email: (o && o.email) || a.email }); });
+  }
+  return out;
+}
 const gmail = require('../services/gmail');
 const { requireHrAccess, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
 
@@ -180,11 +205,7 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     if (!panelIds.length && job && job.roundPanels && b.round && Array.isArray(job.roundPanels[b.round])) {
       panelIds = job.roundPanels[b.round];
     }
-    let panelists = [];
-    if (panelIds.length) {
-      const emps = await HrUser.findAll({ where: { id: panelIds } });
-      panelists = emps.map((e) => ({ id: e.id, name: e.name, department: e.department || '', email: e.email }));
-    }
+    const panelists = await resolvePanelists(panelIds);
     const roundLabel = (() => { const st = (job && job.stages || []).find((x) => x.id === b.round); return st ? st.label : (b.round || ''); })();
     const title = b.title || `${roundLabel ? roundLabel + ' — ' : 'Interview: '}${cand.name}${job ? ` (${job.title})` : ''}`;
     let event = {};

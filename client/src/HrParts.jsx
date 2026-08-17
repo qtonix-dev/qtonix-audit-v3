@@ -47,7 +47,7 @@ export async function uploadToImageKit(file, folder, fileName) {
   return { url: data.url, fileId: data.fileId };
 }
 
-export const ROLE_LABELS = { hr: 'HR', recruiter: 'HR Recruiter', manager: 'Manager', tl: 'Team Lead', senior: 'Senior Executive', junior: 'Junior Executive', trainee: 'Trainee', intern: 'Intern', employee: 'Employee' };
+export const ROLE_LABELS = { hr: 'HR', recruiter: 'HR Recruiter', manager: 'Manager', tl: 'Team Lead', senior: 'Senior Executive', junior: 'Junior Executive', trainee: 'Trainee', intern: 'Intern', employee: 'Employee', director: 'Director' };
 export const ROLE_OPTIONS = [['hr', 'HR'], ['recruiter', 'HR Recruiter'], ['manager', 'Manager'], ['tl', 'Team Lead'], ['senior', 'Senior Executive'], ['junior', 'Junior Executive'], ['trainee', 'Trainee'], ['intern', 'Intern'], ['employee', 'Employee']];
 // Seniority order for the org chart (lower index = higher in the hierarchy).
 export const ROLE_LEVEL = { manager: 0, tl: 1, senior: 2, junior: 3, trainee: 4, intern: 5, employee: 3, hr: 1, recruiter: 2 };
@@ -585,6 +585,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
   const [rows, setRows] = useState([]);
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [editingDirector, setEditingDirector] = useState(null);
   const [resetting, setResetting] = useState(null);
   const [msg, setMsg] = useState('');
   const [branches, setBranches] = useState([]);
@@ -680,7 +681,13 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  {canManage && (isAdmin || u.branch === myBranch) ? (
+                  {u.isDirector ? (
+                    isAdmin ? (
+                      <div className="flex items-center justify-end gap-0.5">
+                        <IconBtn title="Edit director details" onClick={() => setEditingDirector(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
+                      </div>
+                    ) : <div className="text-right text-[10px] text-slate-300">Director</div>
+                  ) : canManage && (isAdmin || u.branch === myBranch) ? (
                     <div className="flex items-center justify-end gap-0.5">
                       <IconBtn title="View profile" onClick={() => onOpenProfile(u._id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></IconBtn>
                       <IconBtn title="Edit" onClick={() => setEditing(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
@@ -703,6 +710,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
       {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} isAdmin={isAdmin} lockBranch={!isAdmin && isHrManager ? myBranch : ''} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
       {editing && <EditEmployeeModal user={editing} branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} isAdmin={isAdmin} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setMsg('Employee updated.'); load(); }} />}
       {resetting && <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onDone={() => { setResetting(null); setMsg('Password reset.'); }} />}
+      {editingDirector && <DirectorEditModal director={editingDirector} onClose={() => setEditingDirector(null)} onSaved={() => { setEditingDirector(null); setMsg('Director details updated.'); load(); }} />}
     </div>
   );
 }
@@ -745,6 +753,43 @@ export function ResetPasswordModal({ user, onClose, onDone }) {
 }
 
 // Edit core employee fields (admin). Reuses the same field set as add.
+// Limited editor for a Director (CRM admin) surfaced in the employee list.
+// Only Name / Employee ID / Email — their CRM login is never touched.
+export function DirectorEditModal({ director, onClose, onSaved }) {
+  const userId = String(director._id).replace('admin:', '');
+  const [f, setF] = useState({ name: director.name || '', employeeId: director.employeeId || '', email: director.email || '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const save = async () => {
+    if (!f.name.trim()) return setErr('Name is required.');
+    setBusy(true); setErr('');
+    try { await hrApi(`/directors/${userId}`, { method: 'PUT', body: JSON.stringify(f) }); onSaved(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">Edit director</div><div className="text-xs text-slate-400">Their HRMS details only — CRM login is unaffected.</div></div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <label className="block text-xs font-bold text-slate-500">Name<input className={inputCls} value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Correct display name" /></label>
+          <label className="block text-xs font-bold text-slate-500">Employee ID<input className={inputCls} value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="e.g. QTX-D001" /></label>
+          <label className="block text-xs font-bold text-slate-500">Email<input className={inputCls} value={f.email} onChange={(e) => set('email', e.target.value)} placeholder="Contact / interview-invite email" /></label>
+          <div className="text-[11px] text-slate-400">This email is used for interview-panel calendar invites.</div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, isAdmin, onClose, onSaved }) {
   const [f, setF] = useState({
     name: user.name || '', employeeId: user.employeeId || '', phone: user.phone || '', designation: user.designation || '',

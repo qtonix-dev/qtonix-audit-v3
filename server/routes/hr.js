@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
@@ -331,11 +331,46 @@ router.get('/users', requireHrAccess, requireHrAdmin, async (req, res, next) => 
 router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrUser.findAll({ order: [['name', 'ASC']] });
-    res.json(rows.map((u) => ({
+    const list = rows.map((u) => ({
       _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,
       avatar: u.avatar, active: u.active, completion: profileCompletion(u),
-    })));
+    }));
+    // Also surface CRM admins as "Directors" so HR can pick them as interview
+    // panelists. Their HRMS-side details come from the overlay table (their CRM
+    // name may be a sales alias), falling back to the CRM record.
+    const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id', 'name', 'email'], order: [['name', 'ASC']] });
+    const overlays = await HrDirectorProfile.findAll();
+    const byUser = {}; overlays.forEach((o) => { byUser[o.userId] = o; });
+    admins.forEach((a) => {
+      const o = byUser[a.id];
+      list.push({
+        _id: `admin:${a.id}`, id: `admin:${a.id}`, isDirector: true,
+        name: (o && o.name) || a.name, employeeId: (o && o.employeeId) || '', email: (o && o.email) || a.email,
+        type: 'director', designation: 'Director', branch: '', department: 'Leadership',
+        avatar: (o && o.avatar) || null, active: true, completion: 100,
+      });
+    });
+    res.json(list);
+  } catch (e) { next(e); }
+});
+
+// Edit a director's HRMS-side details (name, employee id, email) only. Never
+// touches their CRM login. Admin only.
+router.put('/directors/:userId', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const userId = Number(req.params.userId);
+    const admin = await User.findOne({ where: { id: userId, role: 'admin' } });
+    if (!admin) return res.status(404).json({ error: 'Director (admin) not found.' });
+    const b = req.body || {};
+    const [row] = await HrDirectorProfile.findOrCreate({ where: { userId }, defaults: { userId } });
+    if (b.name !== undefined) row.name = String(b.name).slice(0, 160) || null;
+    if (b.employeeId !== undefined) row.employeeId = String(b.employeeId).slice(0, 60) || null;
+    if (b.email !== undefined) row.email = String(b.email).slice(0, 160) || null;
+    if (b.avatar !== undefined) row.avatar = b.avatar || null;
+    await row.save();
+    hrLog(req, 'director.update', row.name || admin.name);
+    res.json({ ok: true, director: { _id: `admin:${userId}`, name: row.name || admin.name, employeeId: row.employeeId || '', email: row.email || admin.email } });
   } catch (e) { next(e); }
 });
 
@@ -984,6 +1019,9 @@ async function hrLog(req, action, target) {
 async function notify(userId, { type, text, candidateId }) {
   try {
     if (!userId) return;
+    // Directors (CRM admins) are referenced as 'admin:<id>' in panels; they don't
+    // receive in-app HR notifications, so skip non-numeric ids.
+    if (!/^\d+$/.test(String(userId))) return;
     const body = String(text || '').slice(0, 500);
     // Dedupe: don't recreate an identical notification for the same user that
     // already exists unread (background jobs re-run and would otherwise pile up
@@ -1102,11 +1140,15 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
     const list = Array.isArray(row.feedback) ? row.feedback.slice() : [];
     list.unshift(entry);
     row.feedback = list; row.changed('feedback', true);
-    // Mark this panelist as having submitted for the interview.
+    // Mark this panelist as having submitted for the interview. An admin acting
+    // as a Director panelist is stored under the 'admin:<id>' panelist key.
     if (b.interviewId) {
       const ivs = (row.interviews || []).map((iv) => {
         if (iv.id !== b.interviewId) return iv;
-        const fbp = { ...(iv.feedbackByPanelist || {}) }; fbp[req.hrActor.id] = true;
+        const fbp = { ...(iv.feedbackByPanelist || {}) };
+        const adminKey = `admin:${req.hrActor.id}`;
+        const panelHasAdmin = (iv.panelists || []).some((p) => String(p.id) === adminKey);
+        fbp[req.isHrAdmin && panelHasAdmin ? adminKey : req.hrActor.id] = true;
         return { ...iv, feedbackByPanelist: fbp };
       });
       row.interviews = ivs; row.changed('interviews', true);

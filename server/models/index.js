@@ -1487,9 +1487,23 @@ const HrSurveyResponse = sequelize.define('HrSurveyResponse', {
 ] });
 HrSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// HRMS overlay for CRM admins ("Directors"). CRM admins appear in the HR
+// employee list so HR can pick them as interview panelists. Their CRM login is
+// never touched — this table only holds HRMS-side overrides (correct name,
+// employee id, contact email) since their CRM name may be a sales alias.
+const HrDirectorProfile = sequelize.define('HrDirectorProfile', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId: { type: DataTypes.INTEGER, allowNull: false, unique: true }, // CRM User.id
+  name: { type: DataTypes.STRING(160), allowNull: true },       // HRMS display name override
+  employeeId: { type: DataTypes.STRING(60), allowNull: true },
+  email: { type: DataTypes.STRING(160), allowNull: true },       // HRMS contact / invite email override
+  avatar: { type: DataTypes.TEXT, allowNull: true },
+}, { tableName: 'hr_director_profiles', indexes: [{ name: 'idx_hr_dir_user', fields: ['userId'] }] });
+HrDirectorProfile.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
