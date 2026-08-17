@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v192';
+const APP_VERSION = 'v193';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -64,6 +64,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../storage/uploads')));
 app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
+app.use('/api/surveys', require('./routes/crmSurvey'));
 app.use('/api/demo', demo);
 // Shareable training sandbox: /api/demo-app/<token>/... — token-gated inside
 // the router, serving fabricated data only. See routes/demoApp.js.

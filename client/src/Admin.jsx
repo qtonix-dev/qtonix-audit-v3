@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
+import CrmSurveyAdmin from './CrmSurvey.jsx';
 import { formatPhone } from './countries.js';
 
 /**
@@ -1523,7 +1524,7 @@ function Users({ me, say }) {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
     try {
-      const body = { name: edit.name, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, joiningDate: edit.joiningDate || null, maritalStatus: edit.maritalStatus || null, anniversary: edit.anniversary || null, canViewConverted: !!edit.canViewConverted, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], callHippoEmail: edit.callHippoEmail || null, aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
+      const body = { name: edit.name, email: edit.email, role: edit.role, jobType: edit.jobType, managerId: edit.managerId, targets: edit.targets, avatar: edit.avatar, phone: edit.phone, designation: edit.designation, birthday: edit.birthday || null, joiningDate: edit.joiningDate || null, maritalStatus: edit.maritalStatus || null, anniversary: edit.anniversary || null, canViewConverted: !!edit.canViewConverted, team: edit.team, shift: edit.shift, managerScopes: edit.managerScopes || [], callHippoEmail: edit.callHippoEmail || null, aliases: Array.isArray(edit.aliases) ? edit.aliases : String(edit.aliases || '').split(',').map((a) => a.trim()).filter(Boolean) };
       if (edit.newPassword) body.password = edit.newPassword;
       await api(`/admin/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
       setEdit(null); load(); say && say(`Updated ${edit.name}`, 'good');
@@ -1622,6 +1623,7 @@ function Users({ me, say }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+            <Field label="Login email" hint="The address this user signs in with"><input className={inputCls} value={edit.email || ''} onChange={(e) => setEdit({ ...edit, email: e.target.value })} placeholder="user@qtonix.com" /></Field>
             <Field label="Phone"><IndiaPhone value={edit.phone || ''} onChange={(v) => setEdit({ ...edit, phone: v })} /></Field>
             <Field label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></Field>
             <Field label="Role"><select className={inputCls} value={edit.role} onChange={(e) => setEdit({ ...edit, role: e.target.value })} disabled={edit._id === me.id || edit._id === me._id}><option value="agent">Sales agent</option><option value="manager">Manager</option><option value="leadmanager">Lead manager</option><option value="admin">Admin</option></select></Field>
@@ -2220,12 +2222,18 @@ function Limits({ settings, setSettings }) {
 function ActivityLog() {
   const [logs, setLogs] = useState(null);
   const [redOnly, setRedOnly] = useState(false);
-  const load = () => api('/admin/logs?limit=300').then(setLogs).catch(() => setLogs([]));
+  const [page, setPage] = useState(1);
+  const PER = 50;
+  const load = () => api('/admin/logs?limit=1000').then(setLogs).catch(() => setLogs([]));
   useEffect(() => { load(); }, []);
 
   // A log is "red" when it's a flagged copy-abuse event.
   const isRed = (l) => l.action === 'copy.flagged' || l.severity === 'alert';
-  const rows = (logs || []).filter((l) => (redOnly ? isRed(l) : true));
+  const allRows = (logs || []).filter((l) => (redOnly ? isRed(l) : true));
+  const pages = Math.max(1, Math.ceil(allRows.length / PER));
+  const curPage = Math.min(page, pages);
+  const rows = allRows.slice((curPage - 1) * PER, curPage * PER);
+  useEffect(() => { setPage(1); }, [redOnly]);
 
   return (
     <div>
@@ -2280,6 +2288,18 @@ function ActivityLog() {
               })}
             </tbody>
           </table>
+          {pages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-500">
+              <span>Showing {(curPage - 1) * PER + 1}–{Math.min(curPage * PER, allRows.length)} of {allRows.length}</span>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(1)} disabled={curPage === 1} className="px-2 py-1 rounded border border-slate-200 disabled:opacity-40">«</button>
+                <button onClick={() => setPage(curPage - 1)} disabled={curPage === 1} className="px-2 py-1 rounded border border-slate-200 disabled:opacity-40">Prev</button>
+                <span className="px-2 font-bold">Page {curPage} / {pages}</span>
+                <button onClick={() => setPage(curPage + 1)} disabled={curPage === pages} className="px-2 py-1 rounded border border-slate-200 disabled:opacity-40">Next</button>
+                <button onClick={() => setPage(pages)} disabled={curPage === pages} className="px-2 py-1 rounded border border-slate-200 disabled:opacity-40">»</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2313,7 +2333,7 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'email' && tab !== 'log' && tab !== 'targets';
 
@@ -2347,6 +2367,7 @@ export default function Admin() {
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}
+        {tab === 'survey' && <CrmSurveyAdmin />}
         {tab === 'tv' && <MotivatorTvSettings say={say} />}
         {tab === 'demo' && <DemoModeSettings say={say} />}
         {tab === 'log' && <ActivityLog />}

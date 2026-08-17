@@ -466,7 +466,7 @@ router.post('/users', async (req, res, next) => {
 
 router.put('/users/:id', async (req, res, next) => {
   try {
-    const { name, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, joiningDate, maritalStatus, anniversary, canViewConverted, callHippoEmail } = req.body || {};
+    const { name, email, role, phone, designation, active, password, team, shift, aliases, managerScopes, jobType, managerId, targets, avatar, birthday, joiningDate, maritalStatus, anniversary, canViewConverted, callHippoEmail } = req.body || {};
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -476,6 +476,17 @@ router.put('/users/:id', async (req, res, next) => {
     }
 
     if (name !== undefined) user.name = name;
+    // Login email is editable (this is the address the user signs in with).
+    // Validate format and enforce uniqueness across users.
+    if (email !== undefined) {
+      const next = String(email).toLowerCase().trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+      if (next !== (user.email || '').toLowerCase()) {
+        const clash = await User.findOne({ where: { email: next } });
+        if (clash && clash.id !== user.id) return res.status(409).json({ error: 'That email is already in use by another user.' });
+        user.email = next;
+      }
+    }
     if (birthday !== undefined) user.birthday = birthday || null;
     if (joiningDate !== undefined) user.joiningDate = joiningDate || null;
     if (maritalStatus !== undefined) {

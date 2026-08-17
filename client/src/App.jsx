@@ -1651,23 +1651,49 @@ export default function App() {
   useEffect(() => {
     if (!user || IS_DEMO) return;
 
-    // --- Copy-abuse detection: 3 copies within 30s → report one flagged event.
-    let copyTimes = [];
-    let lastFlagAt = 0;
-    const onCopy = () => {
-      const now = Date.now();
-      copyTimes = copyTimes.filter((t) => now - t < 30000);
-      copyTimes.push(now);
-      if (copyTimes.length >= 3 && now - lastFlagAt > 30000) {
-        lastFlagAt = now;
-        copyTimes = [];
-        api('/auth/security/copy-flag', {
-          method: 'POST',
-          body: JSON.stringify({ count: 3, windowMs: 30000, path: window.location.pathname }),
-        }).catch(() => {});
+    // --- Copy / inspect abuse: 3 suspicious actions within 30s → flag the event
+    // AND sign the user out (deters scraping / data exfiltration). Suspicious
+    // actions are: copying page data, and opening browser dev-tools / inspect.
+    let abuseTimes = [];
+    const forceLogout = (reason) => {
+      try {
+        api('/auth/security/copy-flag', { method: 'POST', body: JSON.stringify({ count: 3, windowMs: 30000, path: window.location.pathname, reason, action: 'auto-logout' }) }).catch(() => {});
+      } finally {
+        localStorage.removeItem('qtx_token');
+        // Small delay so the flag request is dispatched before we tear down.
+        setTimeout(() => { window.location.href = '/'; }, 60);
       }
     };
+    const registerAbuse = (reason) => {
+      const now = Date.now();
+      abuseTimes = abuseTimes.filter((t) => now - t < 30000);
+      abuseTimes.push(now);
+      if (abuseTimes.length >= 3) { abuseTimes = []; forceLogout(reason); }
+    };
+    const onCopy = () => registerAbuse('copy');
     document.addEventListener('copy', onCopy);
+
+    // Dev-tools / inspect detection. Two signals: (a) the window's inner vs outer
+    // size diverging sharply (docked dev-tools panel), and (b) a debugger-timing
+    // probe. Each detection counts as one abuse action, so 3 within 30s logs out.
+    let devtoolsOpen = false;
+    const checkDevtools = () => {
+      const threshold = 160;
+      const widthGap = window.outerWidth - window.innerWidth > threshold;
+      const heightGap = window.outerHeight - window.innerHeight > threshold;
+      const open = widthGap || heightGap;
+      if (open && !devtoolsOpen) { devtoolsOpen = true; registerAbuse('inspect'); }
+      else if (!open) { devtoolsOpen = false; }
+    };
+    const devtoolsTimer = setInterval(checkDevtools, 1000);
+    // Keyboard shortcuts that open inspect tools also count.
+    const onKeyInspect = (e) => {
+      const k = (e.key || '').toLowerCase();
+      if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i', 'j', 'c'].includes(k)) || ((e.ctrlKey || e.metaKey) && k === 'u')) {
+        registerAbuse('inspect-shortcut');
+      }
+    };
+    document.addEventListener('keydown', onKeyInspect);
 
     // --- Inactivity: after 5 minutes of no interaction, show a warning popup
     // with a countdown (handled by the popup component) rather than signing out
@@ -1696,6 +1722,8 @@ export default function App() {
 
     return () => {
       document.removeEventListener('copy', onCopy);
+      document.removeEventListener('keydown', onKeyInspect);
+      clearInterval(devtoolsTimer);
       activityEvents.forEach((e) => window.removeEventListener(e, onActivity));
       if (idleTimer) clearTimeout(idleTimer);
     };

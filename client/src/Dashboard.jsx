@@ -11,6 +11,7 @@ function fmtAge(ms) {
 import { Pagination } from './Leads.jsx';
 import { showCelebration } from './SaleCelebration.jsx';
 import SalesRace from './SalesRace.jsx';
+import { CrmSurveyGate } from './CrmSurvey.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
@@ -530,6 +531,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* Prompt to connect email until the user has done so. */}
       <DashboardGmailNotice />
+
+      {/* Pending team survey (popup + banner). */}
+      <CrmSurveyGate />
 
       {/* Celebration slider — rotates the latest sales win and today's
           birthdays / work + wedding anniversaries, 10s per slide. */}

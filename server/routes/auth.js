@@ -109,15 +109,18 @@ router.put('/me/profile', requireAuth, async (req, res, next) => {
  */
 router.post('/security/copy-flag', requireAuth, async (req, res, next) => {
   try {
-    const { count, windowMs, path } = req.body || {};
+    const { count, windowMs, path, reason, action } = req.body || {};
     const u = await User.findByPk(req.user.id);
+    const label = action === 'auto-logout'
+      ? `Auto sign-out — ${count || 3}+ ${reason || 'copy'} actions in ${Math.round((windowMs || 30000) / 1000)}s${path ? ` on ${String(path).slice(0, 120)}` : ''}`
+      : `${count || 3}+ copies in ${Math.round((windowMs || 30000) / 1000)}s${path ? ` on ${String(path).slice(0, 120)}` : ''}`;
     await AuditLog.create({
       userId: req.user.id,
       userName: req.user.name || (u && u.name) || '—',
       userRole: (u && u.role) || req.user.role || null,
       userEmail: (u && u.email) || null,
       action: 'copy.flagged',
-      target: `${count || 3}+ copies in ${Math.round((windowMs || 30000) / 1000)}s${path ? ` on ${String(path).slice(0, 120)}` : ''}`,
+      target: label,
       ip: req.ip,
       severity: 'alert',
     });

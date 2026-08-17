@@ -1501,9 +1501,47 @@ const HrDirectorProfile = sequelize.define('HrDirectorProfile', {
 }, { tableName: 'hr_director_profiles', indexes: [{ name: 'idx_hr_dir_user', fields: ['userId'] }] });
 HrDirectorProfile.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
+// team. Same shape as the HR survey so the shared AI service works unchanged. =====
+const CrmSurvey = sequelize.define('CrmSurvey', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(160), allowNull: false },
+  description: { type: DataTypes.TEXT, defaultValue: '' },
+  template: { type: DataTypes.STRING(60), defaultValue: 'employee_mood' },
+  questions: { type: DataTypes.JSON, defaultValue: [] },
+  frequency: { type: DataTypes.STRING(20), defaultValue: 'one_time' },
+  status: { type: DataTypes.STRING(20), defaultValue: 'active' },
+  period: { type: DataTypes.STRING(20), defaultValue: '' },
+  periodStartedAt: { type: DataTypes.DATE, allowNull: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), allowNull: true },
+  analysis: { type: DataTypes.JSON, defaultValue: {} },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'crm_surveys', indexes: [{ name: 'idx_crm_survey_active', fields: ['active'] }] });
+CrmSurvey.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const CrmSurveyResponse = sequelize.define('CrmSurveyResponse', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  surveyId: { type: DataTypes.INTEGER, allowNull: false },
+  period: { type: DataTypes.STRING(20), defaultValue: '' },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false }, // CRM User.id
+  employeeName: { type: DataTypes.STRING(120), allowNull: true },
+  department: { type: DataTypes.STRING(120), allowNull: true }, // role snapshot (unused in split)
+  branch: { type: DataTypes.STRING(120), allowNull: true },     // team (Bhubaneswar/Kolkata)
+  answers: { type: DataTypes.JSON, defaultValue: {} },
+  followups: { type: DataTypes.JSON, defaultValue: [] },
+  avgScore: { type: DataTypes.FLOAT, allowNull: true },
+  behavior: { type: DataTypes.JSON, defaultValue: null },
+  sentiment: { type: DataTypes.JSON, defaultValue: null },
+}, { tableName: 'crm_survey_responses', indexes: [
+  { name: 'idx_crm_sresp_survey', fields: ['surveyId'] },
+  { name: 'idx_crm_sresp_emp', fields: ['employeeId'] },
+] });
+CrmSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
