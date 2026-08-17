@@ -109,7 +109,7 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl my-8" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-extrabold text-[#050A1F] mb-1">{presetType === 'employee' ? 'Add employee' : 'Add user'}</h3>
         <p className="text-xs text-slate-400 mb-4">Enter the essentials to create the account. The rest of the profile is completed by the user after they sign in.</p>
@@ -646,7 +646,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Employees</h1>
         {canManage && <button onClick={() => setShow(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add employee</button>}
       </div>
-      {isHrManager && !isAdmin && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">As HR Manager you manage employees in the <b>{myBranch}</b> branch.</div>}
+      {isHrManager && !isAdmin && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">You have the privilege to manage employees in the <b>{myBranch}</b> branch.</div>}
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
       {/* Filters */}
@@ -775,7 +775,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-8" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="text-lg font-extrabold text-[#050A1F]">Edit employee</div>

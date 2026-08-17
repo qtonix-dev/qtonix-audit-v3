@@ -301,27 +301,55 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
       </div>
 
       {/* HR target progress (daily scheduling + monthly hiring) */}
-      {targets.length > 0 && (
+      {targets.length > 0 && (() => {
+        // Rank by monthly-hire achievement (primary target), then daily.
+        const scored = targets.map((t) => ({
+          ...t,
+          monthlyPct: t.monthlyTarget > 0 ? Math.round((t.monthlyDone / t.monthlyTarget) * 100) : null,
+          dailyPct: t.dailyTarget > 0 ? Math.round((t.dailyDone / t.dailyTarget) * 100) : null,
+        })).sort((a, b) => (b.monthlyPct ?? -1) - (a.monthlyPct ?? -1) || (b.monthlyDone - a.monthlyDone) || (b.dailyDone - a.dailyDone));
+        const leader = scored[0];
+        const medal = (i) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+        return (
         <div className="rounded-2xl border border-slate-100 bg-white p-5">
-          <div className="font-extrabold text-[#050A1F] mb-4">HR targets</div>
-          <div className="grid md:grid-cols-2 gap-x-8 gap-y-4">
-            {targets.map((t) => (
-              <div key={t.id} className="flex items-center gap-3">
-                <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">
-                  {t.avatar ? <img src={t.avatar} alt="" className="w-full h-full object-cover" /> : (t.name || '?')[0]}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-[#050A1F] truncate">{t.name}</div>
-                  <div className="grid grid-cols-2 gap-3 mt-1.5">
-                    {t.dailyTarget > 0 && <TargetBar label="Today's interviews" done={t.dailyDone} target={t.dailyTarget} color="#2563EB" />}
-                    {t.monthlyTarget > 0 && <TargetBar label="Hired this month" done={t.monthlyDone} target={t.monthlyTarget} color="#16A34A" />}
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-extrabold text-[#050A1F] flex items-center gap-2">🎯 HR targets race</div>
+            {leader && <div className="text-xs text-slate-500">Leading: <b className="text-[#050A1F]">{leader.name}</b>{leader.monthlyPct != null ? ` · ${leader.monthlyPct}% of monthly hires` : ''}</div>}
+          </div>
+          <div className="space-y-2.5">
+            {scored.map((t, i) => {
+              const hitMonthly = t.monthlyTarget > 0 && t.monthlyDone >= t.monthlyTarget;
+              const hitDaily = t.dailyTarget > 0 && t.dailyDone >= t.dailyTarget;
+              const barPct = t.monthlyPct != null ? Math.min(100, Math.max(4, t.monthlyPct)) : (t.dailyPct != null ? Math.min(100, Math.max(4, t.dailyPct)) : 4);
+              return (
+                <div key={t.id} className={`flex items-center gap-3 rounded-xl p-2.5 ${i === 0 ? 'bg-amber-50/60 border border-amber-100' : 'hover:bg-slate-50'}`}>
+                  <div className="w-7 text-center text-lg shrink-0">{medal(i)}</div>
+                  <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">
+                    {t.avatar ? <img src={t.avatar} alt="" className="w-full h-full object-cover" /> : (t.name || '?')[0]}
+                  </span>
+                  <div className="w-32 shrink-0 min-w-0">
+                    <div className="text-sm font-bold text-[#050A1F] truncate">{t.name}</div>
+                    <div className="text-[10px] text-slate-400">
+                      {t.dailyTarget > 0 && <span className={hitDaily ? 'text-blue-600 font-bold' : ''}>{t.dailyDone}/{t.dailyTarget} today</span>}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${barPct}%`, background: hitMonthly ? '#16A34A' : ORANGE }} />
+                    </div>
+                  </div>
+                  <div className="w-24 text-right shrink-0">
+                    <div className="font-extrabold text-xs text-[#050A1F]">{t.monthlyTarget > 0 ? `${t.monthlyDone}/${t.monthlyTarget}` : '—'} <span className="font-semibold text-slate-400">hired</span></div>
+                    {t.monthlyPct != null && <div className={`text-[10px] font-bold ${hitMonthly ? 'text-green-600' : 'text-slate-400'}`}>{hitMonthly ? '✓ target hit' : `${t.monthlyPct}%`}</div>}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+          <div className="text-[10px] text-slate-400 mt-3">Ranked by monthly hiring target · today's interviews shown per HR.</div>
         </div>
-      )}
+        );
+      })()}
 
       <div className="grid md:grid-cols-2 gap-4">
         {/* Candidates per stage (funnel) */}
@@ -2284,6 +2312,34 @@ function SurveyResults({ surveys }) {
           {/* Breakdowns */}
           <SentimentBreakdown title="By department" rows={data.byDepartment} />
           <SentimentBreakdown title="By branch" rows={data.byBranch} />
+
+          {/* Per-response detail with hesitation signals */}
+          {data.responses && data.responses.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+              <div className="text-sm font-extrabold text-[#050A1F] mb-1">Individual responses</div>
+              <div className="text-[11px] text-slate-400 mb-3">Hesitation = lingered noticeably or heavily self-edited on a question — a hint they may have answered diplomatically. Fed to the AI for a deeper read.</div>
+              <div className="space-y-1.5">
+                {data.responses.map((r) => {
+                  const sent = r.sentiment && r.sentiment.label;
+                  const sc = sent === 'positive' ? 'bg-green-100 text-green-700' : sent === 'negative' ? 'bg-red-100 text-red-700' : sent === 'neutral' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400';
+                  return (
+                    <div key={r._id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                      <div className="w-36 min-w-0">
+                        <div className="text-sm font-bold text-[#050A1F] truncate">{r.employeeName || 'Employee'}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{[r.department, r.branch].filter(Boolean).join(' · ') || '—'}</div>
+                      </div>
+                      <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sc}`}>{sent || 'not analysed'}</span>
+                      {r.sentiment && r.sentiment.tone && <span className="text-[11px] text-slate-500 italic">{r.sentiment.tone}</span>}
+                      {r.hesitationCount > 0 && (
+                        <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-purple-100 text-purple-700" title={r.hesitationQuestions.join(' · ')}>⚠ hesitation ×{r.hesitationCount}</span>
+                      )}
+                      <div className="ml-auto text-xs text-slate-400 shrink-0">{r.avgScore != null ? `${r.avgScore.toFixed(1)}/5` : '—'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2868,6 +2924,17 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  // --- Response-behaviour tracking (per question) ---
+  // timeMs: accumulated focus time; backspaces: deletions in text fields;
+  // changes: times they revised a scale/choice pick after the first.
+  const behavior = React.useRef({});
+  const focusAt = React.useRef({});
+  const beh = (qid) => (behavior.current[qid] = behavior.current[qid] || { timeMs: 0, backspaces: 0, changes: 0, answered: false });
+  const onFocusQ = (qid) => { focusAt.current[qid] = Date.now(); beh(qid); };
+  const onBlurQ = (qid) => { const t = focusAt.current[qid]; if (t) { beh(qid).timeMs += Date.now() - t; focusAt.current[qid] = 0; } };
+  const onKeyText = (qid, e) => { if (e.key === 'Backspace' || e.key === 'Delete') beh(qid).backspaces += 1; };
+  const noteChange = (qid) => { const b = beh(qid); if (b.answered) b.changes += 1; else b.answered = true; };
+  const flushTimers = () => { Object.keys(focusAt.current).forEach((qid) => onBlurQ(qid)); };
   const patch = (qid, p) => setAnswers((a) => ({ ...a, [qid]: { ...(a[qid] || {}), ...p } }));
   const toggleChoice = (qid, opt) => setAnswers((a) => { const cur = (a[qid] && a[qid].choices) || []; const next = cur.includes(opt) ? cur.filter((c) => c !== opt) : [...cur, opt]; return { ...a, [qid]: { ...(a[qid] || {}), choices: next } }; });
 
@@ -2899,9 +2966,12 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
 
   const submit = async () => {
     setBusy(true); setErr('');
+    flushTimers();
+    const behaviorPayload = {};
+    Object.keys(behavior.current).forEach((qid) => { const b = behavior.current[qid]; behaviorPayload[qid] = { timeMs: b.timeMs, backspaces: b.backspaces, changes: b.changes }; });
     const followups = followupQs.map((q) => ({ question: q.text, answer: followupA[q.id] || 'No answer' }));
     try {
-      const r = await hrApi(`/surveys/${survey._id}/respond`, { method: 'POST', body: JSON.stringify({ answers, followups }) });
+      const r = await hrApi(`/surveys/${survey._id}/respond`, { method: 'POST', body: JSON.stringify({ answers, followups, behavior: behaviorPayload }) });
       setSuccessMsg(r.message || 'Thank you for your feedback!'); setPhase('done');
     } catch (e) { setErr(e.message); setBusy(false); }
   };
@@ -2909,14 +2979,14 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
   const renderQuestion = (q, i) => {
     const a = answers[q.id] || {};
     return (
-      <div key={q.id} className="mb-5">
+      <div key={q.id} className="mb-5" onMouseEnter={() => onFocusQ(q.id)}>
         <div className="text-sm font-bold text-[#050A1F] mb-2">{i + 1}. {q.text}</div>
 
         {q.type === 'scale5' && (
           <>
             <div className="flex items-center gap-1.5">
               {[1, 2, 3, 4, 5].map((n) => (
-                <button key={n} onClick={() => patch(q.id, { score: n })}
+                <button key={n} onClick={() => { noteChange(q.id); onBlurQ(q.id); patch(q.id, { score: n }); }}
                   className={`w-11 h-11 rounded-lg font-extrabold text-white transition ${a.score === n ? 'ring-2 ring-offset-2 ring-slate-400 scale-105' : 'opacity-80 hover:opacity-100'}`}
                   style={{ background: SCALE_COLORS[n - 1] }}>{n}</button>
               ))}
@@ -2928,7 +2998,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
         {q.type === 'single_choice' && (
           <div className="space-y-1.5">
             {(q.options || []).map((opt) => (
-              <button key={opt} onClick={() => patch(q.id, { choice: opt })}
+              <button key={opt} onClick={() => { noteChange(q.id); onBlurQ(q.id); patch(q.id, { choice: opt }); }}
                 className={`w-full text-left flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm ${a.choice === opt ? 'border-[#FF6A00] bg-orange-50 text-orange-700 font-bold' : 'border-slate-200 text-slate-600'}`}>
                 <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${a.choice === opt ? 'border-[#FF6A00]' : 'border-slate-300'}`}>{a.choice === opt && <span className="w-2 h-2 rounded-full bg-[#FF6A00]" />}</span>{opt}
               </button>
@@ -2939,7 +3009,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
         {q.type === 'multi_choice' && (
           <div className="space-y-1.5">
             {(q.options || []).map((opt) => { const on = ((a.choices) || []).includes(opt); return (
-              <button key={opt} onClick={() => toggleChoice(q.id, opt)}
+              <button key={opt} onClick={() => { noteChange(q.id); toggleChoice(q.id, opt); }}
                 className={`w-full text-left flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm ${on ? 'border-[#FF6A00] bg-orange-50 text-orange-700 font-bold' : 'border-slate-200 text-slate-600'}`}>
                 <span className={`w-4 h-4 rounded border-2 flex items-center justify-center ${on ? 'border-[#FF6A00] bg-[#FF6A00]' : 'border-slate-300'}`}>{on && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><path d="M20 6L9 17l-5-5" /></svg>}</span>{opt}
               </button>
@@ -2948,11 +3018,15 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
         )}
 
         {q.type === 'short_answer' && (
-          <textarea className={inputCls} rows={2} placeholder="Your answer" value={a.text || ''} onChange={(e) => patch(q.id, { text: e.target.value })} />
+          <textarea className={inputCls} rows={2} placeholder="Your answer" value={a.text || ''}
+            onFocus={() => onFocusQ(q.id)} onBlur={() => onBlurQ(q.id)} onKeyDown={(e) => onKeyText(q.id, e)}
+            onChange={(e) => patch(q.id, { text: e.target.value })} />
         )}
 
         {q.comment && q.type !== 'short_answer' && (
-          <textarea className={inputCls + ' mt-2'} rows={2} placeholder="Write your comment (optional)" value={a.comment || ''} onChange={(e) => patch(q.id, { comment: e.target.value })} />
+          <textarea className={inputCls + ' mt-2'} rows={2} placeholder="Write your comment (optional)" value={a.comment || ''}
+            onFocus={() => onFocusQ(q.id)} onBlur={() => onBlurQ(q.id)} onKeyDown={(e) => onKeyText(q.id, e)}
+            onChange={(e) => patch(q.id, { comment: e.target.value })} />
         )}
       </div>
     );
@@ -3099,6 +3173,8 @@ function NotificationBell({ onOpenCandidate }) {
   const load = () => hrApi('/notifications').then((r) => { setItems(r.notifications || []); setUnread(r.unread || 0); }).catch(() => {});
   useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, []);
   const markAll = async () => { try { await hrApi('/notifications/read', { method: 'POST', body: JSON.stringify({}) }); setUnread(0); setItems((xs) => xs.map((x) => ({ ...x, read: true }))); } catch {} };
+  const removeOne = async (id) => { setItems((xs) => xs.filter((x) => x._id !== id)); setUnread((u) => Math.max(0, u - 1)); try { await hrApi(`/notifications/${id}`, { method: 'DELETE' }); } catch {} };
+  const clearAll = async () => { setItems([]); setUnread(0); try { await hrApi('/notifications/clear', { method: 'POST', body: JSON.stringify({}) }); } catch {} };
   const icon = (t) => t === 'mention' ? '💬' : t === 'application' ? '📥' : t === 'interview' ? '📅' : t === 'offer' ? '📄' : '🔔';
   return (
     <div className="relative">
@@ -3112,18 +3188,20 @@ function NotificationBell({ onOpenCandidate }) {
           <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
               <span className="font-extrabold text-[#050A1F] text-sm">Notifications</span>
-              {items.length > 0 && <button onClick={markAll} className="text-[11px] font-bold text-orange-600">Mark all read</button>}
+              {items.length > 0 && <button onClick={clearAll} className="text-[11px] font-bold text-orange-600">Clear all</button>}
             </div>
             <div className="max-h-96 overflow-auto">
               {items.length === 0 ? <div className="px-4 py-8 text-center text-slate-400 text-sm">You're all caught up.</div> : items.map((n) => (
-                <button key={n._id} onClick={() => { setOpen(false); if (n.candidateId && onOpenCandidate) onOpenCandidate(n.candidateId); }}
-                  className={`w-full text-left px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex gap-3 ${n.read ? '' : 'bg-orange-50/40'}`}>
-                  <span className="text-lg leading-none">{icon(n.type)}</span>
-                  <div className="min-w-0">
-                    <div className="text-sm text-slate-700">{n.text}</div>
-                    <div className="text-[11px] text-slate-400 mt-0.5">{timeAgo(n.createdAt)}</div>
-                  </div>
-                </button>
+                <div key={n._id} className={`group w-full px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex gap-3 items-start ${n.read ? '' : 'bg-orange-50/40'}`}>
+                  <button onClick={() => { setOpen(false); if (n.candidateId && onOpenCandidate) onOpenCandidate(n.candidateId); }} className="flex gap-3 text-left min-w-0 flex-1">
+                    <span className="text-lg leading-none">{icon(n.type)}</span>
+                    <div className="min-w-0">
+                      <div className="text-sm text-slate-700">{n.text}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{timeAgo(n.createdAt)}</div>
+                    </div>
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); removeOne(n._id); }} title="Dismiss" className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-600 opacity-0 group-hover:opacity-100">×</button>
+                </div>
               ))}
             </div>
           </div>

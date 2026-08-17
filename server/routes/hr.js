@@ -984,7 +984,13 @@ async function hrLog(req, action, target) {
 async function notify(userId, { type, text, candidateId }) {
   try {
     if (!userId) return;
-    await HrNotification.create({ userId, type: type || 'info', text: String(text || '').slice(0, 500), candidateId: candidateId || null });
+    const body = String(text || '').slice(0, 500);
+    // Dedupe: don't recreate an identical notification for the same user that
+    // already exists unread (background jobs re-run and would otherwise pile up
+    // the same alert every cycle).
+    const dup = await HrNotification.findOne({ where: { userId, text: body, read: false } });
+    if (dup) return;
+    await HrNotification.create({ userId, type: type || 'info', text: body, candidateId: candidateId || null });
   } catch (e) { console.error('[notify] failed:', e.message); }
 }
 // Resolve @mentions in a comment body to HrUsers and notify them.
@@ -1659,6 +1665,22 @@ router.post('/notifications/read', requireHrAccess, async (req, res, next) => {
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
+// Delete a single notification (persists — won't reappear on refresh).
+router.delete('/notifications/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
+    await HrNotification.destroy({ where: { id: req.params.id, userId: req.hrUser.id } });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+// Clear all of my notifications.
+router.post('/notifications/clear', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
+    await HrNotification.destroy({ where: { userId: req.hrUser.id } });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 
 // ---- Recruiter dashboard stats ----
 // ---- HR target progress (per HR user: daily scheduling + monthly hiring) ----
@@ -1966,12 +1988,20 @@ router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
 });
 
 // Admin clears a missed-commitment item.
-router.post('/missed-commitments/:candidateId/dismiss', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/missed-commitments/:candidateId/dismiss', requireHrAccess, async (req, res, next) => {
   try {
+    if (!canViewInternal(req)) return res.status(403).json({ error: 'Not allowed.' });
     const row = await HrCandidate.findByPk(req.params.candidateId);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     const aid = String((req.body || {}).activityId || '');
     if (!aid) return res.status(400).json({ error: 'activityId is required.' });
+    // Admins can clear anything; otherwise the item must belong to this user —
+    // either their candidate, or a feedback item addressed to them (fb-…-<myId>).
+    if (!req.isHrAdmin) {
+      const mine = row.recruiterId === req.hrActor.id || row.recruiterName === req.hrActor.name;
+      const myFeedback = aid.startsWith('fb-') && aid.endsWith(`-${req.hrActor.id}`);
+      if (!mine && !myFeedback) return res.status(403).json({ error: 'You can only clear your own items.' });
+    }
     const list = Array.isArray(row.dismissedMissed) ? row.dismissedMissed.slice() : [];
     if (!list.includes(aid)) list.push(aid);
     row.dismissedMissed = list; row.changed('dismissedMissed', true);
@@ -2350,6 +2380,34 @@ router.post('/surveys/:id/respond', requireHrAccess, async (req, res, next) => {
       answers[q.id] = entry;
     }
     const followups = Array.isArray(b.followups) ? b.followups.map((f) => ({ question: String(f.question || '').slice(0, 240), answer: String(f.answer || '').slice(0, 20) })) : [];
+
+    // Response-behaviour signals (client-tracked). Derive per-question hesitation
+    // relative to THIS person's own pace, so we can tell the AI where they paused
+    // or heavily self-edited (a sign of diplomatic, guarded answers).
+    const rawBeh = (b.behavior && typeof b.behavior === 'object') ? b.behavior : {};
+    const perQ = {};
+    const times = [];
+    for (const q of (survey.questions || [])) {
+      const x = rawBeh[q.id] || {};
+      const e = {
+        timeMs: Math.max(0, Math.round(Number(x.timeMs) || 0)),
+        backspaces: Math.max(0, Math.round(Number(x.backspaces) || 0)),
+        changes: Math.max(0, Math.round(Number(x.changes) || 0)),
+      };
+      perQ[q.id] = e;
+      if (e.timeMs > 0) times.push(e.timeMs);
+    }
+    const avgTime = times.length ? times.reduce((a, c) => a + c, 0) / times.length : 0;
+    // Flag questions where they lingered (>1.6x their own average) or self-edited
+    // a lot (many backspaces / repeated selection changes).
+    for (const q of (survey.questions || [])) {
+      const e = perQ[q.id];
+      e.slow = avgTime > 0 && e.timeMs >= avgTime * 1.6 && e.timeMs > 4000;
+      e.heavyEdit = e.backspaces >= 15 || e.changes >= 3;
+      e.hesitation = !!(e.slow || e.heavyEdit);
+    }
+    const behavior = { perQuestion: perQ, avgTimeMs: Math.round(avgTime), flagged: Object.entries(perQ).filter(([, e]) => e.hesitation).map(([qid]) => qid) };
+
     // Average of the scale scores only (choice/short-answer have no numeric value).
     const scores = (survey.questions || []).filter((q) => q.type === 'scale5').map((q) => Number((answers[q.id] || {}).score)).filter((n) => Number.isFinite(n));
     const avgScore = scores.length ? scores.reduce((a, c) => a + c, 0) / scores.length : null;
@@ -2359,7 +2417,7 @@ router.post('/surveys/:id/respond', requireHrAccess, async (req, res, next) => {
     const row = await HrSurveyResponse.create({
       surveyId: survey.id, period: survey.period, employeeId: me.id, employeeName: me.name,
       department: me.department || '', branch: me.branch || '',
-      answers, followups, avgScore,
+      answers, followups, avgScore, behavior,
     });
 
     // Personal, AI-written thank-you (best-effort).
@@ -2409,12 +2467,25 @@ router.get('/surveys/:id/results', requireHrAccess, requireHrAdmin, async (req, 
           positive: n ? Math.round(c.positive / n * 100) : 0, neutral: n ? Math.round(c.neutral / n * 100) : 0, negative: n ? Math.round(c.negative / n * 100) : 0 };
       }).sort((a, b) => b.count - a.count);
     };
+    // Per-response detail for the admin table (name, sentiment, and where the
+    // employee hesitated — surfaced from the behaviour signals).
+    const responseDetail = responses.map((r) => {
+      const beh = r.behavior || {};
+      const flagged = Array.isArray(beh.flagged) ? beh.flagged : [];
+      const flaggedQ = flagged.map((qid) => { const q = (survey.questions || []).find((x) => x.id === qid); return q ? q.text : null; }).filter(Boolean);
+      return {
+        _id: r.id, employeeName: r.employeeName, department: r.department, branch: r.branch,
+        avgScore: r.avgScore, sentiment: r.sentiment || null,
+        hesitationCount: flagged.length, hesitationQuestions: flaggedQ,
+      };
+    });
     res.json({
       survey: { _id: survey.id, name: survey.name, frequency: survey.frequency, questions: survey.questions },
       period, total, analysed: withSent.length,
       sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
       good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
       byDepartment: groupBy((r) => r.department), byBranch: groupBy((r) => r.branch),
+      responses: responseDetail,
       analysedAt: analysis ? analysis.at : null,
     });
   } catch (e) { next(e); }
@@ -2436,7 +2507,7 @@ router.post('/surveys/:id/analyze', requireHrAccess, requireHrAdmin, async (req,
     for (const r of responses) {
       if (r.sentiment && r.sentiment.label) continue;
       try {
-        const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore });
+        const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore, behavior: r.behavior });
         r.sentiment = sent; r.changed('sentiment', true); await r.save();
       } catch {}
     }

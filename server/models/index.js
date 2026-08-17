@@ -1477,6 +1477,9 @@ const HrSurveyResponse = sequelize.define('HrSurveyResponse', {
   answers: { type: DataTypes.JSON, defaultValue: {} },
   followups: { type: DataTypes.JSON, defaultValue: [] }, // [{ question, answer }]
   avgScore: { type: DataTypes.FLOAT, allowNull: true },
+  // Response-behaviour signals per question: { [qid]: { timeMs, backspaces, changes } }
+  // plus derived flags. Feeds the AI so it can read hesitation / diplomatic fear.
+  behavior: { type: DataTypes.JSON, defaultValue: null },
   sentiment: { type: DataTypes.JSON, defaultValue: null }, // { label, tone, note }
 }, { tableName: 'hr_survey_responses', indexes: [
   { name: 'idx_hr_sresp_survey', fields: ['surveyId'] },

@@ -515,13 +515,6 @@ function MailTab({ c }) {
   const [detail, setDetail] = useState(null); // full email being viewed
   const load = () => hrApi(`/candidates/${c.id}/emails`).then(setData).catch((e) => setData({ connected: false, error: e.message }));
   useEffect(() => { load(); }, [c.id]);
-  if (!data) return <Empty>Loading…</Empty>;
-  if (!data.connected) return (
-    <div className="text-center py-8">
-      <div className="text-sm text-slate-500 mb-2">The shared recruitment mailbox isn't linked yet.</div>
-      <div className="text-xs text-slate-400">Ask an admin to connect it in HR Admin → Recruitment mailbox.</div>
-    </div>
-  );
   const replyTo = (m) => {
     const when = m.date ? new Date(m.date).toLocaleString() : '';
     const who = `${m.fromName || ''} <${m.fromEmail || m.from || ''}>`.trim();
@@ -529,15 +522,23 @@ function MailTab({ c }) {
     const quoted = `<br><br><div style="border-left:2px solid #ccc;padding-left:10px;color:#555"><div>On ${when}, ${who} wrote:</div>${inner}</div>`;
     setCompose({ mode: 'reply', to: [c.email], subject: /^re:/i.test(m.subject || '') ? m.subject : `Re: ${m.subject || ''}`, inReplyTo: m.messageId || m.id, threadId: m.threadId, body: quoted });
   };
+  // The mailbox is unlinked only once we've loaded and it says so.
+  const notConnected = data && !data.connected;
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <div className="text-xs text-slate-400">Conversation from <b className="text-slate-600">{data.mailbox}</b></div>
-        <button onClick={() => setCompose({ mode: 'new', to: [c.email], subject: '' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}>
+        <div className="text-xs text-slate-400">{data ? (data.connected ? <>Conversation from <b className="text-slate-600">{data.mailbox}</b></> : 'Recruitment mailbox not linked') : 'Loading conversation…'}</div>
+        <button onClick={() => setCompose({ mode: 'new', to: [c.email], subject: '' })} disabled={notConnected} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-50" style={{ background: ORANGE }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M22 6l-10 7L2 6" /></svg> Compose
         </button>
       </div>
-      {(data.messages || []).length === 0 ? <Empty>No emails with this candidate yet.</Empty> : (
+      {!data ? <Empty>Loading…</Empty>
+        : notConnected ? (
+          <div className="text-center py-8">
+            <div className="text-sm text-slate-500 mb-2">The shared recruitment mailbox isn't linked yet.</div>
+            <div className="text-xs text-slate-400">Ask an admin to connect it in HR Admin → Recruitment mailbox.</div>
+          </div>
+        ) : (data.messages || []).length === 0 ? <Empty>No emails with this candidate yet.</Empty> : (
         <div className="space-y-2">
           {data.messages.map((m) => (
             <button key={m.id} onClick={() => setDetail(m)} className="w-full text-left rounded-xl border border-slate-200 p-3 hover:border-orange-200 hover:bg-orange-50/30 transition">

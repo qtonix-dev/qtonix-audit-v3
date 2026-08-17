@@ -66,21 +66,40 @@ async function followUpQuestions(apiKey, { questions, answers }) {
 
 /**
  * Per-response sentiment: reads tone + language, not just the literal words.
+ * Also weighs RESPONSE BEHAVIOUR (how long they lingered on each question and
+ * how much they self-edited) to catch diplomatic/guarded answers.
  * Returns { label: 'positive'|'neutral'|'negative', tone, note }.
  */
-async function analyseResponse(apiKey, { questions, answers, followups, avgScore }) {
+async function analyseResponse(apiKey, { questions, answers, followups, avgScore, behavior }) {
   const summary = describeSubmission({ questions, answers, followups });
+  // Turn behaviour into a readable hint the model can reason over.
+  let behaviourText = '';
+  if (behavior && behavior.perQuestion) {
+    const notes = [];
+    for (const q of (questions || [])) {
+      const e = behavior.perQuestion[q.id];
+      if (!e) continue;
+      const bits = [];
+      if (e.slow) bits.push('paused notably longer than their own average');
+      if (e.heavyEdit) bits.push(`self-edited heavily (${e.backspaces} backspaces, ${e.changes} answer changes)`);
+      if (bits.length) notes.push(`- "${q.text}": ${bits.join('; ')}`);
+    }
+    if (notes.length) behaviourText = `\n\nResponse behaviour signals (hesitation can mean they wanted to say more but answered diplomatically out of caution):\n${notes.join('\n')}`;
+  }
   const system = [
     'You are an expert people-analytics AI. Decode how the employee genuinely FEELS,',
     'not just what they literally wrote. Weigh tone, word choice, hedging, and the numeric scores.',
+    'ALSO weigh response behaviour: lingering long on a question or heavily self-editing often signals',
+    'the person wanted to say something but softened it out of caution or fear — read past the diplomatic surface.',
     'Classify overall sentiment as exactly one of: positive, neutral, negative.',
-    'Also give a one-word tone (e.g. frustrated, hopeful, disengaged, content, anxious) and a short note (<=20 words).',
+    'Give a one-word tone (e.g. frustrated, hopeful, disengaged, content, anxious, guarded) and a short note (<=24 words)',
+    'that, where relevant, calls out any guardedness the behaviour suggests.',
     'Return STRICT JSON: {"label":"...","tone":"...","note":"..."}. No commentary.',
   ].join(' ');
-  const out = await callClaude(apiKey, { system, maxTokens: 300, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}` }] });
+  const out = await callClaude(apiKey, { system, maxTokens: 300, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}${behaviourText}` }] });
   const p = parseJson(out);
   const label = ['positive', 'neutral', 'negative'].includes(p.label) ? p.label : 'neutral';
-  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 160) };
+  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 200) };
 }
 
 /**
