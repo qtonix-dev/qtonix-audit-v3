@@ -2222,18 +2222,28 @@ function Limits({ settings, setSettings }) {
 function ActivityLog() {
   const [logs, setLogs] = useState(null);
   const [redOnly, setRedOnly] = useState(false);
+  const [source, setSource] = useState('crm'); // crm | hrms | all
   const [page, setPage] = useState(1);
   const PER = 50;
   const load = () => api('/admin/logs?limit=1000').then(setLogs).catch(() => setLogs([]));
   useEffect(() => { load(); }, []);
 
-  // A log is "red" when it's a flagged copy-abuse event.
+  // HR-portal activity is namespaced with an `hr.` action prefix; everything
+  // else is Sales-CRM activity.
+  const isHr = (l) => String(l.action || '').startsWith('hr.');
   const isRed = (l) => l.action === 'copy.flagged' || l.severity === 'alert';
-  const allRows = (logs || []).filter((l) => (redOnly ? isRed(l) : true));
+  const allRows = (logs || []).filter((l) => {
+    if (source === 'crm' && isHr(l)) return false;
+    if (source === 'hrms' && !isHr(l)) return false;
+    if (redOnly && !isRed(l)) return false;
+    return true;
+  });
   const pages = Math.max(1, Math.ceil(allRows.length / PER));
   const curPage = Math.min(page, pages);
   const rows = allRows.slice((curPage - 1) * PER, curPage * PER);
-  useEffect(() => { setPage(1); }, [redOnly]);
+  useEffect(() => { setPage(1); }, [redOnly, source]);
+
+  const counts = { crm: (logs || []).filter((l) => !isHr(l)).length, hrms: (logs || []).filter(isHr).length };
 
   return (
     <div>
@@ -2250,10 +2260,19 @@ function ActivityLog() {
         </div>
       </div>
 
+      {/* Separate CRM vs HRMS activity. */}
+      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-4">
+        {[['crm', 'Sales CRM'], ['hrms', 'HRMS'], ['all', 'All']].map(([id, label]) => (
+          <button key={id} onClick={() => setSource(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${source === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>
+            {label}{id !== 'all' && counts[id] != null ? ` (${counts[id]})` : ''}
+          </button>
+        ))}
+      </div>
+
       {logs === null ? (
         <div className="text-slate-400 text-sm py-8">Loading…</div>
       ) : rows.length === 0 ? (
-        <div className="text-slate-400 text-sm py-8">No activity recorded{redOnly ? ' matching this filter' : ''} yet.</div>
+        <div className="text-slate-400 text-sm py-8">No {source === 'hrms' ? 'HRMS' : source === 'crm' ? 'Sales CRM' : ''} activity recorded{redOnly ? ' matching this filter' : ''} yet.</div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
           <table className="w-full text-sm">
