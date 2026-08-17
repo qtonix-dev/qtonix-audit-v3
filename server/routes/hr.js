@@ -675,7 +675,7 @@ router.put('/job-posts/:id/round-panels', requireHrAccess, requireHrManager, asy
 
 // Create or update a draft (the builder auto-saves as the HR moves through steps).
 // Only admins and HR managers create job posts.
-router.post('/job-posts', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/job-posts', requireHrAccess, requireScheduler, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'Job title is required.' });
@@ -684,6 +684,12 @@ router.post('/job-posts', requireHrAccess, requireHrManager, async (req, res, ne
     fields.createdByName = req.hrActor.name;
     if (!fields.stages || !fields.stages.length) fields.stages = DEFAULT_STAGES;
     if (!fields.formFields || !Object.keys(fields.formFields).length) fields.formFields = DEFAULT_FORM_FIELDS;
+    // Auto-assign the creating HR (unless admin) so it lands in their "My jobs".
+    if (req.hrActor.kind === 'hr') {
+      const assigned = Array.isArray(fields.assignedHrIds) ? fields.assignedHrIds.map(Number) : [];
+      if (!assigned.includes(Number(req.hrActor.id))) assigned.push(Number(req.hrActor.id));
+      fields.assignedHrIds = assigned;
+    }
     const row = await HrJobPost.create(fields);
     hrLog(req, 'job.create', row.title);
     res.json(row.toJSON());

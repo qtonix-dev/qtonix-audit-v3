@@ -540,7 +540,7 @@ function HrRecruitment({ isAdmin, me }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
-        {tab === 'jobs' && (isAdmin || (me && me.isHrManager)) && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
+        {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
       </div>
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
@@ -565,7 +565,7 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const [shareFor, setShareFor] = useState(null); // job to share
   const [assignFor, setAssignFor] = useState(null); // job to assign HR to
-  const [scope, setScope] = useState('all'); // all | mine
+  const [scope, setScope] = useState(isAdmin ? 'all' : 'mine'); // all | mine
   const myId = me && (me._id || me.id);
   const isMgr = !!(me && me.isHrManager);
   // Restrictive: only assigned HR (or admin / branch HR-manager) can add candidates.
@@ -792,6 +792,10 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
   const [stageFilter, setStageFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const myId = me && (me._id || me.id);
+  // Non-admins default to only their own candidates so others don't contact them.
+  const [mineOnly, setMineOnly] = useState(!isAdmin);
+  const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
   // Keyword search runs server-side (covers resume text); other filters are local.
   const load = (kw) => {
     const qs = kw && kw.trim() ? `?q=${encodeURIComponent(kw.trim())}` : '';
@@ -815,6 +819,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
   const allTags = Array.from(new Set(cands.flatMap((c) => c.tags || []))).sort();
 
   const filtered = cands.filter((c) => {
+    if (mineOnly && !isMineCand(c)) return false;
     if (jobFilter && c.jobPostId !== Number(jobFilter)) return false;
     if (stageFilter && (stageFilter === 'rejected' ? !c.rejected : c.stage !== stageFilter)) return false;
     if (sourceFilter && c.source !== sourceFilter) return false;
@@ -837,6 +842,10 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
     <div>
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+          <button onClick={() => setMineOnly(true)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
+          <button onClick={() => setMineOnly(false)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${!mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
+        </div>
         <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
         <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
           <option value="">All positions</option>
@@ -894,7 +903,6 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
                       <td className="px-4 py-3">
                         <button onClick={() => setViewId(c._id)} className="text-left">
                           <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
-                          <div className="text-xs text-slate-400">{c.email}</div>
                         </button>
                         {(c.rating > 0 || (c.tags || []).length > 0) && (
                           <div className="flex items-center gap-1.5 mt-1">
