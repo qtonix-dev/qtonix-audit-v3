@@ -1483,6 +1483,7 @@ function Users({ me, say }) {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [edit, setEdit] = useState(null);
+  const [deleting, setDeleting] = useState(null);
   const [uview, setUview] = useState('list');
 
   // Reassign an agent to a manager (and inherit that manager's team+shift so
@@ -1689,6 +1690,8 @@ function Users({ me, say }) {
         </div>
       )}
 
+      {deleting && <DeleteUserModal user={deleting} users={users} onClose={() => setDeleting(null)} onDone={(msg) => { setDeleting(null); load(); say && say(msg, 'good'); }} />}
+
       {uview === 'list' && <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1740,6 +1743,10 @@ function Users({ me, say }) {
                         ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64M12 2v10"/></svg>
                         : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
                     </button>
+                    <button title="Delete" onClick={() => setDeleting(u)}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-100 hover:text-red-600">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13"/></svg>
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1747,7 +1754,7 @@ function Users({ me, say }) {
           </tbody>
         </table>
       </div>}
-      <p className="text-[11px] text-slate-400 mt-3">Deactivating is a soft delete — their reports are preserved and keep working.</p>
+      <p className="text-[11px] text-slate-400 mt-3">Deactivating is a soft delete — their reports are preserved and keep working. Deleting removes the account permanently; you'll be asked to reassign their leads and reports first.</p>
     </div>
   );
 }
@@ -2219,6 +2226,63 @@ function Limits({ settings, setSettings }) {
 // ---------------------------------------------------------------------------
 // Activity log (persisted, from MySQL)
 // ---------------------------------------------------------------------------
+function DeleteUserModal({ user, users, onClose, onDone }) {
+  const [impact, setImpact] = useState(null);
+  const [reassignTo, setReassignTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { api(`/admin/users/${user._id}/impact`).then(setImpact).catch(() => setImpact({ leads: 0, reports: 0, directReports: 0 })); }, [user._id]);
+  const needsReassign = impact && (impact.leads > 0 || impact.reports > 0);
+  const options = (users || []).filter((u) => u._id !== user._id && u.active);
+  const del = async () => {
+    if (needsReassign && !reassignTo) { setErr('Choose who should receive their leads and reports.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api(`/admin/users/${user._id}`, { method: 'DELETE', body: JSON.stringify({ reassignTo: reassignTo ? Number(reassignTo) : null }) });
+      const moved = r.reassigned && (r.reassigned.leads || r.reassigned.reports);
+      onDone(`${user.name} deleted${moved ? ` — ${r.reassigned.leads} leads & ${r.reassigned.reports} reports reassigned` : ''}`);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100">
+          <div className="text-lg font-extrabold text-red-600">Delete {user.name}?</div>
+          <div className="text-xs text-slate-400 mt-0.5">This permanently removes the account. It can't be undone.</div>
+        </div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          {!impact ? <div className="text-sm text-slate-400">Checking what they own…</div> : (
+            <>
+              {needsReassign ? (
+                <>
+                  <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-sm text-amber-800">
+                    {user.name} owns <b>{impact.leads}</b> lead{impact.leads === 1 ? '' : 's'} and <b>{impact.reports}</b> report{impact.reports === 1 ? '' : 's'}. Reassign them to another user before deleting.
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-500 mb-1">Reassign leads &amp; reports to</div>
+                    <select className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm" value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+                      <option value="">Select a user…</option>
+                      {options.map((u) => <option key={u._id} value={u._id}>{u.name} ({u.role}{u.team ? ` · ${u.team}` : ''})</option>)}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-sm text-slate-600">This user owns no leads or reports, so nothing needs reassigning.</div>
+              )}
+              {impact.directReports > 0 && <div className="text-[11px] text-slate-400">{impact.directReports} user{impact.directReports === 1 ? '' : 's'} report to them — their reporting line will be cleared.</div>}
+            </>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={del} disabled={busy || !impact} className="rounded-lg px-5 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">{busy ? 'Deleting…' : 'Delete user'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActivityLog() {
   const [logs, setLogs] = useState(null);
   const [redOnly, setRedOnly] = useState(false);

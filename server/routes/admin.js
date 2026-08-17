@@ -535,18 +535,59 @@ router.put('/users/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.delete('/users/:id', async (req, res, next) => {
+// GET /api/admin/users/:id/impact — how many leads/reports this user owns, so
+// the delete dialog can prompt for a reassignment target.
+router.get('/users/:id/impact', async (req, res, next) => {
   try {
-    if (Number(req.params.id) === req.user.id) {
-      return res.status(400).json({ error: 'You cannot delete your own account.' });
-    }
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
-    // Soft delete: reports reference this agent and must keep working.
-    user.active = false;
-    await user.save();
-    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.deactivate', target: user.email, ip: req.ip });
-    res.json({ ok: true, message: 'Account deactivated. Their reports are preserved.' });
+    const [leads, reports, reportsBy] = await Promise.all([
+      Lead.count({ where: { ownerId: user.id } }),
+      Report.count({ where: { agentId: user.id } }),
+      User.count({ where: { managerId: user.id } }),
+    ]);
+    res.json({ leads, reports, directReports: reportsBy });
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/admin/users/:id — permanently remove a user. Their owned leads and
+// reports are reassigned to `reassignTo` (required when they own any), so nothing
+// is orphaned. Guards: can't delete self or the last active admin.
+router.delete('/users/:id', async (req, res, next) => {
+  try {
+    if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account.' });
+    const user = await User.findByPk(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    // Never allow removing the last remaining admin.
+    if (user.role === 'admin') {
+      const admins = await User.count({ where: { role: 'admin', active: true } });
+      if (admins <= 1) return res.status(400).json({ error: 'You cannot delete the last active admin.' });
+    }
+
+    const ownedLeads = await Lead.count({ where: { ownerId: user.id } });
+    const ownedReports = await Report.count({ where: { agentId: user.id } });
+    const reassignTo = (req.body && req.body.reassignTo) ? Number(req.body.reassignTo) : null;
+
+    if (ownedLeads > 0 || ownedReports > 0) {
+      if (!reassignTo) return res.status(400).json({ error: 'Choose a user to receive this person’s leads and reports before deleting.' });
+      if (reassignTo === user.id) return res.status(400).json({ error: 'Pick a different user to receive the leads and reports.' });
+      const target = await User.findOne({ where: { id: reassignTo, active: true } });
+      if (!target) return res.status(400).json({ error: 'The selected user to receive the data is not valid.' });
+      // Move ownership. enteredById (historical "who keyed it") is left intact.
+      if (ownedLeads > 0) await Lead.update({ ownerId: target.id, assignedAt: new Date() }, { where: { ownerId: user.id } });
+      if (ownedReports > 0) await Report.update({ agentId: target.id, agentName: target.name }, { where: { agentId: user.id } });
+    }
+
+    // Clear reporting lines that point at this user so nobody reports to a ghost.
+    await User.update({ managerId: null }, { where: { managerId: user.id } });
+    // Remove personal records tied to the account.
+    try { await MonthlyTarget.destroy({ where: { userId: user.id } }); } catch {}
+
+    const label = user.email;
+    await user.destroy();
+    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'user.delete', target: `${label}${reassignTo ? ` → reassigned ${ownedLeads} leads / ${ownedReports} reports` : ''}`, ip: req.ip });
+    res.json({ ok: true, reassigned: { leads: ownedLeads, reports: ownedReports } });
   } catch (e) { next(e); }
 });
 
