@@ -3023,7 +3023,7 @@ function HrAdmin({ user }) {
       {tab === 'shifts' && <ShiftsManager shifts={shifts} reload={load} setErr={setErr} />}
 
       {/* HOLIDAYS TAB */}
-      {tab === 'holidays' && <HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} />}
+      {tab === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'surveys' && <SurveyAdmin setErr={setErr} />}
@@ -3116,6 +3116,113 @@ function HolidaysManager({ holidays, branches, reload, setErr }) {
           <SharedField label="Applies to"><select className={inputCls} value={f.branch} onChange={(e) => set({ branch: e.target.value })}><option value="">All branches</option>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></SharedField>
           <div className="flex justify-end"><button onClick={submit} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: ORANGE }}>Add holiday</button></div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Admin editor for leave categories, leave rules, week-off rules and late-entry
+// rules. Saved into Settings.hrPolicy and enforced server-side.
+const WEEKOFF_OPTIONS = [['all_sundays', 'All Sundays'], ['sat_sun', 'All Saturdays & Sundays'], ['alt_sat_sun', '2nd & 4th Sat + all Sun'], ['custom', 'Custom days']];
+const WEEKDAYS = [['0', 'Sun'], ['1', 'Mon'], ['2', 'Tue'], ['3', 'Wed'], ['4', 'Thu'], ['5', 'Fri'], ['6', 'Sat']];
+function LeavePolicyManager({ branches, isAdmin, setErr }) {
+  const [pol, setPol] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi('/policy').then((r) => setPol(r.policy)).catch(() => {}); }, []);
+  if (!pol) return null;
+  const save = async () => {
+    setBusy(true); setSaved(false); setErr('');
+    try { const r = await hrApi('/policy', { method: 'PUT', body: JSON.stringify(pol) }); setPol(r.policy); setSaved(true); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const setCat = (i, obj) => setPol((p) => ({ ...p, categories: p.categories.map((c, idx) => idx === i ? { ...c, ...obj } : c) }));
+  const setCatAlloc = (i, k, v) => setPol((p) => ({ ...p, categories: p.categories.map((c, idx) => idx === i ? { ...c, allocation: { ...c.allocation, [k]: Number(v) || 0 } } : c) }));
+  const addCat = () => setPol((p) => ({ ...p, categories: [...p.categories, { id: `cat${Date.now()}`, name: 'New category', allocation: { casual: 12, medical: 12, privilege: 12, wfh: 24 } }] }));
+  const delCat = (i) => setPol((p) => ({ ...p, categories: p.categories.filter((_, idx) => idx !== i) }));
+  const setLate = (k, v) => setPol((p) => ({ ...p, lateRule: { ...p.lateRule, [k]: Number(v) || 0 } }));
+  const setWO = (branch, obj) => setPol((p) => ({ ...p, weekOff: { ...p.weekOff, [branch === '__default' ? 'default' : 'byBranch']: branch === '__default' ? { ...p.weekOff.default, ...obj } : { ...p.weekOff.byBranch, [branch]: { ...(p.weekOff.byBranch[branch] || {}), ...obj } } } }));
+  const woFor = (branch) => branch === '__default' ? (pol.weekOff.default || { type: 'all_sundays' }) : (pol.weekOff.byBranch[branch] || { type: '' });
+
+  if (!isAdmin) return null;
+  return (
+    <div className="space-y-6">
+      <div className="text-lg font-extrabold text-[#050A1F]">Leave & attendance policy</div>
+
+      {/* Categories */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-3"><div className="text-sm font-bold text-[#050A1F]">Leave categories</div><button onClick={addCat} className="text-xs font-bold text-[#FF4500]">+ Add category</button></div>
+        <div className="text-xs text-slate-400 mb-3">Group employees and assign allocations here, then pick the category on each employee's Leave tab.</div>
+        <div className="space-y-3">
+          {pol.categories.map((c, i) => (
+            <div key={c.id} className="border border-slate-100 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <input className={inputCls + ' max-w-xs'} value={c.name} onChange={(e) => setCat(i, { name: e.target.value })} />
+                <span className="text-[11px] text-slate-400">id: {c.id}</span>
+                {c.id !== 'default' && <button onClick={() => delCat(i)} className="ml-auto text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>}
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                {[['casual', 'Casual (CL)'], ['medical', 'Medical (ML)'], ['privilege', 'Privilege (PL)'], ['wfh', 'WFH']].map(([k, l]) => (
+                  <SharedField key={k} label={l}><input type="number" className={inputCls} value={c.allocation?.[k] ?? 0} onChange={(e) => setCatAlloc(i, k, e.target.value)} /></SharedField>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Leave rules */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Leave rules</div>
+        <div className="space-y-3 text-sm">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={!!pol.leaveRules.casual?.sandwichBlock} onChange={(e) => setPol((p) => ({ ...p, leaveRules: { ...p.leaveRules, casual: { ...p.leaveRules.casual, sandwichBlock: e.target.checked } } }))} /> Block <b>casual leave</b> immediately before/after a week-off or holiday (Fri/Mon etc.)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={!!pol.leaveRules.medical?.requireDocument} onChange={(e) => setPol((p) => ({ ...p, leaveRules: { ...p.leaveRules, medical: { ...p.leaveRules.medical, requireDocument: e.target.checked } } }))} /> Require a <b>medical document</b> for medical leave</label>
+          <div className="flex items-center gap-2"><span>Privilege leave must be applied</span><input type="number" className={inputCls + ' w-20'} value={pol.leaveRules.privilege?.noticeDays ?? 7} onChange={(e) => setPol((p) => ({ ...p, leaveRules: { ...p.leaveRules, privilege: { ...p.leaveRules.privilege, noticeDays: Number(e.target.value) || 0 } } }))} /><span>days in advance</span></div>
+        </div>
+      </div>
+
+      {/* Late entry rules */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Late-entry rules</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <SharedField label="Grace (minutes)"><input type="number" className={inputCls} value={pol.lateRule.graceMinutes} onChange={(e) => setLate('graceMinutes', e.target.value)} /></SharedField>
+          <SharedField label="Consecutive late = half day"><input type="number" className={inputCls} value={pol.lateRule.consecutiveForHalfDay} onChange={(e) => setLate('consecutiveForHalfDay', e.target.value)} /></SharedField>
+          <SharedField label="Monthly late = half day"><input type="number" className={inputCls} value={pol.lateRule.monthlyForHalfDay} onChange={(e) => setLate('monthlyForHalfDay', e.target.value)} /></SharedField>
+          <SharedField label="Shift hours / day"><input type="number" className={inputCls} value={pol.lateRule.shiftHours} onChange={(e) => setLate('shiftHours', e.target.value)} /></SharedField>
+        </div>
+        <div className="text-xs text-slate-400 mt-2">Deficit hours (short of the shift length) are deducted from salary: perDay = monthlyCTC/30, perHour = perDay/shiftHours, deduction = perHour × deficit hours.</div>
+      </div>
+
+      {/* Week-off rules */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold text-[#050A1F] mb-3">Week-off rules</div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-slate-600 w-40">Default (all branches)</span>
+            <select className={inputCls + ' max-w-xs'} value={woFor('__default').type} onChange={(e) => setWO('__default', { type: e.target.value })}>{WEEKOFF_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          </div>
+          {branches.map((b) => {
+            const wo = woFor(b.name);
+            return (
+              <div key={b._id} className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-slate-600 w-40">{b.name}</span>
+                <select className={inputCls + ' max-w-xs'} value={wo.type || ''} onChange={(e) => setWO(b.name, { type: e.target.value })}>
+                  <option value="">Use default</option>
+                  {WEEKOFF_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                {wo.type === 'custom' && (
+                  <div className="flex gap-1">{WEEKDAYS.map(([v, l]) => { const on = (wo.days || []).includes(Number(v)); return <button key={v} onClick={() => setWO(b.name, { days: on ? (wo.days || []).filter((x) => x !== Number(v)) : [...(wo.days || []), Number(v)] })} className={`px-2 py-1 rounded text-[11px] font-bold ${on ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>{l}</button>; })}</div>
+                )}
+              </div>
+            );
+          })}
+          <div className="text-xs text-slate-400">Bhubaneswar: 2nd & 4th Sat + all Sun. Kolkata: all Sat & Sun.</div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 justify-end">
+        {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓</span>}
+        <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save policy'}</button>
       </div>
     </div>
   );

@@ -262,6 +262,9 @@ export function ImageKitSection() {
 // ---------------------------------------------------------------------------
 const DOC_TYPES = ['PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Driving License', 'Utility Bill'];
 const HIRING_DOC_TYPES = ['Offer letter', 'Appointment letter', 'ID proof', 'Address proof', 'Education certificate', 'Experience letter', 'Relieving letter', 'Salary slip', 'Bank details', 'Photograph', 'Other'];
+// Types HR collects at onboarding, uploaded one by one into the employee's
+// ImageKit folder. "Other" lets HR type a custom document name.
+const ONBOARD_DOC_TYPES = ['Aadhar Card', 'Voter ID Card', 'Offer Letter', 'Experience Letter', 'Education Certificates', 'Other'];
 
 // Performance card kinds — praise/review are positive/neutral notes; yellow and
 // red are conduct flags (minor / major).
@@ -298,7 +301,8 @@ export function ProfilePage({ me, targetId }) {
   const [ikReady, setIkReady] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
-  const [editMode, setEditMode] = useState(false); // personal details: view vs edit
+  const [editMode, setEditMode] = useState(false); // legacy (kept for other tabs)
+  const [editSec, setEditSec] = useState(null); // 'personal' | 'bank' | 'documents' — which heading is being edited
   const [payModal, setPayModal] = useState(null); // {reason} when adding a salary record
   const [perfModal, setPerfModal] = useState(null); // {kind} when adding a performance card
 
@@ -481,86 +485,93 @@ export function ProfilePage({ me, targetId }) {
               </div>
             )}
 
-            {/* PERSONAL + DOCUMENTS (employee-editable, view-first) */}
-            {tab === 'personal' && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-extrabold text-[#050A1F]">Personal details</div>
-                  {(isSelf || canEditLocked) && (
-                    editMode
-                      ? <div className="flex gap-2"><button onClick={() => { setEditMode(false); reload(); }} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button><button onClick={async () => { await save(); setEditMode(false); }} disabled={saving} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save'}</button></div>
-                      : <button onClick={() => setEditMode(true)} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5"><Icon.Edit size={13} /> Edit</button>
-                  )}
+            {/* PERSONAL / BANK / DOCUMENTS — each heading edits independently */}
+            {tab === 'personal' && (() => {
+              const mayEdit = isSelf || canEditLocked;
+              const saveSec = async () => { await save(); setEditSec(null); };
+              const SectionHead = ({ id, title }) => (
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-extrabold text-[#050A1F]">{title}</div>
+                  {mayEdit && (editSec === id
+                    ? <div className="flex gap-2"><button onClick={() => { setEditSec(null); reload(); }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button><button onClick={saveSec} disabled={saving} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save'}</button></div>
+                    : <button onClick={() => setEditSec(id)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5"><Icon.Edit size={13} /> Edit</button>)}
                 </div>
-
-                {!editMode ? (
-                  <div className="space-y-6">
-                    <InfoGrid items={[
-                      ['Home address', p.personal?.homeAddress],
-                      ['Personal email', p.personal?.personalEmail],
-                      ['Date of birth', fmtLong(p.personal?.dob)],
-                      ['Marital status', p.personal?.maritalStatus],
-                      ...(p.personal?.maritalStatus === 'Married' ? [['Anniversary', fmtLong(p.personal?.anniversary)]] : []),
-                    ]} />
-                    <div>
-                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Bank details</div>
+              );
+              return (
+                <div className="space-y-8">
+                  {/* Personal details */}
+                  <div>
+                    <SectionHead id="personal" title="Personal details" />
+                    {editSec === 'personal' ? (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2"><Field label="Home address"><textarea className={inputCls} rows={2} value={p.personal?.homeAddress ?? ''} onChange={(e) => patch('personal', { homeAddress: e.target.value })} /></Field></div>
+                        <Field label="Personal email"><input className={inputCls} value={p.personal?.personalEmail ?? ''} onChange={(e) => patch('personal', { personalEmail: e.target.value })} /></Field>
+                        <Field label="Date of birth"><input type="date" className={inputCls} value={p.personal?.dob ?? ''} onChange={(e) => patch('personal', { dob: e.target.value })} /></Field>
+                        <Field label="Marital status"><select className={inputCls} value={p.personal?.maritalStatus ?? ''} onChange={(e) => patch('personal', { maritalStatus: e.target.value })}><option value="">— select —</option><option>Single</option><option>Married</option></select></Field>
+                        {p.personal?.maritalStatus === 'Married' && <Field label="Anniversary date"><input type="date" className={inputCls} value={p.personal?.anniversary ?? ''} onChange={(e) => patch('personal', { anniversary: e.target.value })} /></Field>}
+                      </div>
+                    ) : (
                       <InfoGrid items={[
-                        ['Bank name', p.bank?.bankName],
-                        ['Account number', p.bank?.accountNumber],
-                        ['IFSC code', p.bank?.ifsc],
-                        ['Account type', p.bank?.accountType],
+                        ['Home address', p.personal?.homeAddress],
+                        ['Personal email', p.personal?.personalEmail],
+                        ['Date of birth', fmtLong(p.personal?.dob)],
+                        ['Marital status', p.personal?.maritalStatus],
+                        ...(p.personal?.maritalStatus === 'Married' ? [['Anniversary', fmtLong(p.personal?.anniversary)]] : []),
                       ]} />
-                    </div>
-                    <div>
-                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Documents</div>
-                      {(p.documents || []).length === 0 ? <div className="text-sm text-slate-400">No documents added.</div> : (
-                        <div className="grid grid-cols-2 gap-2">
-                          {(p.documents || []).map((d, i) => (
-                            <div key={i} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2.5">
-                              <div className="min-w-0"><div className="text-sm font-semibold text-slate-700">{d.type}</div>{d.number && <div className="text-xs text-slate-400 truncate">{d.number}</div>}</div>
-                              {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 shrink-0">View ↗</a>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2"><Field label="Home address"><textarea className={inputCls} rows={2} value={p.personal?.homeAddress ?? ''} onChange={(e) => patch('personal', { homeAddress: e.target.value })} /></Field></div>
-                      <Field label="Personal email"><input className={inputCls} value={p.personal?.personalEmail ?? ''} onChange={(e) => patch('personal', { personalEmail: e.target.value })} /></Field>
-                      <Field label="Date of birth"><input type="date" className={inputCls} value={p.personal?.dob ?? ''} onChange={(e) => patch('personal', { dob: e.target.value })} /></Field>
-                      <Field label="Marital status"><select className={inputCls} value={p.personal?.maritalStatus ?? ''} onChange={(e) => patch('personal', { maritalStatus: e.target.value })}><option value="">— select —</option><option>Single</option><option>Married</option></select></Field>
-                      {p.personal?.maritalStatus === 'Married' && <Field label="Anniversary date"><input type="date" className={inputCls} value={p.personal?.anniversary ?? ''} onChange={(e) => patch('personal', { anniversary: e.target.value })} /></Field>}
-                    </div>
-                    <div>
-                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Bank details</div>
+
+                  {/* Bank details */}
+                  <div>
+                    <SectionHead id="bank" title="Bank details" />
+                    {editSec === 'bank' ? (
                       <div className="grid grid-cols-2 gap-4">
                         <Field label="Bank name"><input className={inputCls} value={p.bank?.bankName ?? ''} onChange={(e) => patch('bank', { bankName: e.target.value })} /></Field>
                         <Field label="Account number"><input className={inputCls} value={p.bank?.accountNumber ?? ''} onChange={(e) => patch('bank', { accountNumber: e.target.value })} /></Field>
                         <Field label="IFSC code"><input className={inputCls} value={p.bank?.ifsc ?? ''} onChange={(e) => patch('bank', { ifsc: e.target.value })} /></Field>
                         <Field label="Account type"><select className={inputCls} value={p.bank?.accountType ?? ''} onChange={(e) => patch('bank', { accountType: e.target.value })}><option value="">— select —</option><option>Saving</option><option>Office Salary Account</option></select></Field>
                       </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Documents</div>
+                    ) : (
+                      <InfoGrid items={[
+                        ['Bank name', p.bank?.bankName],
+                        ['Account number', p.bank?.accountNumber],
+                        ['IFSC code', p.bank?.ifsc],
+                        ['Account type', p.bank?.accountType],
+                      ]} />
+                    )}
+                  </div>
+
+                  {/* Documents — HR uploads onboarding documents one by one */}
+                  <div>
+                    <SectionHead id="documents" title="Documents" />
+                    {editSec === 'documents' ? (
                       <div className="space-y-3">
                         {(p.documents || []).map((d, i) => (
                           <div key={i} className="grid grid-cols-12 gap-2 items-end border border-slate-100 rounded-lg p-3">
-                            <div className="col-span-4"><Field label="Type"><select className={inputCls} value={d.type} onChange={(e) => setDoc(i, { type: e.target.value })}>{DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field></div>
-                            <div className="col-span-4"><Field label="Number"><input className={inputCls} value={d.number} onChange={(e) => setDoc(i, { number: e.target.value })} /></Field></div>
-                            <div className="col-span-3">{d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View file ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setDoc(i, { url }))} /></label>}</div>
+                            <div className="col-span-4"><Field label="Type"><select className={inputCls} value={ONBOARD_DOC_TYPES.includes(d.type) ? d.type : 'Other'} onChange={(e) => setDoc(i, { type: e.target.value, customType: e.target.value === 'Other' ? (d.customType || '') : '' })}>{ONBOARD_DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field></div>
+                            {(d.type === 'Other' || !ONBOARD_DOC_TYPES.includes(d.type)) && <div className="col-span-4"><Field label="Document name"><input className={inputCls} value={d.customType ?? ''} onChange={(e) => setDoc(i, { customType: e.target.value })} placeholder="e.g. PAN Card" /></Field></div>}
+                            <div className={`${(d.type === 'Other' || !ONBOARD_DOC_TYPES.includes(d.type)) ? 'col-span-3' : 'col-span-7'}`}>{d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View file ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setDoc(i, { url }))} /></label>}</div>
                             <div className="col-span-1 text-right"><button onClick={() => delDoc(i)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button></div>
                           </div>
                         ))}
-                        <button onClick={addDoc} className="text-xs font-bold text-[#FF4500]">+ Add document</button>
+                        <button onClick={() => setP((s) => ({ ...s, documents: [...(s.documents || []), { type: 'Aadhar Card', customType: '', url: '' }] }))} className="text-xs font-bold text-[#FF4500]">+ Add document</button>
                       </div>
-                    </div>
+                    ) : (
+                      (p.documents || []).length === 0 ? <div className="text-sm text-slate-400">No documents added.</div> : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {(p.documents || []).map((d, i) => (
+                            <div key={i} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2.5">
+                              <div className="min-w-0 flex items-center gap-2"><span className="text-slate-400"><Icon.Doc size={16} /></span><div className="text-sm font-semibold text-slate-700 truncate">{d.type === 'Other' ? (d.customType || 'Other') : d.type}</div></div>
+                              {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 shrink-0">View ↗</a>}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              );
+            })()}
 
             {/* PAYROLL & COMPENSATION + PERFORMANCE (Admin / HR Manager edit) */}
             {tab === 'payroll' && (
@@ -904,11 +915,22 @@ function LeaveTab({ employeeId, canManage }) {
   useEffect(() => { load(); }, [employeeId]);
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
   const del = async (id) => { if (!window.confirm('Remove this leave record?')) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  const setCategory = async (categoryId) => { try { await hrApi(`/employees/${employeeId}/leave-category`, { method: 'PUT', body: JSON.stringify({ categoryId, clearOverride: true }) }); load(); } catch (e) { alert(e.message); } };
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-extrabold text-[#050A1F]">Leave balances</div>
-        {canManage && <div className="flex gap-2"><button onClick={() => setAllocModal(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Set allocation</button><button onClick={() => setAddModal(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Record leave</button></div>}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <div className="text-sm font-extrabold text-[#050A1F]">Leave balances</div>
+          {(data.categories || []).length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Category</span>
+              <select disabled={!canManage} value={data.leaveCategory || 'default'} onChange={(e) => setCategory(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-bold disabled:opacity-60">
+                {data.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        {canManage && <div className="flex gap-2"><button onClick={() => setAllocModal(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Override allocation</button><button onClick={() => setAddModal(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Record leave</button></div>}
       </div>
       <div className="grid grid-cols-4 gap-3">
         {LEAVE_TYPES.map(([k, label]) => {
@@ -922,6 +944,8 @@ function LeaveTab({ employeeId, canManage }) {
           );
         })}
       </div>
+
+      {canManage && <AttendanceDeductionCard employeeId={employeeId} />}
 
       <div>
         <div className="text-sm font-extrabold text-[#050A1F] mb-3">Leave records</div>
@@ -956,13 +980,25 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [duration, setDuration] = useState('full');
   const [reason, setReason] = useState('');
+  const [documentUrl, setDocumentUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [elig, setElig] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [blockErr, setBlockErr] = useState('');
   useEffect(() => { hrApi(`/employees/${employeeId}/leave-eligibility?date=${date}`).then(setElig).catch(() => setElig(null)); }, [date, employeeId]);
-  const save = async () => {
-    setBusy(true);
-    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify({ type, date, duration, reason, paid: true }) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+  const doSave = async (force) => {
+    setBusy(true); setBlockErr('');
+    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify({ type, date, duration, reason, paid: true, documentUrl, force }) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
+    catch (e) {
+      // Policy blocks come back with a message; offer an override.
+      if (e.status === 400 && /week-off|advance|medical/i.test(e.message)) { setBlockErr(e.message); setBusy(false); }
+      else { alert(e.message); setBusy(false); }
+    }
+  };
+  const uploadMedical = async (file) => {
+    if (!file) return; setUploading(true);
+    try { const { url } = await uploadToImageKit(file, `/qtonix-hr/employees/id${employeeId}/medical`, file.name); setDocumentUrl(url); }
+    catch (e) { alert('Upload failed: ' + e.message); } finally { setUploading(false); }
   };
   const unpaidWarn = elig && !elig.paidAllowed && type !== 'wfh';
   return (
@@ -971,8 +1007,8 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Record leave</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Type"><select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>{LEAVE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
-            <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+            <Field label="Type"><select className={inputCls} value={type} onChange={(e) => { setType(e.target.value); setBlockErr(''); }}>{LEAVE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+            <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => { setDate(e.target.value); setBlockErr(''); }} /></Field>
           </div>
           {type !== 'wfh' && (
             <div>
@@ -980,16 +1016,62 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
               <div className="flex gap-2">{[['full', 'Full day'], ['half', 'Half day']].map(([k, l]) => <button key={k} onClick={() => setDuration(k)} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === k ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>{l}</button>)}</div>
             </div>
           )}
+          {type === 'medical' && (
+            <Field label="Medical document">
+              {documentUrl ? <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
+                : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Upload certificate'}<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>}
+            </Field>
+          )}
           <Field label="Reason"><textarea className={inputCls} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           {unpaidWarn && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">Paid leave isn't allowed during {elig.reason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}. This will be saved as <b>unpaid</b>.</div>}
+          {blockErr && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{blockErr}</div>}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Record leave'}</button>
+          {blockErr
+            ? <button onClick={() => doSave(true)} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Saving…' : 'Override & record'}</button>
+            : <button onClick={() => doSave(false)} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Record leave'}</button>}
         </div>
       </div>
     </div>
   );
+}
+
+// Monthly attendance deduction summary — late days, deficit hours, salary impact.
+function AttendanceDeductionCard({ employeeId }) {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [d, setD] = useState(null);
+  useEffect(() => { hrApi(`/employees/${employeeId}/attendance-summary?month=${month}`).then(setD).catch(() => setD(null)); }, [month, employeeId]);
+  const monthLabel = (() => { const [y, m] = month.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' }); })();
+  return (
+    <div className="rounded-2xl border border-slate-200/70 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-extrabold text-[#050A1F]">Attendance & salary impact</div>
+        <input type="month" className="rounded-lg border border-slate-300 px-2 py-1 text-xs" value={month} onChange={(e) => setMonth(e.target.value)} />
+      </div>
+      {!d ? <div className="text-slate-400 text-sm">Loading…</div> : (
+        <div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <Stat label="Late days" value={d.lateDays} />
+            <Stat label="Max consecutive" value={d.maxConsecutiveLate} />
+            <Stat label="Half-day penalties" value={d.penaltyHalfDays} />
+            <Stat label="Deficit hours" value={d.deficitHours} />
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4 text-sm space-y-1">
+            <div className="flex justify-between"><span className="text-slate-500">Per-day salary</span><span className="font-bold">₹{d.perDaySalary.toLocaleString('en-IN')}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Per-hour</span><span className="font-bold">₹{d.perHour.toLocaleString('en-IN')}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Deficit deduction ({d.deficitHours}h)</span><span className="font-bold text-red-600">−₹{d.deficitDeduction.toLocaleString('en-IN')}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Half-day deduction ({d.penaltyHalfDays})</span><span className="font-bold text-red-600">−₹{d.halfDayDeduction.toLocaleString('en-IN')}</span></div>
+            <div className="flex justify-between border-t border-slate-200 pt-1 mt-1"><span className="font-bold text-[#050A1F]">Total deduction — {monthLabel}</span><span className="font-extrabold text-red-600">−₹{d.totalDeduction.toLocaleString('en-IN')}</span></div>
+          </div>
+          {d.monthlyCtc === 0 && <div className="text-[11px] text-amber-600 mt-2">Add a salary record in Payroll to calculate the deduction amount.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+function Stat({ label, value }) {
+  return <div className="rounded-xl border border-slate-100 p-3"><div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div><div className="text-xl font-extrabold text-[#050A1F] mt-0.5">{value}</div></div>;
 }
 
 function LeaveAllocModal({ employeeId, current, onClose, onSaved }) {

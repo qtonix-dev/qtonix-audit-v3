@@ -435,10 +435,35 @@ const Settings = sequelize.define(
       defaultValue: { seranking: '', anthropic: '', openai: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '', hrMailboxToken: '' },
     },
 
-    // Shared HR recruitment mailbox (e.g. career@qtonix.com). One inbox all
-    // recruiters send from and see. Refresh token lives in apiKeys.hrMailboxToken
-    // (encrypted); this holds the address and connection metadata.
-    hrMailbox: { type: DataTypes.JSON, defaultValue: { email: '', connectedAt: null } },
+    // HR leave / attendance policy. Holds leave categories (allocation groups),
+    // per-type leave rules, week-off rules by branch, and late-entry rules used
+    // for the salary-deduction calculation. See defaults in initDb.
+    hrPolicy: {
+      type: DataTypes.JSON,
+      defaultValue: {
+        categories: [
+          { id: 'default', name: 'Default', allocation: { casual: 12, medical: 12, privilege: 12, wfh: 24 } },
+        ],
+        leaveRules: {
+          casual: { sandwichBlock: true },   // CL not allowed adjacent to week-off/holiday
+          medical: { requireDocument: true, sandwichBlock: false },
+          privilege: { noticeDays: 7 },      // must inform 7 days prior
+          wfh: {},
+        },
+        lateRule: {
+          graceMinutes: 30,                  // after shift start + grace = late
+          consecutiveForHalfDay: 3,          // 3 consecutive late = half day
+          monthlyForHalfDay: 6,              // 6 non-consecutive late in a month = half day
+          shiftHours: 9,                     // expected working hours/day
+        },
+        weekOff: {
+          // Per-branch week-off rule. type: 'all_sundays' | 'sat_sun' |
+          // 'alt_sat_sun' (2nd & 4th Sat + all Sun) | 'custom'.
+          byBranch: {},
+          default: { type: 'all_sundays' },
+        },
+      },
+    },
     // Additional shared HR mailboxes (multi-inbox). Each: { id, email, label,
     // connectedAt }. Its refresh token is stored in apiKeys as
     // `hrMailboxToken:<id>` (encrypted). The legacy single hrMailbox above is
@@ -1473,6 +1498,7 @@ const HrLeave = sequelize.define('HrLeave', {
   duration: { type: DataTypes.STRING(10), defaultValue: 'full' }, // full|half
   paid: { type: DataTypes.BOOLEAN, defaultValue: true },
   reason: { type: DataTypes.STRING(300), allowNull: true },
+  documentUrl: { type: DataTypes.STRING(500), allowNull: true }, // medical certificate etc.
   status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
   appliedById: { type: DataTypes.INTEGER, allowNull: true },
 }, { tableName: 'hr_leaves', indexes: [{ name: 'idx_hr_leave_emp', fields: ['employeeId'] }] });

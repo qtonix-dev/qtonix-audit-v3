@@ -623,7 +623,10 @@ router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     if (!canManagePeople(req) && !isSelf) return res.status(403).json({ error: 'Not allowed.' });
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const alloc = allocationFor(policy, emp);
+    const catId = (emp.profile && emp.profile.leaveCategory) || 'default';
     const rows = await HrLeave.findAll({ where: { employeeId: id }, order: [['date', 'DESC']] });
     // Used = sum of paid leave days per type (half = 0.5). WFH tracked separately.
     const usedPaid = { casual: 0, medical: 0, privilege: 0, wfh: 0 };
@@ -634,7 +637,7 @@ router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     });
     res.json({
       canManage: canManagePeople(req),
-      allocation: alloc, usedPaid, usedUnpaid,
+      allocation: alloc, usedPaid, usedUnpaid, leaveCategory: catId, categories: policy.categories,
       balance: Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (usedPaid[k] || 0)).toFixed(1)])),
       leaves: rows.map((r) => r.toJSON()),
     });
@@ -657,6 +660,91 @@ router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, 
   } catch (e) { next(e); }
 });
 
+// Assign an employee to a leave category (Admin / HR Manager). The category's
+// allocation then applies to them (unless a per-employee override exists).
+router.put('/employees/:id/leave-category', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can change the leave category.' });
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const catId = String((req.body && req.body.categoryId) || 'default');
+    emp.profile = { ...(emp.profile || {}), leaveCategory: catId };
+    // Clear any per-employee override so the category allocation takes effect.
+    if (req.body && req.body.clearOverride) delete emp.profile.leaveAllocation;
+    emp.changed('profile', true); await emp.save();
+    hrLog(req, 'leave.category', `${emp.name} → ${catId}`);
+    res.json({ ok: true, leaveCategory: catId });
+  } catch (e) { next(e); }
+});
+
+// Monthly attendance summary + late-entry salary deduction for an employee.
+// Late = login later than shift start + grace. Half-day penalties: N consecutive
+// late, or M non-consecutive late in the month. Deficit hours (short of the
+// shift length on worked days) convert to a salary deduction.
+router.get('/employees/:id/attendance-summary', requireHrAccess, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const isSelf = req.hrUser && req.hrUser.id === id;
+    if (!canManagePeople(req) && !isSelf) return res.status(403).json({ error: 'Not allowed.' });
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date().toISOString().slice(0, 7);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const lateRule = policy.lateRule;
+    const shift = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+    const shiftStart = shift && shift.startTime ? shift.startTime : '09:30';
+    const shiftHours = Number(lateRule.shiftHours) || 9;
+    const rows = await HrAttendance.findAll({ where: { employeeId: id, date: { [Op.like]: `${month}-%` } }, order: [['date', 'ASC']] });
+
+    const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const graceLimit = toMin(shiftStart) + (Number(lateRule.graceMinutes) || 30);
+
+    let lateDays = 0, deficitMinutes = 0, consecRun = 0, maxConsec = 0;
+    const lateHalfDays = []; // dates auto-marked half-day due to lateness
+    const perDay = [];
+    for (const r of rows) {
+      const login = toMin(r.loginTime); const logout = toMin(r.logoutTime);
+      let isLate = false;
+      if ((r.status === 'present' || r.status === 'half_day') && login != null) {
+        isLate = login > graceLimit;
+        // Deficit = shortfall vs shift hours (only counts worked days with both times).
+        if (logout != null) {
+          const worked = logout - login; const expected = shiftHours * 60;
+          if (worked < expected) deficitMinutes += (expected - worked);
+        }
+      }
+      if (isLate) { lateDays += 1; consecRun += 1; maxConsec = Math.max(maxConsec, consecRun); }
+      else consecRun = 0;
+      perDay.push({ date: r.date, status: r.status, late: isLate, loginTime: r.loginTime, logoutTime: r.logoutTime });
+    }
+    // Half-day penalties: number of half-days from consecutive runs of >= threshold,
+    // plus (if total late >= monthly threshold) one more.
+    const consecHalf = Math.floor(maxConsec / (lateRule.consecutiveForHalfDay || 3));
+    const monthlyHalf = lateDays >= (lateRule.monthlyForHalfDay || 6) ? 1 : 0;
+    const penaltyHalfDays = consecHalf + monthlyHalf;
+
+    // Salary deduction from deficit hours. perDaySalary = monthlyCTC/30;
+    // perHour = perDaySalary/shiftHours; deduction = perHour * deficitHours.
+    const payHist = (emp.profile && emp.profile.payrollHistory) || [];
+    const latest = payHist.slice().sort((a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || ''))[0];
+    const monthlyCtc = latest ? Number(latest.ctc) / 12 : 0; // ctc stored annual → monthly
+    const perDaySalary = monthlyCtc / 30;
+    const perHour = perDaySalary / shiftHours;
+    const deficitHours = +(deficitMinutes / 60).toFixed(2);
+    const deficitDeduction = +(perHour * deficitHours).toFixed(2);
+    const halfDayDeduction = +(perDaySalary * 0.5 * penaltyHalfDays).toFixed(2);
+
+    res.json({
+      month, shiftStart, graceMinutes: lateRule.graceMinutes, shiftHours,
+      lateDays, maxConsecutiveLate: maxConsec, penaltyHalfDays,
+      deficitHours, monthlyCtc: +monthlyCtc.toFixed(2), perDaySalary: +perDaySalary.toFixed(2), perHour: +perHour.toFixed(2),
+      deficitDeduction, halfDayDeduction, totalDeduction: +(deficitDeduction + halfDayDeduction).toFixed(2),
+      canManage: canManagePeople(req), perDay,
+    });
+  } catch (e) { next(e); }
+});
+
 // Record a leave. Enforces the probation/notice rule: paid leave isn't allowed
 // then, but the leave can still be taken as UNPAID.
 router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
@@ -669,6 +757,41 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
     if (!type) return res.status(400).json({ error: 'Invalid leave type.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date || '')) return res.status(400).json({ error: 'Invalid date.' });
+
+    // Policy checks (unless the caller explicitly overrides with force:true).
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const rules = policy.leaveRules || {};
+    const force = b.force === true;
+    if (!force) {
+      // Sandwich rule: leave can't be immediately before/after a week-off or
+      // holiday (applies to casual by default; medical is exempt).
+      if (rules[type] && rules[type].sandwichBlock) {
+        const day = new Date(b.date + 'T00:00:00');
+        const adj = [new Date(day.getTime() - 86400000), new Date(day.getTime() + 86400000)].map((d) => d.toISOString().slice(0, 10));
+        const holidays = await HrHoliday.findAll({ where: { date: adj } });
+        const hset = new Set(holidays.map((h) => h.date));
+        for (const ad of adj) {
+          if (isWeekOff(policy, emp.branch, ad) || hset.has(ad)) {
+            return res.status(400).json({ error: `Casual leave can't be taken immediately before or after a week-off or holiday. Use medical leave, or override if this is an exception.`, policyBlock: 'sandwich' });
+          }
+        }
+      }
+      // Medical leave requires a supporting document.
+      if (type === 'medical' && rules.medical && rules.medical.requireDocument && !b.documentUrl) {
+        return res.status(400).json({ error: 'Medical leave requires a supporting document. Please attach the medical certificate.', policyBlock: 'medical_doc' });
+      }
+      // Privilege leave requires N days advance notice.
+      if (type === 'privilege' && rules.privilege && rules.privilege.noticeDays) {
+        const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00');
+        const leaveDay = new Date(b.date + 'T00:00:00');
+        const daysAhead = Math.round((leaveDay - today) / 86400000);
+        if (daysAhead < rules.privilege.noticeDays) {
+          return res.status(400).json({ error: `Privilege leave must be applied at least ${rules.privilege.noticeDays} days in advance (this is ${daysAhead} day${daysAhead === 1 ? '' : 's'} ahead). Override if this is an exception.`, policyBlock: 'notice' });
+        }
+      }
+    }
+
     const elig = leavePaidEligibility(emp, b.date);
     // If the caller asked for paid but it's not allowed, force unpaid (allowed but unpaid).
     let paid = b.paid !== false;
@@ -677,6 +800,7 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const row = await HrLeave.create({
       employeeId: id, type, date: b.date, duration: b.duration === 'half' ? 'half' : 'full',
       paid, reason: String(b.reason || '').slice(0, 300), status: 'approved', appliedById: req.hrActor.id,
+      documentUrl: b.documentUrl || null,
     });
     // Reflect leave on the attendance calendar for that day.
     try {
@@ -2347,6 +2471,70 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
     await s.save();
     hrLog(req, 'settings.update', b.careers ? 'careers page' : (b.autoScore !== undefined ? `auto-score ${b.autoScore ? 'on' : 'off'}` : 'settings'));
     res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
+  } catch (e) { next(e); }
+});
+
+// ---- HR leave / attendance policy (Admin only) ----
+const DEFAULT_HR_POLICY = {
+  categories: [{ id: 'default', name: 'Default', allocation: { casual: 12, medical: 12, privilege: 12, wfh: 24 } }],
+  leaveRules: {
+    casual: { sandwichBlock: true },
+    medical: { requireDocument: true, sandwichBlock: false },
+    privilege: { noticeDays: 7 },
+    wfh: {},
+  },
+  lateRule: { graceMinutes: 30, consecutiveForHalfDay: 3, monthlyForHalfDay: 6, shiftHours: 9 },
+  weekOff: { byBranch: {}, default: { type: 'all_sundays' } },
+};
+function getHrPolicy(s) {
+  const p = (s && s.hrPolicy) || {};
+  return {
+    categories: Array.isArray(p.categories) && p.categories.length ? p.categories : DEFAULT_HR_POLICY.categories,
+    leaveRules: { ...DEFAULT_HR_POLICY.leaveRules, ...(p.leaveRules || {}) },
+    lateRule: { ...DEFAULT_HR_POLICY.lateRule, ...(p.lateRule || {}) },
+    weekOff: { byBranch: (p.weekOff && p.weekOff.byBranch) || {}, default: (p.weekOff && p.weekOff.default) || DEFAULT_HR_POLICY.weekOff.default },
+  };
+}
+// Resolve a branch's week-off rule → is a given date a week-off?
+function isWeekOff(policy, branch, dateStr) {
+  const rule = (policy.weekOff.byBranch && policy.weekOff.byBranch[branch]) || policy.weekOff.default || { type: 'all_sundays' };
+  const d = new Date(dateStr + 'T00:00:00');
+  const dow = d.getDay(); // 0 Sun … 6 Sat
+  const nthWeek = Math.ceil(d.getDate() / 7); // 1st..5th occurrence of that weekday
+  if (rule.type === 'all_sundays') return dow === 0;
+  if (rule.type === 'sat_sun') return dow === 0 || dow === 6;
+  if (rule.type === 'alt_sat_sun') return dow === 0 || (dow === 6 && (nthWeek === 2 || nthWeek === 4));
+  if (rule.type === 'custom' && Array.isArray(rule.days)) return rule.days.includes(dow);
+  return dow === 0;
+}
+// Resolve the allocation for an employee (category on profile overrides).
+function allocationFor(policy, emp) {
+  const catId = (emp.profile && emp.profile.leaveCategory) || 'default';
+  const cat = policy.categories.find((c) => c.id === catId) || policy.categories[0];
+  return { ...DEFAULT_LEAVE_ALLOCATION, ...((cat && cat.allocation) || {}), ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+}
+
+router.get('/policy', requireHrAccess, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ policy: getHrPolicy(s), canManage: req.isHrAdmin });
+  } catch (e) { next(e); }
+});
+router.put('/policy', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cur = getHrPolicy(s);
+    const b = req.body || {};
+    const next2 = {
+      categories: Array.isArray(b.categories) ? b.categories : cur.categories,
+      leaveRules: { ...cur.leaveRules, ...(b.leaveRules || {}) },
+      lateRule: { ...cur.lateRule, ...(b.lateRule || {}) },
+      weekOff: b.weekOff ? { byBranch: b.weekOff.byBranch || {}, default: b.weekOff.default || cur.weekOff.default } : cur.weekOff,
+    };
+    s.hrPolicy = next2; s.changed('hrPolicy', true);
+    await s.save();
+    hrLog(req, 'policy.update', 'leave/attendance policy');
+    res.json({ policy: getHrPolicy(s) });
   } catch (e) { next(e); }
 });
 
