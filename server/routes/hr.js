@@ -1165,6 +1165,24 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
 
     row.stage = requested;
     row.rejected = false;
+    // Keep the offer state consistent with the pipeline: the offer process only
+    // belongs to the Offered/Hired stages. If a candidate is moved back to an
+    // earlier stage, clear the "pending hire" marker and deactivate an offer that
+    // never actually progressed — otherwise they'd wrongly linger in the
+    // dashboard "Offers to complete" list.
+    const offerStageIds = new Set((job && job.stages || []).filter((s) => ['offered', 'offer'].includes(String(s.id).toLowerCase())).map((s) => s.id));
+    const inOfferOrHired = HIRED_STAGE_IDS.has(requested.toLowerCase()) || offerStageIds.has(requested);
+    if (!inOfferOrHired && row.offer) {
+      const o = row.offer;
+      if (o.status !== 'accepted') {
+        o.pendingHire = false;
+        // If nothing real happened in the offer (no discussions, LOI, letter,
+        // approvals), turn the tab off entirely.
+        const hasProgress = (o.salaryDiscussions && o.salaryDiscussions.length) || (o.approvals && o.approvals.length) || o.loi || o.offerLetter;
+        if (!hasProgress) o.active = false;
+        row.offer = o; row.changed('offer', true);
+      }
+    }
     pushTimeline(row, { type: 'stage', text: `Moved to ${stageLabel(requested)}.`, by: req.hrActor.name });
     await row.save();
     hrLog(req, 'candidate.stage', `${row.name} → ${stageLabel(requested)}`);
@@ -2189,13 +2207,21 @@ router.get('/pending-offers', requireHrAccess, async (req, res, next) => {
     const meId = req.hrActor.id;
     const meName = req.hrActor.name;
     const rows = await HrCandidate.findAll({ where: { rejected: false } });
+    const jobCache = {};
+    const jobFor = async (id) => { if (!id) return null; if (!(id in jobCache)) jobCache[id] = await HrJobPost.findByPk(id); return jobCache[id]; };
     const items = [];
     for (const c of rows) {
       const offerDone = c.offer && c.offer.status === 'accepted';
       if (offerDone) continue;
-      const inHiredStage = HIRED_STAGE_IDS.has(String(c.stage || '').toLowerCase());
+      const stageL = String(c.stage || '').toLowerCase();
+      const inHiredStage = HIRED_STAGE_IDS.has(stageL);
+      const job = await jobFor(c.jobPostId);
+      const inOfferStage = (job && job.stages || []).some((s) => ['offered', 'offer'].includes(String(s.id).toLowerCase()) && s.id === c.stage);
       const pendingHire = c.offer && c.offer.pendingHire;
-      if (!inHiredStage && !pendingHire) continue;
+      // Only surface candidates who are actually in an offer/hired stage AND still
+      // flagged for hire — so a candidate moved back to an earlier stage (or whose
+      // offer was never really started) no longer lingers here.
+      if (!((inHiredStage || inOfferStage) && pendingHire)) continue;
       const mine = c.recruiterId === meId || c.recruiterName === meName;
       if (!isAdmin && !mine) continue;
       items.push({

@@ -97,7 +97,22 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const moveNext = () => { if (nextStage) moveToStage(nextStage.id); };
   const reject = () => setShowReject(true);
 
-  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ...(c.canViewInternal !== false ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
+  // The Offer tab belongs to the offer process — show it only when the candidate
+  // is in an Offer/Hired stage, or an offer already has real activity. This keeps
+  // it from lingering when a candidate is moved back to an earlier stage.
+  const offerStageActive = (() => {
+    const stageL = String(c.stage || '').toLowerCase();
+    const HIRED = ['hired', 'onboarded', 'joined', 'selected'];
+    if (HIRED.includes(stageL)) return true;
+    const st = stages.find((s) => s.id === c.stage);
+    if (st && ['offered', 'offer'].includes(String(st.id).toLowerCase())) return true;
+    const o = c.offer || {};
+    if (o.status === 'accepted' || o.pendingHire) return true;
+    const hasProgress = (o.salaryDiscussions && o.salaryDiscussions.length) || (o.approvals && o.approvals.length) || o.loi || o.offerLetter;
+    return !!hasProgress;
+  })();
+  const effectiveTab = (tab === 'offer' && !offerStageActive) ? 'resume' : tab;
+  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ...(c.canViewInternal !== false && offerStageActive ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
 
   return (
     <div>
@@ -171,26 +186,26 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : 0;
             return (
               <button key={id} onClick={() => setTab(id)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${tab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
-                <TabIcon name={id} active={tab === id} />
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${effectiveTab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                <TabIcon name={id} active={effectiveTab === id} />
                 <span>{label}</span>
-                {count > 0 && <span className={`rounded-full px-1.5 text-[10px] font-bold ${tab === id ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-400'}`}>{count}</span>}
+                {count > 0 && <span className={`rounded-full px-1.5 text-[10px] font-bold ${effectiveTab === id ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-400'}`}>{count}</span>}
               </button>
             );
           })}
         </div>
 
         <div className="p-6 min-h-[340px]">
-          {tab === 'resume' && <ResumeTab c={c} />}
-          {tab === 'application' && <ApplicationTab c={c} a={a} job={job} onSaved={load} />}
-          {tab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
-          {tab === 'comments' && <CommentsTab c={c} reload={load} />}
-          {tab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
-          {tab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} />}
-          {tab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
-          {tab === 'mail' && <MailTab c={c} />}
-          {tab === 'timeline' && <TimelineTab c={c} />}
-          {tab === 'attachments' && <AttachmentsTab c={c} reload={load} />}
+          {effectiveTab === 'resume' && <ResumeTab c={c} />}
+          {effectiveTab === 'application' && <ApplicationTab c={c} a={a} job={job} onSaved={load} />}
+          {effectiveTab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
+          {effectiveTab === 'comments' && <CommentsTab c={c} reload={load} />}
+          {effectiveTab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
+          {effectiveTab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} />}
+          {effectiveTab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
+          {effectiveTab === 'mail' && <MailTab c={c} />}
+          {effectiveTab === 'timeline' && <TimelineTab c={c} />}
+          {effectiveTab === 'attachments' && <AttachmentsTab c={c} reload={load} />}
         </div>
       </div>
 
