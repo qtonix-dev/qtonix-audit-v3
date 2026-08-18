@@ -1280,16 +1280,18 @@ router.post('/candidates/:id/attachments', requireHrAccess, async (req, res, nex
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
-    const { base64, fileName } = req.body || {};
+    const { base64, fileName, docType } = req.body || {};
     if (!base64) return res.status(400).json({ error: 'No file provided.' });
     const { safeFolder } = require('./careers');
     const imagekit = require('../services/imagekit');
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     const out = await imagekit.uploadFile({ base64, fileName: fileName || 'file', folder: `HRMS/${safeFolder(job ? job.title : 'General')}/Attachments` });
     const list = Array.isArray(row.attachments) ? row.attachments.slice() : [];
-    list.unshift({ id: `at${Date.now()}`, name: out.name || fileName, url: out.url, at: new Date().toISOString(), by: req.hrActor.name });
+    const allowedTypes = ['Resume', 'Work Portfolio', 'Task', 'Other'];
+    const type = allowedTypes.includes(docType) ? docType : 'Other';
+    list.unshift({ id: `at${Date.now()}${Math.floor(Math.random() * 1000)}`, name: out.name || fileName, url: out.url, docType: type, at: new Date().toISOString(), by: req.hrActor.name });
     row.attachments = list; row.changed('attachments', true);
-    pushTimeline(row, { type: 'attachment', text: `${req.hrActor.name} uploaded an attachment: ${out.name || fileName}.`, by: req.hrActor.name });
+    pushTimeline(row, { type: 'attachment', text: `${req.hrActor.name} uploaded ${type === 'Other' ? 'an attachment' : `a ${type.toLowerCase()}`}: ${out.name || fileName}.`, by: req.hrActor.name });
     await row.save();
     res.json(row.toJSON());
   } catch (e) {

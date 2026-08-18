@@ -179,14 +179,23 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
 // ---------- Resume ----------
 function ResumeTab({ c }) {
+  const [useGoogle, setUseGoogle] = useState(false);
   if (!c.resumeUrl) return <Empty>No resume uploaded.</Empty>;
   const isPdf = /\.pdf($|\?)/i.test(c.resumeUrl);
+  // Some storage/CDN hosts send headers that stop a PDF rendering inline in an
+  // iframe (the "content is blocked" message). Google's viewer reliably embeds
+  // any public PDF URL, so offer it as a one-click fallback.
+  const googleSrc = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(c.resumeUrl)}`;
   return (
     <div>
-      <div className="flex justify-end mb-2"><a href={c.resumeUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Open / Download</a></div>
+      <div className="flex justify-end gap-2 mb-2">
+        {isPdf && <button onClick={() => setUseGoogle((v) => !v)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">{useGoogle ? 'Try direct view' : "Can't see it? Use viewer"}</button>}
+        <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Open / Download</a>
+      </div>
       {isPdf
-        ? <iframe title="resume" src={`${c.resumeUrl}#view=FitH`} className="w-full h-[640px] rounded-lg border border-slate-200" />
+        ? <iframe title="resume" src={useGoogle ? googleSrc : `${c.resumeUrl}#view=FitH`} className="w-full h-[640px] rounded-lg border border-slate-200" />
         : <div className="text-center py-10"><a href={c.resumeUrl} target="_blank" rel="noreferrer" className="text-orange-600 font-bold">View resume file</a></div>}
+      {isPdf && !useGoogle && <div className="text-[11px] text-slate-400 mt-2 text-center">If the resume doesn't appear above, click “Can't see it? Use viewer”.</div>}
     </div>
   );
 }
@@ -789,28 +798,71 @@ function AttachmentsTab({ c, reload }) {
   const list = c.attachments || [];
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [picking, setPicking] = useState(false); // doc-type chooser open
+  const [docType, setDocType] = useState(null);   // chosen type awaiting file(s)
   const ref = useRef(null);
-  const upload = async (file) => {
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { setErr('File too large (max 10MB).'); return; }
+  const DOC_TYPES = [
+    { id: 'Resume', label: 'Resume', icon: '📄', multi: false, hint: 'A single resume/CV file' },
+    { id: 'Work Portfolio', label: 'Work Portfolio', icon: '🎨', multi: false, hint: 'Portfolio or samples of work' },
+    { id: 'Task', label: 'Task — Multiple files', icon: '🗂️', multi: true, hint: 'Assignment / task submission (multiple files allowed)' },
+    { id: 'Other', label: 'Other', icon: '📎', multi: false, hint: 'Any other document' },
+  ];
+  const choose = (t) => { setDocType(t); setPicking(false); setErr(''); setTimeout(() => ref.current?.click(), 50); };
+  const upload = async (files) => {
+    const arr = Array.from(files || []);
+    if (!arr.length || !docType) return;
+    for (const file of arr) { if (file.size > 10 * 1024 * 1024) { setErr(`"${file.name}" is too large (max 10MB).`); return; } }
     setBusy(true); setErr('');
-    try { const base64 = await fileToBase64(file); await hrApi(`/candidates/${c.id}/attachments`, { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); reload(); }
-    catch (e) { setErr(e.message); } finally { setBusy(false); }
+    try {
+      for (const file of arr) {
+        const base64 = await fileToBase64(file);
+        await hrApi(`/candidates/${c.id}/attachments`, { method: 'POST', body: JSON.stringify({ base64, fileName: file.name, docType: docType.id }) });
+      }
+      reload();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); setDocType(null); if (ref.current) ref.current.value = ''; }
   };
   const del = async (id) => { if (!window.confirm('Remove this attachment?')) return; try { await hrApi(`/candidates/${c.id}/attachments/${id}`, { method: 'DELETE' }); reload(); } catch {} };
+  const badge = (t) => {
+    const map = { 'Resume': 'bg-blue-100 text-blue-700', 'Work Portfolio': 'bg-purple-100 text-purple-700', 'Task': 'bg-amber-100 text-amber-700', 'Other': 'bg-slate-100 text-slate-500' };
+    return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${map[t] || map.Other}`}>{t || 'Other'}</span>;
+  };
+  const iconFor = (t) => (DOC_TYPES.find((d) => d.id === t) || {}).icon || '📎';
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <div className="text-sm text-slate-500">Resume, offer letters and any other documents.</div>
-        <button onClick={() => !busy && ref.current?.click()} disabled={busy} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Uploading…' : '⬆ Upload file'}</button>
-        <input ref={ref} type="file" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
+        <div className="text-sm text-slate-500">Resume, work portfolio, task files and any other documents.</div>
+        <button onClick={() => !busy && setPicking(true)} disabled={busy} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Uploading…' : '⬆ Upload file'}</button>
+        <input ref={ref} type="file" className="hidden" multiple={docType?.multi} onChange={(e) => upload(e.target.files)} />
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
-      {c.resumeUrl && <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50"><span>📄</span><span className="text-sm font-semibold text-slate-700">Resume</span></a>}
+
+      {picking && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setPicking(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100"><div className="text-lg font-extrabold text-[#050A1F]">What are you uploading?</div><div className="text-xs text-slate-400 mt-0.5">Pick a document type so files stay organised.</div></div>
+            <div className="p-4 grid grid-cols-1 gap-2">
+              {DOC_TYPES.map((t) => (
+                <button key={t.id} onClick={() => choose(t)} className="w-full text-left flex items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-orange-400 hover:bg-orange-50/50 transition">
+                  <span className="text-xl">{t.icon}</span>
+                  <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm">{t.label}</div><div className="text-xs text-slate-400">{t.hint}</div></div>
+                </button>
+              ))}
+            </div>
+            <div className="px-6 py-3 border-t border-slate-100 flex justify-end"><button onClick={() => setPicking(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button></div>
+          </div>
+        </div>
+      )}
+
+      {c.resumeUrl && (
+        <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50">
+          <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 min-w-0"><span>📄</span><span className="text-sm font-semibold text-slate-700 truncate">Resume</span></a>
+          {badge('Resume')}
+        </div>
+      )}
       {list.map((f) => (
         <div key={f.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 mb-2 hover:bg-slate-50">
-          <a href={f.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 min-w-0"><span>📎</span><span className="text-sm font-semibold text-slate-700 truncate">{f.name}</span></a>
-          <div className="flex items-center gap-3 shrink-0"><span className="text-xs text-slate-400">{fmt(f.at)}</span><button onClick={() => del(f.id)} className="text-xs font-bold text-red-500">Remove</button></div>
+          <a href={f.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 min-w-0"><span>{iconFor(f.docType)}</span><span className="text-sm font-semibold text-slate-700 truncate">{f.name}</span></a>
+          <div className="flex items-center gap-3 shrink-0">{badge(f.docType)}<span className="text-xs text-slate-400">{fmt(f.at)}</span><button onClick={() => del(f.id)} className="text-xs font-bold text-red-500">Remove</button></div>
         </div>
       ))}
       {!c.resumeUrl && !list.length && <Empty>No attachments yet.</Empty>}

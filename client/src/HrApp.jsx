@@ -891,7 +891,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th className="px-4 py-3"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
                 <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
-                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Current Salary</th><th className="px-4 py-3">Resume Match</th><th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Resume Match</th><th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
               </tr></thead>
               <tbody>
@@ -911,14 +911,13 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{c.phone || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500">{job(c.jobPostId).title || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500">{totalExperience(c)}</td>
-                      <td className="px-4 py-3 text-slate-500">{a.currentCtc || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{job(c.jobPostId).title || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{totalExperience(c)}</td>
                       <td className="px-4 py-3"><ResumeMatchBadge match={c.resumeMatch} /></td>
                       <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
-                      <td className="px-4 py-3 text-slate-500">{c.recruiterName || '—'}</td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">{timeAgo(c.updatedAt)}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{(c.recruiterName || '—').split(' ')[0]}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
@@ -1294,8 +1293,8 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                   <div><L req>Last Name</L><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
                   <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={checkDup} placeholder="+91…" /></div>
                   <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} onBlur={checkDup} /></div>
-                  <div><L>Current CTC (Annual)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 4,50,000" /></div>
-                  <div><L>Expected CTC (Annual)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 8,50,000" /></div>
+                  <div><L>Current Salary (Monthly)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 35,000" /></div>
+                  <div><L>Expected Salary (Monthly)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 55,000" /></div>
                   <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
                   <div><L>Source</L>
                     <select className={inp} value={source} onChange={(e) => setSource(e.target.value)}>

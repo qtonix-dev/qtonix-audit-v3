@@ -28,7 +28,20 @@ async function extractFileText({ base64, fileName }) {
     const { PDFParse } = require('pdf-parse');
     const parser = new PDFParse({ data: buf });
     const data = await parser.getText();
-    return (data && data.text) || '';
+    let text = (data && data.text) || '';
+    // Emails (and other links) in resumes are frequently embedded as PDF link
+    // annotations rather than visible text, so getText() misses them. Scan the
+    // raw bytes for mailto: / URI annotations and append anything found so both
+    // the AI and the regex detector can see it.
+    try {
+      const rawStr = buf.toString('latin1');
+      const found = new Set();
+      (rawStr.match(/mailto:([^)\s>"']+)/gi) || []).forEach((m) => found.add(m.replace(/^mailto:/i, '').trim()));
+      (rawStr.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).forEach((e) => found.add(e.trim()));
+      const extra = [...found].filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      if (extra.length) text += `\nContact links: ${extra.join(' ')}`;
+    } catch { /* non-fatal */ }
+    return text;
   }
   if (name.endsWith('.docx') || mime.includes('officedocument.wordprocessingml')) {
     const mammoth = require('mammoth');

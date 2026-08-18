@@ -17,7 +17,9 @@
   .job { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px 22px; margin-bottom: 12px; box-shadow: 0 6px 20px rgba(2,6,23,.05); display: flex; justify-content: space-between; align-items: center; gap: 16px; text-decoration: none; color: inherit; transition: transform .15s, box-shadow .15s; }
   .job:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(2,6,23,.1); }
   .jtitle { font-size: 17px; font-weight: 800; }
-  .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: #64748b; margin-top: 5px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; color: #475569; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+  .chip .ci { font-size: 12px; line-height: 1; }
   .apply { border: 0; border-radius: 9px; padding: 10px 18px; font-size: 13px; font-weight: 800; color: #fff; background: linear-gradient(90deg,#FF6A00,#FF4500); white-space: nowrap; }
   .muted { color: #94a3b8; font-size: 14px; }
   .empty { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 48px; text-align: center; }
@@ -30,6 +32,9 @@
   var token = location.pathname.split('/')[2];
   var app = document.getElementById('app');
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var MODE = { in_office: 'In-Office', hybrid: 'Hybrid', remote: 'Remote' };
+  var EMP = { full_time: 'Full-time', part_time: 'Part-time', internship: 'Internship', freelance: 'Freelance', contract: 'Contract' };
+  function chip(icon, text) { return '<span class="chip"><span class="ci">' + icon + '</span>' + esc(text) + '</span>'; }
 
   fetch('/api/careers/careers/' + encodeURIComponent(token))
     .then(function (r) { if (!r.ok) throw 0; return r.json(); })
@@ -51,12 +56,13 @@
     } else {
       jobs.forEach(function (j) {
         var meta = [];
-        if (j.department) meta.push(esc(j.department));
-        if (j.workMode) meta.push(esc(j.workMode));
-        if (j.employmentType) meta.push(esc(j.employmentType));
-        (j.locations || []).forEach(function (l) { meta.push(esc(typeof l === 'string' ? l : (l.city || l.name || ''))); });
-        html += '<a class="job" href="/careers/' + esc(j.token) + '/embed" target="_blank">';
-        html += '<div><div class="jtitle">' + esc(j.title) + '</div><div class="meta">' + meta.filter(Boolean).map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div></div>';
+        if (j.department) meta.push(chip('🏢', j.department));
+        if (j.workMode) meta.push(chip('💼', MODE[j.workMode] || j.workMode));
+        if (j.employmentType) meta.push(chip('🕒', EMP[j.employmentType] || j.employmentType));
+        var locs = (j.locations || []).map(function (l) { return typeof l === 'string' ? l : (l.city || l.name || ''); }).filter(Boolean);
+        if (locs.length) meta.push(chip('📍', locs.join(', ')));
+        html += '<a class="job" href="/careers/' + esc(j.token) + '" target="_blank">';
+        html += '<div><div class="jtitle">' + esc(j.title) + '</div><div class="meta">' + meta.join('') + '</div></div>';
         html += '<span class="apply">Apply →</span></a>';
       });
     }

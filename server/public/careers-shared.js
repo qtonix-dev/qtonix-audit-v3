@@ -38,7 +38,7 @@
     if (fieldOn(ff.workExperience)) html += '<label>Work experience' + reqMark(ff.workExperience) + '</label><textarea name="workExperience" rows="2"' + (ff.workExperience === 'mandatory' ? ' required' : '') + '></textarea>';
     if (fieldOn(ff.educationDetails)) html += '<label>Education details' + reqMark(ff.educationDetails) + '</label><textarea name="educationDetails" rows="2"' + (ff.educationDetails === 'mandatory' ? ' required' : '') + '></textarea>';
     if (fieldOn(ff.noticePeriod)) html += '<label>Notice period' + reqMark(ff.noticePeriod) + '</label><input name="noticePeriod"' + (ff.noticePeriod === 'mandatory' ? ' required' : '') + '>';
-    if (fieldOn(ff.ctc)) html += '<div class="row"><div><label>Current CTC' + reqMark(ff.ctc) + '</label><input name="currentCtc"' + (ff.ctc === 'mandatory' ? ' required' : '') + '></div><div><label>Expected CTC</label><input name="expectedCtc"></div></div>';
+    if (fieldOn(ff.ctc)) html += '<div class="row"><div><label>Current Salary (Monthly)' + reqMark(ff.ctc) + '</label><input name="currentCtc"' + (ff.ctc === 'mandatory' ? ' required' : '') + '></div><div><label>Expected Salary (Monthly)</label><input name="expectedCtc"></div></div>';
     if (fieldOn(ff.portfolio)) html += '<label>Work link / Portfolio' + reqMark(ff.portfolio) + '</label><input name="portfolio"' + (ff.portfolio === 'mandatory' ? ' required' : '') + '>';
     if (fieldOn(ff.gender)) html += '<label>Gender' + reqMark(ff.gender) + '</label><select name="gender"' + (ff.gender === 'mandatory' ? ' required' : '') + '><option value="">— Select —</option><option>Male</option><option>Female</option><option>Other</option><option>Prefer not to say</option></select>';
 
