@@ -310,9 +310,13 @@ router.get('/reporting-options', requireHrAccess, async (req, res, next) => {
   try {
     const hr = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'type', 'designation'], order: [['name', 'ASC']] });
     const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id', 'name'], order: [['name', 'ASC']] });
+    // Respect the HR-side "hidden" flag so admins removed from the HR employee
+    // list also disappear from reporting options and the org chart.
+    const hiddenIds = new Set((await HrDirectorProfile.findAll({ where: { hidden: true }, attributes: ['userId'] })).map((o) => o.userId));
+    const visibleAdmins = admins.filter((a) => !hiddenIds.has(a.id));
     res.json({
       hr: hr.map((h) => ({ id: h.id, name: h.name, type: h.type, designation: h.designation })),
-      admins: admins.map((a) => ({ id: a.id, name: a.name })),
+      admins: visibleAdmins.map((a) => ({ id: a.id, name: a.name })),
     });
   } catch (e) { next(e); }
 });
@@ -645,18 +649,28 @@ async function scoreResumeMatchBg(candidateId) {
 router.get('/job-posts', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrJobPost.findAll({ order: [['createdAt', 'DESC']] });
-    // Applied-candidate counts per job (single grouped query).
+    // Candidate counts per job, split by how they entered: public_form = they
+    // applied themselves; anything else (manual) = HR added them.
     const counts = await HrCandidate.findAll({
-      attributes: ['jobPostId', [HrCandidate.sequelize.fn('COUNT', HrCandidate.sequelize.col('id')), 'n']],
-      group: ['jobPostId'], raw: true,
+      attributes: ['jobPostId', 'source', [HrCandidate.sequelize.fn('COUNT', HrCandidate.sequelize.col('id')), 'n']],
+      group: ['jobPostId', 'source'], raw: true,
     });
-    const byJob = {}; counts.forEach((c) => { byJob[c.jobPostId] = Number(c.n); });
+    const appliedByJob = {}; const addedByJob = {}; const totalByJob = {};
+    counts.forEach((c) => {
+      const n = Number(c.n);
+      totalByJob[c.jobPostId] = (totalByJob[c.jobPostId] || 0) + n;
+      if (c.source === 'public_form') appliedByJob[c.jobPostId] = (appliedByJob[c.jobPostId] || 0) + n;
+      else addedByJob[c.jobPostId] = (addedByJob[c.jobPostId] || 0) + n;
+    });
     // Resolve assigned-HR names for display.
     const allIds = [...new Set(rows.flatMap((r) => Array.isArray(r.assignedHrIds) ? r.assignedHrIds : []))];
     const hrById = {};
     if (allIds.length) { const hrs = await HrUser.findAll({ where: { id: allIds }, attributes: ['id', 'name', 'avatar'] }); hrs.forEach((h) => { hrById[h.id] = { id: h.id, name: h.name, avatar: h.avatar }; }); }
     res.json(rows.map((r) => ({
-      ...r.toJSON(), applicantCount: byJob[r.id] || 0,
+      ...r.toJSON(),
+      applicantCount: totalByJob[r.id] || 0,
+      appliedCount: appliedByJob[r.id] || 0,
+      addedCount: addedByJob[r.id] || 0,
       assignedHr: (Array.isArray(r.assignedHrIds) ? r.assignedHrIds : []).map((id) => hrById[id]).filter(Boolean),
     })));
   } catch (e) { next(e); }
@@ -1114,7 +1128,57 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
     pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 200)}` : ''}.`, by: req.hrActor.name });
     await row.save();
     hrLog(req, 'candidate.reject', `${row.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 120)}` : ''}`);
-    res.json(row.toJSON());
+
+    // Optionally email the candidate the rejection (subject/body come from the
+    // reviewed draft on the client). Best-effort — rejection is already recorded.
+    let emailed = false;
+    if (req.body.sendEmail && row.email && req.body.subject && req.body.body) {
+      try {
+        const gmail = require('../services/gmail');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+        const from = (s && s.hrMailbox) || null;
+        if (token && from) {
+          await gmail.sendMessage(s, token, from, { from, to: row.email, subject: String(req.body.subject).slice(0, 200), bodyHtml: String(req.body.body).slice(0, 8000), attachments: [] });
+          emailed = true;
+          pushTimeline(row, { type: 'rejection', text: `Rejection email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
+          await row.save();
+        }
+      } catch { /* email is best-effort */ }
+    }
+    res.json({ ...row.toJSON(), emailed });
+  } catch (e) { next(e); }
+});
+
+// AI-draft a warm, professional rejection email personalised to this candidate.
+router.post('/candidates/:id/reject-email/draft', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('openai') : null;
+    if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in CRM Admin → API keys.' });
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const reason = String((req.body || {}).reason || '').slice(0, 300);
+    const system = [
+      'Act as a professional, empathetic HR / talent acquisition specialist writing a candidate rejection email after an application or interview.',
+      'Be warm, respectful, concise and encouraging; thank them for their time and interest, keep it positive, and do NOT quote the internal reason verbatim or list specific shortcomings — keep it gracious and general.',
+      'Do not make promises to keep their resume on file unless natural. Sign off from the recruiter.',
+      'Structure the body as clean HTML — wrap each paragraph in its own <p> tag. No <html> wrapper.',
+      'Return strict JSON: {"subject":"...","body":"<p>...</p>"}. No markdown, no commentary outside the JSON.',
+    ].join(' ');
+    const ctx = `Candidate: ${row.name}\nRole: ${job ? job.title : 'the role'}\nCompany: Qtonix\nRecruiter: ${req.hrActor.name}\nInternal reason (for tone only, do not quote): ${reason || 'not specified'}`;
+    try { const { recordApiCall } = require('../models'); recordApiCall && recordApiCall('openai'); } catch {}
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: ctx }], max_tokens: 800, response_format: { type: 'json_object' } }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
+    let parsed = {};
+    try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
+    res.json({ subject: parsed.subject || `Update on your application${job ? ` — ${job.title}` : ''}`, body: parsed.body || '' });
   } catch (e) { next(e); }
 });
 
@@ -1815,17 +1879,15 @@ router.get('/targets-progress', requireHrAccess, async (req, res, next) => {
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const rows = withTargets.map((u) => {
-      // Interviews this HR scheduled today (across candidate.interviews[].scheduledById or createdBy name).
-      let interviewsToday = 0;
+      // Daily target measures candidates this HR added today (each added candidate
+      // = an interview lined up). Monthly target measures onboarded/accepted hires.
+      let addedToday = 0;
       let onboardedThisMonth = 0;
       cands.forEach((c) => {
-        (c.interviews || []).forEach((iv) => {
-          const at = iv.createdAt || iv.at;
-          const byMe = iv.scheduledById === u.id || iv.createdBy === u.name || iv.by === u.name;
-          if (byMe && at && new Date(at).getTime() >= startOfDay) interviewsToday += 1;
-        });
+        const minesCand = c.recruiterId === u.id || c.recruiterName === u.name;
+        if (minesCand && c.createdAt && new Date(c.createdAt).getTime() >= startOfDay) addedToday += 1;
         // Onboarded = accepted offer, credited to the recruiter, this month.
-        if (c.offer && c.offer.status === 'accepted' && (c.recruiterId === u.id || c.recruiterName === u.name)) {
+        if (c.offer && c.offer.status === 'accepted' && minesCand) {
           const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
           if (doneAt && new Date(doneAt).getTime() >= startOfMonth) onboardedThisMonth += 1;
         }
@@ -1833,7 +1895,7 @@ router.get('/targets-progress', requireHrAccess, async (req, res, next) => {
       const t = u.targets || {};
       return {
         id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '',
-        dailyTarget: Number(t.dailyInterviews) || 0, dailyDone: interviewsToday,
+        dailyTarget: Number(t.dailyInterviews) || 0, dailyDone: addedToday,
         monthlyTarget: Number(t.monthlyOnboarding) || 0, monthlyDone: onboardedThisMonth,
       };
     });

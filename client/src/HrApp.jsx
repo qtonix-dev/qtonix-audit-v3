@@ -206,16 +206,25 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [showAnnModal, setShowAnnModal] = useState(false);
   const [board, setBoard] = useState(null);
   useEffect(() => {
-    hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} }));
-    hrApi('/dashboard-stats').then(setStats).catch(() => {});
+    // Live-updating stats: fetch on mount, then poll and refresh on window focus
+    // so the targets race and counters reflect newly-added candidates promptly.
+    const loadLive = () => {
+      hrApi('/dashboard').then(setData).catch(() => setData({ metrics: {} }));
+      hrApi('/dashboard-stats').then(setStats).catch(() => {});
+      hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
+      hrApi('/leaderboard').then(setBoard).catch(() => {});
+    };
+    loadLive();
     hrApi('/job-posts').then(setJobs).catch(() => {});
     hrApi('/source-analytics').then((r) => setAnalytics(r.sources || [])).catch(() => {});
-    hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
     hrApi('/missed-commitments').then(setMissed).catch(() => {});
     hrApi('/unread-mail').then(setMail).catch(() => {});
     hrApi('/celebrations').then((r) => setCelebrations(r.items || [])).catch(() => {});
-    hrApi('/leaderboard').then(setBoard).catch(() => {});
     loadAnnouncements();
+    const iv = setInterval(loadLive, 30000);
+    const onFocus = () => loadLive();
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(iv); window.removeEventListener('focus', onFocus); };
   }, []);
   const loadAnnouncements = () => hrApi('/announcements').then((r) => { setAnnouncements(r.announcements || []); setAnnCanPost(!!r.canPost); }).catch(() => {});
   const m = (data && data.metrics) || {};
@@ -637,7 +646,7 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, forceSco
             <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 flex-wrap">
               {published && <span>Published {published}</span>}
               <button onClick={() => onViewApplicants(j._id)} className="font-bold text-orange-600 hover:text-orange-700 hover:underline">
-                {j.applicantCount || 0} candidate{(j.applicantCount || 0) === 1 ? '' : 's'} applied
+                {(j.appliedCount || 0)} applied · {(j.addedCount || 0)} added
               </button>
               {/* Assigned HR */}
               {assigned.length > 0 ? (
@@ -3040,6 +3049,13 @@ function HrOrgChart({ users, reporting }) {
   );
 
   const admins = reporting.admins || [];
+  // Any employees bucketed under an admin who is no longer in the list (removed
+  // from HR / deleted in CRM) would otherwise vanish — surface them as orphaned.
+  const adminIdSet = new Set(admins.map((a) => a.id));
+  const orphanedReports = Object.entries(adminBuckets)
+    .filter(([adminId]) => !adminIdSet.has(Number(adminId)) && !adminIdSet.has(adminId))
+    .flatMap(([, arr]) => arr);
+  const allRoots = [...roots, ...orphanedReports];
   return (
     <div className="space-y-4">
       {admins.map((a) => (
@@ -3054,10 +3070,10 @@ function HrOrgChart({ users, reporting }) {
           </div>
         </div>
       ))}
-      {roots.length > 0 && (
+      {allRoots.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="text-[11px] text-slate-400 uppercase tracking-wide font-bold mb-2">Unassigned (no reporting manager)</div>
-          {roots.map((n) => <Node key={n._id} n={n} depth={0} />)}
+          {allRoots.map((n) => <Node key={n._id} n={n} depth={0} />)}
         </div>
       )}
       {active.length === 0 && <div className="text-slate-400 text-sm text-center py-8">No active employees to chart yet.</div>}

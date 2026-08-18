@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { hrApi, fileToBase64, ResumeMatchBadge } from './HrApp.jsx';
+import { titleCase } from './HrParts.jsx';
 import { MailEditor, ChipInput } from './Leads.jsx';
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
@@ -171,7 +172,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
       {showInterview && <InterviewModal candidateId={c.id} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
-      {showReject && <RejectModal onClose={() => setShowReject(false)} onReject={async (reason) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) })); setShowReject(false); }} />}
+      {showReject && <RejectModal candidateId={c.id} candidateEmail={c.email} onClose={() => setShowReject(false)} onReject={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify(payload) })); setShowReject(false); }} />}
       {showSelfSchedule && <SelfScheduleModal candidate={c} onClose={() => setShowSelfSchedule(false)} onSaved={() => { setShowSelfSchedule(false); load(); }} />}
     </div>
   );
@@ -364,8 +365,31 @@ function CommentsTab({ c, reload }) {
   const [internal, setInternal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editText, setEditText] = useState('');
+  const [emps, setEmps] = useState([]);
+  const [mention, setMention] = useState(null); // {query, start} when typing @…
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const taRef = useRef(null);
   const canInternal = c.canViewInternal !== false; // HR/admin only
   const list = c.comments || [];
+  useEffect(() => { hrApi('/employees').then((r) => setEmps((r || []).filter((e) => e.active && !e.isDirector))).catch(() => {}); }, []);
+  // Detect an in-progress @mention at the caret and surface matching employees.
+  const onText = (e) => {
+    const v = e.target.value; setText(v);
+    const caret = e.target.selectionStart || v.length;
+    const upto = v.slice(0, caret);
+    const m = upto.match(/@([\w.]*)$/);
+    if (m) { setMention({ query: m[1].toLowerCase(), start: caret - m[0].length }); setMentionIdx(0); }
+    else setMention(null);
+  };
+  const mentionMatches = mention ? emps.filter((e) => e.name && e.name.toLowerCase().replace(/\s+/g, '').startsWith(mention.query) || (e.name || '').toLowerCase().split(/\s+/).some((w) => w.startsWith(mention.query))).slice(0, 6) : [];
+  const pickMention = (emp) => {
+    const handle = '@' + (emp.name || '').trim().split(/\s+/).join('');
+    const before = text.slice(0, mention.start);
+    const after = text.slice((taRef.current && taRef.current.selectionStart) || text.length);
+    const next = `${before}${handle} ${after}`;
+    setText(next); setMention(null);
+    setTimeout(() => { if (taRef.current) { taRef.current.focus(); const pos = (before + handle + ' ').length; taRef.current.setSelectionRange(pos, pos); } }, 0);
+  };
   const add = async () => { if (!text.trim()) return; setBusy(true); try { await hrApi(`/candidates/${c.id}/comments`, { method: 'POST', body: JSON.stringify({ text: text.trim(), internal: canInternal && internal }) }); setText(''); setInternal(false); await reload(); } finally { setBusy(false); } };
   const saveEdit = async (id) => { if (!editText.trim()) return; try { await hrApi(`/candidates/${c.id}/comments/${id}`, { method: 'PATCH', body: JSON.stringify({ text: editText.trim() }) }); setEditId(null); await reload(); } catch {} };
   // Colour an avatar deterministically from the author's name.
@@ -376,17 +400,39 @@ function CommentsTab({ c, reload }) {
   const renderText = (t) => String(t || '').split(/(@[\w.]+)/g).map((part, i) => /^@[\w.]+$/.test(part)
     ? <span key={i} className="font-bold text-orange-600 bg-orange-50 rounded px-1">{part}</span>
     : <span key={i}>{part}</span>);
+  const onKeyDown = (e) => {
+    if (mention && mentionMatches.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionMatches.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(mentionMatches[mentionIdx]); return; }
+      if (e.key === 'Escape') { setMention(null); return; }
+    }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) add();
+  };
   return (
     <div>
       {/* Composer card */}
-      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 mb-5">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 mb-5 relative">
         <textarea
+          ref={taRef}
           className="w-full bg-transparent text-sm outline-none resize-none placeholder:text-slate-400"
           rows={2}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={onText}
           placeholder="Share an update or note… type @name to notify a colleague"
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) add(); }} />
+          onKeyDown={onKeyDown} />
+        {mention && mentionMatches.length > 0 && (
+          <div className="absolute left-3 right-3 top-16 z-20 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-auto">
+            {mentionMatches.map((e, i) => (
+              <button key={e._id} onMouseDown={(ev) => { ev.preventDefault(); pickMention(e); }}
+                className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm ${i === mentionIdx ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                <span className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style={{ background: colorFor(e.name) }}>{initials(e.name)}</span>
+                <span className="font-semibold text-slate-700">{titleCase(e.name)}</span>
+                <span className="text-xs text-slate-400">{e.designation || e.type}{e.department ? ` · ${e.department}` : ''}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200/70">
           {canInternal ? (
             <label className="flex items-center gap-2 text-xs text-slate-500 select-none cursor-pointer">
@@ -1142,7 +1188,7 @@ function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
                 {shown.length === 0 ? <div className="p-3 text-xs text-slate-400">No employees found.</div> : shown.map((e) => (
                   <label key={e._id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
                     <input type="checkbox" checked={picked.includes(e._id)} onChange={() => toggle(e._id)} />
-                    <span className="font-semibold text-slate-700">{e.name}</span>
+                    <span className="font-semibold text-slate-700">{titleCase(e.name)}</span>
                     <span className="text-xs text-slate-400">{e.designation || e.type}{e.department ? ` · ${e.department}` : ''}</span>
                   </label>
                 ))}
@@ -1430,8 +1476,11 @@ function SelfScheduleModal({ candidate, onClose, onSaved }) {
   const [slots, setSlots] = useState((existing.slots || []).map((s) => ({ id: s.id, at: s.at, confirmedBy: s.confirmedBy || [] })));
   const [questions, setQuestions] = useState(existing.questions || []);
   const [emps, setEmps] = useState([]);
+  const [panelDept, setPanelDept] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
+  const panelDepts = [...new Set(emps.map((e) => e.department).filter(Boolean))].sort();
+  const shownPanel = emps.filter((e) => !panelDept || e.department === panelDept);
 
   const publicLink = existing.token ? `${window.location.origin}/schedule/${existing.token}` : '';
   const togglePanelist = (id) => setPanelistIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -1463,12 +1512,23 @@ function SelfScheduleModal({ candidate, onClose, onSaved }) {
         </div>
 
         <div>
-          <Lbl>Interview panel (they confirm their availability)</Lbl>
-          <div className="flex flex-wrap gap-2">
-            {emps.map((e) => (
-              <button key={e._id} onClick={() => togglePanelist(e._id)} className={`rounded-full px-3 py-1 text-xs font-bold border ${panelistIds.includes(e._id) ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{e.name}</button>
+          <div className="flex items-center justify-between mb-1">
+            <Lbl>Interview panel (they confirm their availability) {panelistIds.length ? `(${panelistIds.length})` : ''}</Lbl>
+            <select className="text-xs rounded-lg border border-slate-300 px-2 py-1" value={panelDept} onChange={(e) => setPanelDept(e.target.value)}>
+              <option value="">All departments</option>
+              {panelDepts.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="border border-slate-200 rounded-lg max-h-40 overflow-auto divide-y divide-slate-50">
+            {shownPanel.length === 0 ? <div className="p-3 text-xs text-slate-400">No employees found.</div> : shownPanel.map((e) => (
+              <label key={e._id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={panelistIds.includes(e._id)} onChange={() => togglePanelist(e._id)} />
+                <span className="font-semibold text-slate-700">{titleCase(e.name)}</span>
+                <span className="text-xs text-slate-400">{e.designation || e.type}{e.department ? ` · ${e.department}` : ''}</span>
+              </label>
             ))}
           </div>
+          <div className="text-[11px] text-slate-400 mt-1">Panelists confirm their availability; the candidate only sees confirmed slots.</div>
         </div>
 
         <div>
@@ -1524,39 +1584,86 @@ function SelfScheduleModal({ candidate, onClose, onSaved }) {
 }
 
 // Reject with a required reason (HR picks from configured reasons or adds one).
-function RejectModal({ onClose, onReject }) {
+function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
   const [reasons, setReasons] = useState([]);
   const [picked, setPicked] = useState('');
   const [custom, setCustom] = useState('');
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState('reason'); // reason | email
+  const [sendEmail, setSendEmail] = useState(true);
+  const [drafting, setDrafting] = useState(false);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [err, setErr] = useState('');
   useEffect(() => { hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {}); }, []);
   const addReason = async () => {
     const v = custom.trim(); if (!v) return;
     try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { alert(e.message); }
   };
-  const submit = async () => { if (!picked) return; setBusy(true); await onReject(picked); };
+  const goEmail = async () => {
+    if (!picked) return;
+    setStep('email');
+    if (candidateEmail && !body) {
+      setDrafting(true); setErr('');
+      try { const r = await hrApi(`/candidates/${candidateId}/reject-email/draft`, { method: 'POST', body: JSON.stringify({ reason: picked }) }); setSubject(r.subject || ''); setBody(r.body || ''); }
+      catch (e) { setErr(e.message); setSendEmail(false); }
+      finally { setDrafting(false); }
+    }
+  };
+  const submit = async () => {
+    setBusy(true);
+    await onReject({ reason: picked, sendEmail: sendEmail && !!candidateEmail, subject, body });
+  };
   return (
-    <Modal title="Reject candidate" onClose={onClose}>
-      <div className="text-sm text-slate-500 mb-3">Pick a reason before sending the rejection. This is recorded on the candidate.</div>
-      <div className="space-y-2 max-h-64 overflow-auto">
-        {reasons.map((r) => (
-          <label key={r} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
-            <input type="radio" name="reason" checked={picked === r} onChange={() => setPicked(r)} />
-            <span className="text-slate-700">{r}</span>
-          </label>
-        ))}
-      </div>
-      {adding ? (
-        <div className="flex gap-2 mt-2">
-          <input className={inp} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
-          <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>Add</button>
-        </div>
-      ) : <button onClick={() => setAdding(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
-      <div className="flex justify-end gap-2 mt-5">
-        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-        <button onClick={submit} disabled={busy || !picked} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : 'Reject candidate'}</button>
-      </div>
+    <Modal title="Reject candidate" onClose={onClose} wide={step === 'email'}>
+      {step === 'reason' ? (
+        <>
+          <div className="text-sm text-slate-500 mb-3">Pick a reason before sending the rejection. This is recorded on the candidate.</div>
+          <div className="space-y-2 max-h-64 overflow-auto">
+            {reasons.map((r) => (
+              <label key={r} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                <input type="radio" name="reason" checked={picked === r} onChange={() => setPicked(r)} />
+                <span className="text-slate-700">{r}</span>
+              </label>
+            ))}
+          </div>
+          {adding ? (
+            <div className="flex gap-2 mt-2">
+              <input className={inp} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
+              <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>Add</button>
+            </div>
+          ) : <button onClick={() => setAdding(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
+          <div className="flex justify-end gap-2 mt-5">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={goEmail} disabled={!picked} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>Next: email →</button>
+          </div>
+        </>
+      ) : (
+        <>
+          {err && <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">{err}</div>}
+          {!candidateEmail ? (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-sm text-slate-500 mb-3">No email on file for this candidate — they'll be rejected without an email.</div>
+          ) : (
+            <>
+              <label className="flex items-center gap-2 text-sm text-slate-600 mb-3"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Send a rejection email to {candidateEmail}</label>
+              {sendEmail && (
+                drafting ? <div className="text-sm text-slate-400 py-8 text-center">✨ Drafting a thoughtful rejection email…</div> : (
+                  <div className="space-y-3">
+                    <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+                    <div><Lbl>Message</Lbl><div className="rounded-lg border border-slate-300 min-h-[180px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+                    <div className="text-[11px] text-slate-400">Drafted by AI — review and edit before sending.</div>
+                  </div>
+                )
+              )}
+            </>
+          )}
+          <div className="flex justify-between gap-2 mt-5">
+            <button onClick={() => setStep('reason')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">← Back</button>
+            <button onClick={submit} disabled={busy || (sendEmail && candidateEmail && drafting)} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : (sendEmail && candidateEmail ? 'Reject & send email' : 'Reject candidate')}</button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

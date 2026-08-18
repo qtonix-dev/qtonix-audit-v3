@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v201';
+const APP_VERSION = 'v203';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -49,7 +49,10 @@ app.use(helmet({
       'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
-      'frame-src': ["'self'"],
+      // Resume/attachment PDFs are hosted on ImageKit and can be previewed inline;
+      // the Google Docs viewer is a fallback embed for PDFs that won't render
+      // directly. Both must be allowed as frame sources.
+      'frame-src': ["'self'", 'https://ik.imagekit.io', 'https://docs.google.com', 'https://drive.google.com'],
     },
   },
 }));
