@@ -45,6 +45,8 @@ function SurveyCreate({ surveys, reload, setErr }) {
   const [questions, setQuestions] = useState([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [testTake, setTestTake] = useState(null); // survey being test-taken
+  const [testResults, setTestResults] = useState(null); // survey whose test results are shown
   const Q_TYPES = [['scale5', 'Rating scale (1–5)'], ['single_choice', 'Multiple choice (pick one)'], ['multi_choice', 'Multiple choice (pick many)'], ['short_answer', 'Short answer']];
   const isChoice = (t) => t === 'single_choice' || t === 'multi_choice';
   const addQ = () => setQuestions((qs) => [...qs, { id: `q${Date.now()}`, text: '', type: 'scale5', comment: false, options: [] }]);
@@ -64,10 +66,11 @@ function SurveyCreate({ surveys, reload, setErr }) {
     try {
       await api('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
       setName(''); setDescription(''); setFrequency('one_time'); setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
-      setMsg('Survey launched — the sales team will be prompted to respond.'); reload();
+      setMsg('Survey saved as a draft — test it below, then click “Make live” to send it to the team.'); reload();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const closeSurvey = async (s) => { if (!window.confirm(`Close "${s.name}"?`)) return; try { await api(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); } catch (e) { alert(e.message); } };
+  const activate = async (s) => { if (!window.confirm(`Make "${s.name}" live? The sales team will be prompted to respond, and any test responses will be cleared.`)) return; try { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); reload(); } catch (e) { alert(e.message); } };
   const del = async (s) => { if (!window.confirm(`Delete "${s.name}"?`)) return; try { await api(`/surveys/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
 
   return (
@@ -128,27 +131,37 @@ function SurveyCreate({ surveys, reload, setErr }) {
             </div>
             <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-3">+ Add question</button>
           </div>
-          <div className="pt-1"><button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Launching…' : 'Launch Survey'}</button></div>
+          <div className="pt-1"><button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save as draft'}</button></div>
         </div>
       </div>
       <div>
-        <div className="text-sm font-bold text-[#050A1F] mb-2">Active &amp; recent surveys</div>
+        <div className="text-sm font-bold text-[#050A1F] mb-2">Surveys</div>
         {surveys.length === 0 ? <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No surveys yet.</div> : (
-          <div className="space-y-2">{surveys.map((s) => (
+          <div className="space-y-2">{surveys.map((s) => {
+            const statusPill = s.status === 'active'
+              ? <span className="text-green-600 font-bold">Active</span>
+              : s.status === 'draft' ? <span className="text-amber-600 font-bold">Draft</span> : <span className="text-slate-400">Closed</span>;
+            return (
             <div key={s._id} className="bg-white rounded-xl border border-slate-200/70 p-4">
-              <div className="flex items-center justify-between">
-                <div><div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'} · {s.status === 'active' ? <span className="text-green-600 font-bold">Active</span> : <span className="text-slate-400">Closed</span>} · {s.responseCount || 0} responses this period</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
+                  <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'} · {statusPill}{s.status === 'active' ? ` · ${s.responseCount || 0} responses this period` : ''}</div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => setTestTake(s)} className="text-xs font-bold text-blue-600 border border-blue-200 rounded-lg px-2.5 py-1.5">Test</button>
+                  <button onClick={() => setTestResults(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Test results</button>
+                  {s.status === 'draft' && <button onClick={() => activate(s)} className="text-xs font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: ORANGE }}>Make live</button>}
                   {s.status === 'active' && <button onClick={() => closeSurvey(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Close</button>}
                   <button onClick={() => del(s)} className="text-slate-300 hover:text-red-500"><Trash size={16} /></button>
                 </div>
               </div>
-            </div>))}
+            </div>);
+          })}
           </div>
         )}
       </div>
+      {testTake && <SurveyTakeModal survey={testTake} testMode onClose={() => setTestTake(null)} onDone={() => { setTestTake(null); }} />}
+      {testResults && <TestResultsModal survey={testResults} onClose={() => setTestResults(null)} />}
     </div>
   );
 }
@@ -207,46 +220,80 @@ function SurveyResults({ surveys }) {
         {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">{periods.map((p) => <option key={p} value={p}>{p}</option>)}</select>}
         <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="ml-auto rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
       </div>
-      {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : data.total === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No responses yet for this period.</div>
-      ) : (
-        <div className="space-y-6">
-          <div className="text-xs text-slate-400">{data.total} response{data.total === 1 ? '' : 's'} · {data.analysed} analysed{data.analysedAt ? ` · last analysed ${new Date(data.analysedAt).toLocaleString()}` : ''}</div>
-          {data.analysed === 0 && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-700">Click “Analyse with AI” to decode sentiment and surface themes from the responses.</div>}
-          <div className="grid grid-cols-3 gap-4">
-            <SentimentCircle label="Positive Sentiment" pct={data.sentiment.positive} color="#16A34A" />
-            <SentimentCircle label="Neutral Sentiment" pct={data.sentiment.neutral} color="#F59E0B" />
-            <SentimentCircle label="Negative Sentiment" pct={data.sentiment.negative} color="#DC2626" />
-          </div>
-          {(data.summary || data.good.length || data.improve.length) && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl border border-green-100 p-5"><div className="text-sm font-extrabold text-green-700 mb-2">Top 3 good points</div><ul className="space-y-1.5">{(data.good.length ? data.good : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-green-500">✔</span>{g}</li>)}</ul></div>
-              <div className="bg-white rounded-2xl border border-amber-100 p-5"><div className="text-sm font-extrabold text-amber-700 mb-2">Top 3 to improve</div><ul className="space-y-1.5">{(data.improve.length ? data.improve : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-amber-500">▲</span>{g}</li>)}</ul></div>
-            </div>
-          )}
-          {data.summary && <div className="bg-white rounded-2xl border border-slate-200/70 p-5 text-sm text-slate-600"><b className="text-[#050A1F]">Overall mood:</b> {data.summary}</div>}
-          <SentimentBreakdown title="By team" rows={data.byBranch} />
-          {data.responses && data.responses.length > 0 && (
-            <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-              <div className="text-sm font-extrabold text-[#050A1F] mb-1">Individual responses</div>
-              <div className="text-[11px] text-slate-400 mb-3">Hesitation = lingered noticeably or heavily self-edited on a question — a hint they may have answered diplomatically. Fed to the AI for a deeper read.</div>
-              <div className="space-y-1.5">{data.responses.map((r) => {
-                const sent = r.sentiment && r.sentiment.label;
-                const sc = sent === 'positive' ? 'bg-green-100 text-green-700' : sent === 'negative' ? 'bg-red-100 text-red-700' : sent === 'neutral' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400';
-                return (
-                  <div key={r._id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2">
-                    <div className="w-36 min-w-0"><div className="text-sm font-bold text-[#050A1F] truncate">{r.employeeName || 'User'}</div><div className="text-[10px] text-slate-400 truncate">{r.branch || '—'}</div></div>
-                    <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sc}`}>{sent || 'not analysed'}</span>
-                    {r.sentiment && r.sentiment.tone && <span className="text-[11px] text-slate-500 italic">{r.sentiment.tone}</span>}
-                    {r.hesitationCount > 0 && <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-purple-100 text-purple-700" title={r.hesitationQuestions.join(' · ')}>⚠ hesitation ×{r.hesitationCount}</span>}
-                    <div className="ml-auto text-xs text-slate-400 shrink-0">{r.avgScore != null ? `${r.avgScore.toFixed(1)}/5` : '—'}</div>
-                  </div>
-                );
-              })}</div>
-            </div>
-          )}
+      {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : <ResultsBody data={data} />}
+    </div>
+  );
+}
+
+// Shared results renderer (used by the live results tab and the test-results modal).
+function ResultsBody({ data }) {
+  if (data.total === 0) return <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No responses yet for this period.</div>;
+  return (
+    <div className="space-y-6">
+      <div className="text-xs text-slate-400">{data.total} response{data.total === 1 ? '' : 's'} · {data.analysed} analysed{data.analysedAt ? ` · last analysed ${new Date(data.analysedAt).toLocaleString()}` : ''}</div>
+      {data.analysed === 0 && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-700">Click “Analyse with AI” to decode sentiment and surface themes from the responses.</div>}
+      <div className="grid grid-cols-3 gap-4">
+        <SentimentCircle label="Positive Sentiment" pct={data.sentiment.positive} color="#16A34A" />
+        <SentimentCircle label="Neutral Sentiment" pct={data.sentiment.neutral} color="#F59E0B" />
+        <SentimentCircle label="Negative Sentiment" pct={data.sentiment.negative} color="#DC2626" />
+      </div>
+      {(data.summary || data.good.length || data.improve.length) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-green-100 p-5"><div className="text-sm font-extrabold text-green-700 mb-2">Top 3 good points</div><ul className="space-y-1.5">{(data.good.length ? data.good : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-green-500">✔</span>{g}</li>)}</ul></div>
+          <div className="bg-white rounded-2xl border border-amber-100 p-5"><div className="text-sm font-extrabold text-amber-700 mb-2">Top 3 to improve</div><ul className="space-y-1.5">{(data.improve.length ? data.improve : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-amber-500">▲</span>{g}</li>)}</ul></div>
         </div>
       )}
+      {data.summary && <div className="bg-white rounded-2xl border border-slate-200/70 p-5 text-sm text-slate-600"><b className="text-[#050A1F]">Overall mood:</b> {data.summary}</div>}
+      <SentimentBreakdown title="By team" rows={data.byBranch} />
+      {data.responses && data.responses.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-1">Individual responses</div>
+          <div className="text-[11px] text-slate-400 mb-3">Hesitation = lingered noticeably or heavily self-edited on a question — a hint they may have answered diplomatically. Fed to the AI for a deeper read.</div>
+          <div className="space-y-1.5">{data.responses.map((r) => {
+            const sent = r.sentiment && r.sentiment.label;
+            const sc = sent === 'positive' ? 'bg-green-100 text-green-700' : sent === 'negative' ? 'bg-red-100 text-red-700' : sent === 'neutral' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400';
+            return (
+              <div key={r._id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                <div className="w-36 min-w-0"><div className="text-sm font-bold text-[#050A1F] truncate">{r.employeeName || 'User'}</div><div className="text-[10px] text-slate-400 truncate">{r.branch || '—'}</div></div>
+                <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sc}`}>{sent || 'not analysed'}</span>
+                {r.sentiment && r.sentiment.tone && <span className="text-[11px] text-slate-500 italic">{r.sentiment.tone}</span>}
+                {r.hesitationCount > 0 && <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-purple-100 text-purple-700" title={r.hesitationQuestions.join(' · ')}>⚠ hesitation ×{r.hesitationCount}</span>}
+                <div className="ml-auto text-xs text-slate-400 shrink-0">{r.avgScore != null ? `${r.avgScore.toFixed(1)}/5` : '—'}</div>
+              </div>
+            );
+          })}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Modal showing TEST results for a survey (period = 'test'), with analyse + clear.
+function TestResultsModal({ survey, onClose }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const load = () => { setBusy(true); api(`/surveys/${survey._id}/results?period=test`).then(setData).catch(() => setData(null)).finally(() => setBusy(false)); };
+  useEffect(() => { load(); }, [survey._id]);
+  const analyze = async () => { setAnalyzing(true); try { await api(`/surveys/${survey._id}/analyze`, { method: 'POST', body: JSON.stringify({ period: 'test' }) }); load(); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
+  const clear = async () => { if (!window.confirm('Clear all test responses for this survey?')) return; try { await api(`/surveys/${survey._id}/test-responses`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">Test results — {survey.name}</div><div className="text-xs text-blue-600 font-bold mt-0.5">🧪 Preview data only</div></div>
+          <div className="flex items-center gap-2">
+            <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
+            {data && data.total > 0 && <button onClick={clear} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-500">Clear</button>}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+          </div>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data || data.total === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm">No test responses yet. Click “Test” on the survey to take it, then come back here.</div>
+          ) : <ResultsBody data={data} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -274,7 +321,7 @@ export function CrmSurveyGate() {
   );
 }
 
-function SurveyTakeModal({ survey, onClose, onDone }) {
+function SurveyTakeModal({ survey, onClose, onDone, testMode }) {
   const [answers, setAnswers] = useState({});
   const [phase, setPhase] = useState('main');
   const [followupQs, setFollowupQs] = useState([]);
@@ -282,6 +329,8 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const fuPath = testMode ? 'test-followups' : 'followups';
+  const respondPath = testMode ? 'test-respond' : 'respond';
   const behavior = useRef({});
   const focusAt = useRef({});
   const beh = (qid) => (behavior.current[qid] = behavior.current[qid] || { timeMs: 0, backspaces: 0, changes: 0, answered: false });
@@ -302,7 +351,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
     if (!allAnswered) return setErr('Please answer every question.');
     if (anyLow && phase === 'main') {
       setBusy(true);
-      try { const r = await api(`/surveys/${survey._id}/followups`, { method: 'POST', body: JSON.stringify({ answers }) }); if (r.questions && r.questions.length) { setFollowupQs(r.questions); setPhase('followups'); setBusy(false); return; } } catch {}
+      try { const r = await api(`/surveys/${survey._id}/${fuPath}`, { method: 'POST', body: JSON.stringify({ answers }) }); if (r.questions && r.questions.length) { setFollowupQs(r.questions); setPhase('followups'); setBusy(false); return; } } catch {}
       setBusy(false);
     }
     submit();
@@ -311,7 +360,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
     setBusy(true); setErr(''); flushTimers();
     const behaviorPayload = {}; Object.keys(behavior.current).forEach((qid) => { const b = behavior.current[qid]; behaviorPayload[qid] = { timeMs: b.timeMs, backspaces: b.backspaces, changes: b.changes }; });
     const followups = followupQs.map((q) => ({ question: q.text, answer: followupA[q.id] || 'No answer' }));
-    try { const r = await api(`/surveys/${survey._id}/respond`, { method: 'POST', body: JSON.stringify({ answers, followups, behavior: behaviorPayload }) }); setSuccessMsg(r.message || 'Thank you for your feedback!'); setPhase('done'); }
+    try { const r = await api(`/surveys/${survey._id}/${respondPath}`, { method: 'POST', body: JSON.stringify({ answers, followups, behavior: behaviorPayload }) }); setSuccessMsg(r.message || 'Thank you for your feedback!'); setPhase('done'); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
 
@@ -350,6 +399,7 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
           {phase !== 'done' && <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>}
         </div>
         <div className="p-6 overflow-y-auto">
+          {testMode && phase !== 'done' && <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs font-bold text-blue-700">🧪 Test mode — this response is saved separately and won't affect live results.</div>}
           {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           {phase === 'main' && (survey.questions || []).map((q, i) => renderQuestion(q, i))}
           {phase === 'followups' && (<div>
