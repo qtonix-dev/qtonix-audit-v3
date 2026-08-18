@@ -261,6 +261,7 @@ export function ImageKitSection() {
 // by an admin to view/edit anyone's profile (pass targetId).
 // ---------------------------------------------------------------------------
 const DOC_TYPES = ['PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Driving License', 'Utility Bill'];
+const HIRING_DOC_TYPES = ['Offer letter', 'Appointment letter', 'ID proof', 'Address proof', 'Education certificate', 'Experience letter', 'Relieving letter', 'Salary slip', 'Bank details', 'Photograph', 'Other'];
 
 // Performance card kinds — praise/review are positive/neutral notes; yellow and
 // red are conduct flags (minor / major).
@@ -364,7 +365,7 @@ export function ProfilePage({ me, targetId }) {
 
   const roleLabel = ROLE_LABELS[row.type] || row.type;
   const reportsToName = row.reportsToAdminId ? '(Admin)' : (row.reportsToId ? `HR #${row.reportsToId}` : '—');
-  const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['employment', 'Previous Employment'], ['onboarding', 'Onboarding']];
+  const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['documents', 'Documents'], ['attendance', 'Attendance'], ['leave', 'Leave'], ['onboarding', 'Onboarding']];
 
   // A read-only identity field for the header meta rows.
   const initials = (row.name || '?').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
@@ -650,45 +651,79 @@ export function ProfilePage({ me, targetId }) {
             {/* EDUCATION (employee-editable) */}
             {tab === 'education' && (
               <div>
-                <div className="text-sm font-extrabold text-[#050A1F] mb-3">Education records</div>
-                {[['tenth', '10th'], ['twelfth', '+2'], ['graduation', 'Graduation']].map(([key, label]) => (
-                  <div key={key} className="mb-4">
-                    <div className="text-xs font-bold text-slate-500 mb-2">{label}</div>
-                    <div className="grid grid-cols-2 gap-3">
-                      {key === 'graduation' && <Field label="Course name"><input className={inputCls} value={p.education?.[key]?.courseName ?? ''} onChange={(e) => patch('education', { [key]: { ...(p.education?.[key] || {}), courseName: e.target.value } })} /></Field>}
-                      <Field label="Institution"><input className={inputCls} value={p.education?.[key]?.institution ?? ''} onChange={(e) => patch('education', { [key]: { ...(p.education?.[key] || {}), institution: e.target.value } })} /></Field>
-                      <Field label="Year of passing"><input className={inputCls} value={p.education?.[key]?.year ?? ''} onChange={(e) => patch('education', { [key]: { ...(p.education?.[key] || {}), year: e.target.value } })} /></Field>
-                      <Field label="% achieved"><input className={inputCls} value={p.education?.[key]?.percent ?? ''} onChange={(e) => patch('education', { [key]: { ...(p.education?.[key] || {}), percent: e.target.value } })} /></Field>
-                      <div className="flex items-end">{p.education?.[key]?.url ? <a href={p.education[key].url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2">View ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => patch('education', { [key]: { ...(p.education?.[key] || {}), url } }))} /></label>}</div>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex justify-end"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
-              </div>
-            )}
-
-            {/* PREVIOUS EMPLOYMENT (employee-editable) */}
-            {tab === 'employment' && (
-              <div>
-                <label className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-600"><input type="checkbox" checked={!!p.employment?.fresher} onChange={(e) => patch('employment', { fresher: e.target.checked, records: e.target.checked ? [] : (p.employment?.records || []) })} /> Fresher (no prior experience)</label>
-                {!p.employment?.fresher && (
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-extrabold text-[#050A1F]">Professional & education</div>
+                  <button onClick={() => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>
+                </div>
+                {(p.eduRecords || []).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No qualifications added yet.</div>
+                ) : (
                   <div className="space-y-3">
-                    {((p.employment && p.employment.records) || []).map((r, i) => (
-                      <div key={i} className="grid grid-cols-12 gap-2 items-end border border-slate-100 rounded-lg p-3">
-                        <div className="col-span-3"><Field label="Employer"><input className={inputCls} value={r.employer} onChange={(e) => setExp(i, { employer: e.target.value })} /></Field></div>
-                        <div className="col-span-2"><Field label="From"><input className={inputCls} placeholder="MM/YYYY" value={r.from} onChange={(e) => setExp(i, { from: e.target.value })} /></Field></div>
-                        <div className="col-span-2"><Field label="To"><input className={inputCls} placeholder="MM/YYYY" value={r.to} onChange={(e) => setExp(i, { to: e.target.value })} /></Field></div>
-                        <div className="col-span-2"><Field label="Designation"><input className={inputCls} value={r.designation} onChange={(e) => setExp(i, { designation: e.target.value })} /></Field></div>
-                        <div className="col-span-2"><Field label="Salary"><input className={inputCls} value={r.salary} onChange={(e) => setExp(i, { salary: e.target.value })} /></Field></div>
-                        <div className="col-span-1 text-right"><button onClick={() => delExp(i)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button></div>
-                      </div>
-                    ))}
-                    <button onClick={addExp} className="text-xs font-bold text-[#FF4500]">+ Add experience</button>
+                    {(p.eduRecords || []).map((r, i) => {
+                      const setEdu = (obj) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
+                      const delEdu = () => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).filter((_, idx) => idx !== i) }));
+                      return (
+                        <div key={r.id || i} className="border border-slate-100 rounded-xl p-4">
+                          <div className="grid grid-cols-12 gap-3 items-end">
+                            <div className="col-span-3"><Field label="Level"><select className={inputCls} value={r.level} onChange={(e) => setEdu({ level: e.target.value })}>{['10th', '+2 / Diploma', 'Graduation', 'Post-graduation', 'Certification', 'Other'].map((l) => <option key={l}>{l}</option>)}</select></Field></div>
+                            <div className="col-span-4"><Field label="Course / stream"><input className={inputCls} value={r.course || ''} onChange={(e) => setEdu({ course: e.target.value })} /></Field></div>
+                            <div className="col-span-5"><Field label="Institution / board"><input className={inputCls} value={r.institution || ''} onChange={(e) => setEdu({ institution: e.target.value })} /></Field></div>
+                            <div className="col-span-3"><Field label="Year"><input className={inputCls} value={r.year || ''} onChange={(e) => setEdu({ year: e.target.value })} /></Field></div>
+                            <div className="col-span-3"><Field label="% / CGPA"><input className={inputCls} value={r.percent || ''} onChange={(e) => setEdu({ percent: e.target.value })} /></Field></div>
+                            <div className="col-span-4 flex items-end gap-2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2.5">View certificate ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload certificate<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setEdu({ url }))} /></label>}</div>
+                            <div className="col-span-2 flex items-end justify-end"><button onClick={delEdu} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <div className="flex justify-end mt-4"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
               </div>
             )}
+
+            {/* DOCUMENTS (hiring documents uploaded at joining) */}
+            {tab === 'documents' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-sm font-extrabold text-[#050A1F]">Hiring documents</div>
+                  <button onClick={() => setP((s) => ({ ...s, hiringDocs: [...(s.hiringDocs || []), { id: `doc${Date.now()}`, name: '', type: 'Offer letter', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add document</button>
+                </div>
+                <div className="text-xs text-slate-400 mb-4">Upload all documents collected during hiring — offer letter, ID proofs, certificates, past experience letters, etc.</div>
+                {(p.hiringDocs || []).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No documents uploaded yet.</div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {(p.hiringDocs || []).map((d, i) => {
+                      const setD = (obj) => setP((s) => ({ ...s, hiringDocs: (s.hiringDocs || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
+                      const delD = () => setP((s) => ({ ...s, hiringDocs: (s.hiringDocs || []).filter((_, idx) => idx !== i) }));
+                      return (
+                        <div key={d.id || i} className="border border-slate-100 rounded-xl p-3">
+                          <div className="flex items-start gap-3">
+                            <span className="shrink-0 w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400"><Icon.Doc size={18} /></span>
+                            <div className="flex-1 min-w-0 space-y-2">
+                              <select className={inputCls + ' py-1.5'} value={d.type} onChange={(e) => setD({ type: e.target.value })}>{HIRING_DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+                              <input className={inputCls + ' py-1.5'} value={d.name || ''} onChange={(e) => setD({ name: e.target.value })} placeholder="Label (optional)" />
+                              <div className="flex items-center gap-2">
+                                {d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload file<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setD({ url }))} /></label>}
+                                <button onClick={delD} className="text-slate-300 hover:text-red-500 ml-auto"><Icon.Trash size={15} /></button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="flex justify-end mt-4"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+              </div>
+            )}
+
+            {/* ATTENDANCE */}
+            {tab === 'attendance' && <AttendanceTab employeeId={id} canManage={canEditPayroll} />}
+
+            {/* LEAVE */}
+            {tab === 'leave' && <LeaveTab employeeId={id} canManage={canEditPayroll} />}
 
             {/* ONBOARDING CHECKLIST */}
             {tab === 'onboarding' && <OnboardingChecklist employeeId={id} canEdit={canEditLocked} />}
@@ -758,6 +793,219 @@ function PerformanceCardModal({ by, onClose, onSave }) {
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
           <button onClick={() => { if (!title.trim() && !note.trim()) return; onSave({ id: `perf${Date.now()}`, kind, title: title.trim(), note: note.trim(), date, by: by || '' }); }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Add note</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Attendance tab: month grid, mark each day, late by login/logout ----
+const ATT_STATUS = {
+  present: { label: 'Present', short: 'P', bg: '#DCFCE7', fg: '#16A34A' },
+  absent: { label: 'Absent', short: 'A', bg: '#FEE2E2', fg: '#DC2626' },
+  half_day: { label: 'Half day', short: 'H', bg: '#FEF9C3', fg: '#CA8A04' },
+  leave: { label: 'Leave', short: 'L', bg: '#E0E7FF', fg: '#4F46E5' },
+  holiday: { label: 'Holiday', short: 'Ho', bg: '#F1F5F9', fg: '#64748B' },
+  week_off: { label: 'Week off', short: 'W', bg: '#F1F5F9', fg: '#94A3B8' },
+};
+function AttendanceTab({ employeeId, canManage }) {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [dayModal, setDayModal] = useState(null);
+  const load = () => hrApi(`/employees/${employeeId}/attendance?month=${month}`).then(setData).catch(() => setData({ days: [] }));
+  useEffect(() => { load(); }, [month, employeeId]);
+  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const byDate = {}; (data.days || []).forEach((d) => { byDate[d.date] = d; });
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const firstDow = (new Date(y, m - 1, 1).getDay() + 6) % 7; // Monday-first
+  const cells = []; for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const monthLabel = new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  const dkey = (d) => `${month}-${String(d).padStart(2, '0')}`;
+  const counts = (data.days || []).reduce((a, d) => { a[d.status] = (a[d.status] || 0) + 1; return a; }, {});
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <button onClick={() => { const d = new Date(y, m - 2, 1); setMonth(d.toISOString().slice(0, 7)); }} className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">‹</button>
+          <div className="text-sm font-extrabold text-[#050A1F] w-40 text-center">{monthLabel}</div>
+          <button onClick={() => { const d = new Date(y, m, 1); setMonth(d.toISOString().slice(0, 7)); }} className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">›</button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(ATT_STATUS).map(([k, s]) => counts[k] ? <span key={k} className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ background: s.bg, color: s.fg }}>{s.label}: {counts[k]}</span> : null)}
+        </div>
+      </div>
+      {!canManage && <div className="mb-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-500">View only — attendance is maintained by HR.</div>}
+      <div className="grid grid-cols-7 gap-1 mb-1">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="text-center text-[10px] font-bold uppercase tracking-wide text-slate-400 py-1">{d}</div>)}</div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={`b${i}`} className="min-h-[64px]" />;
+          const rec = byDate[dkey(d)];
+          const st = rec ? (ATT_STATUS[rec.status] || ATT_STATUS.present) : null;
+          return (
+            <button key={d} onClick={() => canManage && setDayModal({ date: dkey(d), rec: rec || { date: dkey(d), status: 'present' } })}
+              className={`min-h-[64px] rounded-lg border p-1.5 text-left ${canManage ? 'hover:border-orange-300' : ''} border-slate-100`} style={st ? { background: st.bg } : {}}>
+              <div className="text-[11px] font-bold" style={{ color: st ? st.fg : '#94A3B8' }}>{d}</div>
+              {rec && <div className="text-[10px] font-bold mt-0.5" style={{ color: st.fg }}>{st.label}</div>}
+              {rec && rec.late && <div className="text-[9px] font-bold text-red-500">Late</div>}
+              {rec && rec.loginTime && <div className="text-[9px] text-slate-400">{rec.loginTime}{rec.logoutTime ? `–${rec.logoutTime}` : ''}</div>}
+            </button>
+          );
+        })}
+      </div>
+      {dayModal && <AttendanceDayModal employeeId={employeeId} day={dayModal} onClose={() => setDayModal(null)} onSaved={() => { setDayModal(null); load(); }} />}
+    </div>
+  );
+}
+
+function AttendanceDayModal({ employeeId, day, onClose, onSaved }) {
+  const [status, setStatus] = useState(day.rec.status || 'present');
+  const [loginTime, setLoginTime] = useState(day.rec.loginTime || '');
+  const [logoutTime, setLogoutTime] = useState(day.rec.logoutTime || '');
+  const [note, setNote] = useState(day.rec.note || '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/attendance/${day.date}`, { method: 'PUT', body: JSON.stringify({ status, loginTime, logoutTime, note }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">{fmtLong(day.date)}</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-4">
+          <div>
+            <div className="text-xs font-bold text-slate-500 mb-2">Status</div>
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(ATT_STATUS).map(([k, s]) => <button key={k} onClick={() => setStatus(k)} className={`rounded-lg px-2 py-2 text-xs font-bold border ${status === k ? 'ring-2 ring-orange-300' : ''}`} style={{ background: s.bg, color: s.fg, borderColor: 'transparent' }}>{s.label}</button>)}
+            </div>
+          </div>
+          {(status === 'present' || status === 'half_day') && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Login time"><input type="time" className={inputCls} value={loginTime} onChange={(e) => setLoginTime(e.target.value)} /></Field>
+              <Field label="Logout time"><input type="time" className={inputCls} value={logoutTime} onChange={(e) => setLogoutTime(e.target.value)} /></Field>
+            </div>
+          )}
+          <Field label="Note (optional)"><input className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Leave tab: allocation, balances, records; probation/notice → unpaid ----
+const LEAVE_TYPES = [['casual', 'Casual leave'], ['medical', 'Medical leave'], ['privilege', 'Privilege leave'], ['wfh', 'Work from home']];
+function LeaveTab({ employeeId, canManage }) {
+  const [data, setData] = useState(null);
+  const [addModal, setAddModal] = useState(false);
+  const [allocModal, setAllocModal] = useState(false);
+  const load = () => hrApi(`/employees/${employeeId}/leave`).then(setData).catch(() => setData({ leaves: [] }));
+  useEffect(() => { load(); }, [employeeId]);
+  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const del = async (id) => { if (!window.confirm('Remove this leave record?')) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-extrabold text-[#050A1F]">Leave balances</div>
+        {canManage && <div className="flex gap-2"><button onClick={() => setAllocModal(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Set allocation</button><button onClick={() => setAddModal(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Record leave</button></div>}
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        {LEAVE_TYPES.map(([k, label]) => {
+          const alloc = data.allocation[k] || 0; const used = data.usedPaid[k] || 0; const bal = data.balance[k] ?? (alloc - used);
+          return (
+            <div key={k} className="rounded-2xl border border-slate-200/70 p-4">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+              <div className="text-2xl font-extrabold text-[#050A1F] mt-1">{k === 'wfh' ? used : bal}<span className="text-sm font-bold text-slate-300"> / {alloc}</span></div>
+              <div className="text-[11px] text-slate-400 mt-0.5">{k === 'wfh' ? `${used} used` : `${used} used · ${bal} left`}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div>
+        <div className="text-sm font-extrabold text-[#050A1F] mb-3">Leave records</div>
+        {(data.leaves || []).length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No leave taken yet.</div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden divide-y divide-slate-50">
+            {data.leaves.map((l) => {
+              const label = (LEAVE_TYPES.find(([k]) => k === l.type) || [null, l.type])[1];
+              return (
+                <div key={l._id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                  <span className="font-semibold text-slate-700 w-36">{label}</span>
+                  <span className="text-slate-500">{fmtLong(l.date)}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-slate-100 text-slate-500">{l.duration === 'half' ? 'Half day' : 'Full day'}</span>
+                  <span className={`text-[11px] font-bold rounded-full px-2 py-0.5 ${l.paid ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-700'}`}>{l.paid ? 'Paid' : 'Unpaid'}</span>
+                  {l.reason && <span className="text-slate-400 truncate flex-1">{l.reason}</span>}
+                  {canManage && <button onClick={() => del(l._id)} className="text-slate-300 hover:text-red-500 ml-auto shrink-0"><Icon.Trash size={15} /></button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {addModal && <LeaveAddModal employeeId={employeeId} onClose={() => setAddModal(false)} onSaved={() => { setAddModal(false); load(); }} />}
+      {allocModal && <LeaveAllocModal employeeId={employeeId} current={data.allocation} onClose={() => setAllocModal(false)} onSaved={() => { setAllocModal(false); load(); }} />}
+    </div>
+  );
+}
+
+function LeaveAddModal({ employeeId, onClose, onSaved }) {
+  const [type, setType] = useState('casual');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [duration, setDuration] = useState('full');
+  const [reason, setReason] = useState('');
+  const [elig, setElig] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { hrApi(`/employees/${employeeId}/leave-eligibility?date=${date}`).then(setElig).catch(() => setElig(null)); }, [date, employeeId]);
+  const save = async () => {
+    setBusy(true);
+    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify({ type, date, duration, reason, paid: true }) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  const unpaidWarn = elig && !elig.paidAllowed && type !== 'wfh';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Record leave</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Type"><select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>{LEAVE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+            <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          </div>
+          {type !== 'wfh' && (
+            <div>
+              <div className="text-xs font-bold text-slate-500 mb-2">Duration</div>
+              <div className="flex gap-2">{[['full', 'Full day'], ['half', 'Half day']].map(([k, l]) => <button key={k} onClick={() => setDuration(k)} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === k ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>{l}</button>)}</div>
+            </div>
+          )}
+          <Field label="Reason"><textarea className={inputCls} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+          {unpaidWarn && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">Paid leave isn't allowed during {elig.reason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}. This will be saved as <b>unpaid</b>.</div>}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Record leave'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeaveAllocModal({ employeeId, current, onClose, onSaved }) {
+  const [alloc, setAlloc] = useState({ casual: current.casual ?? 12, medical: current.medical ?? 12, privilege: current.privilege ?? 12, wfh: current.wfh ?? 24 });
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/leave-allocation`, { method: 'PUT', body: JSON.stringify(alloc) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Leave allocation</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 grid grid-cols-2 gap-4">
+          {LEAVE_TYPES.map(([k, l]) => <Field key={k} label={`${l} (per year)`}><input type="number" className={inputCls} value={alloc[k]} onChange={(e) => setAlloc((a) => ({ ...a, [k]: Number(e.target.value) || 0 }))} /></Field>)}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save allocation'}</button>
         </div>
       </div>
     </div>

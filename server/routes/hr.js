@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
@@ -523,6 +523,190 @@ router.post('/profile/:id/timeline', requireHrAccess, async (req, res, next) => 
     row.timeline = tl; row.changed('timeline', true);
     await row.save();
     res.json({ ok: true, timeline: row.timeline });
+  } catch (e) { next(e); }
+});
+
+// ---- Attendance & Leave (Admin / HR Manager manage; employee views own) ----
+
+// Whether the viewer may manage attendance/leave for others.
+function canManagePeople(req) { return req.isHrAdmin || req.isHrManager; }
+// Default paid-leave allocation assigned at joining (can be overridden per user
+// via profile.leaveAllocation).
+const DEFAULT_LEAVE_ALLOCATION = { casual: 12, medical: 12, privilege: 12, wfh: 24 };
+
+// Is the employee within probation (first 3 months) or serving notice on `date`?
+// During these windows paid leave isn't allowed (it can still be taken, unpaid).
+function leavePaidEligibility(emp, dateStr) {
+  const date = new Date(dateStr + 'T00:00:00');
+  // Probation: first 3 months from joining date.
+  if (emp.joiningDate) {
+    const join = new Date(emp.joiningDate);
+    const probationEnd = new Date(join); probationEnd.setMonth(probationEnd.getMonth() + 3);
+    if (date < probationEnd) return { paidAllowed: false, reason: 'probation' };
+  }
+  // Notice period: if a noticeStart/lastWorkingDay is recorded on the profile.
+  const p = emp.profile || {};
+  const notice = p.notice || {};
+  if (notice.lastWorkingDay) {
+    const lwd = new Date(notice.lastWorkingDay);
+    const noticeStart = notice.noticeStart ? new Date(notice.noticeStart) : null;
+    if (date <= lwd && (!noticeStart || date >= noticeStart)) return { paidAllowed: false, reason: 'notice' };
+  }
+  return { paidAllowed: true, reason: null };
+}
+
+// GET attendance for an employee within a month (?month=YYYY-MM).
+router.get('/employees/:id/attendance', requireHrAccess, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const isSelf = req.hrUser && req.hrUser.id === id;
+    if (!canManagePeople(req) && !isSelf) return res.status(403).json({ error: 'Not allowed.' });
+    const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date().toISOString().slice(0, 7);
+    const rows = await HrAttendance.findAll({ where: { employeeId: id, date: { [Op.like]: `${month}-%` } }, order: [['date', 'ASC']] });
+    res.json({ month, canManage: canManagePeople(req), days: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Upsert a single day's attendance (Admin / HR Manager).
+router.put('/employees/:id/attendance/:date', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    const id = Number(req.params.id);
+    const date = String(req.params.date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
+    const b = req.body || {};
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    // Late = login later than the shift start (if a shift is set).
+    let late = !!b.late;
+    if (b.loginTime && emp.shiftId) {
+      const shift = await HrShift.findByPk(emp.shiftId);
+      if (shift && shift.startTime && b.loginTime > shift.startTime) late = true;
+    }
+    const [row] = await HrAttendance.findOrCreate({ where: { employeeId: id, date }, defaults: { employeeId: id, date } });
+    if (b.status !== undefined) row.status = b.status;
+    if (b.loginTime !== undefined) row.loginTime = b.loginTime || null;
+    if (b.logoutTime !== undefined) row.logoutTime = b.logoutTime || null;
+    if (b.note !== undefined) row.note = String(b.note || '').slice(0, 200);
+    row.late = late; row.markedById = req.hrActor.id; row.source = 'manual';
+    await row.save();
+    hrLog(req, 'attendance.mark', `${emp.name} ${date} ${row.status}`);
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Bulk mark (e.g. mark whole month or a set of dates at once).
+router.post('/employees/:id/attendance/bulk', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    const id = Number(req.params.id);
+    const entries = Array.isArray(req.body && req.body.entries) ? req.body.entries : [];
+    let n = 0;
+    for (const e of entries) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date || '')) continue;
+      const [row] = await HrAttendance.findOrCreate({ where: { employeeId: id, date: e.date }, defaults: { employeeId: id, date: e.date } });
+      if (e.status) row.status = e.status;
+      if (e.loginTime !== undefined) row.loginTime = e.loginTime || null;
+      if (e.logoutTime !== undefined) row.logoutTime = e.logoutTime || null;
+      row.markedById = req.hrActor.id; await row.save(); n += 1;
+    }
+    hrLog(req, 'attendance.bulk', `${n} days`);
+    res.json({ ok: true, updated: n });
+  } catch (e) { next(e); }
+});
+
+// Leave summary + records for an employee (allocation, used, balance, list).
+router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const isSelf = req.hrUser && req.hrUser.id === id;
+    if (!canManagePeople(req) && !isSelf) return res.status(403).json({ error: 'Not allowed.' });
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+    const rows = await HrLeave.findAll({ where: { employeeId: id }, order: [['date', 'DESC']] });
+    // Used = sum of paid leave days per type (half = 0.5). WFH tracked separately.
+    const usedPaid = { casual: 0, medical: 0, privilege: 0, wfh: 0 };
+    const usedUnpaid = { casual: 0, medical: 0, privilege: 0, wfh: 0 };
+    rows.forEach((r) => {
+      const d = r.duration === 'half' ? 0.5 : 1;
+      (r.paid ? usedPaid : usedUnpaid)[r.type] = ((r.paid ? usedPaid : usedUnpaid)[r.type] || 0) + d;
+    });
+    res.json({
+      canManage: canManagePeople(req),
+      allocation: alloc, usedPaid, usedUnpaid,
+      balance: Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (usedPaid[k] || 0)).toFixed(1)])),
+      leaves: rows.map((r) => r.toJSON()),
+    });
+  } catch (e) { next(e); }
+});
+
+// Set an employee's paid-leave allocation (Admin / HR Manager) — usually at joining.
+router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can set leave allocation.' });
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const b = req.body || {};
+    const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+    ['casual', 'medical', 'privilege', 'wfh'].forEach((k) => { if (b[k] !== undefined) alloc[k] = Number(b[k]) || 0; });
+    emp.profile = { ...(emp.profile || {}), leaveAllocation: alloc }; emp.changed('profile', true);
+    await emp.save();
+    hrLog(req, 'leave.allocation', emp.name);
+    res.json({ ok: true, allocation: alloc });
+  } catch (e) { next(e); }
+});
+
+// Record a leave. Enforces the probation/notice rule: paid leave isn't allowed
+// then, but the leave can still be taken as UNPAID.
+router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can record leave.' });
+    const id = Number(req.params.id);
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const b = req.body || {};
+    const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
+    if (!type) return res.status(400).json({ error: 'Invalid leave type.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date || '')) return res.status(400).json({ error: 'Invalid date.' });
+    const elig = leavePaidEligibility(emp, b.date);
+    // If the caller asked for paid but it's not allowed, force unpaid (allowed but unpaid).
+    let paid = b.paid !== false;
+    let forcedUnpaid = false;
+    if (paid && !elig.paidAllowed) { paid = false; forcedUnpaid = true; }
+    const row = await HrLeave.create({
+      employeeId: id, type, date: b.date, duration: b.duration === 'half' ? 'half' : 'full',
+      paid, reason: String(b.reason || '').slice(0, 300), status: 'approved', appliedById: req.hrActor.id,
+    });
+    // Reflect leave on the attendance calendar for that day.
+    try {
+      const [att] = await HrAttendance.findOrCreate({ where: { employeeId: id, date: b.date }, defaults: { employeeId: id, date: b.date } });
+      att.status = type === 'wfh' ? 'present' : (b.duration === 'half' ? 'half_day' : 'leave');
+      att.note = `${type}${paid ? '' : ' (unpaid)'}`; att.markedById = req.hrActor.id; await att.save();
+    } catch {}
+    hrLog(req, 'leave.add', `${emp.name} ${type} ${b.date}${forcedUnpaid ? ' (unpaid — probation/notice)' : ''}`);
+    res.json({ ...row.toJSON(), forcedUnpaid, forcedReason: forcedUnpaid ? elig.reason : null });
+  } catch (e) { next(e); }
+});
+
+// Delete a leave record.
+router.delete('/employees/:id/leave/:leaveId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can remove leave.' });
+    const row = await HrLeave.findOne({ where: { id: Number(req.params.leaveId), employeeId: Number(req.params.id) } });
+    if (!row) return res.status(404).json({ error: 'Leave record not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Check paid-leave eligibility for a date (used by the UI to warn before saving).
+router.get('/employees/:id/leave-eligibility', requireHrAccess, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    res.json(leavePaidEligibility(emp, date));
   } catch (e) { next(e); }
 });
 

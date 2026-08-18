@@ -1442,6 +1442,42 @@ const HrOnboarding = sequelize.define('HrOnboarding', {
 }, { tableName: 'hr_onboarding', indexes: [{ name: 'idx_hr_onboard_emp', fields: ['employeeId'] }] });
 HrOnboarding.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Daily attendance for an employee. One row per employee per date. Status covers
+// present / absent / half-day / leave / holiday / week-off. Late is derived from
+// the login time vs the shift, but stored for convenience.
+const HrAttendance = sequelize.define('HrAttendance', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false }, // HrUser id
+  date: { type: DataTypes.STRING(10), allowNull: false },    // YYYY-MM-DD
+  status: { type: DataTypes.STRING(20), defaultValue: 'present' }, // present|absent|half_day|leave|holiday|week_off
+  loginTime: { type: DataTypes.STRING(5), allowNull: true },  // HH:MM
+  logoutTime: { type: DataTypes.STRING(5), allowNull: true }, // HH:MM
+  late: { type: DataTypes.BOOLEAN, defaultValue: false },
+  note: { type: DataTypes.STRING(200), allowNull: true },
+  markedById: { type: DataTypes.INTEGER, allowNull: true },
+  source: { type: DataTypes.STRING(20), defaultValue: 'manual' }, // manual|api
+}, { tableName: 'hr_attendance', indexes: [
+  { name: 'idx_hr_att_emp_date', unique: true, fields: ['employeeId', 'date'] },
+  { name: 'idx_hr_att_emp', fields: ['employeeId'] },
+] });
+HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// A leave record for an employee. Types: casual, medical, privilege, wfh.
+// duration: full | half. paid indicates whether it's counted against paid
+// balance (unpaid during probation / notice period).
+const HrLeave = sequelize.define('HrLeave', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  type: { type: DataTypes.STRING(20), allowNull: false },     // casual|medical|privilege|wfh
+  date: { type: DataTypes.STRING(10), allowNull: false },     // YYYY-MM-DD (single-day entries)
+  duration: { type: DataTypes.STRING(10), defaultValue: 'full' }, // full|half
+  paid: { type: DataTypes.BOOLEAN, defaultValue: true },
+  reason: { type: DataTypes.STRING(300), allowNull: true },
+  status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
+  appliedById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'hr_leaves', indexes: [{ name: 'idx_hr_leave_emp', fields: ['employeeId'] }] });
+HrLeave.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 // A survey definition (admin-created from a template). Questions are a JSON
 // array of { id, text, type:'scale5', comment:true }. Frequency drives
 // auto-recurrence; `period` marks the current cycle (e.g. '2026-08').
@@ -1543,6 +1579,6 @@ CrmSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, t
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
