@@ -1187,8 +1187,16 @@ function AddCandidateModal({ job, onClose, onSaved }) {
       finally { clearInterval(timer); }
       setProg({ pct: 100, label: 'Done' });
       if (p._text) setResumeText(p._text);
+      // Also upload the same file as the candidate's resume so it doesn't have
+      // to be uploaded a second time. Best-effort — parsing already succeeded.
+      let uploadedUrl = '';
+      try {
+        const up = await hrApi('/candidates/upload', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name, kind: 'resume', jobPostId: job._id }) });
+        uploadedUrl = up.url || '';
+      } catch {}
       setC((s) => ({
         ...s,
+        resumeUrl: uploadedUrl || s.resumeUrl,
         firstName: p.firstName || s.firstName, lastName: p.lastName || s.lastName,
         email: p.email || s.email, phone: p.phone || s.phone,
         currentCtc: p.currentCtc || s.currentCtc, expectedCtc: p.expectedCtc || s.expectedCtc,
@@ -1270,6 +1278,12 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                   <div className="mt-3">
                     <div className="h-2 rounded-full bg-slate-200 overflow-hidden"><div className="h-full rounded-full transition-all duration-300" style={{ width: `${Math.max(5, Math.min(100, prog.pct))}%`, background: ORANGE }} /></div>
                     <div className="text-[11px] text-slate-500 mt-1">{prog.label} {prog.pct >= 100 ? '✓' : `${Math.round(prog.pct)}%`}</div>
+                  </div>
+                )}
+                {!prog && c.resumeUrl && (
+                  <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-green-700">
+                    <span>✓</span><span>Resume attached.</span>
+                    <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="text-orange-600 underline">View</a>
                   </div>
                 )}
               </div>

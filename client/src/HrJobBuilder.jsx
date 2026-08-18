@@ -668,7 +668,7 @@ function PreviewModal({ job, onCancel, onProceed }) {
           )}
 
           <SectionTitle>Job description</SectionTitle>
-          <div className="prose prose-sm max-w-none text-slate-700 prose-headings:text-[#050A1F] prose-headings:font-extrabold" dangerouslySetInnerHTML={{ __html: job.description || '<p class="text-slate-400">No description yet.</p>' }} />
+          <div className="rich-text max-w-none text-slate-700 text-sm" dangerouslySetInnerHTML={{ __html: job.description || '<p class="text-slate-400">No description yet.</p>' }} />
         </div>
 
         <div className="px-8 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">

@@ -168,7 +168,35 @@ ${raw}`,
   });
   const data = parseJson(out);
   ['skills', 'workExperience', 'education'].forEach((k) => { if (!Array.isArray(data[k])) data[k] = []; });
+
+  // Email/phone are frequently missed by the model when they sit in a header,
+  // a hyperlink, or run together with other text. Detect them directly from the
+  // raw resume text and TRUST that over the model when a clear match exists.
+  const detectedEmail = detectEmail(raw);
+  if (detectedEmail) data.email = detectedEmail;
+  else if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email).trim())) data.email = '';
+  if (!data.phone) { const ph = detectPhone(raw); if (ph) data.phone = ph; }
+
   return data;
+}
+
+// Pull the most likely personal email from resume text. Skips obvious noise
+// (example.com, image filenames) and prefers the first real-looking address.
+function detectEmail(text) {
+  const matches = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  const cleaned = matches
+    .map((m) => m.replace(/[.,;:)>\]]+$/, '').trim())
+    .filter((m) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m))
+    .filter((m) => !/\.(png|jpe?g|gif|svg|webp)$/i.test(m))
+    .filter((m) => !/@(example|test|domain|email|sentry|wixpress)\./i.test(m));
+  return cleaned[0] || '';
+}
+
+// Best-effort phone detection (10–15 digits, optional country code / separators).
+function detectPhone(text) {
+  const m = String(text || '').match(/(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,4}\d{2,4}/g) || [];
+  const cand = m.map((x) => x.trim()).filter((x) => (x.replace(/\D/g, '').length >= 10 && x.replace(/\D/g, '').length <= 15));
+  return cand[0] || '';
 }
 
 /**
