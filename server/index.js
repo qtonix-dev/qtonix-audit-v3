@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v210';
+const APP_VERSION = 'v211';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');

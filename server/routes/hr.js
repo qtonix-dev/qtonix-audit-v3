@@ -2399,22 +2399,22 @@ router.get('/pending-offers', requireHrAccess, async (req, res, next) => {
     const items = [];
     for (const c of rows) {
       const offerDone = c.offer && c.offer.status === 'accepted';
-      if (offerDone) continue;
+      if (offerDone) continue; // offer already complete — nothing to do
       const stageL = String(c.stage || '').toLowerCase();
       const inHiredStage = HIRED_STAGE_IDS.has(stageL);
       const job = await jobFor(c.jobPostId);
       const inOfferStage = (job && job.stages || []).some((s) => ['offered', 'offer'].includes(String(s.id).toLowerCase()) && s.id === c.stage);
-      const pendingHire = c.offer && c.offer.pendingHire;
-      // Only surface candidates who are actually in an offer/hired stage AND still
-      // flagged for hire — so a candidate moved back to an earlier stage (or whose
-      // offer was never really started) no longer lingers here.
-      if (!((inHiredStage || inOfferStage) && pendingHire)) continue;
+      // Show any candidate sitting in an Offer or Hired stage whose offer isn't
+      // accepted yet. Being in that stage is the signal — we don't require the
+      // internal pendingHire flag (a candidate dragged straight to Offered should
+      // still appear). Candidates in earlier stages never show.
+      if (!inHiredStage && !inOfferStage) continue;
       const mine = c.recruiterId === meId || c.recruiterName === meName;
       if (!isAdmin && !mine) continue;
       items.push({
         candidateId: c.id, candidateName: c.name, recruiterName: c.recruiterName || 'Unassigned',
         stage: c.stage, offerStatus: (c.offer && c.offer.status) || 'not_started',
-        reason: inHiredStage ? 'Marked hired but offer not completed' : 'Hire pending — complete the offer',
+        reason: inHiredStage ? 'Marked hired but offer not completed' : 'In offer stage — complete the offer',
       });
     }
     res.json({ count: items.length, items });
