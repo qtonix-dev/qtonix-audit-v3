@@ -41,6 +41,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [tab, setTab] = useState(initialTab || 'resume');
   const [err, setErr] = useState('');
   const [pendingHintShown, setPendingHintShown] = useState(false);
+  const [offerNotice, setOfferNotice] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
   const [showInterview, setShowInterview] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -58,6 +59,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
     if (c && !pendingHintShown && c.offer && c.offer.pendingHire && c.offer.status !== 'accepted') {
       setPendingHintShown(true);
       if (!initialTab) setTab('offer');
+      setOfferNotice(`Complete the offer process for ${c.name} before hiring. Once the offer is accepted, they'll move to Hired automatically.`);
     }
   }, [c, pendingHintShown, initialTab]);
 
@@ -87,7 +89,10 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
     const updated = await act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: stageId }) }));
     // If the move to a hired stage was redirected because the offer isn't done,
     // jump to the Offer tab so HR can complete it.
-    if (updated && updated.offerIncomplete) { setTab('offer'); setErr(''); }
+    if (updated && updated.offerIncomplete) {
+      setTab('offer'); setErr('');
+      setOfferNotice(updated.message || `Complete the offer process before hiring ${c.name}. Once the offer is accepted, they'll move to Hired automatically.`);
+    }
   };
   const moveNext = () => { if (nextStage) moveToStage(nextStage.id); };
   const reject = () => setShowReject(true);
@@ -151,6 +156,13 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
           {err && <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+          {offerNotice && (
+            <div className="mt-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm px-3 py-2 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5">📝</span>
+              <span className="flex-1">{offerNotice}</span>
+              <button onClick={() => setOfferNotice('')} className="shrink-0 text-sky-400 hover:text-sky-600 font-bold">✕</button>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}
@@ -202,6 +214,10 @@ function ResumeTab({ c }) {
   // iframe (the "content is blocked" message). Google's viewer reliably embeds
   // any public PDF URL, so offer it as a one-click fallback.
   const googleSrc = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(c.resumeUrl)}`;
+  // Hide the browser PDF viewer chrome (toolbar, side panes, filename, zoom,
+  // page number, download) so only the document shows — we already have an
+  // Open / Download action above.
+  const directSrc = `${c.resumeUrl}#toolbar=0&navpanes=0&scrollbar=0&statusbar=0&view=FitH`;
   return (
     <div>
       <div className="flex justify-end gap-2 mb-2">
@@ -209,7 +225,7 @@ function ResumeTab({ c }) {
         <a href={c.resumeUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Open / Download</a>
       </div>
       {isPdf
-        ? <iframe title="resume" src={useGoogle ? googleSrc : `${c.resumeUrl}#view=FitH`} className="w-full h-[640px] rounded-lg border border-slate-200" />
+        ? <iframe title="resume" src={useGoogle ? googleSrc : directSrc} className="w-full h-[640px] rounded-lg border border-slate-200" />
         : <div className="text-center py-10"><a href={c.resumeUrl} target="_blank" rel="noreferrer" className="text-orange-600 font-bold">View resume file</a></div>}
       {isPdf && !useGoogle && <div className="text-[11px] text-slate-400 mt-2 text-center">If the resume doesn't appear above, click “Can't see it? Use viewer”.</div>}
     </div>

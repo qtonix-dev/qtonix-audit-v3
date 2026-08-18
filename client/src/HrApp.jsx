@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
-import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon } from './HrParts.jsx';
+import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase } from './HrParts.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
 import { AppSwitcher } from './AppSwitcher.jsx';
@@ -45,6 +45,27 @@ export function normalizePhone(raw) {
   if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`; // 91XXXXXXXXXX
   if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`; // leading 0
   return `+${digits}`;
+}
+
+// Pretty phone for display: +91 9812-345-678 for a normalised Indian number,
+// otherwise a light grouping of the digits. Never throws on odd input.
+export function formatPhone(raw) {
+  if (!raw) return '—';
+  const norm = normalizePhone(raw);
+  const m = norm.match(/^\+91(\d{10})$/);
+  if (m) { const d = m[1]; return `+91 ${d.slice(0, 4)}-${d.slice(4, 7)}-${d.slice(7)}`; }
+  return norm || String(raw);
+}
+
+// Shorten a long job title so the candidate table stays within its column.
+// Keeps the meaningful head of the title and trims trailing qualifiers.
+export function shortTitle(title) {
+  if (!title) return '—';
+  let t = String(title).trim();
+  // Drop common bracketed/after-dash qualifiers e.g. "(Remote)", " - Bhubaneswar".
+  t = t.replace(/\s*[\(\[].*?[\)\]]\s*/g, ' ').replace(/\s*[-–—|].*$/, '').trim();
+  if (t.length > 22) t = t.slice(0, 21).trimEnd() + '…';
+  return t || '—';
 }
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00] focus:border-transparent';
 
@@ -288,12 +309,12 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
           <div className="space-y-1 max-h-40 overflow-auto">
             {pendingOffers.slice(0, 10).map((p) => (
               <button key={p.candidateId} onClick={() => onOpenCandidate && onOpenCandidate(p.candidateId, 'offer')}
-                className="w-full flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-sky-100/50 transition-colors text-left">
-                <span>📝</span>
-                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{p.candidateName}</span>
-                <span className="text-slate-400 truncate">· {p.reason}</span>
-                {isAdmin && <span className="text-slate-400 ml-auto shrink-0">{p.recruiterName}</span>}
-                <span className="text-sky-600 font-bold shrink-0 ml-auto">Complete →</span>
+                className="w-full flex items-center gap-2 bg-white rounded-lg px-3 py-2 text-[11px] hover:bg-sky-100/50 transition-colors text-left">
+                <span className="shrink-0">📝</span>
+                <span className="font-bold text-[#050A1F] truncate shrink-0 max-w-[130px]">{p.candidateName}</span>
+                <span className="text-slate-400 truncate flex-1 min-w-0">· {p.reason}</span>
+                {isAdmin && <span className="text-slate-400 shrink-0 hidden sm:inline">{p.recruiterName}</span>}
+                <span className="text-sky-600 font-bold shrink-0">Complete →</span>
               </button>
             ))}
           </div>
@@ -572,6 +593,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
   const [branches, setBranches] = useState([]);
   const [err, setErr] = useState('');
   const [candFilterJob, setCandFilterJob] = useState(null); // preset job filter when arriving from a job's applicant link
+  const [candSourceFilter, setCandSourceFilter] = useState(''); // preset source filter (applied vs added)
   // Scope hints carried in from the dashboard cards (e.g. show all candidates,
   // or only this week's applications).
   const [candScope, setCandScope] = useState(intent && intent.candScope ? intent.candScope : null); // 'all' | 'mine' | null
@@ -587,7 +609,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
   }, []);
 
   const startBuilder = (seed) => { setBuilderSeed(seed || null); setMode('build'); };
-  const viewApplicants = (jobId) => { setCandFilterJob(jobId); setTab('candidates'); };
+  const viewApplicants = (jobId, source) => { setCandFilterJob(jobId); setCandSourceFilter(source || ''); setTab('candidates'); };
 
   if (mode === 'build') {
     return <HrJobBuilder departments={departments} branches={branches} existing={builderSeed}
@@ -602,14 +624,29 @@ function HrRecruitment({ isAdmin, me, intent }) {
         {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
       </div>
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
-      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-6">
-        {tabs.map(([id, label]) => (
-          <button key={id} onClick={() => { setTab(id); if (id !== 'candidates') setCandFilterJob(null); }}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
-        ))}
+      <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+          {tabs.map(([id, label]) => (
+            <button key={id} onClick={() => { setTab(id); if (id !== 'candidates') setCandFilterJob(null); }}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
+          ))}
+        </div>
+        {/* Scope toggle sits on the right of the same row, contextual to the tab. */}
+        {tab === 'jobs' && (
+          <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => setJobScope('all')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(jobScope || (isAdmin ? 'all' : 'mine')) === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All jobs</button>
+            <button onClick={() => setJobScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(jobScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My jobs</button>
+          </div>
+        )}
+        {tab === 'candidates' && (
+          <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => setCandScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
+            <button onClick={() => setCandScope('all')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
+          </div>
+        )}
       </div>
-      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} forceScope={jobScope} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} forceScope={candScope} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
+      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} scope={jobScope || (isAdmin ? 'all' : 'mine')} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -620,11 +657,11 @@ export function fileToBase64(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
 }
 
-function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, forceScope }) {
+function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, scope: scopeProp }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const [shareFor, setShareFor] = useState(null); // job to share
   const [assignFor, setAssignFor] = useState(null); // job to assign HR to
-  const [scope, setScope] = useState(forceScope || (isAdmin ? 'all' : 'mine')); // all | mine
+  const scope = scopeProp || (isAdmin ? 'all' : 'mine'); // controlled from the tab row
   const myId = me && (me._id || me.id);
   const isMgr = !!(me && me.isHrManager);
   // Restrictive: only assigned HR (or admin / branch HR-manager) can add candidates.
@@ -650,10 +687,6 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, forceSco
   if (!jobs.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No job posts yet. Click “Post a Job” to create one.</div>;
   return (
     <div className="space-y-3">
-      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-1">
-        <button onClick={() => setScope('all')} className={`px-3 py-1 rounded-md text-xs font-bold ${scope === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All jobs</button>
-        <button onClick={() => setScope('mine')} className={`px-3 py-1 rounded-md text-xs font-bold ${scope === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My jobs</button>
-      </div>
       {shown.length === 0 && <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No jobs assigned to you yet.</div>}
       {shown.map((j) => {
         const sp = statusPill(j.status);
@@ -670,9 +703,11 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, forceSco
             <div className="text-xs text-slate-500 mt-0.5">{(j.locations || []).join(' · ') || '—'} · {j.department || 'No dept'} · {j.openings || 1} opening(s)</div>
             <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 flex-wrap">
               {published && <span>Published {published}</span>}
-              <button onClick={() => onViewApplicants(j._id)} className="font-bold text-orange-600 hover:text-orange-700 hover:underline">
-                {(j.appliedCount || 0)} applied · {(j.addedCount || 0)} added
-              </button>
+              <span className="text-slate-500">
+                <button onClick={() => onViewApplicants(j._id, 'public_form')} className="font-bold text-orange-600 hover:text-orange-700 hover:underline">{(j.appliedCount || 0)} applied</button>
+                <span className="text-slate-300"> · </span>
+                <button onClick={() => onViewApplicants(j._id, 'manual')} className="font-bold text-blue-600 hover:text-blue-700 hover:underline">{(j.addedCount || 0)} added</button>
+              </span>
               {/* Assigned HR */}
               {assigned.length > 0 ? (
                 <span className="flex items-center gap-1.5">
@@ -838,7 +873,7 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOnly, openCandidateId, openCandidateTab }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, weekOnly, openCandidateId, openCandidateTab }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [viewTab, setViewTab] = useState(null);
@@ -850,13 +885,12 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOn
   const [q, setQ] = useState('');
   const [jobFilter, setJobFilter] = useState(initialJobFilter || '');
   const [stageFilter, setStageFilter] = useState('');
-  const [sourceFilter, setSourceFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState(initialSource || '');
   const [tagFilter, setTagFilter] = useState('');
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
   const myId = me && (me._id || me.id);
-  // Non-admins default to only their own candidates so others don't contact them.
-  // A forced scope from the dashboard ('all') overrides that default.
-  const [mineOnly, setMineOnly] = useState(forceScope ? forceScope === 'mine' : !isAdmin);
+  // Scope ('mine' | 'all') is controlled from the recruitment tab row.
+  const mineOnly = (scope || (isAdmin ? 'all' : 'mine')) === 'mine';
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
   const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
   // Keyword search runs server-side (covers resume text); other filters are local.
@@ -867,6 +901,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOn
   useEffect(() => { load(); }, []);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
+  useEffect(() => { setSourceFilter(initialSource || ''); }, [initialSource]);
   const job = (id) => jobs.find((j) => j._id === id) || {};
   const stageLabel = (c) => {
     if (c.rejected) return { label: 'Rejected', color: '#DC2626' };
@@ -907,10 +942,6 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOn
     <div>
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-          <button onClick={() => setMineOnly(true)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
-          <button onClick={() => setMineOnly(false)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${!mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
-        </div>
         <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>
         <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
         <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
@@ -953,39 +984,39 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOn
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                <th className="px-4 py-3"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
-                <th className="px-4 py-3">Candidate</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Position</th>
-                <th className="px-4 py-3">Experience</th><th className="px-4 py-3">Resume Match</th><th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Recruiter</th><th className="px-4 py-3">Last update</th><th className="px-4 py-3 text-right">Actions</th>
+            <table className="w-full text-xs">
+              <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="px-2.5 py-2.5"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
+                <th className="px-2.5 py-2.5">Candidate</th><th className="px-2.5 py-2.5">Phone</th><th className="px-2.5 py-2.5">Position</th>
+                <th className="px-2.5 py-2.5">Exp</th><th className="px-2.5 py-2.5">Match</th><th className="px-2.5 py-2.5">Status</th>
+                <th className="px-2.5 py-2.5">Recruiter</th><th className="px-2.5 py-2.5">Updated</th><th className="px-2.5 py-2.5 text-right">Actions</th>
               </tr></thead>
               <tbody>
                 {paged.map((c) => {
                   const a = c.answers || {}; const st = stageLabel(c);
                   return (
                     <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/60">
-                      <td className="px-4 py-3"><input type="checkbox" checked={sel.includes(c._id)} onChange={() => toggleSel(c._id)} /></td>
-                      <td className="px-4 py-3">
+                      <td className="px-2.5 py-2"><input type="checkbox" checked={sel.includes(c._id)} onChange={() => toggleSel(c._id)} /></td>
+                      <td className="px-2.5 py-2">
                         <button onClick={() => setViewId(c._id)} className="text-left">
-                          <div className="font-semibold text-slate-700 hover:text-orange-600">{c.name}</div>
+                          <div className="font-semibold text-slate-700 hover:text-orange-600 whitespace-nowrap">{titleCase(c.name)}</div>
                         </button>
                         {(c.rating > 0 || (c.tags || []).length > 0) && (
-                          <div className="flex items-center gap-1.5 mt-1">
-                            {c.rating > 0 && <span className="text-amber-400 text-xs">{'★'.repeat(c.rating)}<span className="text-slate-200">{'★'.repeat(5 - c.rating)}</span></span>}
-                            {(c.tags || []).slice(0, 3).map((t) => <span key={t} className="rounded-full bg-slate-100 text-slate-500 px-1.5 py-0.5 text-[10px] font-semibold">{t}</span>)}
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {c.rating > 0 && <span className="text-amber-400 text-[10px]">{'★'.repeat(c.rating)}<span className="text-slate-200">{'★'.repeat(5 - c.rating)}</span></span>}
+                            {(c.tags || []).slice(0, 2).map((t) => <span key={t} className="rounded-full bg-slate-100 text-slate-500 px-1.5 py-0.5 text-[9px] font-semibold">{t}</span>)}
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{c.phone || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{job(c.jobPostId).title || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{totalExperience(c)}</td>
-                      <td className="px-4 py-3"><ResumeMatchBadge match={c.resumeMatch} /></td>
-                      <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{(c.recruiterName || '—').split(' ')[0]}</td>
-                      <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{formatPhone(c.phone)}</td>
+                      <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap" title={job(c.jobPostId).title || ''}>{shortTitle(job(c.jobPostId).title)}</td>
+                      <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{totalExperience(c)}</td>
+                      <td className="px-2.5 py-2"><ResumeMatchBadge match={c.resumeMatch} /></td>
+                      <td className="px-2.5 py-2"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
+                      <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{titleCase((c.recruiterName || '—').split(' ')[0])}</td>
+                      <td className="px-2.5 py-2 text-slate-400 text-[11px] whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
+                      <td className="px-2.5 py-2">
+                        <div className="flex items-center justify-end gap-1">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
                           <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
                           {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
@@ -1147,7 +1178,7 @@ function EditCandidateModal({ candidateId, jobs, onClose, onSaved }) {
   const save = async () => {
     setBusy(true);
     try {
-      await hrApi(`/candidates/${candidateId}`, { method: 'PATCH', body: JSON.stringify({ name: c.name, email: c.email, phone: c.phone, jobPostId: c.jobPostId, answers: c.answers }) });
+      await hrApi(`/candidates/${candidateId}`, { method: 'PATCH', body: JSON.stringify({ name: c.name, email: c.email, phone: normalizePhone(c.phone), jobPostId: c.jobPostId, answers: c.answers }) });
       onSaved();
     } catch { setBusy(false); }
   };
@@ -1470,6 +1501,7 @@ function RecruitPipeline({ jobs }) {
   const [moveFor, setMoveFor] = useState(null); // candidate to move via popup
   const [mine, setMine] = useState(false);
   const [me, setMe] = useState(null);
+  const [stageSearch, setStageSearch] = useState({}); // { [stageId]: query } for stages with many cards
   const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
   useEffect(() => { load(); }, [jobId]);
   useEffect(() => { hrApi('/profile-me').then(setMe).catch(() => {}); }, []);
@@ -1515,7 +1547,9 @@ function RecruitPipeline({ jobs }) {
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
-          const col = visible.filter((c) => c.stage === s.id && !c.rejected);
+          const colAll = visible.filter((c) => c.stage === s.id && !c.rejected);
+          const sq = (stageSearch[s.id] || '').trim().toLowerCase();
+          const col = sq ? colAll.filter((c) => `${c.name || ''} ${c.email || ''} ${c.phone || ''}`.toLowerCase().includes(sq)) : colAll;
           return (
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}
@@ -1525,10 +1559,19 @@ function RecruitPipeline({ jobs }) {
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
                   <span className="text-sm font-extrabold text-[#050A1F]">{s.label}</span>
-                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{colAll.length}</span>
                 </div>
               </div>
+              {/* Search within a busy stage (more than 4 candidates). */}
+              {colAll.length > 4 && (
+                <div className="px-1 pb-2">
+                  <input value={stageSearch[s.id] || ''} onChange={(e) => setStageSearch((m) => ({ ...m, [s.id]: e.target.value }))}
+                    placeholder={`Search ${s.label.toLowerCase()}…`}
+                    className="w-full rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                </div>
+              )}
               <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
+                {col.length === 0 && sq && <div className="text-[11px] text-slate-400 px-2 py-3 text-center">No matches in this stage.</div>}
                 {col.map((c) => {
                   const a = c.answers || {};
                   const rm = c.resumeMatch || {};
@@ -2589,6 +2632,31 @@ function SentimentBreakdown({ title, rows }) {
   );
 }
 
+function PhoneNormalizeCard() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+  const run = async () => {
+    if (!window.confirm('Format all existing candidate phone numbers to +91 mobile format? This updates stored records.')) return;
+    setBusy(true); setErr(''); setResult(null);
+    try { const r = await hrApi('/candidates/normalize-phones', { method: 'POST' }); setResult(r); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-bold text-[#050A1F]">Format existing phone numbers</div>
+          <div className="text-xs text-slate-500 mt-1 max-w-md">One-time cleanup: converts saved candidate numbers to the standard <span className="font-mono">+91 9812-345-678</span> format. New candidates are already saved in this format.</div>
+        </div>
+        <button onClick={run} disabled={busy} className="rounded-lg px-4 py-2 text-xs font-bold text-white disabled:opacity-50 shrink-0" style={{ background: ORANGE }}>{busy ? 'Formatting…' : 'Format now'}</button>
+      </div>
+      {result && <div className="text-sm text-green-600 font-semibold mt-3">Done ✓ — {result.updated} of {result.total} updated.</div>}
+      {err && <div className="text-sm text-red-600 mt-3">{err}</div>}
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -2618,6 +2686,14 @@ function HrSettingsTab({ isAdmin, setErr }) {
           {saved && <div className="text-sm text-green-600 font-semibold mt-3">Saved ✓</div>}
         </div>
       </div>
+
+      {/* Data maintenance */}
+      {isAdmin && (
+        <div className="max-w-2xl">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Data maintenance</div>
+          <PhoneNormalizeCard />
+        </div>
+      )}
 
       {/* Recruitment mailbox */}
       <div>

@@ -29,6 +29,20 @@ function isHiredCandidate(c) {
   return false;
 }
 
+// Normalise a phone to +91XXXXXXXXXX for a 10-digit Indian mobile; keep an
+// existing country code otherwise. Deterministic (no network needed).
+function normalizePhoneServer(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  if (s.startsWith('+')) { const d = s.slice(1).replace(/\D/g, ''); return d ? `+${d}` : ''; }
+  const digits = s.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`;
+  return `+${digits}`;
+}
+
 // Profile completion: the sections we score a profile against. Each present +
 // non-empty section counts toward the percentage shown in the admin list.
 function profileCompletion(hrUser) {
@@ -1311,6 +1325,46 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
     res.json(row.toJSON());
     // Re-score the resume match, folding in the new feedback + all notes.
     scoreResumeMatchBg(row.id);
+  } catch (e) { next(e); }
+});
+
+// One-time maintenance: normalise all existing candidate phone numbers to the
+// +91XXXXXXXXXX format. Uses OpenAI to interpret messy/edge-case numbers when a
+// key is present, with a deterministic fallback. Admin only.
+router.post('/candidates/normalize-phones', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const rows = await HrCandidate.findAll();
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('openai') : null;
+    let updated = 0; const ambiguous = [];
+    for (const c of rows) {
+      if (!c.phone) continue;
+      const norm = normalizePhoneServer(c.phone);
+      if (norm && norm !== c.phone) { c.phone = norm; await c.save(); updated += 1; }
+      else if (norm && !/^\+\d{10,15}$/.test(norm)) ambiguous.push({ id: c.id, phone: c.phone });
+    }
+    if (key && ambiguous.length) {
+      try {
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model: 'gpt-4o-mini', response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: 'You normalise phone numbers to E.164. For Indian mobiles output +91 then 10 digits. Return strict JSON {"results":[{"id":<id>,"phone":"+91XXXXXXXXXX"}]} only. If unsure, omit that id.' },
+              { role: 'user', content: JSON.stringify(ambiguous.slice(0, 100)) },
+            ], max_tokens: 1500 }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          let parsed = {}; try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch {}
+          for (const r of (parsed.results || [])) {
+            const cand = rows.find((x) => x.id === r.id);
+            if (cand && /^\+\d{10,15}$/.test(String(r.phone || ''))) { cand.phone = r.phone; await cand.save(); updated += 1; }
+          }
+        }
+      } catch { /* best-effort */ }
+    }
+    hrLog(req, 'candidate.normalize_phones', `${updated} updated`);
+    res.json({ ok: true, updated, total: rows.length });
   } catch (e) { next(e); }
 });
 
