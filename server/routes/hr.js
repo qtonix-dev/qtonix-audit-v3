@@ -445,14 +445,15 @@ router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const isSelf = req.hrUser && req.hrUser.id === id;
-    const canEditLocked = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    const canEditLocked = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
     if (!canEditLocked && !isSelf) {
       return res.status(403).json({ error: 'You can only view your own profile.' });
     }
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
     const shift = row.shiftId ? await HrShift.findByPk(row.shiftId) : null;
-    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, shift: shift ? shift.toJSON() : null });
+    const canEditPayroll = req.isHrAdmin || req.isHrManager;
+    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll, canEditSelf: isSelf || canEditLocked, shift: shift ? shift.toJSON() : null });
   } catch (e) { next(e); }
 });
 
@@ -467,7 +468,7 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const isSelf = req.hrUser && req.hrUser.id === id;
-    const canEditLocked = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    const canEditLocked = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
     if (!canEditLocked && !isSelf) {
       return res.status(403).json({ error: 'You can only edit your own profile.' });
     }
@@ -488,15 +489,17 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
       const current = row.profile || {};
       const incoming = b.profile;
       // Sections anyone (incl. the employee) may edit about themselves.
-      const openSections = ['personal', 'documents', 'bank', 'education', 'employment'];
-      // Sections only HR/Admin may edit.
-      const lockedSections = ['payroll', 'performance'];
+      const openSections = ['personal', 'documents', 'bank', 'education', 'employment', 'hiringDocs'];
+      // Sections only Admin or an HR Manager may edit (payroll, performance
+      // cards, salary history, attendance and leave live in dedicated endpoints).
+      const lockedSections = ['payroll', 'performance', 'payrollHistory', 'performanceCards'];
+      const canEditPayroll = req.isHrAdmin || req.isHrManager;
       const merged = { ...current };
       openSections.forEach((s) => { if (incoming[s] !== undefined) merged[s] = incoming[s]; });
       lockedSections.forEach((s) => {
         if (incoming[s] !== undefined) {
-          if (canEditLocked) merged[s] = incoming[s];
-          // else silently ignore — employee can't change payroll/performance.
+          if (canEditPayroll) merged[s] = incoming[s];
+          // else silently ignore — only admins/HR managers change these.
         }
       });
       row.profile = merged; row.changed('profile', true);

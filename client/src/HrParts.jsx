@@ -8,9 +8,33 @@ const IconBase = ({ size = 16, children, ...p }) => (
 );
 export const Icon = {
   Pencil: (p) => <IconBase {...p}><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></IconBase>,
+  Edit: (p) => <IconBase {...p}><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></IconBase>,
   Trash: (p) => <IconBase {...p}><path d="M4 7h16" /><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" /><path d="M6 7l1 12.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7" /><path d="M10 11v6M14 11v6" /></IconBase>,
   Globe: (p) => <IconBase {...p}><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.5 2.4 2.5 14.6 0 17M12 3.5c-2.5 2.4-2.5 14.6 0 17" /></IconBase>,
+  Plus: (p) => <IconBase {...p}><path d="M12 5v14M5 12h14" /></IconBase>,
+  Doc: (p) => <IconBase {...p}><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" /><path d="M14 2v6h6" /></IconBase>,
 };
+
+// A read-only two-column info grid for "view" mode. Empty values show a dash.
+export function InfoGrid({ items }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+      {items.map(([label, value], i) => (
+        <div key={i} className={label === 'Home address' ? 'col-span-2' : ''}>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+          <div className="text-sm font-semibold text-[#050A1F] mt-0.5 whitespace-pre-wrap">{value || <span className="text-slate-300">—</span>}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Format a date as "12 Aug 1998"; returns '' for empty input.
+export function fmtLong(d) {
+  if (!d) return '';
+  const x = new Date(d); if (isNaN(x)) return String(d);
+  return x.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 // Shared HR helpers/components used by HrApp. Kept here so the main shell file
 // stays readable. Everything talks only to /api/hr/*.
@@ -238,6 +262,15 @@ export function ImageKitSection() {
 // ---------------------------------------------------------------------------
 const DOC_TYPES = ['PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Driving License', 'Utility Bill'];
 
+// Performance card kinds — praise/review are positive/neutral notes; yellow and
+// red are conduct flags (minor / major).
+const PERF_KINDS = {
+  praise: { label: 'Appreciation', icon: '🌟', bg: '#DCFCE7', border: '#BBF7D0' },
+  review: { label: 'Review', icon: '📝', bg: '#EFF6FF', border: '#BFDBFE' },
+  yellow: { label: 'Yellow card', icon: '🟨', bg: '#FEF9C3', border: '#FDE68A' },
+  red: { label: 'Red card', icon: '🟥', bg: '#FEE2E2', border: '#FECACA' },
+};
+
 // Icons for the user-detail tabs (stroke SVG paths), matching candidate detail.
 const PROFILE_TAB_ICONS = {
   timeline: 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
@@ -264,8 +297,12 @@ export function ProfilePage({ me, targetId }) {
   const [ikReady, setIkReady] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false); // personal details: view vs edit
+  const [payModal, setPayModal] = useState(null); // {reason} when adding a salary record
+  const [perfModal, setPerfModal] = useState(null); // {kind} when adding a performance card
 
   const canEditLocked = !!(row && row.canEditLocked); // HR/Admin viewing
+  const canEditPayroll = !!(row && row.canEditPayroll); // Admin or HR Manager only
   const isSelf = !targetId;
 
   const reload = () => hrApi(`/profile/${id}`).then((r) => { setRow(r); setP(r.profile || {}); setAvatar(r.avatar || ''); }).catch((e) => setErr(e.message));
@@ -300,6 +337,17 @@ export function ProfilePage({ me, targetId }) {
   const addExp = () => patch('employment', { fresher: false, records: [...((p.employment && p.employment.records) || []), { employer: '', from: '', to: '', designation: '', salary: '' }] });
   const setExp = (i, obj) => patch('employment', { records: ((p.employment && p.employment.records) || []).map((r, idx) => idx === i ? { ...r, ...obj } : r) });
   const delExp = (i) => patch('employment', { records: ((p.employment && p.employment.records) || []).filter((_, idx) => idx !== i) });
+
+  // Payroll history: each entry records the CTC at a point in time with a reason
+  // (Joining / Increment / Appraisal / Promotion / Revision). Kept newest-first.
+  const payHistory = () => (p.payrollHistory || []).slice().sort((a, b) => (b.effectiveDate || '').localeCompare(a.effectiveDate || ''));
+  const addPayEntry = (entry) => setP((s) => ({ ...s, payrollHistory: [...(s.payrollHistory || []), entry] }));
+  const delPayEntry = (id) => setP((s) => ({ ...s, payrollHistory: (s.payrollHistory || []).filter((x) => x.id !== id) }));
+  // Performance cards: dated notes with a kind — praise, review, yellow (minor
+  // issue) or red (major issue).
+  const perfCards = () => (p.performanceCards || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const addPerfCard = (card) => setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] }));
+  const delPerfCard = (id) => setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== id) }));
 
   const save = async () => {
     setSaving(true); setMsg(''); setErr('');
@@ -432,63 +480,170 @@ export function ProfilePage({ me, targetId }) {
               </div>
             )}
 
-            {/* PERSONAL + DOCUMENTS (employee-editable) */}
+            {/* PERSONAL + DOCUMENTS (employee-editable, view-first) */}
             {tab === 'personal' && (
               <div className="space-y-6">
-                <div>
-                  <div className="text-sm font-extrabold text-[#050A1F] mb-3">Personal details</div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2"><Field label="Home address"><textarea className={inputCls} rows={2} value={p.personal?.homeAddress ?? ''} onChange={(e) => patch('personal', { homeAddress: e.target.value })} /></Field></div>
-                    <Field label="Personal email"><input className={inputCls} value={p.personal?.personalEmail ?? ''} onChange={(e) => patch('personal', { personalEmail: e.target.value })} /></Field>
-                    <Field label="Date of birth"><input type="date" className={inputCls} value={p.personal?.dob ?? ''} onChange={(e) => patch('personal', { dob: e.target.value })} /></Field>
-                    <Field label="Marital status"><select className={inputCls} value={p.personal?.maritalStatus ?? ''} onChange={(e) => patch('personal', { maritalStatus: e.target.value })}><option value="">— select —</option><option>Single</option><option>Married</option></select></Field>
-                    {p.personal?.maritalStatus === 'Married' && <Field label="Anniversary date"><input type="date" className={inputCls} value={p.personal?.anniversary ?? ''} onChange={(e) => patch('personal', { anniversary: e.target.value })} /></Field>}
-                  </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-extrabold text-[#050A1F]">Personal details</div>
+                  {(isSelf || canEditLocked) && (
+                    editMode
+                      ? <div className="flex gap-2"><button onClick={() => { setEditMode(false); reload(); }} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button><button onClick={async () => { await save(); setEditMode(false); }} disabled={saving} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save'}</button></div>
+                      : <button onClick={() => setEditMode(true)} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5"><Icon.Edit size={13} /> Edit</button>
+                  )}
                 </div>
-                <div>
-                  <div className="text-sm font-extrabold text-[#050A1F] mb-3">Bank details</div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="Bank name"><input className={inputCls} value={p.bank?.bankName ?? ''} onChange={(e) => patch('bank', { bankName: e.target.value })} /></Field>
-                    <Field label="Account number"><input className={inputCls} value={p.bank?.accountNumber ?? ''} onChange={(e) => patch('bank', { accountNumber: e.target.value })} /></Field>
-                    <Field label="IFSC code"><input className={inputCls} value={p.bank?.ifsc ?? ''} onChange={(e) => patch('bank', { ifsc: e.target.value })} /></Field>
-                    <Field label="Account type"><select className={inputCls} value={p.bank?.accountType ?? ''} onChange={(e) => patch('bank', { accountType: e.target.value })}><option value="">— select —</option><option>Saving</option><option>Office Salary Account</option></select></Field>
+
+                {!editMode ? (
+                  <div className="space-y-6">
+                    <InfoGrid items={[
+                      ['Home address', p.personal?.homeAddress],
+                      ['Personal email', p.personal?.personalEmail],
+                      ['Date of birth', fmtLong(p.personal?.dob)],
+                      ['Marital status', p.personal?.maritalStatus],
+                      ...(p.personal?.maritalStatus === 'Married' ? [['Anniversary', fmtLong(p.personal?.anniversary)]] : []),
+                    ]} />
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Bank details</div>
+                      <InfoGrid items={[
+                        ['Bank name', p.bank?.bankName],
+                        ['Account number', p.bank?.accountNumber],
+                        ['IFSC code', p.bank?.ifsc],
+                        ['Account type', p.bank?.accountType],
+                      ]} />
+                    </div>
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Documents</div>
+                      {(p.documents || []).length === 0 ? <div className="text-sm text-slate-400">No documents added.</div> : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {(p.documents || []).map((d, i) => (
+                            <div key={i} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2.5">
+                              <div className="min-w-0"><div className="text-sm font-semibold text-slate-700">{d.type}</div>{d.number && <div className="text-xs text-slate-400 truncate">{d.number}</div>}</div>
+                              {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 shrink-0">View ↗</a>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-sm font-extrabold text-[#050A1F] mb-3">Documents</div>
-                  <div className="space-y-3">
-                    {(p.documents || []).map((d, i) => (
-                      <div key={i} className="grid grid-cols-12 gap-2 items-end border border-slate-100 rounded-lg p-3">
-                        <div className="col-span-4"><Field label="Type"><select className={inputCls} value={d.type} onChange={(e) => setDoc(i, { type: e.target.value })}>{DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field></div>
-                        <div className="col-span-4"><Field label="Number"><input className={inputCls} value={d.number} onChange={(e) => setDoc(i, { number: e.target.value })} /></Field></div>
-                        <div className="col-span-3">{d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View file ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setDoc(i, { url }))} /></label>}</div>
-                        <div className="col-span-1 text-right"><button onClick={() => delDoc(i)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button></div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2"><Field label="Home address"><textarea className={inputCls} rows={2} value={p.personal?.homeAddress ?? ''} onChange={(e) => patch('personal', { homeAddress: e.target.value })} /></Field></div>
+                      <Field label="Personal email"><input className={inputCls} value={p.personal?.personalEmail ?? ''} onChange={(e) => patch('personal', { personalEmail: e.target.value })} /></Field>
+                      <Field label="Date of birth"><input type="date" className={inputCls} value={p.personal?.dob ?? ''} onChange={(e) => patch('personal', { dob: e.target.value })} /></Field>
+                      <Field label="Marital status"><select className={inputCls} value={p.personal?.maritalStatus ?? ''} onChange={(e) => patch('personal', { maritalStatus: e.target.value })}><option value="">— select —</option><option>Single</option><option>Married</option></select></Field>
+                      {p.personal?.maritalStatus === 'Married' && <Field label="Anniversary date"><input type="date" className={inputCls} value={p.personal?.anniversary ?? ''} onChange={(e) => patch('personal', { anniversary: e.target.value })} /></Field>}
+                    </div>
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Bank details</div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <Field label="Bank name"><input className={inputCls} value={p.bank?.bankName ?? ''} onChange={(e) => patch('bank', { bankName: e.target.value })} /></Field>
+                        <Field label="Account number"><input className={inputCls} value={p.bank?.accountNumber ?? ''} onChange={(e) => patch('bank', { accountNumber: e.target.value })} /></Field>
+                        <Field label="IFSC code"><input className={inputCls} value={p.bank?.ifsc ?? ''} onChange={(e) => patch('bank', { ifsc: e.target.value })} /></Field>
+                        <Field label="Account type"><select className={inputCls} value={p.bank?.accountType ?? ''} onChange={(e) => patch('bank', { accountType: e.target.value })}><option value="">— select —</option><option>Saving</option><option>Office Salary Account</option></select></Field>
                       </div>
-                    ))}
-                    <button onClick={addDoc} className="text-xs font-bold text-[#FF4500]">+ Add document</button>
+                    </div>
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F] mb-3">Documents</div>
+                      <div className="space-y-3">
+                        {(p.documents || []).map((d, i) => (
+                          <div key={i} className="grid grid-cols-12 gap-2 items-end border border-slate-100 rounded-lg p-3">
+                            <div className="col-span-4"><Field label="Type"><select className={inputCls} value={d.type} onChange={(e) => setDoc(i, { type: e.target.value })}>{DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field></div>
+                            <div className="col-span-4"><Field label="Number"><input className={inputCls} value={d.number} onChange={(e) => setDoc(i, { number: e.target.value })} /></Field></div>
+                            <div className="col-span-3">{d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View file ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setDoc(i, { url }))} /></label>}</div>
+                            <div className="col-span-1 text-right"><button onClick={() => delDoc(i)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button></div>
+                          </div>
+                        ))}
+                        <button onClick={addDoc} className="text-xs font-bold text-[#FF4500]">+ Add document</button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="flex justify-end"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+                )}
               </div>
             )}
 
-            {/* PAYROLL & COMPENSATION (locked: HR/Admin edit; employee view-only) */}
+            {/* PAYROLL & COMPENSATION + PERFORMANCE (Admin / HR Manager edit) */}
             {tab === 'payroll' && (
-              <div>
-                {!canEditLocked && <div className="mb-4 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-500">This section is maintained by HR. You have view-only access.</div>}
-                <div className="text-sm font-extrabold text-[#050A1F] mb-3">Salary components</div>
-                <div className="grid grid-cols-3 gap-4 mb-6">
-                  {['basic', 'hra', 'ta', 'da', 'other', 'pf', 'esi'].map((k) => (
-                    <Field key={k} label={k.toUpperCase()}>{canEditLocked ? <input type="number" className={inputCls} value={p.payroll?.[k] ?? ''} onChange={(e) => patch('payroll', { [k]: e.target.value })} /> : <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm font-semibold text-[#050A1F]">{p.payroll?.[k] ?? '—'}</div>}</Field>
-                  ))}
+              <div className="space-y-8">
+                {!canEditPayroll && <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-500">This section is maintained by HR. You have view-only access.</div>}
+
+                {/* Salary history */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F]">Salary history</div>
+                      <div className="text-xs text-slate-400">Joining package, then each increment / appraisal over time.</div>
+                    </div>
+                    {canEditPayroll && <button onClick={() => setPayModal({ reason: (p.payrollHistory || []).length ? 'Increment' : 'Joining' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add salary record</button>}
+                  </div>
+                  {payHistory().length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No salary records yet.{canEditPayroll && ' Add the joining package to start.'}</div>
+                  ) : (
+                    <div className="relative pl-6">
+                      <div className="absolute left-1.5 top-1 bottom-1 w-px bg-slate-200" />
+                      {payHistory().map((e, i) => (
+                        <div key={e.id} className="relative mb-4">
+                          <span className="absolute -left-[18px] top-1.5 w-3 h-3 rounded-full border-2 border-white" style={{ background: i === 0 ? '#16A34A' : '#FF6A00' }} />
+                          <div className="bg-white rounded-xl border border-slate-100 p-4 flex items-center justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg font-extrabold text-[#050A1F]">₹{Number(e.ctc || 0).toLocaleString('en-IN')}</span>
+                                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: (e.reason === 'Joining' ? '#DCFCE7' : '#FFF7ED'), color: (e.reason === 'Joining' ? '#16A34A' : '#C2410C') }}>{e.reason}</span>
+                              </div>
+                              <div className="text-xs text-slate-400 mt-0.5">Effective {fmtLong(e.effectiveDate)}{e.note ? ` · ${e.note}` : ''}</div>
+                            </div>
+                            {canEditPayroll && <button onClick={() => delPayEntry(e.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={15} /></button>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {canEditPayroll && payHistory().length > 0 && <div className="flex justify-end mt-2"><button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
                 </div>
-                <div className="text-sm font-extrabold text-[#050A1F] mb-3">Performance history</div>
-                <div className="grid grid-cols-1 gap-4">
-                  {[['promotions', 'Promotion history'], ['reviews', 'Performance review'], ['disciplinary', 'Disciplinary notices / warnings']].map(([k, l]) => (
-                    <Field key={k} label={l}>{canEditLocked ? <textarea className={inputCls} rows={2} value={p.performance?.[k] ?? ''} onChange={(e) => patch('performance', { [k]: e.target.value })} /> : <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-700 whitespace-pre-wrap min-h-[42px]">{p.performance?.[k] || '—'}</div>}</Field>
-                  ))}
+
+                {/* Performance history */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className="text-sm font-extrabold text-[#050A1F]">Performance history</div>
+                      <div className="text-xs text-slate-400">Reviews and conduct notes. Yellow = minor issue, Red = major issue.</div>
+                    </div>
+                    {canEditPayroll && <button onClick={() => setPerfModal({ kind: 'praise' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add review</button>}
+                  </div>
+                  {(() => {
+                    const yellow = (p.performanceCards || []).filter((c) => c.kind === 'yellow').length;
+                    const red = (p.performanceCards || []).filter((c) => c.kind === 'red').length;
+                    return (yellow || red) ? (
+                      <div className="flex gap-2 mb-3">
+                        {yellow > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-700"><span className="w-3 h-4 rounded-sm bg-amber-400" /> {yellow} yellow card{yellow === 1 ? '' : 's'}</span>}
+                        {red > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700"><span className="w-3 h-4 rounded-sm bg-red-500" /> {red} red card{red === 1 ? '' : 's'}</span>}
+                      </div>
+                    ) : null;
+                  })()}
+                  {perfCards().length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No performance notes yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {perfCards().map((c) => {
+                        const meta = PERF_KINDS[c.kind] || PERF_KINDS.review;
+                        return (
+                          <div key={c.id} className="bg-white rounded-xl border p-3 flex items-start gap-3" style={{ borderColor: meta.border }}>
+                            <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: meta.bg }}>{meta.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-[#050A1F]">{meta.label}</span>
+                                {c.title && <span className="text-sm text-slate-600">· {c.title}</span>}
+                                <span className="text-[11px] text-slate-400">{fmtLong(c.date)}{c.by ? ` · ${c.by}` : ''}</span>
+                              </div>
+                              {c.note && <div className="text-sm text-slate-500 mt-1 whitespace-pre-wrap">{c.note}</div>}
+                            </div>
+                            {canEditPayroll && <button onClick={() => delPerfCard(c.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={15} /></button>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {canEditPayroll && perfCards().length > 0 && <div className="flex justify-end mt-2"><button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
                 </div>
-                {canEditLocked && <div className="flex justify-end mt-6"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
               </div>
             )}
 
@@ -541,6 +696,70 @@ export function ProfilePage({ me, targetId }) {
         </div>
       </div>
       {resetOpen && <ResetPasswordModal user={{ _id: id, name: row.name }} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); setMsg('Password reset.'); }} />}
+      {payModal && <SalaryRecordModal initial={payModal} onClose={() => setPayModal(null)} onSave={async (entry) => { addPayEntry(entry); setPayModal(null); setTimeout(save, 0); }} />}
+      {perfModal && <PerformanceCardModal by={me?.name} onClose={() => setPerfModal(null)} onSave={async (card) => { addPerfCard(card); setPerfModal(null); setTimeout(save, 0); }} />}
+    </div>
+  );
+}
+
+// Modal: add a salary record (joining package or a later increment/appraisal).
+function SalaryRecordModal({ initial, onClose, onSave }) {
+  const [ctc, setCtc] = useState('');
+  const [reason, setReason] = useState(initial.reason || 'Increment');
+  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState('');
+  const REASONS = ['Joining', 'Increment', 'Appraisal', 'Promotion', 'Revision'];
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Add salary record</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-4">
+          <Field label="Annual CTC (₹)"><input type="number" className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} placeholder="e.g. 600000" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Reason"><select className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)}>{REASONS.map((r) => <option key={r}>{r}</option>)}</select></Field>
+            <Field label="Effective date"><input type="date" className={inputCls} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></Field>
+          </div>
+          <Field label="Note (optional)"><input className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Annual appraisal 2026" /></Field>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={() => { if (!ctc) return; onSave({ id: `pay${Date.now()}`, ctc: Number(ctc), reason, effectiveDate, note }); }} disabled={!ctc} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Add record</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal: add a performance card — appreciation, review, or yellow/red conduct flag.
+function PerformanceCardModal({ by, onClose, onSave }) {
+  const [kind, setKind] = useState('praise');
+  const [title, setTitle] = useState('');
+  const [note, setNote] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Add performance note</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-4">
+          <div>
+            <div className="text-xs font-bold text-slate-500 mb-2">Type</div>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(PERF_KINDS).map(([k, m]) => (
+                <button key={k} onClick={() => setKind(k)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${kind === k ? 'ring-2 ring-orange-300' : ''}`} style={{ background: m.bg, borderColor: m.border, color: '#334155' }}><span>{m.icon}</span>{m.label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Title"><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short summary" /></Field>
+            <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          </div>
+          <Field label="Details"><textarea className={inputCls} rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened / feedback…" /></Field>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={() => { if (!title.trim() && !note.trim()) return; onSave({ id: `perf${Date.now()}`, kind, title: title.trim(), note: note.trim(), date, by: by || '' }); }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Add note</button>
+        </div>
+      </div>
     </div>
   );
 }
