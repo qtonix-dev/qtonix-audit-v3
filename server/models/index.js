@@ -1498,6 +1498,7 @@ const HrDirectorProfile = sequelize.define('HrDirectorProfile', {
   employeeId: { type: DataTypes.STRING(60), allowNull: true },
   email: { type: DataTypes.STRING(160), allowNull: true },       // HRMS contact / invite email override
   avatar: { type: DataTypes.TEXT, allowNull: true },
+  hidden: { type: DataTypes.BOOLEAN, defaultValue: false },     // manually removed from HR employee list
 }, { tableName: 'hr_director_profiles', indexes: [{ name: 'idx_hr_dir_user', fields: ['userId'] }] });
 HrDirectorProfile.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 

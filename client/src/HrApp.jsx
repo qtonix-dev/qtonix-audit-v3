@@ -31,6 +31,21 @@ export const hrApi = async (path, opts = {}) => {
 };
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
+
+// Normalise a phone number to a consistent format. A bare 10-digit Indian mobile
+// gets a +91 prefix; numbers that already carry a country code are kept. Returns
+// the input unchanged if it doesn't look like a standard number.
+export function normalizePhone(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  if (s.startsWith('+')) { const d = s.slice(1).replace(/\D/g, ''); return d ? `+${d}` : ''; }
+  const digits = s.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 10) return `+91${digits}`;           // bare Indian mobile
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`; // 91XXXXXXXXXX
+  if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`; // leading 0
+  return `+${digits}`;
+}
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00] focus:border-transparent';
 
 function greeting() {
@@ -175,7 +190,7 @@ function AnnouncementModal({ onClose, onSaved }) {
   );
 }
 
-function HrDashboard({ user, isAdmin, onOpenCandidate }) {
+function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
   const [jobs, setJobs] = useState([]);
@@ -209,10 +224,10 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
   const stageRows = Object.entries(byStage).map(([id, n]) => ({ id, label: stageLabels[id] || id, n })).sort((a, b) => b.n - a.n);
   const SRC = { manual: 'Manual', linkedin: 'LinkedIn', naukri: 'Naukri', indeed: 'Indeed', referral: 'Referral', careers_page: 'Careers', public_form: 'Careers' };
   const cards = [
-    ['Open positions', stats ? stats.openJobs : m.openJobs, '#2563EB', 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z'],
-    ['Active candidates', stats ? stats.totalActive : m.candidates, '#FF6A00', 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
-    ['Applications this week', stats ? stats.applicationsThisWeek : '—', '#8b5cf6', 'M22 11.08V12a10 10 0 1 1-5.93-9.14 M22 4L12 14.01l-3-3'],
-    ['Avg time-to-hire', stats && stats.avgTimeToHire != null ? `${stats.avgTimeToHire}d` : '—', '#16A34A', 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
+    ['Open positions', stats ? stats.openJobs : m.openJobs, '#2563EB', 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z', { tab: 'jobs', jobScope: 'mine' }],
+    ['Active candidates', stats ? stats.totalActive : m.candidates, '#FF6A00', 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', { tab: 'candidates', candScope: 'all' }],
+    ['Applications this week', stats ? stats.applicationsThisWeek : '—', '#8b5cf6', 'M22 11.08V12a10 10 0 1 1-5.93-9.14 M22 4L12 14.01l-3-3', { tab: 'candidates', candScope: 'all', weekOnly: true }],
+    ['Avg time-to-hire', stats && stats.avgTimeToHire != null ? `${stats.avgTimeToHire}d` : '—', '#16A34A', 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', null],
   ];
   const softTint = (hex) => `${hex}0F`;
   return (
@@ -289,15 +304,20 @@ function HrDashboard({ user, isAdmin, onOpenCandidate }) {
 
       {/* Accent stat cards, CRM-style */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {cards.map(([label, val, color, icon]) => (
-          <div key={label} className="rounded-2xl border p-5 relative overflow-hidden" style={{ borderColor: color + '33', background: '#fff' }}>
-            <div className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: softTint(color) }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icon.split(' M').map((seg, i) => <path key={i} d={(i ? 'M' : '') + seg} />)}</svg>
+        {cards.map(([label, val, color, icon, navTarget]) => {
+          const clickable = navTarget && onNav;
+          return (
+            <div key={label} onClick={() => clickable && onNav(navTarget)}
+              className={`rounded-2xl border p-5 relative overflow-hidden ${clickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`} style={{ borderColor: color + '33', background: '#fff' }}>
+              <div className="absolute top-4 right-4 w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: softTint(color) }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icon.split(' M').map((seg, i) => <path key={i} d={(i ? 'M' : '') + seg} />)}</svg>
+              </div>
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+              <div className="text-3xl font-extrabold mt-1" style={{ color }}>{val ?? '—'}</div>
+              {clickable && <div className="text-[10px] font-semibold text-slate-300 mt-1">View →</div>}
             </div>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-            <div className="text-3xl font-extrabold mt-1" style={{ color }}>{val ?? '—'}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* HR target progress (daily scheduling + monthly hiring) */}
@@ -509,8 +529,8 @@ function TargetBar({ label, done, target, color }) {
 
 // --- Recruitment -----------------------------------------------------------
 
-function HrRecruitment({ isAdmin, me }) {
-  const [tab, setTab] = useState('jobs');
+function HrRecruitment({ isAdmin, me, intent }) {
+  const [tab, setTab] = useState(intent && intent.tab ? intent.tab : 'jobs');
   const [mode, setMode] = useState('list'); // list | choose | build
   const [builderSeed, setBuilderSeed] = useState(null);
   const [jobs, setJobs] = useState([]);
@@ -518,6 +538,11 @@ function HrRecruitment({ isAdmin, me }) {
   const [branches, setBranches] = useState([]);
   const [err, setErr] = useState('');
   const [candFilterJob, setCandFilterJob] = useState(null); // preset job filter when arriving from a job's applicant link
+  // Scope hints carried in from the dashboard cards (e.g. show all candidates,
+  // or only this week's applications).
+  const [candScope, setCandScope] = useState(intent && intent.candScope ? intent.candScope : null); // 'all' | 'mine' | null
+  const [candWeekOnly, setCandWeekOnly] = useState(!!(intent && intent.weekOnly));
+  const [jobScope, setJobScope] = useState(intent && intent.jobScope ? intent.jobScope : null); // 'mine' | 'all' | null
   const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
 
   const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
@@ -549,8 +574,8 @@ function HrRecruitment({ isAdmin, me }) {
             className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
         ))}
       </div>
-      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} />}
+      {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} forceScope={jobScope} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} forceScope={candScope} weekOnly={candWeekOnly} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -561,11 +586,11 @@ export function fileToBase64(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
 }
 
-function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants }) {
+function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, forceScope }) {
   const [addFor, setAddFor] = useState(null); // job to add a candidate to
   const [shareFor, setShareFor] = useState(null); // job to share
   const [assignFor, setAssignFor] = useState(null); // job to assign HR to
-  const [scope, setScope] = useState(isAdmin ? 'all' : 'mine'); // all | mine
+  const [scope, setScope] = useState(forceScope || (isAdmin ? 'all' : 'mine')); // all | mine
   const myId = me && (me._id || me.id);
   const isMgr = !!(me && me.isHrManager);
   // Restrictive: only assigned HR (or admin / branch HR-manager) can add candidates.
@@ -779,7 +804,7 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOnly }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
@@ -792,10 +817,13 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
   const [stageFilter, setStageFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
   const myId = me && (me._id || me.id);
   // Non-admins default to only their own candidates so others don't contact them.
-  const [mineOnly, setMineOnly] = useState(!isAdmin);
+  // A forced scope from the dashboard ('all') overrides that default.
+  const [mineOnly, setMineOnly] = useState(forceScope ? forceScope === 'mine' : !isAdmin);
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
+  const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
   // Keyword search runs server-side (covers resume text); other filters are local.
   const load = (kw) => {
     const qs = kw && kw.trim() ? `?q=${encodeURIComponent(kw.trim())}` : '';
@@ -820,6 +848,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
 
   const filtered = cands.filter((c) => {
     if (mineOnly && !isMineCand(c)) return false;
+    if (weekFilter && !isThisWeek(c)) return false;
     if (jobFilter && c.jobPostId !== Number(jobFilter)) return false;
     if (stageFilter && (stageFilter === 'rejected' ? !c.rejected : c.stage !== stageFilter)) return false;
     if (sourceFilter && c.source !== sourceFilter) return false;
@@ -846,6 +875,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter }) {
           <button onClick={() => setMineOnly(true)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
           <button onClick={() => setMineOnly(false)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${!mineOnly ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
         </div>
+        <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>
         <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
         <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
           <option value="">All positions</option>
@@ -953,9 +983,10 @@ export function ResumeMatchBadge({ match, size = 'sm' }) {
   };
   const s = styles[level] || styles.not_available;
   const pad = size === 'lg' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[11px]';
+  const hasScore = match && typeof match.score === 'number' && level !== 'not_available';
   return (
-    <span className={`inline-flex items-center rounded-full font-bold ${pad}`} style={{ background: s.bg, color: s.fg }} title={match && match.reason ? match.reason : (level === 'not_available' ? 'No resume or profile data to score.' : '')}>
-      {s.label}{match && typeof match.score === 'number' && level !== 'not_available' ? ` · ${match.score}` : ''}
+    <span className={`inline-flex items-center rounded-full font-bold ${pad}`} style={{ background: s.bg, color: s.fg }} title={match && match.reason ? match.reason : (level === 'not_available' ? 'No resume or profile data to score.' : `${s.label} match`)}>
+      {hasScore ? match.score : s.label}
     </span>
   );
 }
@@ -1218,7 +1249,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
     setBusy(true); setErr('');
     try {
       await hrApi('/candidates', { method: 'POST', body: JSON.stringify({
-        firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone,
+        firstName: c.firstName, lastName: c.lastName, email: c.email, phone: normalizePhone(c.phone),
         jobPostId: job._id, resumeUrl: c.resumeUrl, currentLocation: c.city || c.address, resumeText, source,
         answers: {
           ...c.answers,
@@ -1291,7 +1322,7 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                 <div className="grid grid-cols-2 gap-4">
                   <div><L req>First Name</L><input className={inp} value={c.firstName} onChange={(e) => set({ firstName: e.target.value })} /></div>
                   <div><L req>Last Name</L><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
-                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={checkDup} placeholder="+91…" /></div>
+                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={(e) => { const norm = normalizePhone(e.target.value); if (norm !== c.phone) set({ phone: norm }); checkDup(); }} placeholder="+91…" /></div>
                   <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} onBlur={checkDup} /></div>
                   <div><L>Current Salary (Monthly)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 35,000" /></div>
                   <div><L>Expected Salary (Monthly)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 55,000" /></div>
@@ -1536,54 +1567,176 @@ function MoveStageModal({ candidate, stages, onClose, onMoved }) {
   );
 }
 
-// Panelist view: interviews assigned to me, grouped by job, with a way to open
-// the candidate and submit feedback.
+// Interview hub: a calendar (month) + list toggle of all interviews the viewer
+// is allowed to see (role-scoped by the backend), plus availability confirmations.
 function MyInterviews() {
-  const [data, setData] = useState(null);
-  const [viewId, setViewId] = useState(null);
+  const [view, setView] = useState('calendar'); // calendar | list
+  const [interviews, setInterviews] = useState(null);
   const [reqs, setReqs] = useState([]);
-  const load = () => { hrApi('/my-interviews').then(setData).catch(() => setData({ jobs: [] })); hrApi('/my-schedule-requests').then((r) => setReqs(r.requests || [])).catch(() => {}); };
+  const [viewId, setViewId] = useState(null);
+  const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [dayModal, setDayModal] = useState(null); // {dateKey, items}
+  const [partModal, setPartModal] = useState(null); // interview whose participants are shown
+  const load = () => {
+    hrApi('/all-interviews').then((r) => setInterviews(r.interviews || [])).catch(() => setInterviews([]));
+    hrApi('/my-schedule-requests').then((r) => setReqs(r.requests || [])).catch(() => {});
+  };
   useEffect(() => { load(); }, []);
   const confirmSlots = async (candidateId, slotIds) => { try { await hrApi(`/candidates/${candidateId}/self-schedule/confirm`, { method: 'POST', body: JSON.stringify({ slotIds }) }); load(); } catch (e) { alert(e.message); } };
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
-  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
-  const jobs = data.jobs || [];
+  if (!interviews) return <div className="text-slate-400 text-sm">Loading…</div>;
+
+  const dateKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  const byDay = {};
+  interviews.forEach((iv) => { if (!iv.at) return; const k = dateKey(iv.at); (byDay[k] = byDay[k] || []).push(iv); });
+
+  // Month grid cells (leading blanks + days).
+  const year = monthCursor.getFullYear(), month = monthCursor.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const startOffset = (firstDay.getDay() + 6) % 7; // Monday-first
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const todayKey = dateKey(new Date());
+  const monthLabel = monthCursor.toLocaleString([], { month: 'long', year: 'numeric' });
+
+  const upcoming = interviews.filter((iv) => new Date(iv.at) >= new Date(new Date().toDateString())).sort((a, b) => new Date(a.at) - new Date(b.at));
+
   return (
     <div>
-      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">My Interviews</h1>
-      <p className="text-sm text-slate-500 mb-6">Candidates you've been assigned to interview. Open a candidate to submit your feedback.</p>
+      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Interviews</h1>
+        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+          <button onClick={() => setView('calendar')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'calendar' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Calendar</button>
+          <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>List</button>
+        </div>
+      </div>
+      <p className="text-sm text-slate-500 mb-6">All scheduled interviews you have access to. Open a candidate to submit feedback.</p>
 
       {reqs.length > 0 && (
         <div className="mb-6">
           <div className="text-sm font-extrabold text-[#050A1F] mb-2">⏳ Confirm your availability</div>
-          <div className="space-y-3">
-            {reqs.map((r) => <ConfirmAvailabilityCard key={r.candidateId} req={r} onConfirm={(ids) => confirmSlots(r.candidateId, ids)} />)}
-          </div>
+          <div className="space-y-3">{reqs.map((r) => <ConfirmAvailabilityCard key={r.candidateId} req={r} onConfirm={(ids) => confirmSlots(r.candidateId, ids)} />)}</div>
         </div>
       )}
 
-      {jobs.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">You have no interview assignments right now.</div>
-      ) : jobs.map((j) => (
-        <div key={j.jobId || 'none'} className="mb-6">
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{j.jobTitle}</div>
-          <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden divide-y divide-slate-50">
-            {j.candidates.map((c) => (
-              <div key={c.interviewId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60">
-                <div>
-                  <div className="font-semibold text-slate-700">{c.name}</div>
-                  <div className="text-xs text-slate-400">{c.roundLabel || 'Interview'} · {c.at ? new Date(c.at).toLocaleString() : 'TBD'}{c.meetLink ? ' · Google Meet' : ''}</div>
+      {view === 'calendar' ? (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-4">
+          <div className="flex items-center justify-between mb-4">
+            <button onClick={() => setMonthCursor(new Date(year, month - 1, 1))} className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">‹</button>
+            <div className="text-sm font-extrabold text-[#050A1F]">{monthLabel}</div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => { const d = new Date(); setMonthCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }} className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50">Today</button>
+              <button onClick={() => setMonthCursor(new Date(year, month + 1, 1))} className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">›</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-7 gap-1 mb-1">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="text-center text-[10px] font-bold uppercase tracking-wide text-slate-400 py-1">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((d, i) => {
+              if (d === null) return <div key={`b${i}`} className="min-h-[84px]" />;
+              const k = dateKey(new Date(year, month, d));
+              const items = byDay[k] || [];
+              const isToday = k === todayKey;
+              return (
+                <div key={k} className={`min-h-[84px] rounded-lg border p-1.5 ${isToday ? 'border-orange-300 bg-orange-50/40' : 'border-slate-100'}`}>
+                  <div className={`text-[11px] font-bold mb-1 ${isToday ? 'text-orange-600' : 'text-slate-400'}`}>{d}</div>
+                  <div className="space-y-1">
+                    {items.slice(0, 3).map((iv) => (
+                      <button key={iv.interviewId} onClick={() => setPartModal(iv)} title={`${iv.candidateName} · ${new Date(iv.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                        className="w-full text-left rounded px-1.5 py-1 text-[10px] font-semibold text-white truncate" style={{ background: ORANGE }}>
+                        {new Date(iv.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {iv.candidateName}
+                      </button>
+                    ))}
+                    {items.length > 3 && <button onClick={() => setDayModal({ dateKey: k, items })} className="w-full text-left text-[10px] font-bold text-slate-400 px-1">+{items.length - 3} more</button>}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {c.meetLink && <a href={c.meetLink} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Join Meet</a>}
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${c.submitted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{c.submitted ? 'Feedback submitted' : 'Feedback pending'}</span>
-                  <button onClick={() => setViewId(c.candidateId)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>{c.submitted ? 'View' : 'Give feedback'}</button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        upcoming.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">No upcoming interviews.</div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden divide-y divide-slate-50">
+            {upcoming.map((iv) => (
+              <div key={iv.interviewId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-700">{iv.candidateName} <span className="text-xs font-normal text-slate-400">· {iv.jobTitle}</span></div>
+                  <div className="text-xs text-slate-400">{iv.roundLabel || 'Interview'} · {new Date(iv.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{iv.panelists.length ? ` · ${iv.panelists.length} panelist${iv.panelists.length === 1 ? '' : 's'}` : ''}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => setPartModal(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Participants</button>
+                  {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Join Meet</a>}
+                  <button onClick={() => setViewId(iv.candidateId)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Open</button>
                 </div>
               </div>
             ))}
           </div>
+        )
+      )}
+
+      {dayModal && <DayInterviewsModal day={dayModal} onClose={() => setDayModal(null)} onPick={(iv) => { setDayModal(null); setPartModal(iv); }} />}
+      {partModal && <InterviewParticipantsModal iv={partModal} onClose={() => setPartModal(null)} onOpen={(cid) => { setPartModal(null); setViewId(cid); }} />}
+    </div>
+  );
+}
+
+function DayInterviewsModal({ day, onClose, onPick }) {
+  const label = new Date(day.dateKey).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">{label}</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-4 max-h-[60vh] overflow-auto divide-y divide-slate-50">
+          {day.items.sort((a, b) => new Date(a.at) - new Date(b.at)).map((iv) => (
+            <button key={iv.interviewId} onClick={() => onPick(iv)} className="w-full text-left flex items-center justify-between px-2 py-2.5 hover:bg-slate-50 rounded-lg">
+              <div><div className="font-semibold text-slate-700 text-sm">{iv.candidateName}</div><div className="text-xs text-slate-400">{iv.roundLabel || 'Interview'} · {new Date(iv.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div></div>
+              <span className="text-[10px] font-bold text-orange-600">Details →</span>
+            </button>
+          ))}
         </div>
-      ))}
+      </div>
+    </div>
+  );
+}
+
+function InterviewParticipantsModal({ iv, onClose, onOpen }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">{iv.roundLabel || 'Interview'}</div><div className="text-xs text-slate-400 mt-0.5">{iv.candidateName} · {iv.jobTitle}</div></div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="flex items-center gap-2 text-sm text-slate-600"><span className="font-bold">When:</span> {new Date(iv.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+          {iv.scheduledBy && <div className="flex items-center gap-2 text-sm text-slate-600"><span className="font-bold">Scheduled by:</span> {iv.scheduledBy}</div>}
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Participants</div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2">
+                <span className="w-7 h-7 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-xs font-bold">{(iv.candidateName || '?')[0]}</span>
+                <div className="min-w-0"><div className="text-sm font-semibold text-slate-700 truncate">{iv.candidateName}</div><div className="text-[11px] text-slate-400 truncate">Candidate{iv.candidateEmail ? ` · ${iv.candidateEmail}` : ''}</div></div>
+              </div>
+              {(iv.panelists || []).map((p) => (
+                <div key={p.id} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2">
+                  <span className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold">{(p.name || '?')[0]}</span>
+                  <div className="min-w-0"><div className="text-sm font-semibold text-slate-700 truncate">{p.name}</div><div className="text-[11px] text-slate-400 truncate">Interviewer{p.email ? ` · ${p.email}` : ''}</div></div>
+                </div>
+              ))}
+              {!(iv.panelists || []).length && <div className="text-xs text-slate-400 px-1">No panelists assigned.</div>}
+            </div>
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-between gap-2">
+          <button onClick={() => onOpen(iv.candidateId)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Open candidate</button>
+          {iv.meetLink
+            ? <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Join Google Meet</a>
+            : <span className="rounded-lg px-5 py-2 text-sm font-bold text-slate-400 bg-slate-100">No Meet link</span>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3110,6 +3263,8 @@ export default function HrApp() {
   const [view, setView] = useState('dashboard');
   const [profileTarget, setProfileTarget] = useState(null);
   const [navKey, setNavKey] = useState(0); // bump to force a fresh sub-view on nav
+  const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
+  const goRecruit = (intent) => { setRecruitIntent(intent || null); setView('recruitment'); setProfileTarget(null); setNavKey((k) => k + 1); };
 
   // Restore session.
   useEffect(() => {
@@ -3151,7 +3306,7 @@ export default function HrApp() {
           </div>
             <nav className="flex gap-0.5">
               {nav.map((n) => (
-                <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setNavKey((k) => k + 1); }}
+                <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${effectiveView === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                   {n.label}
                 </button>
@@ -3166,8 +3321,8 @@ export default function HrApp() {
       </header>
       {!isAdmin && <SurveyGate />}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
-        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />}
-        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} />}
+        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => goRecruit({ tab: 'candidates' })} onNav={goRecruit} />}
+        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
           <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: true, leadLinks: false }} />

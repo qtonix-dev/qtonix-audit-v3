@@ -48,6 +48,15 @@ export async function uploadToImageKit(file, folder, fileName) {
 }
 
 export const ROLE_LABELS = { hr: 'HR', recruiter: 'HR Recruiter', manager: 'Manager', tl: 'Team Lead', senior: 'Senior Executive', junior: 'Junior Executive', trainee: 'Trainee', intern: 'Intern', employee: 'Employee', director: 'Director' };
+
+// Normalise a person's name to Title Case (first letter of each word capital,
+// rest lowercase) so ALL-CAPS or lowercase entries display uniformly. Leaves
+// short all-caps tokens that look like initials (e.g. "JK") alone-ish by still
+// title-casing; keeps intra-word punctuation like O'Brien / Jean-Paul.
+export function titleCase(name) {
+  if (!name) return '';
+  return String(name).toLowerCase().replace(/([a-z\u00C0-\u024F])([a-z\u00C0-\u024F]*)/g, (m, a, b) => a.toUpperCase() + b);
+}
 export const ROLE_OPTIONS = [['hr', 'HR'], ['recruiter', 'HR Recruiter'], ['manager', 'Manager'], ['tl', 'Team Lead'], ['senior', 'Senior Executive'], ['junior', 'Junior Executive'], ['trainee', 'Trainee'], ['intern', 'Intern'], ['employee', 'Employee']];
 // Seniority order for the org chart (lower index = higher in the hierarchy).
 export const ROLE_LEVEL = { manager: 0, tl: 1, senior: 2, junior: 3, trainee: 4, intern: 5, employee: 3, hr: 1, recruiter: 2 };
@@ -600,6 +609,17 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
   const [fRole, setFRole] = useState('');
   const [fStatus, setFStatus] = useState('active');
   const load = () => hrApi('/employees').then(setRows).catch(() => {});
+  // The directory list is trimmed; fetch the full record so the edit form shows
+  // every field (phone, reporting line, targets, etc.).
+  const openEdit = async (u) => {
+    try { const full = await hrApi(`/users/${u._id}`); setEditing(full); }
+    catch { setEditing(u); }
+  };
+  const removeDirector = async (u) => {
+    if (!window.confirm(`Remove ${u.name} from the HR employee list? This does not affect their CRM login.`)) return;
+    try { await hrApi(`/directors/${String(u._id).replace('admin:', '')}`, { method: 'DELETE' }); setMsg('Director removed from HR list.'); load(); }
+    catch (e) { setMsg(e.message); }
+  };
   useEffect(() => {
     load();
     if (canManage) {
@@ -669,7 +689,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
           <tbody>
             {filtered.map((u) => (
               <tr key={u._id} className={`border-t border-slate-100 ${u.active === false ? 'opacity-60' : ''}`}>
-                <td className="px-4 py-3"><button onClick={() => isAdmin && onOpenProfile(u._id)} className="flex items-center gap-2 text-left"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F] hover:text-[#FF4500]">{u.name}</span>{u.active === false && <span className="text-[9px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-bold">Inactive</span>}</button></td>
+                <td className="px-4 py-3"><button onClick={() => isAdmin && onOpenProfile(u._id)} className="flex items-center gap-2 text-left"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F] hover:text-[#FF4500]">{titleCase(u.name)}</span>{u.active === false && <span className="text-[9px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-bold">Inactive</span>}</button></td>
                 <td className="px-4 py-3 text-slate-500">{u.employeeId || '—'}</td>
                 <td className="px-4 py-3"><span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">{ROLE_LABELS[u.type] || u.type}</span></td>
                 <td className="px-4 py-3 text-slate-500">{u.department || '—'}</td>
@@ -685,12 +705,13 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
                     isAdmin ? (
                       <div className="flex items-center justify-end gap-0.5">
                         <IconBtn title="Edit director details" onClick={() => setEditingDirector(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
+                        <IconBtn title="Remove from HR list" onClick={() => removeDirector(u)} color="text-slate-400 hover:text-red-600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13" /></svg></IconBtn>
                       </div>
                     ) : <div className="text-right text-[10px] text-slate-300">Director</div>
                   ) : canManage && (isAdmin || u.branch === myBranch) ? (
                     <div className="flex items-center justify-end gap-0.5">
                       <IconBtn title="View profile" onClick={() => onOpenProfile(u._id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></IconBtn>
-                      <IconBtn title="Edit" onClick={() => setEditing(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
+                      <IconBtn title="Edit" onClick={() => openEdit(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
                       <IconBtn title="Reset password" onClick={() => setResetting(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg></IconBtn>
                       <IconBtn title={u.active === false ? 'Reactivate' : 'Deactivate'} onClick={() => toggleActive(u)} color={u.active === false ? 'text-green-500 hover:text-green-600' : 'text-amber-500 hover:text-amber-600'}>
                         {u.active === false
@@ -832,7 +853,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           <label className="text-xs font-bold text-slate-500">Employee ID<input className={inputCls} value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Phone<input className={inputCls} value={f.phone} onChange={(e) => set('phone', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Designation<input className={inputCls} value={f.designation} onChange={(e) => set('designation', e.target.value)} /></label>
-          <label className="text-xs font-bold text-slate-500">Role<select className={inputCls} value={f.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">Role<select className={inputCls} value={f.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
           <label className="text-xs font-bold text-slate-500">Department<select className={inputCls} value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">—</option>{departments.map((d) => <option key={d._id} value={d.name}>{d.name}</option>)}</select></label>
           <label className="text-xs font-bold text-slate-500">Branch<select className={inputCls} value={f.branch} onChange={(e) => set('branch', e.target.value)}><option value="">—</option>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></label>
           <label className="text-xs font-bold text-slate-500">Reports to<select className={inputCls} value={f.reportsTo} onChange={(e) => set('reportsTo', e.target.value)}><option value="">—</option>{reportingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
@@ -841,8 +862,8 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           <label className="text-xs font-bold text-slate-500">Birthday<input type="date" className={inputCls} value={f.birthday || ''} onChange={(e) => set('birthday', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Marital status<select className={inputCls} value={f.maritalStatus || ''} onChange={(e) => set('maritalStatus', e.target.value)}><option value="">—</option><option value="single">Single</option><option value="married">Married</option></select></label>
           {f.maritalStatus === 'married' && <label className="text-xs font-bold text-slate-500">Anniversary<input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => set('anniversary', e.target.value)} /></label>}
-          {isHrRole && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
-          {isHrRole && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
+          {isAdmin && isHrRole && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
+          {isAdmin && isHrRole && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
           {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set('isHrManager', e.target.checked)} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>}
           {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>}
           <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} /> Active</label>

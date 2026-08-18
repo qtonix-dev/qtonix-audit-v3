@@ -324,6 +324,16 @@ router.get('/users', requireHrAccess, requireHrAdmin, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// GET /api/hr/users/:id — full record for one HR user, used to populate the edit
+// form (the directory list is trimmed and omits many fields). Admin/manager.
+router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const u = await HrUser.findByPk(req.params.id);
+    if (!u) return res.status(404).json({ error: 'Employee not found.' });
+    res.json({ ...u.toJSON(), completion: profileCompletion(u) });
+  } catch (e) { next(e); }
+});
+
 /**
  * GET /api/hr/employees — directory of all HR staff with completion %. Powers
  * the top-level "Employee" menu. Available to any HR user (read-only list).
@@ -342,8 +352,14 @@ router.get('/employees', requireHrAccess, async (req, res, next) => {
     const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id', 'name', 'email'], order: [['name', 'ASC']] });
     const overlays = await HrDirectorProfile.findAll();
     const byUser = {}; overlays.forEach((o) => { byUser[o.userId] = o; });
+    // Prune overlays whose CRM admin no longer exists (deleted in CRM), so stale
+    // director rows don't linger in the HR list.
+    const liveAdminIds = new Set(admins.map((a) => a.id));
+    const orphanIds = overlays.filter((o) => !liveAdminIds.has(o.userId)).map((o) => o.userId);
+    if (orphanIds.length) { try { await HrDirectorProfile.destroy({ where: { userId: { [Op.in]: orphanIds } } }); } catch {} }
     admins.forEach((a) => {
       const o = byUser[a.id];
+      if (o && o.hidden) return; // manually removed from the HR list
       list.push({
         _id: `admin:${a.id}`, id: `admin:${a.id}`, isDirector: true,
         name: (o && o.name) || a.name, employeeId: (o && o.employeeId) || '', email: (o && o.email) || a.email,
@@ -371,6 +387,18 @@ router.put('/directors/:userId', requireHrAccess, requireHrAdmin, async (req, re
     await row.save();
     hrLog(req, 'director.update', row.name || admin.name);
     res.json({ ok: true, director: { _id: `admin:${userId}`, name: row.name || admin.name, employeeId: row.employeeId || '', email: row.email || admin.email } });
+  } catch (e) { next(e); }
+});
+
+// Remove a director from the HR employee list (does NOT touch their CRM login —
+// they simply no longer appear as an HR "Director"/panelist). Admin only.
+router.delete('/directors/:userId', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const userId = Number(req.params.userId);
+    const [row] = await HrDirectorProfile.findOrCreate({ where: { userId }, defaults: { userId } });
+    row.hidden = true; await row.save();
+    hrLog(req, 'director.hide', row.name || String(userId));
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -1214,7 +1242,50 @@ router.get('/my-interviews', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// AI Recruiter — screen the candidate against the job requirements.
+// GET /api/hr/all-interviews — a flat list of scheduled interviews for the
+// calendar/list views, filtered by role:
+//   • admin: every interview
+//   • HR scheduler (hr/recruiter/manager/tl): interviews they scheduled OR sit
+//     on the panel for
+//   • plain employee / panelist: only interviews where they're a panelist
+// Each entry carries the candidate, job, timing, meet link and participants.
+router.get('/all-interviews', requireHrAccess, async (req, res, next) => {
+  try {
+    const actor = req.hrActor;
+    const isAdmin = actor.kind === 'admin';
+    const myId = actor.id;
+    const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
+    const jobCache = {};
+    const getJob = async (id) => { if (!id) return null; if (!(id in jobCache)) jobCache[id] = await HrJobPost.findByPk(id); return jobCache[id]; };
+    const out = [];
+    for (const r of rows) {
+      const ivs = r.interviews || [];
+      if (!ivs.length) continue;
+      for (const iv of ivs) {
+        const onPanel = (iv.panelists || []).some((p) => String(p.id) === String(myId) || String(p.id) === `admin:${myId}`);
+        const scheduledByMe = isAdmin ? false : (iv.scheduledById === myId || iv.by === actor.name);
+        // Visibility gate.
+        let visible = false;
+        if (isAdmin) visible = true;
+        else if (actor.type && ['hr', 'recruiter', 'manager', 'tl'].includes(actor.type)) visible = scheduledByMe || onPanel;
+        else visible = onPanel; // plain employees / pure panelists
+        if (!visible) continue;
+        const job = await getJob(r.jobPostId);
+        out.push({
+          interviewId: iv.id, candidateId: r.id, candidateName: r.name, candidateEmail: r.email,
+          jobId: r.jobPostId, jobTitle: job ? job.title : 'General',
+          at: iv.at, end: iv.end, mode: iv.mode, round: iv.round, roundLabel: iv.roundLabel,
+          meetLink: iv.meetLink || '', eventLink: iv.eventLink || '', notes: iv.notes || '',
+          scheduledBy: iv.by || '', stage: r.stage,
+          panelists: (iv.panelists || []).map((p) => ({ id: p.id, name: p.name, email: p.email })),
+          amPanelist: onPanel, scheduledByMe,
+        });
+      }
+    }
+    out.sort((a, b) => new Date(a.at) - new Date(b.at));
+    res.json({ interviews: out });
+  } catch (e) { next(e); }
+});
 router.post('/candidates/:id/ai-screen', requireHrAccess, async (req, res, next) => {
   try {
     const key = await anthropicKey();

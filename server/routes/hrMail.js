@@ -224,7 +224,9 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     const iv = {
       id: `iv${Date.now()}`, at: start.toISOString(), end: end.toISOString(),
       mode: b.mode || 'online', round: b.round || '', roundLabel, notes: b.notes || '',
-      by: req.hrActor.name, meetLink: event.meetLink, eventLink: event.htmlLink,
+      by: req.hrActor.name, scheduledById: req.hrActor.kind === 'hr' ? req.hrActor.id : null,
+      scheduledByAdmin: req.hrActor.kind === 'admin' ? req.hrActor.id : null,
+      meetLink: event.meetLink, eventLink: event.htmlLink,
       panelists, feedbackByPanelist: {},
     };
     const list = Array.isArray(cand.interviews) ? cand.interviews.slice() : [];
