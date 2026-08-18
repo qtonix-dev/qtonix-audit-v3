@@ -27,15 +27,24 @@ async function callClaude(apiKey, { system, messages, maxTokens = 1500, tools })
   if (tools) body.tools = tools;
 
   try { recordApiCall && recordApiCall('anthropic'); } catch {}
-  const res = await fetch(ANTHROPIC_API, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-  });
+  // Hard timeout so a hung Claude request can't freeze a report mid-run.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120000);
+  let res;
+  try {
+    res = await fetch(ANTHROPIC_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'Claude API request timed out' : e.message);
+  } finally { clearTimeout(timer); }
 
   if (!res.ok) {
     const err = await res.text();

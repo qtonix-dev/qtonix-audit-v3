@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v195';
+const APP_VERSION = 'v198';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -399,6 +399,22 @@ connectWithRetry()
     app.listen(PORT, () => {
       console.log(`API listening on :${PORT}`);
       if (process.env.DEMO_MODE === 'true') console.log(`Demo page: http://localhost:${PORT}/demo`);
+      // Fail reports that have been stuck 'running'/'queued' too long (e.g. a
+      // hung upstream request before the request timeouts were added), so they
+      // don't spin forever. Runs on boot and every 5 minutes.
+      const reapStalled = async () => {
+        try {
+          const { Report } = require('./models');
+          const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+          const [n] = await Report.update(
+            { status: 'failed', error: 'Report timed out and was stopped. Please run it again.', currentStep: 'Failed' },
+            { where: { status: { [Op.in]: ['running', 'queued'] }, updatedAt: { [Op.lt]: cutoff } } },
+          );
+          if (n) console.log(`[reaper] marked ${n} stalled report(s) as failed`);
+        } catch (e) { console.error('[reaper] failed:', e.message); }
+      };
+      reapStalled();
+      setInterval(reapStalled, 5 * 60 * 1000);
       // Background Gmail sync (per-user OAuth mailboxes → lead_emails).
       try { require('./jobs/gmailSync').start(require('./models')); }
       catch (e) { console.error('[gmail-sync] not started:', e.message); }

@@ -460,7 +460,7 @@ function FullReport({ r, settings, printRef }) {
         <H2 a="The demand is real and measurable." b="You're simply not in the results yet." col={col} />
         <p className="text-xs text-slate-600 leading-relaxed">Your buyers search these terms every day. {r.domain} ranks for {fmt(r.keywordData.totalKeywords)} keywords but holds {r.keywordData.page1Keywords} first-page positions, while competitors capture tens of thousands of visits a month.</p>
         <h3 className="text-sm font-bold mt-5 mb-1">Estimated monthly organic traffic — you vs. competitors</h3>
-        <p className="text-[9px] text-slate-400 italic mb-3">Source: SE Ranking. Log scale. Your bar in blue.</p>
+        <p className="text-[9px] text-slate-400 italic mb-3">Log scale. Your bar in blue.</p>
         {bars.map((b, i) => (
           <div key={i} className="flex items-center gap-2.5 mb-2 text-[10px]">
             <div className="w-32 text-right text-slate-600 shrink-0">{b.label}</div>

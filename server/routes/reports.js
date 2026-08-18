@@ -44,7 +44,11 @@ const createSchema = z.object({
   businessName: z.string().min(1, 'Enter the business name.'),
   customerName: z.string().min(1, 'Enter the customer name.'),
   services: z.array(z.enum(SERVICES)).min(1, 'Select at least one service.'),
-  country: z.string().length(2).optional(),
+  // A 2-letter market code (e.g. 'us', 'in') OR the special 'worldwide' value.
+  // Empty/absent falls back to the configured default country downstream.
+  country: z.string().trim().refine((v) => v === '' || v.length === 2 || v.toLowerCase() === 'worldwide', {
+    message: 'Country must be a 2-letter code or “worldwide”.',
+  }).optional().nullable(),
   location: z.string().optional(),
   customerPhone: z.string().optional(),
   customerEmail: z.string().optional(),

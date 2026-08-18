@@ -90,15 +90,22 @@ class SERanking {
       for (let attempt = 0; attempt <= retries; attempt++) {
         let res;
         try {
-          res = await fetch(url.toString(), {
-            method,
-            headers: {
-              Authorization: `Token ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          });
+          // Guard every request with a hard timeout so a hung socket can't
+          // freeze a report mid-run (was causing reports to stick at 66%).
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 60000);
+          try {
+            res = await fetch(url.toString(), {
+              method,
+              headers: {
+                Authorization: `Token ${this.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              signal: ctrl.signal,
+            });
+          } finally { clearTimeout(timer); }
         } catch (networkErr) {
-          if (attempt === retries) throw new SERankingError(networkErr.message, 0, null);
+          if (attempt === retries) throw new SERankingError(networkErr.name === 'AbortError' ? 'SE Ranking request timed out' : networkErr.message, 0, null);
           await new Promise((r) => setTimeout(r, 2 ** attempt * 1000));
           continue;
         }

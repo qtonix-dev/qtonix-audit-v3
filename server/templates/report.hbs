@@ -366,7 +366,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   {{#if trafficTrend}}
   <h3>Your organic traffic over the last {{trafficTrend.points.length}} months</h3>
-  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}.
+  <p class="note" style="margin:0 0 10px">{{formatMonth report.date}}.
     {{#if (eq trafficTrend.direction "down")}}Trending <strong style="color:var(--red)">down {{trafficTrend.changePct}}%</strong> — visibility is slipping and needs attention.{{/if}}
     {{#if (eq trafficTrend.direction "up")}}Trending <strong style="color:#16A34A">up {{trafficTrend.changePct}}%</strong> — there's momentum to build on.{{/if}}
     {{#if (eq trafficTrend.direction "flat")}}Essentially <strong>flat</strong> — steady, but not growing without action.{{/if}}
@@ -383,7 +383,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
   {{/if}}
 
   <h3>Estimated monthly organic traffic — you vs. competitors</h3>
-  <p class="note" style="margin:0 0 12px">Source: SE Ranking, {{formatMonth report.date}}. Log scale. Your bar in blue.</p>
+  <p class="note" style="margin:0 0 12px">{{formatMonth report.date}}. Log scale. Your bar in blue.</p>
   {{#each trafficBars}}
   <div class="bar-row">
     <div class="bar-lab">{{this.label}}</div>
@@ -394,7 +394,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   {{#if strikingTop.length}}
   <h3>High-intent searches: where you rank now vs. where we'll take you</h3>
-  <p class="note" style="margin:0 0 12px">Source: SE Ranking, {{formatMonth report.date}}. These already sit in positions 11–20 — one push from page one.</p>
+  <p class="note" style="margin:0 0 12px">{{formatMonth report.date}}. These already sit in positions 11–20 — one push from page one.</p>
   <table>
     <thead><tr><th style="width:40%">Keyword</th><th>Now</th><th>Target</th><th>Searches/mo</th><th>Value if page 1</th></tr></thead>
     <tbody>
@@ -638,7 +638,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
 <div class="page">
   <h3 style="margin-top:0">Your backlink profile — {{formatNum backlinks.sampled}} linking websites analysed</h3>
-  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}.{{#if backlinks.toxic}} Much of the profile is spam / low-quality — the cleanup priority.{{/if}}</p>
+  <p class="note" style="margin:0 0 10px">{{formatMonth report.date}}.{{#if backlinks.toxic}} Much of the profile is spam / low-quality — the cleanup priority.{{/if}}</p>
 
   <div style="text-align:center;margin:18px 0">
     <svg width="230" height="230" viewBox="0 0 230 230">
@@ -680,7 +680,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
   <p class="lead">These are the pages Google already rewards. Knowing them tells us where to defend, where to expand, and which page types to build next.</p>
 
   <h3>Your best-performing pages</h3>
-  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}. Ranked by estimated monthly traffic.</p>
+  <p class="note" style="margin:0 0 10px">{{formatMonth report.date}}. Ranked by estimated monthly traffic.</p>
   <table>
     <thead><tr><th style="width:46%">Page</th><th>Keywords</th><th>Traffic/mo</th><th>Value/mo</th></tr></thead>
     <tbody>
@@ -755,7 +755,7 @@ body{ background:#525659; margin:0; padding:24px 0; }
 
   {{#if aiOverview.gaps.length}}
   <h3>Searches where Google's AI Overview answers — without citing you</h3>
-  <p class="note" style="margin:0 0 10px">Source: SE Ranking, {{formatMonth report.date}}. Google shows an AI-generated answer for these terms and cites other sites, not yours. Each is a chance to become the cited source.</p>
+  <p class="note" style="margin:0 0 10px">{{formatMonth report.date}}. Google shows an AI-generated answer for these terms and cites other sites, not yours. Each is a chance to become the cited source.</p>
   <table>
     <thead><tr><th style="width:56%">Search</th><th>Searches/mo</th><th>Your position</th></tr></thead>
     <tbody>
