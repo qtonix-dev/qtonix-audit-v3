@@ -36,10 +36,11 @@ function TabIcon({ name, active }) {
 // WhatsApp glyph.
 const WA_PATH = 'M12 2a10 10 0 0 0-8.5 15.2L2 22l4.9-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-4-4.7-4.2-.1-.2-1-1.4-1-2.6s.6-1.8.9-2.1c.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.3 0 .5l-.4.5-.3.3c-.1.1-.2.3-.1.5.1.2.6 1 1.3 1.6.9.8 1.6 1 1.8 1.1.2.1.4.1.5-.1l.6-.8c.2-.2.4-.2.5-.1l1.8.9c.2.1.4.2.4.3.1.2.1.6 0 1z';
 
-export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose, onDeleted }) {
+export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose, onDeleted, initialTab }) {
   const [c, setC] = useState(null);
-  const [tab, setTab] = useState('resume');
+  const [tab, setTab] = useState(initialTab || 'resume');
   const [err, setErr] = useState('');
+  const [pendingHintShown, setPendingHintShown] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showInterview, setShowInterview] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -51,6 +52,14 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [candidateId]);
+  // If this candidate was marked for hire but the offer isn't complete, guide HR
+  // straight to the Offer tab (once).
+  useEffect(() => {
+    if (c && !pendingHintShown && c.offer && c.offer.pendingHire && c.offer.status !== 'accepted') {
+      setPendingHintShown(true);
+      if (!initialTab) setTab('offer');
+    }
+  }, [c, pendingHintShown, initialTab]);
 
   const rescoreMatch = async () => {
     setRescoring(true);
@@ -73,8 +82,14 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const nextStage = (() => { const i = stages.findIndex((s) => s.id === c.stage); return i >= 0 && i < stages.length - 1 ? stages[i + 1] : null; })();
   const wa = (c.phone || '').replace(/[^0-9]/g, '');
 
-  const act = async (fn) => { try { const updated = await fn(); if (updated) setC((s) => ({ ...updated, job: s.job })); } catch (e) { setErr(e.message); } };
-  const moveNext = () => nextStage && act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: nextStage.id }) }));
+  const act = async (fn) => { try { const updated = await fn(); if (updated) setC((s) => ({ ...updated, job: s.job })); return updated; } catch (e) { setErr(e.message); } };
+  const moveToStage = async (stageId) => {
+    const updated = await act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: stageId }) }));
+    // If the move to a hired stage was redirected because the offer isn't done,
+    // jump to the Offer tab so HR can complete it.
+    if (updated && updated.offerIncomplete) { setTab('offer'); setErr(''); }
+  };
+  const moveNext = () => { if (nextStage) moveToStage(nextStage.id); };
   const reject = () => setShowReject(true);
 
   const TABS = [['resume', 'Resume'], ['application', 'Application'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ...(c.canViewInternal !== false ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];

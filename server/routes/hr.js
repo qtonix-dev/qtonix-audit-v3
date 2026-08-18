@@ -1124,13 +1124,36 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     const from = row.stage;
-    row.stage = String(req.body.stage || 'applied');
+    const requested = String(req.body.stage || 'applied');
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const stageLabel = (id) => { const st = (job && job.stages || []).find((s) => s.id === id); return st ? st.label : id; };
+
+    // Moving to a HIRED stage requires a completed (accepted) offer. If the offer
+    // isn't done, redirect to the "Offered" stage and tell the client to open the
+    // Offer tab so HR can complete it. Once accepted, the offer flow moves them to
+    // Hired automatically.
+    const movingToHired = HIRED_STAGE_IDS.has(requested.toLowerCase());
+    const offerDone = row.offer && row.offer.status === 'accepted';
+    if (movingToHired && !offerDone) {
+      const offeredStage = (job && job.stages || []).find((s) => ['offered', 'offer'].includes(String(s.id).toLowerCase()));
+      row.stage = offeredStage ? offeredStage.id : 'offered';
+      row.rejected = false;
+      // Mark that a hire is intended but pending offer completion.
+      const offer = row.offer || {};
+      offer.pendingHire = true; offer.active = true;
+      if (!offer.status) offer.status = 'discussion';
+      row.offer = offer; row.changed('offer', true);
+      pushTimeline(row, { type: 'stage', text: `${req.hrActor.name} marked ${row.name} for hire — offer needs completing first.`, by: req.hrActor.name });
+      await row.save();
+      hrLog(req, 'candidate.stage', `${row.name} → hire pending offer`);
+      return res.json({ ...row.toJSON(), offerIncomplete: true, message: 'Complete the offer process to finish hiring this candidate.' });
+    }
+
+    row.stage = requested;
     row.rejected = false;
-    let label = row.stage;
-    if (row.jobPostId) { const j = await HrJobPost.findByPk(row.jobPostId); const st = (j && j.stages || []).find((s) => s.id === row.stage); if (st) label = st.label; }
-    pushTimeline(row, { type: 'stage', text: `Moved to ${label}.`, by: req.hrActor.name });
+    pushTimeline(row, { type: 'stage', text: `Moved to ${stageLabel(requested)}.`, by: req.hrActor.name });
     await row.save();
-    hrLog(req, 'candidate.stage', `${row.name} → ${label}`);
+    hrLog(req, 'candidate.stage', `${row.name} → ${stageLabel(requested)}`);
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -1177,14 +1200,25 @@ router.post('/candidates/:id/reject-email/draft', requireHrAccess, async (req, r
     if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in CRM Admin → API keys.' });
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     const reason = String((req.body || {}).reason || '').slice(0, 300);
+    // The HR's own signature (default from their library, else the legacy single).
+    let hrSig = '';
+    if (req.hrActor.kind === 'hr') {
+      const hrUser = await HrUser.findByPk(req.hrActor.id);
+      if (hrUser) {
+        const lib = Array.isArray(hrUser.emailSignatures) ? hrUser.emailSignatures : [];
+        const def = lib.find((x) => x.isDefault) || lib[0];
+        hrSig = (def && def.body) || hrUser.emailSignature || '';
+      }
+    }
     const system = [
-      'Act as a professional, empathetic HR / talent acquisition specialist writing a candidate rejection email after an application or interview.',
-      'Be warm, respectful, concise and encouraging; thank them for their time and interest, keep it positive, and do NOT quote the internal reason verbatim or list specific shortcomings — keep it gracious and general.',
-      'Do not make promises to keep their resume on file unless natural. Sign off from the recruiter.',
-      'Structure the body as clean HTML — wrap each paragraph in its own <p> tag. No <html> wrapper.',
+      'Act as a warm, empathetic HR / talent acquisition specialist writing a candidate rejection email after an application or interview.',
+      'The tone must be professional, kind and encouraging, and must NOT hurt the candidate’s sentiment. Thank them sincerely for their time and interest.',
+      'Do NOT quote any internal reason verbatim or list specific shortcomings — if a reason is given, use it only to gently shape the wording, keeping it gracious and general.',
+      'Include a genuine, positive note that we will keep their profile in mind and will surely inform them if a relevant opening comes up in the future, and wish them all the best for their future endeavours.',
+      'Keep it concise (3–4 short paragraphs). Structure the body as clean HTML — wrap each paragraph in its own <p> tag. No <html> wrapper. Do NOT add a signature or sign-off name — a signature will be appended separately.',
       'Return strict JSON: {"subject":"...","body":"<p>...</p>"}. No markdown, no commentary outside the JSON.',
     ].join(' ');
-    const ctx = `Candidate: ${row.name}\nRole: ${job ? job.title : 'the role'}\nCompany: Qtonix\nRecruiter: ${req.hrActor.name}\nInternal reason (for tone only, do not quote): ${reason || 'not specified'}`;
+    const ctx = `Candidate: ${row.name}\nRole: ${job ? job.title : 'the role'}\nCompany: Qtonix\nRecruiter: ${req.hrActor.name}\nReason provided by HR (optional, for tone only, do not quote): ${reason || 'none — write a warm generic rejection'}`;
     try { const { recordApiCall } = require('../models'); recordApiCall && recordApiCall('openai'); } catch {}
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -1195,7 +1229,11 @@ router.post('/candidates/:id/reject-email/draft', requireHrAccess, async (req, r
     if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
     let parsed = {};
     try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
-    res.json({ subject: parsed.subject || `Update on your application${job ? ` — ${job.title}` : ''}`, body: parsed.body || '' });
+    // Append the HR's signature (or a simple sign-off) below the drafted body.
+    let body = parsed.body || '';
+    if (hrSig) body += `<br><br>${hrSig}`;
+    else body += `<br><p>Warm regards,<br>${req.hrActor.name}<br>Talent Acquisition, Qtonix</p>`;
+    res.json({ subject: parsed.subject || `Update on your application${job ? ` — ${job.title}` : ''}`, body });
   } catch (e) { next(e); }
 });
 
@@ -1645,6 +1683,18 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
       default: return res.status(400).json({ error: 'Unknown offer operation.' });
     }
     row.offer = offer; row.changed('offer', true);
+    // When the offer is accepted, the hiring is complete — automatically move the
+    // candidate into the Hired stage of their pipeline and clear the pending flag.
+    if (offer.status === 'accepted') {
+      const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+      const hiredStage = (job && job.stages || []).find((s) => HIRED_STAGE_IDS.has(String(s.id).toLowerCase()));
+      const targetStage = hiredStage ? hiredStage.id : 'hired';
+      if (row.stage !== targetStage) {
+        row.stage = targetStage; row.rejected = false;
+        pushTimeline(row, { type: 'stage', text: `${row.name} moved to Hired — offer accepted.`, by: req.hrActor.name });
+      }
+      if (offer.pendingHire) { offer.pendingHire = false; row.changed('offer', true); }
+    }
     await row.save();
     hrLog(req, 'offer.' + (b.op || 'update'), `${row.name}${b.status ? ` — ${b.status}` : ''}`);
     res.json(row.toJSON());
@@ -2076,6 +2126,34 @@ router.get('/api-usage', requireHrAccess, requireHrAdmin, async (req, res, next)
 //  • candidate in an interview stage with no upcoming interview booked
 //  • self-schedule link sent but the candidate never booked (past a grace window)
 // Scoped to the logged-in HR user; admins see everyone (with per-owner rollup).
+// Candidates who are hired-in-stage OR flagged for hire but whose offer isn't
+// completed yet — surfaced to the responsible HR (admin sees all) so they finish
+// the offer process. This is the "already moved" catch-up list.
+router.get('/pending-offers', requireHrAccess, async (req, res, next) => {
+  try {
+    const isAdmin = !!req.isHrAdmin;
+    const meId = req.hrActor.id;
+    const meName = req.hrActor.name;
+    const rows = await HrCandidate.findAll({ where: { rejected: false } });
+    const items = [];
+    for (const c of rows) {
+      const offerDone = c.offer && c.offer.status === 'accepted';
+      if (offerDone) continue;
+      const inHiredStage = HIRED_STAGE_IDS.has(String(c.stage || '').toLowerCase());
+      const pendingHire = c.offer && c.offer.pendingHire;
+      if (!inHiredStage && !pendingHire) continue;
+      const mine = c.recruiterId === meId || c.recruiterName === meName;
+      if (!isAdmin && !mine) continue;
+      items.push({
+        candidateId: c.id, candidateName: c.name, recruiterName: c.recruiterName || 'Unassigned',
+        stage: c.stage, offerStatus: (c.offer && c.offer.status) || 'not_started',
+        reason: inHiredStage ? 'Marked hired but offer not completed' : 'Hire pending — complete the offer',
+      });
+    }
+    res.json({ count: items.length, items });
+  } catch (e) { next(e); }
+});
+
 router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
   try {
     if (!canViewInternal(req)) return res.json({ stillOpen: 0, items: [], byOwner: [] });

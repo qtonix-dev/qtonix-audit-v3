@@ -197,6 +197,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [analytics, setAnalytics] = useState(null);
   const [targets, setTargets] = useState([]);
   const [missed, setMissed] = useState(null);
+  const [pendingOffers, setPendingOffers] = useState([]);
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
   const [mail, setMail] = useState(null);
   const [mailTab, setMailTab] = useState('new');
@@ -213,6 +214,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
       hrApi('/dashboard-stats').then(setStats).catch(() => {});
       hrApi('/targets-progress').then((r) => setTargets(r.rows || [])).catch(() => {});
       hrApi('/leaderboard').then(setBoard).catch(() => {});
+      hrApi('/pending-offers').then((r) => setPendingOffers(r.items || [])).catch(() => {});
     };
     loadLive();
     hrApi('/job-posts').then(setJobs).catch(() => {});
@@ -270,6 +272,29 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
                 </div>
                 {a.body && <div className="text-xs text-slate-500 mt-0.5 whitespace-pre-wrap">{a.body}</div>}
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Offers pending completion — candidates marked for hire before the offer
+          process was finished. */}
+      {pendingOffers.length > 0 && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+          <div className="mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-sky-700">📝 Offers to complete · {pendingOffers.length}</div>
+            <div className="text-[11px] text-sky-600">These candidates were marked for hire — finish the offer process to confirm the hire.</div>
+          </div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {pendingOffers.slice(0, 10).map((p) => (
+              <button key={p.candidateId} onClick={() => onOpenCandidate && onOpenCandidate(p.candidateId, 'offer')}
+                className="w-full flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 text-[11px] hover:bg-sky-100/50 transition-colors text-left">
+                <span>📝</span>
+                <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{p.candidateName}</span>
+                <span className="text-slate-400 truncate">· {p.reason}</span>
+                {isAdmin && <span className="text-slate-400 ml-auto shrink-0">{p.recruiterName}</span>}
+                <span className="text-sky-600 font-bold shrink-0 ml-auto">Complete →</span>
+              </button>
             ))}
           </div>
         </div>
@@ -584,7 +609,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
         ))}
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} forceScope={jobScope} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} forceScope={candScope} weekOnly={candWeekOnly} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} forceScope={candScope} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
     </div>
   );
@@ -813,9 +838,10 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOnly }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOnly, openCandidateId, openCandidateTab }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
+  const [viewTab, setViewTab] = useState(null);
   const [notesFor, setNotesFor] = useState(null);
   const [sel, setSel] = useState([]); // selected candidate ids for bulk actions
   const [page, setPage] = useState(1);
@@ -848,7 +874,8 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, forceScope, weekOn
     return { label: st ? st.label : c.stage, color: st ? st.color : '#64748B' };
   };
 
-  if (viewId) return <HrCandidateView candidateId={viewId} isAdmin={isAdmin} onBack={() => { setViewId(null); load(q); }} onDeleted={() => { setViewId(null); load(q); }} />;
+  useEffect(() => { if (openCandidateId) { setViewId(openCandidateId); setViewTab(openCandidateTab || null); } }, [openCandidateId, openCandidateTab]);
+  if (viewId) return <HrCandidateView candidateId={viewId} isAdmin={isAdmin} initialTab={viewTab} onBack={() => { setViewId(null); setViewTab(null); load(q); }} onDeleted={() => { setViewId(null); setViewTab(null); load(q); }} />;
 
   // All stages across jobs, de-duplicated, for the stage filter.
   const allStages = []; const seen = new Set();
@@ -1454,7 +1481,18 @@ function RecruitPipeline({ jobs }) {
   const move = async (c, stage) => {
     if (c.stage === stage) return;
     setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x));
-    try { await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }); } catch (e) { alert(e.message); load(); }
+    try {
+      const updated = await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) });
+      if (updated && updated.offerIncomplete) {
+        // The server redirected the hire to "Offered" pending offer completion —
+        // reconcile the card to its real stage and open the candidate (which will
+        // land on the Offer tab automatically).
+        setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage: updated.stage } : x));
+        setViewId(c._id);
+      } else if (updated && updated.stage) {
+        setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage: updated.stage } : x));
+      }
+    } catch (e) { alert(e.message); load(); }
   };
   if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
@@ -3337,7 +3375,7 @@ export default function HrApp() {
       </header>
       {!isAdmin && <SurveyGate />}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
-        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id) => goRecruit({ tab: 'candidates' })} onNav={goRecruit} />}
+        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
