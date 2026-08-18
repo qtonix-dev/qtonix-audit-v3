@@ -2591,13 +2591,18 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   const [showCc, setShowCc] = useState((initial.cc || []).length > 0);
   const [showBcc, setShowBcc] = useState((initial.bcc || []).length > 0);
   const [subject, setSubject] = useState(initial.subject || '');
-  // On reply/forward, initial.body is the quoted chain; place the default
-  // signature above it (below the new message area), Gmail-style.
   const isReplyOrForward = ['reply', 'replyall', 'forward'].includes(initial.mode);
+  const initialFrom = initial.from || defaultFrom || fromOptions[0]?.value;
+  // The signature is wrapped in a marked container so it can be reliably found
+  // and swapped when the "from" sender changes — always keeping it ABOVE the
+  // quoted chain (Gmail-style), never appended at the very bottom.
+  const wrapSig = (sig) => sig ? `<div data-sig="1"><br><br>${sig}</div>` : '';
+  const sigForValue = (val) => (fromOptions.find((o) => o.value === val)?.signature) || defaultSignature || '';
   const [body, setBody] = useState(() => {
-    const sig = (initial.from && fromOptions.find((o) => o.value === initial.from)?.signature) || defaultSignature || '';
-    if (isReplyOrForward && sig) return `<br><br>${sig}<br>${initial.body || ''}`;
-    return initial.body || '';
+    const sig = sigForValue(initialFrom);
+    if (isReplyOrForward) return `${wrapSig(sig)}${initial.body || ''}`;
+    // Fresh compose: signature sits under the (empty) message area.
+    return sig ? `${initial.body || ''}${wrapSig(sig)}` : (initial.body || '');
   });
   const [attachments, setAttachments] = useState([]);
   const [reports, setReports] = useState([]);
@@ -2617,6 +2622,27 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
 
   const currentFrom = fromOptions.find((o) => o.value === from) || fromOptions[0];
   const sigFor = () => (currentFrom && currentFrom.signature) || defaultSignature || '';
+
+  // When the sender ("from") changes, replace the signature block with the newly
+  // selected user's signature, keeping it in place (above the quoted chain).
+  const prevFromRef = useRef(from);
+  useEffect(() => {
+    if (prevFromRef.current === from) return;
+    prevFromRef.current = from;
+    const newSig = sigForValue(from);
+    setBody((b) => {
+      const hasBlock = /<div data-sig="1">[\s\S]*?<\/div>/.test(b || '');
+      if (hasBlock) {
+        // Swap the existing signature block in place.
+        return (b || '').replace(/<div data-sig="1">[\s\S]*?<\/div>/, newSig ? `<div data-sig="1"><br><br>${newSig}</div>` : '');
+      }
+      if (!newSig) return b || '';
+      // No block yet — insert above the quoted chain if present, else append.
+      const tail = extractQuotedTail(b || '');
+      if (tail) { const head = (b || '').slice(0, (b || '').length - tail.length); return `${head}<div data-sig="1"><br><br>${newSig}</div>${tail}`; }
+      return `${b || ''}<div data-sig="1"><br><br>${newSig}</div>`;
+    });
+  }, [from]);
 
   useEffect(() => { api(`/gmail/lead/${lead._id || lead.id}/reports`).then(setReports).catch(() => {}); }, []);
   useEffect(() => { api('/gmail/templates').then(setTemplates).catch(() => {}); }, []);
@@ -2641,7 +2667,17 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
   };
   const attachReport = (r) => { setAttachments((a) => [...a, { reportId: r._id || r.id, filename: `${r.businessName || 'report'}.pdf` }]); setShowReports(false); };
   const removeAtt = (i) => setAttachments((a) => a.filter((_, idx) => idx !== i));
-  const insertSignature = () => { const sig = sigFor(); if (sig) setBody((b) => `${b || ''}<br><br>${sig}`); };
+  const insertSignature = () => {
+    const sig = sigFor(); if (!sig) return;
+    setBody((b) => {
+      const cur = b || '';
+      // Replace an existing block if present; else place above the quoted chain.
+      if (/<div data-sig="1">[\s\S]*?<\/div>/.test(cur)) return cur.replace(/<div data-sig="1">[\s\S]*?<\/div>/, `<div data-sig="1"><br><br>${sig}</div>`);
+      const tail = extractQuotedTail(cur);
+      if (tail) { const head = cur.slice(0, cur.length - tail.length); return `${head}<div data-sig="1"><br><br>${sig}</div>${tail}`; }
+      return `${cur}<div data-sig="1"><br><br>${sig}</div>`;
+    });
+  };
 
   const doSend = async (scheduled) => {
     setErr('');
@@ -2657,6 +2693,9 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
       if (new Date(sendAt).getTime() < Date.now() - 60000) return setErr('Pick a valid future date and time (in the lead’s timezone).');
     }
     setSending(true);
+    // Strip the internal signature marker attribute before sending (keeps the
+    // div wrapper, drops the editor-only marker).
+    const outBody = (body || '').replace(/ data-sig="1"/g, '');
     try {
       // If we're editing an existing scheduled email, remove the original first
       // so we don't end up with duplicates.
@@ -2664,7 +2703,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
         try { await api(`/gmail/scheduled/${initial.editingScheduledId}/cancel`, { method: 'POST' }); } catch { /* proceed anyway */ }
       }
       await api(`/gmail/lead/${lead._id || lead.id}/send`, { method: 'POST', body: JSON.stringify({
-        from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body,
+        from, to, cc: cc.join(', '), bcc: bcc.join(', '), subject, body: outBody,
         threadId: initial.threadId, inReplyTo: initial.inReplyTo, attachments,
         ...(scheduled ? { sendAt, timezone: tz } : {}),
       }) });

@@ -15,6 +15,20 @@ const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'tra
 // sections (payroll, performance, identity). Everyone else is view-only there.
 const HR_STAFF_TYPES = ['hr', 'recruiter'];
 
+// A candidate is considered hired/onboarded if their pipeline stage is a hired
+// stage OR they have an accepted offer. This covers both workflows: HR moving
+// the candidate's stage directly to "Hired", and completing the offer flow.
+// Custom job pipelines may use variants like 'onboarded'/'joined', so accept
+// those stage ids too.
+const HIRED_STAGE_IDS = new Set(['hired', 'onboarded', 'joined', 'selected']);
+function isHiredCandidate(c) {
+  if (!c) return false;
+  const stage = String(c.stage || '').toLowerCase();
+  if (HIRED_STAGE_IDS.has(stage)) return true;
+  if (c.offer && c.offer.status === 'accepted') return true;
+  return false;
+}
+
 // Profile completion: the sections we score a profile against. Each present +
 // non-empty section counts toward the percentage shown in the admin list.
 function profileCompletion(hrUser) {
@@ -95,12 +109,15 @@ router.get('/me', requireHrAccess, (req, res) => {
 /** GET /api/hr/dashboard — minimal figures for the HR dashboard scaffold. */
 router.get('/dashboard', requireHrAccess, async (req, res, next) => {
   try {
-    const [staff, openJobs, candidates, onboarded] = await Promise.all([
+    const [staff, openJobs, candidates, allCands] = await Promise.all([
       HrUser.count({ where: { active: true } }),
       HrJobPost.count({ where: { status: 'open' } }),
       HrCandidate.count(),
-      HrCandidate.count({ where: { stage: 'onboarded' } }),
+      HrCandidate.findAll({ attributes: ['stage', 'offer'] }),
     ]);
+    // A candidate counts as hired/onboarded when their stage is a hired stage OR
+    // they have an accepted offer — either path HR uses should be reflected.
+    const onboarded = allCands.filter(isHiredCandidate).length;
     res.json({
       greetingName: req.hrActor.name,
       metrics: { staff, openJobs, candidates, onboarded },
@@ -1886,9 +1903,10 @@ router.get('/targets-progress', requireHrAccess, async (req, res, next) => {
       cands.forEach((c) => {
         const minesCand = c.recruiterId === u.id || c.recruiterName === u.name;
         if (minesCand && c.createdAt && new Date(c.createdAt).getTime() >= startOfDay) addedToday += 1;
-        // Onboarded = accepted offer, credited to the recruiter, this month.
-        if (c.offer && c.offer.status === 'accepted' && minesCand) {
-          const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
+        // Onboarded = hired (accepted offer OR moved to a hired stage), credited
+        // to the recruiter, this month.
+        if (minesCand && isHiredCandidate(c)) {
+          const doneAt = (c.offer && c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
           if (doneAt && new Date(doneAt).getTime() >= startOfMonth) onboardedThisMonth += 1;
         }
       });
@@ -1926,7 +1944,7 @@ router.get('/dashboard-stats', requireHrAccess, async (req, res, next) => {
     });
     const avgTimeToHire = hireDays.length ? Math.round(hireDays.reduce((a, b) => a + b, 0) / hireDays.length) : null;
     const totalActive = cands.filter((c) => !c.rejected).length;
-    const hired = cands.filter((c) => c.offer && c.offer.status === 'accepted').length;
+    const hired = cands.filter(isHiredCandidate).length;
     res.json({ openJobs, applicationsThisWeek, byStage, avgTimeToHire, totalActive, hired, totalCandidates: cands.length });
   } catch (e) { next(e); }
 });
@@ -1940,7 +1958,7 @@ router.get('/source-analytics', requireHrAccess, async (req, res, next) => {
     cands.forEach((c) => {
       const src = c.source || 'manual';
       bump(src, 'total');
-      if (c.offer && c.offer.status === 'accepted') bump(src, 'hired');
+      if (isHiredCandidate(c)) bump(src, 'hired');
       else if (c.rejected) bump(src, 'rejected');
       else bump(src, 'inProcess');
     });
