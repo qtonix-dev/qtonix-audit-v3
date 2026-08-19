@@ -499,60 +499,54 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — added & interviews (today/week/month), joined + targets */}
+      {/* HR leaderboard — redesigned as ranked cards with metric blocks */}
       {board && board.rows && board.rows.length > 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-5 overflow-x-auto">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-extrabold text-[#050A1F]">🏆 HR leaderboard</div>
-            {board.leader && <div className="text-xs text-slate-500">Leading: <b className="text-[#050A1F]">{board.leader.name}</b></div>}
+        <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-lg">HR Leaderboard</div></div>
+            {board.leader && <div className="text-xs bg-amber-100 text-amber-700 font-bold rounded-full px-3 py-1">Leading · {board.leader.name}</div>}
           </div>
-          <table className="w-full text-sm min-w-[760px]">
-            <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                <th className="pb-2 w-10" rowSpan={2}>#</th><th className="pb-2" rowSpan={2}>HR name</th>
-                <th className="pb-2 text-center border-l border-slate-100" colSpan={3}>Candidates added</th>
-                <th className="pb-2 text-center border-l border-slate-100" colSpan={3}>Interviews scheduled</th>
-                <th className="pb-2 text-center border-l border-slate-100" colSpan={1}>Joined</th>
-                <th className="pb-2 text-center border-l border-slate-100" rowSpan={2}>Targets</th>
-              </tr>
-              <tr className="text-left text-[9px] uppercase tracking-wide text-slate-300">
-                <th className="pb-1 text-center border-l border-slate-100">Today</th><th className="pb-1 text-center">Week</th><th className="pb-1 text-center">Month</th>
-                <th className="pb-1 text-center border-l border-slate-100">Today</th><th className="pb-1 text-center">Week</th><th className="pb-1 text-center">Month</th>
-                <th className="pb-1 text-center border-l border-slate-100">Month</th>
-              </tr>
-            </thead>
-            <tbody>
-              {board.rows.map((r) => {
-                const t = r.targetInfo || {};
-                const chip = (met) => met === null ? null : <span className={`inline-block w-2 h-2 rounded-full ${met ? 'bg-green-500' : 'bg-red-400'}`} />;
-                return (
-                  <tr key={r.id} className="border-t border-slate-50">
-                    <td className="py-2.5 w-10"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
-                    <td className="py-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                        <span className="font-bold text-[#050A1F] truncate">{r.name}</span>
+          <div className="space-y-2.5">
+            {board.rows.map((r) => {
+              const t = r.targetInfo || {};
+              const medal = r.rank === 1 ? 'from-amber-400 to-yellow-500 text-white' : r.rank === 2 ? 'from-slate-300 to-slate-400 text-white' : r.rank === 3 ? 'from-orange-300 to-orange-400 text-white' : 'bg-slate-100 text-slate-400';
+              const Metric = ({ label, color, buckets, single }) => (
+                <div className="flex-1 min-w-[130px] rounded-xl bg-white border border-slate-100 px-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">{label}</div>
+                  {single ? (
+                    <div className="text-2xl font-extrabold" style={{ color }}>{buckets.month}</div>
+                  ) : (
+                    <div className="flex items-end gap-3">
+                      <div><div className="text-2xl font-extrabold leading-none" style={{ color }}>{buckets.month}</div><div className="text-[9px] text-slate-400 mt-0.5">Month</div></div>
+                      <div className="flex gap-2 pb-0.5">
+                        <div className="text-center"><div className="text-sm font-bold text-slate-600 leading-none">{buckets.today}</div><div className="text-[9px] text-slate-400 mt-0.5">Today</div></div>
+                        <div className="text-center"><div className="text-sm font-bold text-slate-600 leading-none">{buckets.week}</div><div className="text-[9px] text-slate-400 mt-0.5">Week</div></div>
                       </div>
-                    </td>
-                    <td className="py-2.5 text-center text-slate-500 border-l border-slate-50">{r.added.today}</td>
-                    <td className="py-2.5 text-center text-slate-500">{r.added.week}</td>
-                    <td className="py-2.5 text-center font-extrabold text-[#2563EB]">{r.added.month}</td>
-                    <td className="py-2.5 text-center text-slate-500 border-l border-slate-50">{r.interviews.today}</td>
-                    <td className="py-2.5 text-center text-slate-500">{r.interviews.week}</td>
-                    <td className="py-2.5 text-center font-extrabold text-[#FF6A00]">{r.interviews.month}</td>
-                    <td className="py-2.5 text-center font-extrabold text-[#16A34A] border-l border-slate-50">{r.joined.month}</td>
-                    <td className="py-2.5 border-l border-slate-50">
-                      <div className="flex flex-col gap-0.5 text-[11px] text-slate-500">
-                        <span className="flex items-center gap-1.5">{chip(t.dailyMet)} Daily {r.interviews.today}/{t.dailyInterviews || '—'}</span>
-                        <span className="flex items-center gap-1.5">{chip(t.monthlyJoinMet)} Join {r.joined.month}/{t.monthlyJoin || '—'}</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div className="text-[10px] text-slate-400 mt-2">Candidates added = candidates on the platform. Interviews scheduled = booked through the platform. Joined = accepted the offer and on the Hired stage. Green/red dots show whether the HR met their daily interview and monthly join targets.</div>
+                    </div>
+                  )}
+                </div>
+              );
+              return (
+                <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white border border-slate-100 p-3 hover:shadow-sm transition">
+                  <div className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${medal} flex items-center justify-center text-sm font-extrabold`}>{r.rank}</div>
+                  <div className="shrink-0 flex items-center gap-2 w-40 min-w-0">
+                    <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                    <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div>{r.designation && <div className="text-[10px] text-slate-400 truncate">{r.designation}</div>}</div>
+                  </div>
+                  <div className="flex-1 flex flex-wrap gap-2">
+                    <Metric label="Candidates added" color="#2563EB" buckets={r.added} />
+                    <Metric label="Interviews scheduled" color="#FF6A00" buckets={r.interviews} />
+                    <Metric label="Joined" color="#16A34A" buckets={r.joined} single />
+                  </div>
+                  <div className="shrink-0 w-32 space-y-1.5">
+                    <TargetBar label="Daily interviews" done={r.interviews.today} target={t.dailyInterviews || 0} color="#FF6A00" />
+                    <TargetBar label="Monthly joins" done={r.joined.month} target={t.monthlyJoin || 0} color="#16A34A" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-3">Candidates added = candidates on the platform. Interviews scheduled = booked through the platform. Joined = accepted the offer and on the Hired stage.</div>
         </div>
       )}
 
@@ -787,7 +781,7 @@ function AssignHrModal({ job, onClose, onSaved }) {
   const [sel, setSel] = useState((job.assignedHrIds || []).map(Number));
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
-  useEffect(() => { hrApi('/employees').then((rows) => setEmps(rows.filter((e) => ['hr', 'recruiter', 'manager', 'tl'].includes(e.type) && e.active !== false))).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/employees?hrDept=1').then((rows) => setEmps(rows || [])).catch(() => {}); }, []);
   const toggle = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const save = async () => { setBusy(true); try { await hrApi(`/job-posts/${job._id}/assigned-hr`, { method: 'PUT', body: JSON.stringify({ assignedHrIds: sel }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
   const filtered = emps.filter((e) => !q || e.name.toLowerCase().includes(q.toLowerCase()));
@@ -992,14 +986,9 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const [hrFilter, setHrFilter] = useState('');
   const [monthOnly, setMonthOnly] = useState(false); // "This month" for hired/rejected views
   const [rejReason, setRejReason] = useState(null); // candidate whose rejection reason is shown
+  const [hiredOfferFor, setHiredOfferFor] = useState(null); // candidate whose hired offer is being set
   const [hrList, setHrList] = useState([]); // HR-department staff for the HR filter
-  useEffect(() => {
-    hrApi('/employees').then((r) => {
-      const HR_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
-      const inHrDept = (u) => /^(hr|human resources)$/i.test(String(u.department || '').trim());
-      setHrList((r || []).filter((u) => !String(u._id).startsWith('admin:') && u.active !== false && (inHrDept(u) || HR_TYPES.includes(u.type))));
-    }).catch(() => {});
-  }, []);
+  useEffect(() => { hrApi('/employees?hrDept=1').then((r) => setHrList(r || [])).catch(() => {}); }, []);
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
   const curView = listMode || 'active';
   const isHiredView = listMode === 'hired';
@@ -1155,7 +1144,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                       <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{totalExperience(c)}</td>
                       <td className="px-2.5 py-2"><ResumeMatchBadge match={c.resumeMatch} /></td>
                       <td className="px-2.5 py-2"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
-                      {isHiredView && <td className="px-2.5 py-2 whitespace-nowrap font-bold text-green-700">{(c.offer && (c.offer.acceptedAmount || c.offer.finalCtc)) || '—'}</td>}
+                      {isHiredView && <td className="px-2.5 py-2 whitespace-nowrap">{(c.offer && (c.offer.acceptedAmount || c.offer.finalCtc)) ? <span className="font-bold text-green-700">{c.offer.acceptedAmount || c.offer.finalCtc}</span> : <button onClick={() => setHiredOfferFor(c)} className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-50">+ Set offer</button>}</td>}
                       <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{titleCase((c.recruiterName || '—').split(' ')[0])}</td>
                       <td className="px-2.5 py-2 text-slate-400 text-[11px] whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
                       <td className="px-2.5 py-2">
@@ -1178,19 +1167,83 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
         </div>
       )}
       {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(q); }} />}
-      {rejReason && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={() => setRejReason(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Rejection reason</div><button onClick={() => setRejReason(null)} className="text-slate-400 text-xl leading-none">×</button></div>
-            <div className="p-6">
-              <div className="text-sm font-bold text-[#050A1F] mb-1">{titleCase(rejReason.name)}</div>
-              <div className="text-xs text-slate-400 mb-3">{job(rejReason.jobPostId).title || '—'}{rejReason.rejectedAt ? ` · ${new Date(rejReason.rejectedAt).toLocaleDateString()}` : ''}</div>
-              <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-sm text-slate-700 whitespace-pre-wrap">{rejReason.rejectionReason || 'No reason was recorded.'}</div>
-            </div>
-          </div>
-        </div>
-      )}
+      {rejReason && <RejReasonModal candidate={rejReason} jobTitle={job(rejReason.jobPostId).title} onClose={() => setRejReason(null)} onSaved={() => { setRejReason(null); load(q); }} />}
+      {hiredOfferFor && <HiredOfferModal candidate={hiredOfferFor} onClose={() => setHiredOfferFor(null)} onSaved={() => { setHiredOfferFor(null); load(q); }} />}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
+    </div>
+  );
+}
+
+// Shows a candidate's rejection reason; if none was recorded, lets HR enter one.
+function RejReasonModal({ candidate, jobTitle, onClose, onSaved }) {
+  const [editing, setEditing] = useState(!candidate.rejectionReason);
+  const [reason, setReason] = useState(candidate.rejectionReason || '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!reason.trim()) return;
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidate._id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) }); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Rejection reason</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6">
+          <div className="text-sm font-bold text-[#050A1F] mb-1">{titleCase(candidate.name)}</div>
+          <div className="text-xs text-slate-400 mb-3">{jobTitle || '—'}{candidate.rejectedAt ? ` · ${new Date(candidate.rejectedAt).toLocaleDateString()}` : ''}</div>
+          {editing ? (
+            <textarea autoFocus rows={4} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Enter the reason this candidate was rejected…" />
+          ) : (
+            <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-sm text-slate-700 whitespace-pre-wrap">{candidate.rejectionReason}</div>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          {editing ? (
+            <>
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={save} disabled={busy || !reason.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save reason'}</button>
+            </>
+          ) : (
+            <button onClick={() => setEditing(true)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Edit reason</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Lets HR record the salary details for an already-hired candidate whose offer
+// was never logged (candidate ask, what we offered, remark). Stored on the offer.
+function HiredOfferModal({ candidate, onClose, onSaved }) {
+  const [ask, setAsk] = useState((candidate.offer && candidate.offer.declinedSummary && candidate.offer.declinedSummary.candidateAsk) || (candidate.answers && candidate.answers.expectedCtc) || '');
+  const [offered, setOffered] = useState((candidate.offer && (candidate.offer.acceptedAmount || candidate.offer.finalCtc)) || '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const save = async () => {
+    if (!offered.trim()) return alert('Enter what we offered.');
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_hired_offer', candidateAsk: ask.trim(), offered: offered.trim(), note: note.trim() }) }); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Set hired offer</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-3">
+          <div className="text-sm font-bold text-[#050A1F]">{titleCase(candidate.name)}</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Candidate ask</div><input className={inp2} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. 10L" /></div>
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">What we offered</div><input className={inp2} value={offered} onChange={(e) => setOffered(e.target.value)} placeholder="e.g. 8L" /></div>
+          </div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Remark</div><textarea rows={3} className={inp2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note about this offer…" /></div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#16A34A' }}>{busy ? 'Saving…' : 'Save offer'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1246,7 +1299,7 @@ function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (action === 'reject') hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {});
-    if (action === 'assign') hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {});
+    if (action === 'assign') hrApi('/employees?hrDept=1').then((r) => setEmps(r || [])).catch(() => {});
   }, [action]);
   const run = async () => {
     setBusy(true);

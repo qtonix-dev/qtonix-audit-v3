@@ -1265,17 +1265,19 @@ function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
 
 // ---------- Edit candidate modal (moved from list) ----------
 function EditModal({ c, onClose, onSaved }) {
-  const [d, setD] = useState({ name: c.name || '', email: c.email || '', phone: c.phone || '', currentLocation: c.currentLocation || '', recruiterId: c.recruiterId || '', ...(c.answers || {}) });
+  const [d, setD] = useState({ name: c.name || '', email: c.email || '', phone: c.phone || '', currentLocation: c.currentLocation || '', recruiterId: c.recruiterId || '', jobPostId: c.jobPostId || '', ...(c.answers || {}) });
   const [emps, setEmps] = useState([]);
+  const [jobsList, setJobsList] = useState([]);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { hrApi('/employees').then((r) => setEmps((r || []).filter((e) => e.active))).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/employees?hrDept=1').then((r) => setEmps(r || [])).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/job-posts').then((r) => setJobsList((r || []).filter((j) => j.status === 'published' || j.status === 'paused' || j._id === c.jobPostId))).catch(() => {}); }, []);
   const F = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   const save = async () => {
     setBusy(true);
     try {
-      await hrApi(`/candidates/${c.id}`, { method: 'PATCH', body: JSON.stringify({ name: d.name, email: d.email, phone: d.phone, currentLocation: d.currentLocation, recruiterId: d.recruiterId ? Number(d.recruiterId) : null, answers: { currentCtc: d.currentCtc, expectedCtc: d.expectedCtc, noticePeriod: d.noticePeriod, portfolio: d.portfolio } }) });
+      await hrApi(`/candidates/${c.id}`, { method: 'PATCH', body: JSON.stringify({ name: d.name, email: d.email, phone: d.phone, currentLocation: d.currentLocation, recruiterId: d.recruiterId ? Number(d.recruiterId) : null, jobPostId: d.jobPostId ? Number(d.jobPostId) : null, answers: { currentCtc: d.currentCtc, expectedCtc: d.expectedCtc, noticePeriod: d.noticePeriod, portfolio: d.portfolio } }) });
       onSaved();
-    } catch { setBusy(false); }
+    } catch (e) { alert(e.message); setBusy(false); }
   };
   return (
     <Modal title="Edit candidate" onClose={onClose} wide>
@@ -1288,6 +1290,13 @@ function EditModal({ c, onClose, onSaved }) {
         <div><Lbl>Expected Salary</Lbl><input className={F} value={d.expectedCtc || ''} onChange={(e) => setD({ ...d, expectedCtc: e.target.value })} /></div>
         <div><Lbl>Notice Period (days)</Lbl><input className={F} value={d.noticePeriod || ''} onChange={(e) => setD({ ...d, noticePeriod: e.target.value })} /></div>
         <div><Lbl>Portfolio</Lbl><input className={F} value={d.portfolio || ''} onChange={(e) => setD({ ...d, portfolio: e.target.value })} /></div>
+        <div className="col-span-2">
+          <Lbl>Applied post</Lbl>
+          <select className={F} value={d.jobPostId || ''} onChange={(e) => setD({ ...d, jobPostId: e.target.value })}>
+            <option value="">— Select a job post —</option>
+            {jobsList.map((j) => <option key={j._id} value={j._id}>{j.title}{j.status && j.status !== 'published' ? ` (${j.status})` : ''}</option>)}
+          </select>
+        </div>
         <div className="col-span-2">
           <Lbl>Assigned HR / recruiter</Lbl>
           <select className={F} value={d.recruiterId || ''} onChange={(e) => setD({ ...d, recruiterId: e.target.value })}>

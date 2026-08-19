@@ -376,11 +376,17 @@ router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, nex
 router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrUser.findAll({ order: [['name', 'ASC']] });
-    const list = rows.map((u) => ({
+    let list = rows.map((u) => ({
       _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,
       avatar: u.avatar, active: u.active, completion: profileCompletion(u),
     }));
+    // ?hrDept=1 → only employees in the Human Resources department (used wherever
+    // an HR/recruiter must be picked). Directors/CRM admins are excluded.
+    if (['1', 'true', 'yes'].includes(String(req.query.hrDept || '').toLowerCase())) {
+      const isHrDept = (u) => /^(hr|human resources|human resource)$/i.test(String(u.department || '').trim());
+      return res.json(list.filter((u) => u.active !== false && isHrDept(u)));
+    }
     // Also surface CRM admins as "Directors" so HR can pick them as interview
     // panelists. Their HRMS-side details come from the overlay table (their CRM
     // name may be a sales alias), falling back to the CRM record.
@@ -2132,6 +2138,18 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         offer.status = 'offer_sent';
         pushTimeline(row, { type: 'offer', text: `Offer letter ${b.emailSent ? 'sent' : 'attached'} by ${req.hrActor.name}${b.finalCtc ? ` (CTC ${b.finalCtc})` : ''}.`, by: req.hrActor.name });
         break;
+      case 'set_hired_offer': {
+        const offered = String(b.offered || '').slice(0, 60);
+        offer.acceptedAmount = offered;
+        offer.finalCtc = offered || offer.finalCtc;
+        offer.status = 'accepted';
+        offer.active = true;
+        if (!Array.isArray(offer.salaryDiscussions)) offer.salaryDiscussions = [];
+        offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: now, mode: 'manual', meetLink: '', offered, candidateAsk: String(b.candidateAsk || '').slice(0, 60), notes: String(b.note || '').slice(0, 300), by: req.hrActor.name });
+        offer.acceptedOfferId = offer.salaryDiscussions[0].id;
+        pushTimeline(row, { type: 'offer', text: `Hired offer recorded by ${req.hrActor.name}${offered ? ` (offered ${offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
+        break;
+      }
       case 'set_status':
         if (b.status === 'accepted') {
           const list = offer.salaryDiscussions || [];
