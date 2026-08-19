@@ -46,7 +46,10 @@ COPY . .
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# 8. Start the server. The app ensures its own tables + admin at boot (with DB
+# 8. Start the server via the production launcher. The launcher always starts
+# the web server and, when REDIS_URL is set, also starts the report worker in
+# the same container (set RUN_WORKER=false to disable if you run a separate
+# worker service). The app ensures its own tables + admin at boot (with DB
 # retry), so a transient seed failure must never block startup — run seed
-# best-effort and always start the server.
-CMD ["sh", "-c", "npm run seed || echo 'seed skipped'; npm start"]
+# best-effort and always start.
+CMD ["sh", "-c", "npm run seed || echo 'seed skipped'; npm run start:prod"]
