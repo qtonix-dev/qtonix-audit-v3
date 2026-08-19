@@ -1397,6 +1397,7 @@ const HrCandidate = sequelize.define('HrCandidate', {
   source: { type: DataTypes.STRING(30), defaultValue: 'manual' }, // manual | public_form
   rejected: { type: DataTypes.BOOLEAN, defaultValue: false },
   rejectionReason: { type: DataTypes.STRING(300), defaultValue: '' },
+  rejectedAt: { type: DataTypes.DATE, allowNull: true },
   rating: { type: DataTypes.INTEGER, defaultValue: 0 },     // 0-5 quick rating
   tags: { type: DataTypes.JSON, defaultValue: [] },          // ['referral','urgent',...]
   resumeText: { type: DataTypes.TEXT, defaultValue: '' },    // extracted text for keyword search

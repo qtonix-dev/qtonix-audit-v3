@@ -1239,9 +1239,11 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     // Hired candidates live in their own "Hired" tab. The main candidate list
     // hides them; the Hired tab (?hired=only) shows only them.
     const hiredMode = String(req.query.hired || '').toLowerCase();
+    const rejectedMode = String(req.query.rejected || '').toLowerCase();
     const isHired = (r) => isHiredCandidate(r);
-    if (hiredMode === 'only') rows = rows.filter(isHired);
-    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r));
+    if (rejectedMode === 'only') rows = rows.filter((r) => r.rejected);
+    else if (hiredMode === 'only') rows = rows.filter((r) => !r.rejected && isHired(r));
+    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !r.rejected);
     // Strip the big resumeText from list payloads.
     res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
@@ -1465,6 +1467,23 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
     // Hired automatically.
     const movingToHired = HIRED_STAGE_IDS.has(requested.toLowerCase());
     const offerDone = row.offer && row.offer.status === 'accepted';
+
+    // Moving to a "rejected" stage must capture a reason. Unless a reason is
+    // supplied in this same call, tell the client to open the reject dialog
+    // instead of completing the move silently.
+    const REJECTED_STAGE_IDS = new Set(['rejected', 'reject', 'declined', 'disqualified']);
+    const movingToRejected = REJECTED_STAGE_IDS.has(requested.toLowerCase());
+    if (movingToRejected && !req.body.reason) {
+      return res.json({ ...row.toJSON(), needsReason: true, message: 'A rejection reason is required.' });
+    }
+    if (movingToRejected && req.body.reason) {
+      row.stage = 'rejected'; row.rejected = true; row.rejectedAt = new Date();
+      row.rejectionReason = String(req.body.reason).slice(0, 300);
+      pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name} — ${String(req.body.reason).slice(0, 200)}.`, by: req.hrActor.name });
+      await row.save();
+      hrLog(req, 'candidate.reject', `${row.name} — ${String(req.body.reason).slice(0, 120)}`);
+      return res.json(row.toJSON());
+    }
     if (movingToHired && !offerDone) {
       const offeredStage = (job && job.stages || []).find((s) => ['offered', 'offer'].includes(String(s.id).toLowerCase()));
       row.stage = offeredStage ? offeredStage.id : 'offered';
@@ -1512,7 +1531,7 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
-    row.rejected = true; row.stage = 'rejected';
+    row.rejected = true; row.stage = 'rejected'; row.rejectedAt = new Date();
     row.rejectionReason = String(req.body.reason || '').slice(0, 300);
     pushTimeline(row, { type: 'reject', text: `Rejected by ${req.hrActor.name}${req.body.reason ? ` — ${String(req.body.reason).slice(0, 200)}` : ''}.`, by: req.hrActor.name });
     await row.save();
@@ -1700,6 +1719,51 @@ router.post('/candidates/normalize-phones', requireHrAccess, requireHrAdmin, asy
     }
     hrLog(req, 'candidate.normalize_phones', `${updated} updated`);
     res.json({ ok: true, updated, total: rows.length });
+  } catch (e) { next(e); }
+});
+
+// AI summary of rejections — clusters reasons across the rejected candidates
+// (optionally filtered), returning top-5 reasons and suggestions. Admin/HR.
+router.post('/candidates/rejection-summary', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    let rows = await HrCandidate.findAll({ where: { rejected: true } });
+    if (b.jobPostId) rows = rows.filter((c) => c.jobPostId === Number(b.jobPostId));
+    if (b.hrId) rows = rows.filter((c) => String(c.recruiterId || '') === String(b.hrId));
+    if (b.monthOnly) {
+      const now = new Date();
+      rows = rows.filter((c) => { const d = new Date(c.rejectedAt || c.updatedAt || c.createdAt); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); });
+    }
+    const jobCache = {};
+    const jobFor = async (id) => { if (!id) return null; if (!(id in jobCache)) jobCache[id] = await HrJobPost.findByPk(id); return jobCache[id]; };
+    if (b.department) {
+      const keep = [];
+      for (const c of rows) { const j = await jobFor(c.jobPostId); if (j && j.department === b.department) keep.push(c); }
+      rows = keep;
+    }
+    if (rows.length === 0) return res.json({ summary: null, count: 0, message: 'No rejected candidates match these filters.' });
+
+    const items = [];
+    for (const c of rows.slice(0, 200)) {
+      const j = await jobFor(c.jobPostId);
+      const a = c.answers || {};
+      items.push({
+        position: (j && j.title) || 'Unknown', department: (j && j.department) || '', location: (j && (j.locations || []).join(', ')) || a.city || '',
+        hr: c.recruiterName || 'Unassigned', reason: c.rejectionReason || '(no reason recorded)',
+        skills: (a.skills || []).slice(0, 6).join(', '),
+      });
+    }
+    const key = await anthropicKey();
+    if (!key) return res.json({ summary: null, count: rows.length, message: 'AI is not configured. Add an Anthropic key in settings.' });
+    const { callClaude } = require('../services/aiVisibility');
+    const sys = 'You are an expert technical recruiter analysing why candidates were rejected. Given a JSON list of rejected candidates (position, department, location, HR, reason, skills), produce a concise analysis. Return STRICT JSON only, no prose, no markdown: {"overview":"2-3 sentence summary","byPosition":[{"position":"","count":0,"topReason":""}],"topReasons":[{"reason":"","count":0,"detail":""}],"suggestions":[""]}. topReasons must be the 5 most common rejection themes (cluster similar wordings together). suggestions: 3-5 concrete improvements based on the patterns across positions, locations and HR.';
+    let out;
+    try {
+      const raw = await callClaude(key, { system: sys, messages: [{ role: 'user', content: JSON.stringify(items) }], maxTokens: 1500 });
+      const txt = String(raw || '').replace(/```json|```/g, '').trim();
+      out = JSON.parse(txt);
+    } catch (e) { return res.json({ summary: null, count: rows.length, message: 'Could not analyse right now. Please try again.' }); }
+    res.json({ summary: out, count: rows.length });
   } catch (e) { next(e); }
 });
 
@@ -2022,7 +2086,7 @@ router.post('/candidates/bulk', requireHrAccess, async (req, res, next) => {
     const rows = await HrCandidate.findAll({ where: { id: ids } });
     for (const row of rows) {
       if (b.action === 'move' && b.stage) { row.stage = String(b.stage); row.rejected = false; pushTimeline(row, { type: 'stage', text: `Moved to ${b.stage} (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); }
-      else if (b.action === 'reject') { row.rejected = true; row.stage = 'rejected'; row.rejectionReason = String(b.reason || '').slice(0, 300); pushTimeline(row, { type: 'reject', text: `Rejected (bulk) by ${req.hrActor.name}${b.reason ? ` — ${b.reason}` : ''}.`, by: req.hrActor.name }); }
+      else if (b.action === 'reject') { row.rejected = true; row.stage = 'rejected'; row.rejectedAt = new Date(); row.rejectionReason = String(b.reason || '').slice(0, 300); pushTimeline(row, { type: 'reject', text: `Rejected (bulk) by ${req.hrActor.name}${b.reason ? ` — ${b.reason}` : ''}.`, by: req.hrActor.name }); }
       else if (b.action === 'assign' && b.recruiterId) {
         if (!req.isHrAdmin && !req.isHrManager) return res.status(403).json({ error: 'Only an admin or HR manager can reassign candidates.' });
         const u = await HrUser.findByPk(b.recruiterId); if (u) { row.recruiterId = u.id; row.recruiterName = u.name; pushTimeline(row, { type: 'assigned', text: `${u.name} assigned as recruiter (bulk) by ${req.hrActor.name}.`, by: req.hrActor.name }); }

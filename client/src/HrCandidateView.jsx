@@ -87,6 +87,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const act = async (fn) => { try { const updated = await fn(); if (updated) setC((s) => ({ ...updated, job: s.job })); return updated; } catch (e) { setErr(e.message); } };
   const moveToStage = async (stageId) => {
     const updated = await act(() => hrApi(`/candidates/${c.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: stageId }) }));
+    // Moving to a rejected stage needs a reason — open the reject dialog.
+    if (updated && updated.needsReason) { setShowReject(true); return; }
     // If the move to a hired stage was redirected because the offer isn't done,
     // jump to the Offer tab so HR can complete it.
     if (updated && updated.offerIncomplete) {
@@ -171,6 +173,12 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
           {err && <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+          {c.rejected && (
+            <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2.5 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5">⛔</span>
+              <span className="flex-1"><b>Rejected{c.rejectedAt ? ` on ${new Date(c.rejectedAt).toLocaleDateString()}` : ''}.</b> {c.rejectionReason ? <span>Reason: {c.rejectionReason}</span> : <span className="text-red-400">No reason recorded.</span>}</span>
+            </div>
+          )}
           {offerNotice && (
             <div className="mt-3 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm px-3 py-2 flex items-start gap-2">
               <span className="shrink-0 mt-0.5">📝</span>

@@ -614,9 +614,11 @@ function HrRecruitment({ isAdmin, me, intent }) {
   // Scope hints carried in from the dashboard cards (e.g. show all candidates,
   // or only this week's applications).
   const [candScope, setCandScope] = useState(intent && intent.candScope ? intent.candScope : null); // 'all' | 'mine' | null
+  // Candidate List view: My / All (scope) plus Hired / Rejected sub-lists.
+  const [candView, setCandView] = useState(intent && intent.candView ? intent.candView : null); // 'mine' | 'all' | 'hired' | 'rejected'
   const [candWeekOnly, setCandWeekOnly] = useState(!!(intent && intent.weekOnly));
   const [jobScope, setJobScope] = useState(intent && intent.jobScope ? intent.jobScope : null); // 'mine' | 'all' | null
-  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline'], ['hired', 'Hired']];
+  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
 
   const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
   useEffect(() => {
@@ -655,7 +657,16 @@ function HrRecruitment({ isAdmin, me, intent }) {
             <button onClick={() => setJobScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(jobScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My jobs</button>
           </div>
         )}
-        {(tab === 'candidates' || tab === 'pipeline' || tab === 'hired') && (
+        {tab === 'candidates' && (() => {
+          const view = candView || (isAdmin ? 'all' : 'mine');
+          const B = ({ id, label }) => <button onClick={() => setCandView(id)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>;
+          return (
+            <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+              <B id="mine" label="My candidates" /><B id="all" label="All candidates" /><B id="hired" label="Hired" /><B id="rejected" label="Rejected" />
+            </div>
+          );
+        })()}
+        {tab === 'pipeline' && (
           <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
             <button onClick={() => setCandScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
             <button onClick={() => setCandScope('all')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
@@ -663,9 +674,8 @@ function HrRecruitment({ isAdmin, me, intent }) {
         )}
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} scope={jobScope || (isAdmin ? 'all' : 'mine')} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} view={candView || (isAdmin ? 'all' : 'mine')} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} scope={candScope || (isAdmin ? 'all' : 'mine')} />}
-      {tab === 'hired' && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} scope={candScope || (isAdmin ? 'all' : 'mine')} hiredOnly />}
     </div>
   );
 }
@@ -891,7 +901,70 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, weekOnly, hiredOnly, openCandidateId, openCandidateTab }) {
+// AI-generated summary of why candidates were rejected (top reasons + fixes).
+function RejectionSummary({ count, filters }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const run = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await hrApi('/candidates/rejection-summary', { method: 'POST', body: JSON.stringify({ jobPostId: filters.job || undefined, department: filters.dept || undefined, hrId: filters.hr || undefined, monthOnly: !!filters.monthOnly }) });
+      if (r.summary) setData(r.summary); else setMsg(r.message || 'No summary available.');
+    } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="mb-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-extrabold text-[#050A1F]">✨ AI rejection analysis</div>
+          <div className="text-xs text-slate-500">Clusters the rejection reasons across {count} candidate{count === 1 ? '' : 's'} (current filters) and suggests improvements.</div>
+        </div>
+        <button onClick={run} disabled={busy || count === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 shrink-0" style={{ background: '#050A1F' }}>{busy ? 'Analysing…' : (data ? 'Regenerate' : 'Generate summary')}</button>
+      </div>
+      {msg && <div className="mt-3 text-sm text-slate-500">{msg}</div>}
+      {data && (
+        <div className="mt-4 space-y-4">
+          {data.overview && <div className="rounded-xl bg-white border border-slate-100 p-4 text-sm text-slate-700">{data.overview}</div>}
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400 mb-2">Top 5 reasons</div>
+              <ol className="space-y-2">
+                {(data.topReasons || []).slice(0, 5).map((r, i) => (
+                  <li key={i} className="flex gap-2 text-sm">
+                    <span className="font-extrabold text-red-500 shrink-0">{i + 1}.</span>
+                    <span><b className="text-[#050A1F]">{r.reason}</b>{r.count ? <span className="text-slate-400"> · {r.count}</span> : ''}{r.detail && <div className="text-xs text-slate-500 mt-0.5">{r.detail}</div>}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400 mb-2">Suggestions to improve</div>
+              <ul className="space-y-1.5">
+                {(data.suggestions || []).map((s, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-green-500">✔</span>{s}</li>)}
+              </ul>
+            </div>
+          </div>
+          {(data.byPosition || []).length > 0 && (
+            <div className="rounded-xl bg-white border border-slate-100 p-4">
+              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400 mb-2">By position</div>
+              <div className="space-y-1">
+                {data.byPosition.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm border-b border-slate-50 py-1 last:border-0">
+                    <span className="font-semibold text-slate-700">{p.position}</span>
+                    <span className="text-slate-400 text-xs">{p.count ? `${p.count} · ` : ''}{p.topReason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, view, weekOnly, openCandidateId, openCandidateTab }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [viewTab, setViewTab] = useState(null);
@@ -905,23 +978,31 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const [stageFilter, setStageFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState(initialSource || '');
   const [tagFilter, setTagFilter] = useState('');
+  const [deptFilter, setDeptFilter] = useState('');
+  const [hrFilter, setHrFilter] = useState('');
+  const [monthOnly, setMonthOnly] = useState(false); // "This month" for hired/rejected views
+  const [rejReason, setRejReason] = useState(null); // candidate whose rejection reason is shown
+  const [hrList, setHrList] = useState([]); // for the HR filter on hired/rejected views
+  useEffect(() => { hrApi('/employees').then((r) => setHrList((r || []).filter((u) => !String(u._id).startsWith('admin:')))).catch(() => {}); }, []);
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
+  const curView = view || (isAdmin ? 'all' : 'mine');
+  const isHiredView = curView === 'hired';
+  const isRejectedView = curView === 'rejected';
   const myId = me && (me._id || me.id);
-  // Scope ('mine' | 'all') is controlled from the recruitment tab row.
-  const mineOnly = (scope || (isAdmin ? 'all' : 'mine')) === 'mine';
+  const mineOnly = curView === 'mine';
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
   const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
-  // Keyword search runs server-side (covers resume text); other filters are local.
-  // The Hired tab passes hiredOnly → only hired candidates; the normal list
-  // hides hired candidates (they moved to the Hired tab).
+  const isThisMonth = (c) => { const iso = c.rejectedAt || c.updatedAt || c.createdAt; if (!iso) return false; const d = new Date(iso); const now = new Date(); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); };
+  // Keyword search runs server-side; the view decides which server list to pull.
   const load = (kw) => {
     const params = new URLSearchParams();
     if (kw && kw.trim()) params.set('q', kw.trim());
-    if (hiredOnly) params.set('hired', 'only');
+    if (isHiredView) params.set('hired', 'only');
+    if (isRejectedView) params.set('rejected', 'only');
     const qs = params.toString() ? `?${params.toString()}` : '';
     return hrApi(`/candidates${qs}`).then(setCands).catch(() => {});
   };
-  useEffect(() => { load(); }, [hiredOnly]);
+  useEffect(() => { load(); }, [curView]);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
   useEffect(() => { setSourceFilter(initialSource || ''); }, [initialSource]);
@@ -943,10 +1024,13 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const filtered = cands.filter((c) => {
     if (mineOnly && !isMineCand(c)) return false;
     if (weekFilter && !isThisWeek(c)) return false;
+    if (monthOnly && !isThisMonth(c)) return false;
     if (jobFilter && c.jobPostId !== Number(jobFilter)) return false;
     if (stageFilter && (stageFilter === 'rejected' ? !c.rejected : c.stage !== stageFilter)) return false;
     if (sourceFilter && c.source !== sourceFilter) return false;
     if (tagFilter && !(c.tags || []).includes(tagFilter)) return false;
+    if (deptFilter && (job(c.jobPostId).department || '') !== deptFilter) return false;
+    if (hrFilter && String(c.recruiterId || '') !== String(hrFilter)) return false;
     return true;
   });
 
@@ -963,31 +1047,49 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
   return (
     <div>
+      {/* AI summary of rejections */}
+      {isRejectedView && <RejectionSummary count={filtered.length} filters={{ dept: deptFilter, job: jobFilter, hr: hrFilter, monthOnly }} />}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>
+        {!isHiredView && !isRejectedView && <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>}
+        {(isHiredView || isRejectedView) && <button onClick={() => setMonthOnly((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${monthOnly ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This month</button>}
         <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
         <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
           <option value="">All positions</option>
           {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
         </select>
-        <select className={F} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-          <option value="">All stages</option>
-          {allStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          <option value="rejected">Rejected</option>
-        </select>
+        {(isHiredView || isRejectedView) && (
+          <select className={F} value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+            <option value="">All departments</option>
+            {Array.from(new Set(jobs.map((j) => j.department).filter(Boolean))).map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        )}
+        {!isHiredView && !isRejectedView && (
+          <select className={F} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+            <option value="">All stages</option>
+            {allStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            <option value="rejected">Rejected</option>
+          </select>
+        )}
         <select className={F} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
           <option value="">All sources</option>
           <option value="manual">Manual</option>
           <option value="public_form">Application form</option>
         </select>
-        {allTags.length > 0 && (
+        {(isHiredView || isRejectedView) && (
+          <select className={F} value={hrFilter} onChange={(e) => setHrFilter(e.target.value)}>
+            <option value="">All HR</option>
+            {hrList.map((u) => <option key={u._id} value={u._id}>{u.name}</option>)}
+          </select>
+        )}
+        {allTags.length > 0 && !isHiredView && !isRejectedView && (
           <select className={F} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
             <option value="">All tags</option>
             {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         )}
-        {(q || jobFilter || stageFilter || sourceFilter || tagFilter) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+        {(q || jobFilter || stageFilter || sourceFilter || tagFilter || deptFilter || hrFilter || monthOnly) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); setDeptFilter(''); setHrFilter(''); setMonthOnly(false); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Clear</button>}
       </div>
 
       {/* Bulk action bar */}
@@ -1041,6 +1143,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                       <td className="px-2.5 py-2">
                         <div className="flex items-center justify-end gap-1">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
+                          {isRejectedView && <button onClick={() => setRejReason(c)} className="rounded-lg border border-red-200 text-red-600 px-2 py-1 text-[11px] font-bold hover:bg-red-50">Reason</button>}
                           <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
                           {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
                         </div>
@@ -1057,6 +1160,18 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
         </div>
       )}
       {notesFor && <QuickNoteModal candidateId={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(q); }} />}
+      {rejReason && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={() => setRejReason(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Rejection reason</div><button onClick={() => setRejReason(null)} className="text-slate-400 text-xl leading-none">×</button></div>
+            <div className="p-6">
+              <div className="text-sm font-bold text-[#050A1F] mb-1">{titleCase(rejReason.name)}</div>
+              <div className="text-xs text-slate-400 mb-3">{job(rejReason.jobPostId).title || '—'}{rejReason.rejectedAt ? ` · ${new Date(rejReason.rejectedAt).toLocaleDateString()}` : ''}</div>
+              <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-sm text-slate-700 whitespace-pre-wrap">{rejReason.rejectionReason || 'No reason was recorded.'}</div>
+            </div>
+          </div>
+        </div>
+      )}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
   );
@@ -1519,6 +1634,41 @@ function AddCandidateModal({ job, onClose, onSaved }) {
   );
 }
 
+// Lightweight reason capture when a candidate is dragged/moved to a rejected
+// stage from the pipeline. Posts the reason to the stage endpoint.
+function StageRejectModal({ candidate, onClose, onDone }) {
+  const REASONS = ['Skills mismatch', 'Insufficient experience', 'Salary expectations too high', 'Location / relocation', 'Notice period too long', 'Failed interview', 'Position filled', 'Other'];
+  const [reason, setReason] = useState('');
+  const [custom, setCustom] = useState('');
+  const [busy, setBusy] = useState(false);
+  const finalReason = reason === 'Other' ? custom.trim() : reason;
+  const submit = async () => {
+    if (!finalReason) return;
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidate._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: 'rejected', reason: finalReason }) }); onDone(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Reason for rejection</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-3">
+          <div className="text-sm text-slate-500">Why is <b className="text-[#050A1F]">{titleCase(candidate.name)}</b> being rejected?</div>
+          <select className={inp} value={reason} onChange={(e) => setReason(e.target.value)}>
+            <option value="">— select a reason —</option>
+            {REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+          {reason === 'Other' && <textarea className={inp} rows={3} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="Describe the reason…" />}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={submit} disabled={busy || !finalReason} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : 'Confirm rejection'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RecruitPipeline({ jobs, scope }) {
   const published = jobs.filter((j) => j.status === 'published' || j.status === 'paused');
   const [jobId, setJobId] = useState(published[0]?._id || null);
@@ -1538,15 +1688,17 @@ function RecruitPipeline({ jobs, scope }) {
   // Scope ('mine' | 'all') is controlled from the recruitment tab row.
   const mine = scope === 'mine';
   const visible = mine ? cands.filter(isMine) : cands;
+  const [rejectFor, setRejectFor] = useState(null); // candidate being rejected via stage move
   const move = async (c, stage) => {
     if (c.stage === stage) return;
     setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage } : x));
     try {
       const updated = await hrApi(`/candidates/${c._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) });
-      if (updated && updated.offerIncomplete) {
-        // The server redirected the hire to "Offered" pending offer completion —
-        // reconcile the card to its real stage and open the candidate (which will
-        // land on the Offer tab automatically).
+      if (updated && updated.needsReason) {
+        // Moving to a rejected stage — open the reason popup instead.
+        setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage: c.stage } : x));
+        setRejectFor(c);
+      } else if (updated && updated.offerIncomplete) {
         setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage: updated.stage } : x));
         setViewId(c._id);
       } else if (updated && updated.stage) {
@@ -1652,6 +1804,7 @@ function RecruitPipeline({ jobs, scope }) {
         })}
       </div>
       {moveFor && <MoveStageModal candidate={moveFor} stages={stages} onClose={() => setMoveFor(null)} onMoved={(stage) => { move(moveFor, stage); setMoveFor(null); }} />}
+      {rejectFor && <StageRejectModal candidate={rejectFor} onClose={() => setRejectFor(null)} onDone={() => { setRejectFor(null); load(); }} />}
     </div>
   );
 }
