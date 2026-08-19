@@ -104,6 +104,8 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
 // ---- Employee (any active CRM user): pending / follow-ups / respond ----
 router.get('/pending', requireAuth, async (req, res, next) => {
   try {
+    // Admins manage surveys — they are never prompted to answer them.
+    if (req.user.role === 'admin') return res.json({ pending: [] });
     const surveys = await CrmSurvey.findAll({ where: { active: true, status: 'active' } });
     const pending = [];
     for (const s of surveys) {
@@ -122,7 +124,7 @@ router.post('/:id/followups', requireAuth, async (req, res, next) => {
     const key = await anthropicKey();
     if (!key) return res.json({ questions: [] });
     const { followUpQuestions } = require('../services/hrSurveyAI');
-    const questions = await followUpQuestions(key, { questions: survey.questions, answers: (req.body && req.body.answers) || {} });
+    const questions = await followUpQuestions(key, { questions: survey.questions, answers: (req.body && req.body.answers) || {}, guardrails: true });
     res.json({ questions });
   } catch (e) { res.json({ questions: [] }); }
 });
@@ -252,7 +254,7 @@ router.post('/:id/test-followups', requireAuth, requireAdmin, async (req, res, n
     const key = await anthropicKey();
     if (!key) return res.json({ questions: [] });
     const { followUpQuestions } = require('../services/hrSurveyAI');
-    const questions = await followUpQuestions(key, { questions: survey.questions, answers: (req.body && req.body.answers) || {} });
+    const questions = await followUpQuestions(key, { questions: survey.questions, answers: (req.body && req.body.answers) || {}, guardrails: true });
     res.json({ questions });
   } catch (e) { res.json({ questions: [] }); }
 });

@@ -39,6 +39,7 @@ export default function CrmSurveyAdmin() {
 
 function SurveyCreate({ surveys, reload, setErr }) {
   const [template, setTemplate] = useState('employee_mood');
+  const [editId, setEditId] = useState(null); // survey being edited (null = creating new)
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [frequency, setFrequency] = useState('one_time');
@@ -47,6 +48,7 @@ function SurveyCreate({ surveys, reload, setErr }) {
   const [msg, setMsg] = useState('');
   const [testTake, setTestTake] = useState(null); // survey being test-taken
   const [testResults, setTestResults] = useState(null); // survey whose test results are shown
+  const [confirmModal, setConfirmModal] = useState(null); // { title, body, confirmLabel, tone, onConfirm }
   const Q_TYPES = [['scale5', 'Rating scale (1–5)'], ['single_choice', 'Multiple choice (pick one)'], ['multi_choice', 'Multiple choice (pick many)'], ['short_answer', 'Short answer']];
   const isChoice = (t) => t === 'single_choice' || t === 'multi_choice';
   const addQ = () => setQuestions((qs) => [...qs, { id: `q${Date.now()}`, text: '', type: 'scale5', comment: false, options: [] }]);
@@ -57,6 +59,17 @@ function SurveyCreate({ surveys, reload, setErr }) {
   const delOpt = (qi, oi) => setQuestions((qs) => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
   const validQuestions = () => questions.filter((q) => { if (!q.text.trim()) return false; if (isChoice(q.type) && (q.options || []).filter((o) => o.trim()).length < 2) return false; return true; });
 
+  const resetForm = () => {
+    setEditId(null); setName(''); setDescription(''); setFrequency('one_time');
+    setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
+  };
+  const startEdit = (s) => {
+    setEditId(s._id); setName(s.name || ''); setDescription(s.description || ''); setFrequency(s.frequency || 'one_time');
+    setQuestions((s.questions || []).length ? s.questions.map((q) => ({ ...q, options: q.options || [] })) : [{ id: 'q1', text: '', type: 'scale5', comment: false, options: [] }]);
+    setMsg(''); setErr('');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const launch = async () => {
     setMsg('');
     if (!name.trim()) return setErr('Survey name is required.');
@@ -64,29 +77,60 @@ function SurveyCreate({ surveys, reload, setErr }) {
     if (!qs.length) return setErr('Add at least one complete question (choice questions need 2+ options).');
     setBusy(true);
     try {
-      await api('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
-      setName(''); setDescription(''); setFrequency('one_time'); setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
-      setMsg('Survey saved as a draft — test it below, then click “Make live” to send it to the team.'); reload();
+      if (editId) {
+        await api(`/surveys/${editId}`, { method: 'PUT', body: JSON.stringify({ name, description, frequency, questions: qs }) });
+        setMsg('Survey updated. Test it below, then click “Make live” to send it to the team.');
+      } else {
+        await api('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
+        setMsg('Survey saved as a draft — test it below, then click “Make live” to send it to the team.');
+      }
+      resetForm(); reload();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
-  const closeSurvey = async (s) => { if (!window.confirm(`Close "${s.name}"?`)) return; try { await api(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); } catch (e) { alert(e.message); } };
-  const activate = async (s) => { if (!window.confirm(`Make "${s.name}" live? The sales team will be prompted to respond, and any test responses will be cleared.`)) return; try { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); reload(); } catch (e) { alert(e.message); } };
-  const del = async (s) => { if (!window.confirm(`Delete "${s.name}"?`)) return; try { await api(`/surveys/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
+  const closeSurvey = (s) => setConfirmModal({
+    title: 'Close this survey?', body: `“${s.name}” will stop accepting responses. You can re-run it later.`,
+    confirmLabel: 'Close survey', tone: 'slate',
+    onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); },
+  });
+  const activate = (s) => setConfirmModal({
+    title: 'Make this survey live?', body: `“${s.name}” will be sent to the sales team to respond. Any test responses will be cleared and a fresh response period begins.`,
+    confirmLabel: 'Make live', tone: 'orange',
+    onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); setMsg(`“${s.name}” is now live.`); reload(); },
+  });
+  const rerun = (s) => setConfirmModal({
+    title: 'Re-run this survey?', body: `“${s.name}” will be re-opened for a new response period. Previous responses stay saved under their own period; new responses come in fresh.`,
+    confirmLabel: 'Re-run survey', tone: 'orange',
+    onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); setMsg(`“${s.name}” has been re-run and is live again.`); reload(); },
+  });
+  const del = (s) => setConfirmModal({
+    title: 'Delete this survey?', body: `“${s.name}” will be removed. This can’t be undone.`,
+    confirmLabel: 'Delete', tone: 'red',
+    onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'DELETE' }); if (editId === s._id) resetForm(); reload(); },
+  });
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
       <div>
         {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
-        <div className="text-sm font-bold text-[#050A1F] mb-2">Select a template</div>
-        <div className="space-y-2 mb-5">
-          {SURVEY_TEMPLATES.map((t) => (
-            <button key={t.id} disabled={!t.available} onClick={() => t.available && setTemplate(t.id)}
-              className={`w-full text-left rounded-xl border p-3 transition ${template === t.id && t.available ? 'border-orange-400 bg-orange-50' : 'border-slate-200'} ${!t.available ? 'opacity-60 cursor-not-allowed' : 'hover:border-slate-300'}`}>
-              <div className="flex items-center justify-between"><span className="font-bold text-[#050A1F] text-sm">{t.name}</span>{!t.available && <span className="text-[10px] font-bold rounded-full bg-slate-200 text-slate-500 px-2 py-0.5">Coming Soon</span>}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{t.desc}</div>
-            </button>
-          ))}
-        </div>
+        {editId ? (
+          <div className="mb-5 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="text-sm font-bold text-orange-700">✏️ Editing “{name || 'survey'}”</div>
+            <button onClick={resetForm} className="text-xs font-bold text-orange-600 underline">Start a new survey instead</button>
+          </div>
+        ) : (
+          <>
+            <div className="text-sm font-bold text-[#050A1F] mb-2">Select a template</div>
+            <div className="space-y-2 mb-5">
+              {SURVEY_TEMPLATES.map((t) => (
+                <button key={t.id} disabled={!t.available} onClick={() => t.available && setTemplate(t.id)}
+                  className={`w-full text-left rounded-xl border p-3 transition ${template === t.id && t.available ? 'border-orange-400 bg-orange-50' : 'border-slate-200'} ${!t.available ? 'opacity-60 cursor-not-allowed' : 'hover:border-slate-300'}`}>
+                  <div className="flex items-center justify-between"><span className="font-bold text-[#050A1F] text-sm">{t.name}</span>{!t.available && <span className="text-[10px] font-bold rounded-full bg-slate-200 text-slate-500 px-2 py-0.5">Coming Soon</span>}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{t.desc}</div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-3">
           <div><div className="text-xs font-bold text-slate-500 mb-1">Survey name</div><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. August Mood Check" /></div>
           <div><div className="text-xs font-bold text-slate-500 mb-1">Survey description</div><textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="A short note shown to the team." /></div>
@@ -131,7 +175,10 @@ function SurveyCreate({ surveys, reload, setErr }) {
             </div>
             <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-3">+ Add question</button>
           </div>
-          <div className="pt-1"><button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save as draft'}</button></div>
+          <div className="pt-1 flex items-center gap-2">
+            <button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editId ? 'Save changes' : 'Save as draft')}</button>
+            {editId && <button onClick={resetForm} className="rounded-lg px-4 py-2.5 text-sm font-bold text-slate-500 border border-slate-200">Cancel edit</button>}
+          </div>
         </div>
       </div>
       <div>
@@ -147,11 +194,13 @@ function SurveyCreate({ surveys, reload, setErr }) {
                 <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
                   <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'} · {statusPill}{s.status === 'active' ? ` · ${s.responseCount || 0} responses this period` : ''}</div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                  <button onClick={() => startEdit(s)} className="text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5">Edit</button>
                   <button onClick={() => setTestTake(s)} className="text-xs font-bold text-blue-600 border border-blue-200 rounded-lg px-2.5 py-1.5">Test</button>
                   <button onClick={() => setTestResults(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Test results</button>
                   {s.status === 'draft' && <button onClick={() => activate(s)} className="text-xs font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: ORANGE }}>Make live</button>}
                   {s.status === 'active' && <button onClick={() => closeSurvey(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Close</button>}
+                  {s.status === 'closed' && <button onClick={() => rerun(s)} className="text-xs font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: ORANGE }}>Re-run</button>}
                   <button onClick={() => del(s)} className="text-slate-300 hover:text-red-500"><Trash size={16} /></button>
                 </div>
               </div>
@@ -162,6 +211,25 @@ function SurveyCreate({ surveys, reload, setErr }) {
       </div>
       {testTake && <SurveyTakeModal survey={testTake} testMode onClose={() => setTestTake(null)} onDone={() => { setTestTake(null); }} />}
       {testResults && <TestResultsModal survey={testResults} onClose={() => setTestResults(null)} />}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setConfirmModal(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 pt-5 pb-3">
+              <div className="text-lg font-extrabold text-[#050A1F]">{confirmModal.title}</div>
+              <div className="text-sm text-slate-500 mt-1.5 leading-relaxed">{confirmModal.body}</div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setConfirmModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button
+                onClick={async () => { const fn = confirmModal.onConfirm; setConfirmModal(null); try { await fn(); } catch (e) { setErr(e.message); } }}
+                className="rounded-lg px-5 py-2 text-sm font-bold text-white"
+                style={{ background: confirmModal.tone === 'red' ? '#DC2626' : confirmModal.tone === 'slate' ? '#475569' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                {confirmModal.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

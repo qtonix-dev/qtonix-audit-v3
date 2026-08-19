@@ -46,14 +46,23 @@ function describeSubmission({ questions, answers, followups }) {
  * Ask Claude for 2-3 yes/no follow-up questions when the mood looks low.
  * Returns [{ id, text }]. Empty array on any failure (non-blocking).
  */
-async function followUpQuestions(apiKey, { questions, answers }) {
+async function followUpQuestions(apiKey, { questions, answers, guardrails = false }) {
   const summary = describeSubmission({ questions, answers, followups: [] });
+  const guardrailLines = guardrails ? [
+    'STRICT TOPIC GUARDRAILS — never ask about, hint at, or invite complaints regarding any of these:',
+    'salary, pay, compensation, raises, bonuses, or money; leave, PTO, holidays, time-off, or attendance policy;',
+    'benefits, perks, or reimbursements; layoffs, firing, resignation, or job security; legal, HR complaints, harassment, or disputes;',
+    'or anything that solicits a grievance which could place the company in a negative or legal position.',
+    'Keep the questions strictly about the employee\'s own experience, motivation and day-to-day working conditions.',
+    'If a low score relates to a guardrailed topic, ask a neutral question about general wellbeing or support instead.',
+  ] : [];
   const system = [
     'You are an empathetic HR analyst running an employee-mood pulse survey.',
     'An employee just gave one or more low scores (3 or below on a 1-5 agreement scale).',
     'Propose 2 to 3 short YES/NO follow-up questions that gently dig into WHY the mood is low,',
-    'so HR can understand the underlying cause (workload, environment, management, clarity, recognition, etc.).',
+    'so HR can understand the underlying cause (workload, environment, clarity, recognition, collaboration, growth, etc.).',
     'Questions must be answerable with a simple Yes or No, neutral and non-leading, and must not name individuals.',
+    ...guardrailLines,
     'Return STRICT JSON: {"questions":["...","..."]}. No commentary.',
   ].join(' ');
   try {

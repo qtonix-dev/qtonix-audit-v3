@@ -532,8 +532,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
       {/* Prompt to connect email until the user has done so. */}
       <DashboardGmailNotice />
 
-      {/* Pending team survey (popup + banner). */}
-      <CrmSurveyGate />
+      {/* Pending team survey (popup + banner). Admins manage surveys and are
+          never prompted to answer them. */}
+      {!isAdmin && <CrmSurveyGate />}
 
       {/* Celebration slider — rotates the latest sales win and today's
           birthdays / work + wedding anniversaries, 10s per slide. */}
