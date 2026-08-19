@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v224';
+const APP_VERSION = 'v225';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -197,25 +197,34 @@ connectWithRetry()
   .then(async (connected) => {
     if (connected) {
     // -- Boot-time admin safety net. Never throws (so it can't cause a 502).
-    // Ensures the admin account exists. If RESET_ADMIN=true, it also overwrites
-    // the admin password with the current ADMIN_PASSWORD — set that variable,
-    // deploy once, log in, then remove RESET_ADMIN.
+    // Ensures an admin can always sign in. IMPORTANT: it only recreates the
+    // default admin when NO active admin exists at all. Once ownership has been
+    // handed to another admin (e.g. Sandeep) and the old default account was
+    // deleted, this must NOT resurrect it — otherwise a deleted admin keeps
+    // coming back on every deploy. If RESET_ADMIN=true it still resets the
+    // password on the existing default account when present.
     try {
       const bcrypt = require('bcryptjs');
       const email = (process.env.ADMIN_EMAIL || 'admin@qtonix.com').toLowerCase().trim();
       const password = process.env.ADMIN_PASSWORD;
       if (password) {
         const existing = await User.findOne({ where: { email } });
+        const activeAdmins = await User.count({ where: { role: 'admin', active: true } });
         if (!existing) {
-          await User.create({
-            name: process.env.ADMIN_NAME || 'Adam G',
-            email,
-            passwordHash: await bcrypt.hash(password, 12),
-            role: 'admin',
-            phone: process.env.ADMIN_PHONE || '+91-8249016547',
-            designation: 'Project Manager',
-          });
-          console.log('[admin] created:', email);
+          if (activeAdmins > 0) {
+            // Another admin already runs the system — never recreate the old one.
+            console.log('[admin] default account absent but an active admin exists — not recreating.');
+          } else {
+            await User.create({
+              name: process.env.ADMIN_NAME || 'Admin',
+              email,
+              passwordHash: await bcrypt.hash(password, 12),
+              role: 'admin',
+              phone: process.env.ADMIN_PHONE || '',
+              designation: 'Administrator',
+            });
+            console.log('[admin] created (no active admin existed):', email);
+          }
         } else if (String(process.env.RESET_ADMIN).toLowerCase() === 'true') {
           existing.passwordHash = await bcrypt.hash(password, 12);
           existing.role = 'admin';
@@ -228,6 +237,44 @@ connectWithRetry()
       }
     } catch (e) {
       console.error('[admin] boot check skipped:', e.message);
+    }
+
+    // -- One-time, opt-in cleanup for a stale/duplicated admin that keeps
+    // reappearing. Set CLEANUP_ADMIN_EMAIL=<old email> (and deploy once) to:
+    //   1. reassign that account's leads/reports to the current primary admin,
+    //   2. fix any leads/reports still carrying the old owner NAME,
+    //   3. delete the stale account.
+    // Remove the env var after one successful deploy. Never throws.
+    try {
+      const staleEmail = (process.env.CLEANUP_ADMIN_EMAIL || '').toLowerCase().trim();
+      if (staleEmail) {
+        const stale = await User.findOne({ where: { email: staleEmail } });
+        // The admin who should receive the data: prefer CLEANUP_REASSIGN_TO
+        // (an email), else the oldest OTHER active admin.
+        const reassignEmail = (process.env.CLEANUP_REASSIGN_TO || '').toLowerCase().trim();
+        let target = null;
+        if (reassignEmail) target = await User.findOne({ where: { email: reassignEmail, active: true } });
+        if (!target) target = await User.findOne({ where: { role: 'admin', active: true, email: { [Op.ne]: staleEmail } }, order: [['id', 'ASC']] });
+        if (!stale) {
+          console.log('[cleanup] no account with email', staleEmail, '— nothing to remove.');
+        } else if (!target) {
+          console.log('[cleanup] skipped: no other active admin to receive', staleEmail, "'s data.");
+        } else {
+          const { Lead, Report, MonthlyTarget } = require('./models');
+          await Lead.update({ ownerId: target.id, ownerName: target.name }, { where: { ownerId: stale.id } });
+          await Report.update({ agentId: target.id, agentName: target.name }, { where: { agentId: stale.id } });
+          // Also repair any leads/reports that kept the old NAME but a different id.
+          if (stale.name) {
+            await Lead.update({ ownerName: target.name }, { where: { ownerName: stale.name, ownerId: target.id } });
+          }
+          await User.update({ managerId: null }, { where: { managerId: stale.id } });
+          try { await MonthlyTarget.destroy({ where: { userId: stale.id } }); } catch {}
+          await stale.destroy();
+          console.log(`[cleanup] removed stale account ${staleEmail}; data reassigned to ${target.email}. Remove CLEANUP_ADMIN_EMAIL now.`);
+        }
+      }
+    } catch (e) {
+      console.error('[cleanup] legacy admin cleanup skipped:', e.message);
     }
 
     // -- One-time (idempotent) migration of existing reports into the new Leads

@@ -575,7 +575,9 @@ router.delete('/users/:id', async (req, res, next) => {
       const target = await User.findOne({ where: { id: reassignTo, active: true } });
       if (!target) return res.status(400).json({ error: 'The selected user to receive the data is not valid.' });
       // Move ownership. enteredById (historical "who keyed it") is left intact.
-      if (ownedLeads > 0) await Lead.update({ ownerId: target.id, assignedAt: new Date() }, { where: { ownerId: user.id } });
+      // Update the denormalized ownerName too, otherwise the old owner's name
+      // lingers on the leaderboard / missed-commitments views.
+      if (ownedLeads > 0) await Lead.update({ ownerId: target.id, ownerName: target.name, assignedAt: new Date() }, { where: { ownerId: user.id } });
       if (ownedReports > 0) await Report.update({ agentId: target.id, agentName: target.name }, { where: { agentId: user.id } });
     }
 

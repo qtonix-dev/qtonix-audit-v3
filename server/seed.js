@@ -19,14 +19,21 @@ const { initDb, User, sequelize } = require('./models');
     console.log('Admin already exists:', email);
     process.exit(0);
   }
+  // Don't recreate the default admin if the system already has another active
+  // admin (e.g. ownership was handed over and the old default was deleted).
+  const activeAdmins = await User.count({ where: { role: 'admin', active: true } });
+  if (activeAdmins > 0) {
+    console.log(`An active admin already exists — not creating the default ${email}.`);
+    process.exit(0);
+  }
 
   await User.create({
-    name: process.env.ADMIN_NAME || 'Adam G',
+    name: process.env.ADMIN_NAME || 'Admin',
     email,
     passwordHash: await bcrypt.hash(password, 12),
     role: 'admin',
-    phone: process.env.ADMIN_PHONE || '+91-8249016547',
-    designation: 'Project Manager',
+    phone: process.env.ADMIN_PHONE || '',
+    designation: 'Administrator',
   });
 
   console.log('Admin created:', email);
