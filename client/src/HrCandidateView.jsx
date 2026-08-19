@@ -1321,22 +1321,32 @@ function OfferTab({ c, isAdmin, reload }) {
           <span className="rounded-full bg-orange-100 text-orange-700 px-2.5 py-0.5 text-xs font-bold">{STATUS[offer.status] || offer.status}</span>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => op({ op: 'set_status', status: 'accepted' })} className="rounded-lg border border-green-200 text-green-600 px-3 py-1.5 text-xs font-bold">Mark accepted</button>
-          <button onClick={() => op({ op: 'set_status', status: 'declined' })} className="rounded-lg border border-red-200 text-red-500 px-3 py-1.5 text-xs font-bold">Mark declined</button>
+          {offer.status !== 'accepted' && <button onClick={() => setModal('accept')} className="rounded-lg border border-green-200 text-green-600 px-3 py-1.5 text-xs font-bold">Mark accepted</button>}
+          {offer.status !== 'accepted' && <button onClick={() => op({ op: 'set_status', status: 'declined' })} className="rounded-lg border border-red-200 text-red-500 px-3 py-1.5 text-xs font-bold">Mark declined</button>}
         </div>
       </div>
 
-      <Card title="1 · Salary discussion" action={<button onClick={() => setModal('discussion')} className="text-xs font-bold text-orange-600">+ Log discussion</button>}>
-        {(offer.salaryDiscussions || []).length === 0 ? <div className="text-sm text-slate-400">No discussions logged yet.</div> : (
+      <Card title="1 · Salary offers" action={<button onClick={() => setModal('discussion')} className="text-xs font-bold text-orange-600">+ Log salary offer</button>}>
+        {(offer.salaryDiscussions || []).length === 0 ? <div className="text-sm text-slate-400">No salary offers logged yet.</div> : (
           <div className="space-y-2">
-            {offer.salaryDiscussions.map((d) => (
-              <div key={d.id} className="text-sm border-b border-slate-50 pb-2 last:border-0">
-                <div className="flex items-center justify-between"><span className="font-semibold text-slate-700 capitalize">{d.mode}{d.meetLink ? ' · Meet' : ''}</span><span className="text-xs text-slate-400">{fmt(d.at)}</span></div>
-                <div className="text-slate-600">{d.offered && <span>Offered: <b>{d.offered}</b> </span>}{d.candidateAsk && <span>· Asked: <b>{d.candidateAsk}</b></span>}</div>
-                {d.meetLink && <a href={d.meetLink} target="_blank" rel="noreferrer" className="text-xs text-orange-600 font-semibold">{d.meetLink}</a>}
-                {d.notes && <div className="text-slate-500 text-xs mt-0.5">{d.notes}</div>}
-              </div>
-            ))}
+            {offer.salaryDiscussions.map((d) => {
+              const accepted = offer.status === 'accepted' && offer.acceptedOfferId === d.id;
+              return (
+                <div key={d.id} className={`rounded-lg border p-3 ${accepted ? 'border-green-300 bg-green-50' : 'border-slate-100'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-slate-700 capitalize text-sm">{d.mode}{d.meetLink ? ' · Meet' : ''}</span>
+                    <div className="flex items-center gap-2">{accepted && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">✓ Accepted</span>}<span className="text-xs text-slate-400">{fmt(d.at)}</span></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-lg bg-slate-50 px-2.5 py-1.5"><div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Candidate ask</div><div className="font-bold text-[#050A1F]">{d.candidateAsk || '—'}</div></div>
+                    <div className="rounded-lg bg-slate-50 px-2.5 py-1.5"><div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Offered</div><div className="font-bold text-[#050A1F]">{d.offered || '—'}</div></div>
+                  </div>
+                  {d.notes && <div className="text-slate-600 text-sm mt-1.5"><span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Remark: </span>{d.notes}</div>}
+                  {d.meetLink && <a href={d.meetLink} target="_blank" rel="noreferrer" className="text-xs text-orange-600 font-semibold block mt-1">{d.meetLink}</a>}
+                  <div className="text-[11px] text-slate-400 mt-1">Logged by {d.by}</div>
+                </div>
+              );
+            })}
           </div>
         )}
         <button onClick={() => setModal('approval')} className="mt-3 rounded-lg border border-amber-200 text-amber-700 px-3 py-1.5 text-xs font-bold">⤴ Request management approval</button>
@@ -1366,12 +1376,15 @@ function OfferTab({ c, isAdmin, reload }) {
         </Card>
       )}
 
-      <Card title="2 · Letter of Intent" action={<button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button>}>
-        {offer.loi ? <div className="text-sm text-slate-600">Sent {fmt(offer.loi.sentAt)} by {offer.loi.by}. <span className="text-xs text-slate-400">({offer.loi.status})</span></div> : <div className="text-sm text-slate-400">Not sent yet.</div>}
+      <Card title="2 · Letter of Intent" action={offer.status === 'accepted' ? <button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button> : null}>
+        {offer.status !== 'accepted' ? <div className="text-sm text-slate-400">Mark the accepted salary offer first to unlock the LOI.</div>
+          : offer.loi ? <div className="text-sm text-slate-600">Sent {fmt(offer.loi.sentAt)} by {offer.loi.by}. <span className="text-xs text-slate-400">({offer.loi.status})</span></div> : <div className="text-sm text-slate-400">Not sent yet.</div>}
       </Card>
 
-      <Card title="3 · Offer Letter" action={<button onClick={() => setModal('letter')} className="text-xs font-bold text-orange-600">{offer.offerLetter ? 'Resend' : 'Send offer letter'}</button>}>
-        {offer.offerLetter ? (
+      <Card title="3 · Offer Letter" action={offer.status === 'accepted' && offer.loi ? <button onClick={() => setModal('letter')} className="text-xs font-bold text-orange-600">{offer.offerLetter ? 'Resend' : 'Send offer letter'}</button> : null}>
+        {offer.status !== 'accepted' ? <div className="text-sm text-slate-400">Available after the offer is accepted.</div>
+          : !offer.loi ? <div className="text-sm text-slate-400">Send the LOI first.</div>
+          : offer.offerLetter ? (
           <div className="text-sm text-slate-600">
             Sent {fmt(offer.offerLetter.sentAt)} by {offer.offerLetter.by}.
             {offer.offerLetter.fileUrl && <a href={offer.offerLetter.fileUrl} target="_blank" rel="noreferrer" className="text-orange-600 font-semibold ml-1">{offer.offerLetter.fileName || 'View letter'}</a>}
@@ -1381,6 +1394,7 @@ function OfferTab({ c, isAdmin, reload }) {
       </Card>
 
       {modal === 'discussion' && <DiscussionModal candidateId={c.id} onClose={() => setModal(null)} onSaved={() => { setModal(null); reload(); }} />}
+      {modal === 'accept' && <AcceptOfferModal offers={offer.salaryDiscussions || []} onClose={() => setModal(null)} onAccept={async (offerId) => { await op({ op: 'set_status', status: 'accepted', acceptedOfferId: offerId }); setModal(null); }} />}
       {modal === 'approval' && <ApprovalModal onClose={() => setModal(null)} onSubmit={async (b) => { await op({ op: 'request_approval', ...b }); setModal(null); }} />}
       {modal === 'loi' && <LoiModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
       {modal === 'letter' && <OfferLetterModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
@@ -1396,7 +1410,7 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
   const createMeet = async () => { if (!f.at) return alert('Pick a date & time first.'); setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/offer-meet`, { method: 'POST', body: JSON.stringify({ start: f.at, durationMins: f.durationMins, notes: f.notes }) }); setMeet(r.meetLink); } catch (e) { alert(e.message); } finally { setBusy(false); } };
   const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
   return (
-    <Modal title="Log salary discussion" onClose={onClose}>
+    <Modal title="Log salary offer" onClose={onClose}>
       <div className="space-y-3">
         <div><Lbl>Mode</Lbl><select className={inp} value={f.mode} onChange={(e) => set('mode', e.target.value)}><option value="phone">Phone</option><option value="meet">Google Meet</option><option value="in_person">In person</option></select></div>
         {f.mode === 'meet' && (
@@ -1410,10 +1424,10 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Candidate ask</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
           <div><Lbl>Offered</Lbl><input className={inp} value={f.offered} onChange={(e) => set('offered', e.target.value)} placeholder="e.g. 8L" /></div>
-          <div><Lbl>Candidate asked</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
         </div>
-        <div><Lbl>Notes</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></div>
+        <div><Lbl>Remark</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any notes about this offer / conversation" /></div>
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1437,6 +1451,36 @@ function ApprovalModal({ onClose, onSubmit }) {
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
         <button onClick={async () => { setBusy(true); await onSubmit({ candidateAsk, justification }); }} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send request'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function AcceptOfferModal({ offers, onClose, onAccept }) {
+  const [sel, setSel] = useState(offers[0] ? offers[0].id : '');
+  const [busy, setBusy] = useState(false);
+  const go = async () => { if (!sel) return; setBusy(true); try { await onAccept(sel); } catch (e) { alert(e.message); setBusy(false); } };
+  return (
+    <Modal title="Mark offer accepted" onClose={onClose}>
+      {offers.length === 0 ? (
+        <div className="text-sm text-slate-500">Log at least one salary offer before marking the candidate as accepted.</div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-sm text-slate-500 mb-1">Select the salary offer the candidate agreed to:</div>
+          {offers.map((d) => (
+            <label key={d.id} className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${sel === d.id ? 'border-orange-400 bg-orange-50' : 'border-slate-200'}`}>
+              <input type="radio" name="accepted-offer" checked={sel === d.id} onChange={() => setSel(d.id)} />
+              <div className="flex-1">
+                <div className="text-sm font-bold text-[#050A1F]">Offered: {d.offered || '—'} <span className="text-slate-400 font-normal">· Asked: {d.candidateAsk || '—'}</span></div>
+                {d.notes && <div className="text-xs text-slate-500">{d.notes}</div>}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={go} disabled={busy || !sel} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#16A34A' }}>{busy ? 'Saving…' : 'Confirm accepted'}</button>
       </div>
     </Modal>
   );

@@ -2039,7 +2039,7 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
     switch (b.op) {
       case 'add_discussion':
         offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', notes: b.notes || '', by: req.hrActor.name });
-        pushTimeline(row, { type: 'offer', text: `Salary discussion logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered})` : ''}.`, by: req.hrActor.name });
+        pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
         break;
       case 'request_approval':
         offer.approvals.unshift({ id: `ap${Date.now()}`, requestedBy: req.hrActor.name, candidateAsk: b.candidateAsk || '', justification: b.justification || '', status: 'pending', counterOffer: '', decidedBy: '', at: now });
@@ -2059,8 +2059,18 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         pushTimeline(row, { type: 'offer', text: `Offer letter ${b.emailSent ? 'sent' : 'attached'} by ${req.hrActor.name}${b.finalCtc ? ` (CTC ${b.finalCtc})` : ''}.`, by: req.hrActor.name });
         break;
       case 'set_status':
+        if (b.status === 'accepted') {
+          // The candidate must have agreed on a specific logged salary offer.
+          const list = offer.salaryDiscussions || [];
+          if (!list.length) return res.status(400).json({ error: 'Log at least one salary offer before marking accepted.' });
+          const chosen = list.find((d) => d.id === b.acceptedOfferId);
+          if (!chosen) return res.status(400).json({ error: 'Select which salary offer the candidate accepted.' });
+          offer.acceptedOfferId = chosen.id;
+          offer.acceptedAmount = chosen.offered || '';
+          if (!offer.finalCtc && chosen.offered) offer.finalCtc = chosen.offered;
+          pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${chosen.offered ? ` at ${chosen.offered}` : ''}.`, by: req.hrActor.name });
+        }
         offer.status = b.status || offer.status;
-        if (b.status === 'accepted') pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer.`, by: req.hrActor.name });
         if (b.status === 'declined') pushTimeline(row, { type: 'offer', text: `Candidate declined the offer.`, by: req.hrActor.name });
         break;
       default: return res.status(400).json({ error: 'Unknown offer operation.' });
@@ -2892,45 +2902,33 @@ router.delete('/employees/:id/onboarding/:taskId', requireHrAccess, requireSched
 
 // ---- Reset an employee's password (admin only) ----
 // ---- Dashboard: HR leaderboard ----
-// Per-HR productivity: interviews scheduled ("candidates added") and candidates
-// joined ("monthly hiring") — for today and this month — ranked, so the team
-// can see who's leading.
+// Per-HR productivity across three metrics: candidates added to the platform,
+// interviews scheduled through the platform, and candidates joined (offer
+// accepted and sitting in a Hired stage). Ranked for the whole team.
 router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
   try {
     const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'designation', 'type'] });
     const cands = await HrCandidate.findAll();
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const stat = new Map(); // id -> counters
-    users.forEach((u) => stat.set(u.id, { id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '', scheduledToday: 0, scheduledMonth: 0, joinedToday: 0, joinedMonth: 0 }));
-    const bump = (id, key) => { const s = stat.get(id); if (s) s[key] += 1; };
+    const stat = new Map();
+    users.forEach((u) => stat.set(u.id, { id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '', added: 0, interviews: 0, joined: 0 }));
+    const bump = (id, key, n = 1) => { const s = stat.get(id); if (s) s[key] += n; };
     const nameToId = new Map(users.map((u) => [u.name, u.id]));
     cands.forEach((c) => {
-      // Interviews scheduled ("candidate added = scheduling").
+      // Candidates added — credited to the recruiter who owns the candidate.
+      const ownerId = c.recruiterId || nameToId.get(c.recruiterName);
+      if (ownerId) bump(ownerId, 'added');
+      // Interviews scheduled through the platform — credited to whoever scheduled.
       (c.interviews || []).forEach((iv) => {
-        const at = iv.createdAt || iv.at;
-        const id = iv.scheduledById || nameToId.get(iv.createdBy) || nameToId.get(iv.by);
-        if (!id || !at) return;
-        const ts = new Date(at).getTime();
-        if (ts >= startOfMonth) bump(id, 'scheduledMonth');
-        if (ts >= startOfDay) bump(id, 'scheduledToday');
+        const id = iv.scheduledById || nameToId.get(iv.createdBy) || nameToId.get(iv.by) || ownerId;
+        if (id) bump(id, 'interviews');
       });
-      // Candidates joined (accepted offer), credited to the recruiter.
-      if (c.offer && c.offer.status === 'accepted') {
-        const id = c.recruiterId || nameToId.get(c.recruiterName);
-        const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
-        if (id && doneAt) {
-          const ts = new Date(doneAt).getTime();
-          if (ts >= startOfMonth) bump(id, 'joinedMonth');
-          if (ts >= startOfDay) bump(id, 'joinedToday');
-        }
-      }
+      // Joined — offer accepted AND currently in a Hired stage.
+      const joined = c.offer && c.offer.status === 'accepted' && HIRED_STAGE_IDS.has(String(c.stage || '').toLowerCase());
+      if (joined && ownerId) bump(ownerId, 'joined');
     });
-    // Only include HR who scheduled or hired at least once this month (keeps it tidy).
-    let rows = Array.from(stat.values()).filter((r) => r.scheduledMonth > 0 || r.joinedMonth > 0);
-    // Rank by month scheduled, then month joined.
-    rows.sort((a, b) => (b.scheduledMonth - a.scheduledMonth) || (b.joinedMonth - a.joinedMonth) || a.name.localeCompare(b.name));
+    let rows = Array.from(stat.values()).filter((r) => r.added > 0 || r.interviews > 0 || r.joined > 0);
+    // Rank by joined, then interviews, then added.
+    rows.sort((a, b) => (b.joined - a.joined) || (b.interviews - a.interviews) || (b.added - a.added) || a.name.localeCompare(b.name));
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
     res.json({ rows, leader: rows[0] || null });
   } catch (e) { next(e); }

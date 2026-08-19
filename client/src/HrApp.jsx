@@ -499,7 +499,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — candidates added (scheduled) & joined, today + month */}
+      {/* HR leaderboard — candidates added, interviews scheduled, joined */}
       {board && board.rows && board.rows.length > 0 && (
         <div className="rounded-2xl border border-slate-100 bg-white p-5">
           <div className="flex items-center justify-between mb-3">
@@ -508,34 +508,31 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
           </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400">
-                <th className="pb-2">#</th><th className="pb-2">HR</th>
-                <th className="pb-2 text-center" colSpan={2}>Candidates added</th>
-                <th className="pb-2 text-center" colSpan={2}>Joined</th>
-              </tr>
-              <tr className="text-left text-[9px] uppercase tracking-wide text-slate-300">
-                <th></th><th></th><th className="pb-1 text-center">Today</th><th className="pb-1 text-center">Month</th><th className="pb-1 text-center">Today</th><th className="pb-1 text-center">Month</th>
+              <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="pb-2 w-10">#</th><th className="pb-2">HR name</th>
+                <th className="pb-2 text-center">Candidates added</th>
+                <th className="pb-2 text-center">Interviews scheduled</th>
+                <th className="pb-2 text-center">Joined</th>
               </tr>
             </thead>
             <tbody>
               {board.rows.map((r) => (
                 <tr key={r.id} className="border-t border-slate-50">
-                  <td className="py-2 w-8"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
-                  <td className="py-2">
+                  <td className="py-2.5 w-10"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
+                  <td className="py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
                       <span className="font-bold text-[#050A1F] truncate">{r.name}</span>
                     </div>
                   </td>
-                  <td className="py-2 text-center font-semibold text-slate-500">{r.scheduledToday}</td>
-                  <td className="py-2 text-center font-extrabold text-[#2563EB]">{r.scheduledMonth}</td>
-                  <td className="py-2 text-center font-semibold text-slate-500">{r.joinedToday}</td>
-                  <td className="py-2 text-center font-extrabold text-[#16A34A]">{r.joinedMonth}</td>
+                  <td className="py-2.5 text-center font-extrabold text-[#2563EB]">{r.added}</td>
+                  <td className="py-2.5 text-center font-extrabold text-[#FF6A00]">{r.interviews}</td>
+                  <td className="py-2.5 text-center font-extrabold text-[#16A34A]">{r.joined}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div className="text-[10px] text-slate-400 mt-2">Candidates added = interviews scheduled. Joined = candidates who accepted an offer, credited to the recruiter.</div>
+          <div className="text-[10px] text-slate-400 mt-2">Candidates added = candidates on the platform. Interviews scheduled = interviews booked through the platform. Joined = accepted the offer and on the Hired stage.</div>
         </div>
       )}
 
@@ -1188,13 +1185,13 @@ function EditCandidateModal({ candidateId, jobs, onClose, onSaved }) {
       <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl max-h-[88vh] overflow-auto">
         <div className="text-lg font-extrabold text-[#050A1F] mb-4">Edit candidate</div>
         <div className="grid grid-cols-2 gap-3">
-          <div><L>Name</L><input className={F} value={c.name || ''} onChange={(e) => setC({ ...c, name: e.target.value })} /></div>
-          <div><L>Phone</L><input className={F} value={c.phone || ''} onChange={(e) => setC({ ...c, phone: e.target.value })} /></div>
-          <div><L>Email</L><input className={F} value={c.email || ''} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
-          <div><L>Position</L><select className={F} value={c.jobPostId || ''} onChange={(e) => setC({ ...c, jobPostId: Number(e.target.value) })}><option value="">—</option>{jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}</select></div>
-          <div><L>Current Salary</L><input className={F} value={a.currentCtc || ''} onChange={(e) => setA('currentCtc', e.target.value)} /></div>
-          <div><L>Expected Salary</L><input className={F} value={a.expectedCtc || ''} onChange={(e) => setA('expectedCtc', e.target.value)} /></div>
-          <div><L>Notice Period (days)</L><input className={F} value={a.noticePeriod || ''} onChange={(e) => setA('noticePeriod', e.target.value)} /></div>
+          <div><CandL>Name</CandL><input className={F} value={c.name || ''} onChange={(e) => setC({ ...c, name: e.target.value })} /></div>
+          <div><CandL>Phone</CandL><input className={F} value={c.phone || ''} onChange={(e) => setC({ ...c, phone: e.target.value })} /></div>
+          <div><CandL>Email</CandL><input className={F} value={c.email || ''} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
+          <div><CandL>Position</CandL><select className={F} value={c.jobPostId || ''} onChange={(e) => setC({ ...c, jobPostId: Number(e.target.value) })}><option value="">—</option>{jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}</select></div>
+          <div><CandL>Current Salary</CandL><input className={F} value={a.currentCtc || ''} onChange={(e) => setA('currentCtc', e.target.value)} /></div>
+          <div><CandL>Expected Salary</CandL><input className={F} value={a.expectedCtc || ''} onChange={(e) => setA('expectedCtc', e.target.value)} /></div>
+          <div><CandL>Notice Period (days)</CandL><input className={F} value={a.noticePeriod || ''} onChange={(e) => setA('noticePeriod', e.target.value)} /></div>
         </div>
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1244,6 +1241,21 @@ const CAND_EMPTY = {
   linkedin: '', github: '', facebook: '', instagram: '', twitter: '', profileUrl: '',
   answers: {},
 };
+
+// Module-level so they keep a stable identity across renders — defining these
+// inside AddCandidateModal remounted every input on each keystroke (focus loss).
+function CandL({ children, req }) { return <p className="text-[12px] font-bold text-slate-600 mb-1">{children}{req && <span className="text-red-500">*</span>}</p>; }
+function CandSection({ id, title, open, setOpen, children }) {
+  return (
+    <div className="border border-slate-200 rounded-xl mb-3 overflow-hidden">
+      <button onClick={() => setOpen((o) => ({ ...o, [id]: !o[id] }))} className="w-full flex items-center justify-between px-4 py-3 bg-slate-50">
+        <span className="font-bold text-[#050A1F] capitalize">{title}</span>
+        <span className="text-slate-400">{open[id] ? '▲' : '▼'}</span>
+      </button>
+      {open[id] && <div className="p-4">{children}</div>}
+    </div>
+  );
+}
 
 function AddCandidateModal({ job, onClose, onSaved }) {
   const [c, setC] = useState(CAND_EMPTY);
@@ -1331,17 +1343,6 @@ function AddCandidateModal({ job, onClose, onSaved }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
-  const Section = ({ id, title, children }) => (
-    <div className="border border-slate-200 rounded-xl mb-3 overflow-hidden">
-      <button onClick={() => setOpen((o) => ({ ...o, [id]: !o[id] }))} className="w-full flex items-center justify-between px-4 py-3 bg-slate-50">
-        <span className="font-bold text-[#050A1F] capitalize">{title}</span>
-        <span className="text-slate-400">{open[id] ? '▲' : '▼'}</span>
-      </button>
-      {open[id] && <div className="p-4">{children}</div>}
-    </div>
-  );
-  const L = ({ children, req }) => <p className="text-[12px] font-bold text-slate-600 mb-1">{children}{req && <span className="text-red-500">*</span>}</p>;
-
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
       <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col">
@@ -1385,16 +1386,16 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                 )}
               </div>
 
-              <Section id="basic" title="Basic Information">
+              <CandSection id="basic" title="Basic Information" open={open} setOpen={setOpen}>
                 <div className="grid grid-cols-2 gap-4">
-                  <div><L req>First Name</L><input className={inp} value={c.firstName} onChange={(e) => set({ firstName: e.target.value })} /></div>
-                  <div><L req>Last Name</L><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
-                  <div><L>Contact Number</L><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={(e) => { const norm = normalizePhone(e.target.value); if (norm !== c.phone) set({ phone: norm }); checkDup(); }} placeholder="+91…" /></div>
-                  <div><L req>Email Address</L><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} onBlur={checkDup} /></div>
-                  <div><L>Current Salary (Monthly)</L><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 35,000" /></div>
-                  <div><L>Expected Salary (Monthly)</L><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 55,000" /></div>
-                  <div><L>Notice Period (days)</L><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
-                  <div><L>Source</L>
+                  <div><CandL req>First Name</CandL><input className={inp} value={c.firstName} onChange={(e) => set({ firstName: e.target.value })} /></div>
+                  <div><CandL req>Last Name</CandL><input className={inp} value={c.lastName} onChange={(e) => set({ lastName: e.target.value })} /></div>
+                  <div><CandL>Contact Number</CandL><input className={inp} value={c.phone} onChange={(e) => set({ phone: e.target.value })} onBlur={(e) => { const norm = normalizePhone(e.target.value); if (norm !== c.phone) set({ phone: norm }); checkDup(); }} placeholder="+91…" /></div>
+                  <div><CandL req>Email Address</CandL><input className={inp} value={c.email} onChange={(e) => set({ email: e.target.value })} onBlur={checkDup} /></div>
+                  <div><CandL>Current Salary (Monthly)</CandL><input className={inp} value={c.currentCtc} onChange={(e) => set({ currentCtc: e.target.value })} placeholder="Ex: 35,000" /></div>
+                  <div><CandL>Expected Salary (Monthly)</CandL><input className={inp} value={c.expectedCtc} onChange={(e) => set({ expectedCtc: e.target.value })} placeholder="Ex: 55,000" /></div>
+                  <div><CandL>Notice Period (days)</CandL><input className={inp} type="number" value={c.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })} /></div>
+                  <div><CandL>Source</CandL>
                     <select className={inp} value={source} onChange={(e) => setSource(e.target.value)}>
                       <option value="manual">Manual</option>
                       <option value="linkedin">LinkedIn</option>
@@ -1403,83 +1404,83 @@ function AddCandidateModal({ job, onClose, onSaved }) {
                       <option value="referral">Referral</option>
                     </select>
                   </div>
-                  <div className="col-span-2"><L>Resume</L>
+                  <div className="col-span-2"><CandL>Resume</CandL>
                     <ResumeUpload jobPostId={job._id} value={c.resumeUrl} onChange={(url) => set({ resumeUrl: url })} />
                   </div>
                 </div>
-              </Section>
+              </CandSection>
 
-              <Section id="work" title="Work Information">
+              <CandSection id="work" title="Work Information" open={open} setOpen={setOpen}>
                 <label className="flex items-center gap-2 text-sm text-slate-600 mb-3"><input type="checkbox" checked={c.isFresher} onChange={(e) => set({ isFresher: e.target.checked })} /> I am a recent graduate</label>
                 {!c.isFresher && (c.work || []).map((w, i) => (
                   <div key={i} className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-slate-100 last:border-0">
-                    <div><L>Company Name</L><input className={inp} value={w.company} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, company: e.target.value } : x) })} /></div>
-                    <div><L>Job Title</L><input className={inp} value={w.title} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, title: e.target.value } : x) })} /></div>
+                    <div><CandL>Company Name</CandL><input className={inp} value={w.company} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, company: e.target.value } : x) })} /></div>
+                    <div><CandL>Job Title</CandL><input className={inp} value={w.title} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, title: e.target.value } : x) })} /></div>
                     <div className="flex gap-2 items-end">
-                      <div className="flex-1"><L>From</L><input className={inp} value={w.start} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
-                      <div className="flex-1"><L>To</L><input className={inp} value={w.end} disabled={w.current} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
+                      <div className="flex-1"><CandL>From</CandL><input className={inp} value={w.start} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
+                      <div className="flex-1"><CandL>To</CandL><input className={inp} value={w.end} disabled={w.current} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} placeholder="MM/YYYY" /></div>
                     </div>
                     <label className="col-span-3 flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={w.current} onChange={(e) => set({ work: c.work.map((x, idx) => idx === i ? { ...x, current: e.target.checked } : x) })} /> I currently work here</label>
                   </div>
                 ))}
                 {!c.isFresher && <button onClick={() => set({ work: [...c.work, { company: '', title: '', start: '', end: '', current: false }] })} className="text-xs font-bold text-orange-600">+ Add Work Experience</button>}
-                <div className="mt-3"><L>Work Link / Online Portfolio</L><input className={inp} value={c.portfolio} onChange={(e) => set({ portfolio: e.target.value })} /></div>
-                <div className="mt-3"><L>Skills</L>
+                <div className="mt-3"><CandL>Work Link / Online Portfolio</CandL><input className={inp} value={c.portfolio} onChange={(e) => set({ portfolio: e.target.value })} /></div>
+                <div className="mt-3"><CandL>Skills</CandL>
                   <div className="flex flex-wrap gap-1.5 mb-2">{(c.skills || []).map((s, i) => <span key={i} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold">{s}<button onClick={() => set({ skills: c.skills.filter((_, idx) => idx !== i) })} className="text-slate-400 hover:text-red-500">×</button></span>)}</div>
                   <input className={inp} placeholder="Type a skill, press Enter" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value.trim(); if (v && !c.skills.includes(v)) set({ skills: [...c.skills, v] }); e.target.value = ''; } }} />
                 </div>
-              </Section>
+              </CandSection>
 
-              <Section id="edu" title="Educational Information">
+              <CandSection id="edu" title="Educational Information" open={open} setOpen={setOpen}>
                 {(c.education || []).map((ed, i) => (
                   <div key={i} className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-slate-100 last:border-0">
-                    <div><L>Type</L><input className={inp} value={ed.type} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, type: e.target.value } : x) })} placeholder="Bachelor's…" /></div>
-                    <div><L>Course</L><input className={inp} value={ed.course} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, course: e.target.value } : x) })} /></div>
-                    <div><L>Specialization</L><input className={inp} value={ed.specialization} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, specialization: e.target.value } : x) })} /></div>
-                    <div className="col-span-2"><L>Institute Name</L><input className={inp} value={ed.institute} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, institute: e.target.value } : x) })} /></div>
+                    <div><CandL>Type</CandL><input className={inp} value={ed.type} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, type: e.target.value } : x) })} placeholder="Bachelor's…" /></div>
+                    <div><CandL>Course</CandL><input className={inp} value={ed.course} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, course: e.target.value } : x) })} /></div>
+                    <div><CandL>Specialization</CandL><input className={inp} value={ed.specialization} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, specialization: e.target.value } : x) })} /></div>
+                    <div className="col-span-2"><CandL>Institute Name</CandL><input className={inp} value={ed.institute} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, institute: e.target.value } : x) })} /></div>
                     <div className="flex gap-2 items-end">
-                      <div className="flex-1"><L>From</L><input className={inp} value={ed.start} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} /></div>
-                      <div className="flex-1"><L>To</L><input className={inp} value={ed.end} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} /></div>
+                      <div className="flex-1"><CandL>From</CandL><input className={inp} value={ed.start} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, start: e.target.value } : x) })} /></div>
+                      <div className="flex-1"><CandL>To</CandL><input className={inp} value={ed.end} onChange={(e) => set({ education: c.education.map((x, idx) => idx === i ? { ...x, end: e.target.value } : x) })} /></div>
                     </div>
                   </div>
                 ))}
                 <button onClick={() => set({ education: [...c.education, { type: '', course: '', specialization: '', institute: '', start: '', end: '' }] })} className="text-xs font-bold text-orange-600">+ Add Educational Details</button>
-              </Section>
+              </CandSection>
 
-              <Section id="addl" title="Additional Information">
+              <CandSection id="addl" title="Additional Information" open={open} setOpen={setOpen}>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2"><L>Address</L><input className={inp} value={c.address} onChange={(e) => set({ address: e.target.value })} /></div>
-                  <div><L>Country</L><input className={inp} value={c.country} onChange={(e) => set({ country: e.target.value })} /></div>
-                  <div><L>State</L><input className={inp} value={c.state} onChange={(e) => set({ state: e.target.value })} /></div>
-                  <div><L>City</L><input className={inp} value={c.city} onChange={(e) => set({ city: e.target.value })} /></div>
-                  <div><L>Date Of Birth</L><input className={inp} value={c.dob} onChange={(e) => set({ dob: e.target.value })} placeholder="DD/MM/YYYY" /></div>
-                  <div><L>Gender</L>
+                  <div className="col-span-2"><CandL>Address</CandL><input className={inp} value={c.address} onChange={(e) => set({ address: e.target.value })} /></div>
+                  <div><CandL>Country</CandL><input className={inp} value={c.country} onChange={(e) => set({ country: e.target.value })} /></div>
+                  <div><CandL>State</CandL><input className={inp} value={c.state} onChange={(e) => set({ state: e.target.value })} /></div>
+                  <div><CandL>City</CandL><input className={inp} value={c.city} onChange={(e) => set({ city: e.target.value })} /></div>
+                  <div><CandL>Date Of Birth</CandL><input className={inp} value={c.dob} onChange={(e) => set({ dob: e.target.value })} placeholder="DD/MM/YYYY" /></div>
+                  <div><CandL>Gender</CandL>
                     <div className="flex gap-3 mt-1">{['MALE', 'FEMALE', 'OTHER'].map((g) => <label key={g} className="flex items-center gap-1 text-sm"><input type="radio" name="gender" checked={c.gender === g} onChange={() => set({ gender: g })} /> {g === 'OTHER' ? 'Prefer not to say' : g[0] + g.slice(1).toLowerCase()}</label>)}</div>
                   </div>
-                  <div><L>Marital Status</L>
+                  <div><CandL>Marital Status</CandL>
                     <div className="flex gap-3 mt-1">{['MARRIED', 'SINGLE', 'OTHER'].map((g) => <label key={g} className="flex items-center gap-1 text-sm"><input type="radio" name="marital" checked={c.maritalStatus === g} onChange={() => set({ maritalStatus: g })} /> {g === 'OTHER' ? 'Prefer not to say' : g[0] + g.slice(1).toLowerCase()}</label>)}</div>
                   </div>
-                  <div><L>LinkedIn</L><input className={inp} value={c.linkedin} onChange={(e) => set({ linkedin: e.target.value })} /></div>
-                  <div><L>GitHub</L><input className={inp} value={c.github} onChange={(e) => set({ github: e.target.value })} /></div>
-                  <div><L>Facebook</L><input className={inp} value={c.facebook} onChange={(e) => set({ facebook: e.target.value })} /></div>
-                  <div><L>Instagram</L><input className={inp} value={c.instagram} onChange={(e) => set({ instagram: e.target.value })} /></div>
-                  <div><L>Twitter</L><input className={inp} value={c.twitter} onChange={(e) => set({ twitter: e.target.value })} /></div>
-                  <div><L>Profile Link</L><input className={inp} value={c.profileUrl} onChange={(e) => set({ profileUrl: e.target.value })} /></div>
+                  <div><CandL>LinkedIn</CandL><input className={inp} value={c.linkedin} onChange={(e) => set({ linkedin: e.target.value })} /></div>
+                  <div><CandL>GitHub</CandL><input className={inp} value={c.github} onChange={(e) => set({ github: e.target.value })} /></div>
+                  <div><CandL>Facebook</CandL><input className={inp} value={c.facebook} onChange={(e) => set({ facebook: e.target.value })} /></div>
+                  <div><CandL>Instagram</CandL><input className={inp} value={c.instagram} onChange={(e) => set({ instagram: e.target.value })} /></div>
+                  <div><CandL>Twitter</CandL><input className={inp} value={c.twitter} onChange={(e) => set({ twitter: e.target.value })} /></div>
+                  <div><CandL>Profile Link</CandL><input className={inp} value={c.profileUrl} onChange={(e) => set({ profileUrl: e.target.value })} /></div>
                 </div>
-              </Section>
+              </CandSection>
 
               {(job.questions || []).length > 0 && (
-                <Section id="screen" title="Screening Questions">
+                <CandSection id="screen" title="Screening Questions" open={open} setOpen={setOpen}>
                   {(job.questions || []).map((q) => (
                     <div key={q.id} className="mb-3">
-                      <L req={q.mandatory}>{q.question}</L>
+                      <CandL req={q.mandatory}>{q.question}</CandL>
                       {q.type === 'multi' ? <textarea className={inp} rows={3} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })} />
                         : q.type === 'yesno' ? <select className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })}><option value="">— Select —</option><option>Yes</option><option>No</option></select>
                         : q.type === 'multiple' ? <select className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })}><option value="">— Select —</option>{(q.options || []).map((o) => <option key={o}>{o}</option>)}</select>
                         : <input className={inp} value={c.answers[q.id] || ''} onChange={(e) => set({ answers: { ...c.answers, [q.id]: e.target.value } })} />}
                     </div>
                   ))}
-                </Section>
+                </CandSection>
               )}
             </div>
             <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
