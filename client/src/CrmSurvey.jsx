@@ -371,19 +371,20 @@ function TestResultsModal({ survey, onClose }) {
 export function CrmSurveyGate() {
   const [pending, setPending] = useState([]);
   const [openIdx, setOpenIdx] = useState(-1);
-  const [popupShown, setPopupShown] = useState(false);
-  useEffect(() => { api('/surveys/pending').then((r) => { setPending(r.pending || []); if ((r.pending || []).length && !popupShown) { setOpenIdx(0); setPopupShown(true); } }).catch(() => {}); }, []);
+  // Show the pending surveys as a persistent notification banner. We do NOT
+  // auto-open the popup on load/refresh — the user opens it themselves via
+  // "Complete now" (or the notification box). This way a refresh no longer
+  // throws the survey modal in their face every time.
+  useEffect(() => { api('/surveys/pending').then((r) => setPending(r.pending || [])).catch(() => {}); }, []);
   const current = openIdx >= 0 ? pending[openIdx] : null;
   const done = (id) => { setPending((ps) => ps.filter((p) => p._id !== id)); setOpenIdx(-1); };
   if (!pending.length) return null;
   return (
     <>
-      {openIdx < 0 && (
-        <div className="rounded-xl bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white px-4 py-2.5 flex items-center justify-between gap-3 mb-4">
-          <div className="text-sm font-semibold flex items-center gap-2">📝 You have {pending.length} pending survey{pending.length === 1 ? '' : 's'} to complete.</div>
-          <button onClick={() => setOpenIdx(0)} className="rounded-lg bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold">Complete now</button>
-        </div>
-      )}
+      <div className="rounded-xl bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white px-4 py-2.5 flex items-center justify-between gap-3 mb-4">
+        <div className="text-sm font-semibold flex items-center gap-2">📝 You have {pending.length} pending survey{pending.length === 1 ? '' : 's'} to complete.</div>
+        <button onClick={() => setOpenIdx(0)} className="rounded-lg bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold">Complete now</button>
+      </div>
       {current && <SurveyTakeModal survey={current} onClose={() => setOpenIdx(-1)} onDone={() => done(current._id)} />}
     </>
   );
