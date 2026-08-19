@@ -182,7 +182,7 @@ const Report = sequelize.define(
     businessName: { type: DataTypes.STRING(190), allowNull: false },
     customerName: { type: DataTypes.STRING(190), allowNull: false },
     services: { type: DataTypes.JSON, defaultValue: [] },
-    country: { type: DataTypes.STRING(4), defaultValue: 'us' },
+    country: { type: DataTypes.STRING(20), defaultValue: 'us' },
     location: DataTypes.STRING(190),
 
     status: { type: DataTypes.ENUM('queued', 'running', 'complete', 'failed'), defaultValue: 'queued' },
