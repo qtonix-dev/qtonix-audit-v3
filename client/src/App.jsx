@@ -1575,8 +1575,12 @@ export default function App() {
       const p = new URLSearchParams(window.location.search);
       if (p.get('leadRun')) return 'new';
       if (p.get('reportId')) return 'progress';
-      // A persisted view (survives refresh). Fall back to legacy params, then
-      // the dashboard.
+      // Clean path-based view (/leads, /reports, …). Report view ids that map to
+      // a different path label are normalised back here.
+      const seg = (window.location.pathname.replace(/^\//, '').split('/')[0] || '').toLowerCase();
+      const PATH_TO_VIEW = { '': 'dashboard', dashboard: 'dashboard', leads: 'leads', 'call-backs': 'prospects', prospects: 'prospects', 'ai-brief': 'aibrief', aibrief: 'aibrief', reports: 'list', reviews: 'reviews', 'all-email': 'allemail', allemail: 'allemail', 'bulk-email': 'bulkemail', bulkemail: 'bulkemail', 'email-drafts': 'emaildrafts', emaildrafts: 'emaildrafts' };
+      if (seg in PATH_TO_VIEW) return PATH_TO_VIEW[seg];
+      // Legacy query param support.
       if (p.get('view')) return p.get('view');
       if (p.get('q')) return 'list';
       return 'dashboard';
@@ -1616,16 +1620,20 @@ export default function App() {
     return () => { alive = false; clearInterval(t); };
   }, [user]);
 
-  // Keep the current top-level view in the URL so a page refresh returns the
-  // user to where they were rather than bouncing to the dashboard.
+  // Keep the current top-level view in a clean URL path (/leads, /reports, …)
+  // so a refresh returns the user to the same page and links are shareable.
   useEffect(() => {
     try {
       const p = new URLSearchParams(window.location.search);
       // Don't fight the special report/lead-run flows that own the URL.
       if (p.get('leadRun') || p.get('reportId')) return;
-      if (view && view !== 'dashboard') p.set('view', view); else p.delete('view');
+      const VIEW_TO_PATH = { dashboard: '/', leads: '/leads', prospects: '/call-backs', aibrief: '/ai-brief', list: '/reports', report: '/reports', new: '/reports', progress: '/reports', reviews: '/reviews', allemail: '/all-email', bulkemail: '/bulk-email', emaildrafts: '/email-drafts' };
+      const path = VIEW_TO_PATH[view] || '/';
+      // Preserve any non-view query params (e.g. leadId) already on the URL.
+      p.delete('view');
       const qs = p.toString();
-      window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+      const target = `${path}${qs ? `?${qs}` : ''}`;
+      if (`${window.location.pathname}${window.location.search}` !== target) window.history.replaceState(null, '', target);
     } catch { /* history API not available */ }
   }, [view]);
 

@@ -819,7 +819,14 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
     setExporting(false);
   };
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(20);
+  // Remember the chosen page size across navigation (opening a lead unmounts
+  // this list, so component state alone would reset to the default). Scoped by
+  // list type so prospects and leads can differ.
+  const PER_PAGE_KEY = `qtx_leads_perpage_${isProspect ? 'prospect' : 'lead'}`;
+  const [perPage, setPerPageRaw] = useState(() => {
+    try { const v = parseInt(localStorage.getItem(PER_PAGE_KEY) || '', 10); return [10, 20, 50, 100].includes(v) ? v : 20; } catch { return 20; }
+  });
+  const setPerPage = (n) => { setPerPageRaw(n); try { localStorage.setItem(PER_PAGE_KEY, String(n)); } catch { /* */ } };
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
 
   const load = async () => {

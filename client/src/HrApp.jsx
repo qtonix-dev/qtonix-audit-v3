@@ -500,73 +500,77 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — podium for top 3, compact ranked list below */}
+      {/* HR leaderboard — clean ranked list */}
       {board && board.rows && board.rows.length > 0 && (() => {
         const rows = board.rows;
-        const top3 = rows.slice(0, 3);
-        const rest = rows.slice(3);
-        const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean); // 2nd, 1st, 3rd
-        const podStyle = { 1: { h: 'h-24', ring: 'ring-amber-300', badge: 'bg-amber-400', label: '🥇' }, 2: { h: 'h-20', ring: 'ring-slate-300', badge: 'bg-slate-400', label: '🥈' }, 3: { h: 'h-16', ring: 'ring-orange-300', badge: 'bg-orange-400', label: '🥉' } };
-        const Pill = ({ v, color, title }) => <div className="text-center" title={title}><div className="text-sm font-extrabold leading-none" style={{ color }}>{v}</div></div>;
+        const leader = rows[0];
+        const medalFor = (rank) => rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
+        const Metric = ({ value, label, sub, color }) => (
+          <div className="text-center px-1">
+            <div className="text-xl font-extrabold leading-none" style={{ color }}>{value}</div>
+            <div className="text-[10px] font-semibold text-slate-400 mt-1">{label}</div>
+            {sub != null && <div className="text-[9px] text-slate-300 mt-0.5">{sub}</div>}
+          </div>
+        );
         return (
-          <div className="rounded-2xl border border-slate-100 bg-white p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-lg">HR Leaderboard</div></div>
-              <div className="text-[11px] text-slate-400">This month</div>
+          <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-50">
+              <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-base">HR Leaderboard</div></div>
+              <div className="text-[11px] font-semibold text-slate-400">This month</div>
             </div>
 
-            {/* Podium */}
-            <div className="flex items-end justify-center gap-3 sm:gap-6 mb-6">
-              {podiumOrder.map((r) => {
-                const s = podStyle[r.rank] || podStyle[3];
-                return (
-                  <div key={r.id} className="flex flex-col items-center w-24 sm:w-28">
-                    <div className="relative mb-2">
-                      <span className={`block w-14 h-14 rounded-full bg-slate-100 overflow-hidden ring-4 ${s.ring} flex items-center justify-center text-base font-bold text-slate-500`}>{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                      <span className="absolute -bottom-1 -right-1 text-lg">{s.label}</span>
-                    </div>
-                    <div className="text-xs font-bold text-[#050A1F] text-center truncate w-full">{(r.name || '').split(' ')[0]}</div>
-                    <div className="text-[10px] text-slate-400 mb-1.5">{r.joined.month} joined</div>
-                    <div className={`w-full ${s.h} rounded-t-xl bg-gradient-to-t from-slate-100 to-slate-50 border border-slate-100 border-b-0 flex items-start justify-center pt-2`}>
-                      <div className="text-center">
-                        <div className="text-lg font-extrabold text-[#050A1F] leading-none">{r.added.month + r.interviews.month}</div>
-                        <div className="text-[9px] text-slate-400 mt-0.5">activity</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            {/* Leader highlight */}
+            {leader && (
+              <div className="flex items-center gap-3 px-5 py-4 bg-gradient-to-r from-amber-50 to-transparent border-b border-slate-50">
+                <span className="w-12 h-12 rounded-full bg-white ring-2 ring-amber-300 overflow-hidden flex items-center justify-center text-base font-bold text-slate-500 shrink-0">{leader.avatar ? <img src={leader.avatar} alt="" className="w-full h-full object-cover" /> : (leader.name || '?')[0]}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5"><span className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Leading</span><span>🥇</span></div>
+                  <div className="font-extrabold text-[#050A1F] truncate">{leader.name}</div>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <Metric value={leader.added.month} label="Added" color="#2563EB" />
+                  <Metric value={leader.interviews.month} label="Interviews" color="#FF6A00" />
+                  <Metric value={leader.joined.month} label="Joined" color="#16A34A" />
+                </div>
+              </div>
+            )}
 
-            {/* Column key */}
-            <div className="hidden sm:flex items-center gap-3 px-3 pb-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">
-              <div className="w-8">#</div><div className="flex-1">HR</div>
-              <div className="w-20 text-center">Added</div><div className="w-20 text-center">Interviews</div><div className="w-14 text-center">Joined</div><div className="w-28 text-center">Targets</div>
-            </div>
-            {/* Full ranked list */}
-            <div className="space-y-1">
+            {/* Ranked rows */}
+            <div className="divide-y divide-slate-50">
               {rows.map((r) => {
                 const t = r.targetInfo || {};
-                const rankCls = r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-400';
+                const medal = medalFor(r.rank);
                 return (
-                  <div key={r.id} className="flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-slate-50">
-                    <div className={`shrink-0 w-8 h-8 rounded-lg ${rankCls} flex items-center justify-center text-xs font-extrabold`}>{r.rank}</div>
-                    <div className="flex-1 flex items-center gap-2 min-w-0">
-                      <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                      <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div><div className="text-[10px] text-slate-400 truncate sm:hidden">A {r.added.month} · I {r.interviews.month} · J {r.joined.month}</div></div>
+                  <div key={r.id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors">
+                    <div className="w-7 shrink-0 text-center">
+                      {medal ? <span className="text-base">{medal}</span> : <span className="text-sm font-bold text-slate-300">{r.rank}</span>}
                     </div>
-                    <div className="hidden sm:block w-20 text-center"><div className="text-base font-extrabold text-[#2563EB] leading-none">{r.added.month}</div><div className="text-[9px] text-slate-400">{r.added.today}t · {r.added.week}w</div></div>
-                    <div className="hidden sm:block w-20 text-center"><div className="text-base font-extrabold text-[#FF6A00] leading-none">{r.interviews.month}</div><div className="text-[9px] text-slate-400">{r.interviews.today}t · {r.interviews.week}w</div></div>
-                    <div className="hidden sm:block w-14 text-center"><div className="text-base font-extrabold text-[#16A34A] leading-none">{r.joined.month}</div></div>
-                    <div className="hidden sm:block w-28 space-y-1">
-                      <TargetBar label="Daily iv" done={r.interviews.today} target={t.dailyInterviews || 0} color="#FF6A00" />
-                      <TargetBar label="Mo. joins" done={r.joined.month} target={t.monthlyJoin || 0} color="#16A34A" />
+                    <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[11px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div>
+                      {r.designation && <div className="text-[10px] text-slate-400 truncate">{r.designation}</div>}
+                    </div>
+                    {/* Metrics */}
+                    <div className="hidden sm:flex items-center gap-5 shrink-0">
+                      <Metric value={r.added.month} label="Added" sub={`${r.added.today} today`} color="#2563EB" />
+                      <Metric value={r.interviews.month} label="Interviews" sub={`${r.interviews.today} today`} color="#FF6A00" />
+                      <Metric value={r.joined.month} label="Joined" color="#16A34A" />
+                    </div>
+                    {/* Target chips */}
+                    <div className="hidden md:flex flex-col gap-1 w-24 shrink-0">
+                      <TargetChip label="Daily" value={r.interviews.today} target={t.dailyInterviews} />
+                      <TargetChip label="Joins" value={r.joined.month} target={t.monthlyJoin} />
+                    </div>
+                    {/* Mobile compact metrics */}
+                    <div className="sm:hidden text-right shrink-0">
+                      <div className="text-sm font-extrabold text-[#050A1F]">{r.joined.month} <span className="text-[10px] font-semibold text-slate-400">joined</span></div>
+                      <div className="text-[10px] text-slate-400">{r.added.month} added · {r.interviews.month} iv</div>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="text-[10px] text-slate-400 mt-3">Added = candidates on the platform · Interviews = booked through the platform · Joined = accepted &amp; on Hired stage. t = today, w = this week.</div>
+            <div className="px-5 py-3 text-[10px] text-slate-400 border-t border-slate-50">Added = candidates on the platform · Interviews = booked through the platform · Joined = accepted &amp; on Hired stage.</div>
           </div>
         );
       })()}
@@ -596,6 +600,19 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Compact target indicator for the leaderboard: label + value/target with a
+// green tick when met, muted when no target is set.
+function TargetChip({ label, value, target }) {
+  const has = target && target > 0;
+  const met = has && value >= target;
+  return (
+    <div className={`flex items-center justify-between rounded-md px-1.5 py-0.5 text-[9px] font-bold ${met ? 'bg-green-50 text-green-600' : has ? 'bg-slate-50 text-slate-500' : 'bg-slate-50 text-slate-300'}`}>
+      <span>{label}</span>
+      <span>{value}/{has ? target : '—'}{met ? ' ✓' : ''}</span>
     </div>
   );
 }
