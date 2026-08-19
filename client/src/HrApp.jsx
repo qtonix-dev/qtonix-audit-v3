@@ -500,80 +500,51 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — clean ranked list */}
-      {board && board.rows && board.rows.length > 0 && (() => {
-        const rows = board.rows;
-        const leader = rows[0];
-        const medalFor = (rank) => rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
-        const Metric = ({ value, label, sub, color }) => (
-          <div className="text-center px-1">
-            <div className="text-xl font-extrabold leading-none" style={{ color }}>{value}</div>
-            <div className="text-[10px] font-semibold text-slate-400 mt-1">{label}</div>
-            {sub != null && <div className="text-[9px] text-slate-300 mt-0.5">{sub}</div>}
+      {/* HR leaderboard — simple table (matches the CRM pre-sales team style) */}
+      {board && board.rows && board.rows.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="text-sm font-bold text-[#050A1F]">🏆 HR Leaderboard · this month</div>
+            <div className="text-[11px] text-slate-400">Joined = accepted &amp; on Hired stage</div>
           </div>
-        );
-        return (
-          <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-50">
-              <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-base">HR Leaderboard</div></div>
-              <div className="text-[11px] font-semibold text-slate-400">This month</div>
-            </div>
-
-            {/* Leader highlight */}
-            {leader && (
-              <div className="flex items-center gap-3 px-5 py-4 bg-gradient-to-r from-amber-50 to-transparent border-b border-slate-50">
-                <span className="w-12 h-12 rounded-full bg-white ring-2 ring-amber-300 overflow-hidden flex items-center justify-center text-base font-bold text-slate-500 shrink-0">{leader.avatar ? <img src={leader.avatar} alt="" className="w-full h-full object-cover" /> : (leader.name || '?')[0]}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5"><span className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Leading</span><span>🥇</span></div>
-                  <div className="font-extrabold text-[#050A1F] truncate">{leader.name}</div>
-                </div>
-                <div className="flex items-center gap-4 shrink-0">
-                  <Metric value={leader.added.month} label="Added" color="#2563EB" />
-                  <Metric value={leader.interviews.month} label="Interviews" color="#FF6A00" />
-                  <Metric value={leader.joined.month} label="Joined" color="#16A34A" />
-                </div>
-              </div>
-            )}
-
-            {/* Ranked rows */}
-            <div className="divide-y divide-slate-50">
-              {rows.map((r) => {
-                const t = r.targetInfo || {};
-                const medal = medalFor(r.rank);
-                return (
-                  <div key={r.id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors">
-                    <div className="w-7 shrink-0 text-center">
-                      {medal ? <span className="text-base">{medal}</span> : <span className="text-sm font-bold text-slate-300">{r.rank}</span>}
-                    </div>
-                    <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[11px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div>
-                      {r.designation && <div className="text-[10px] text-slate-400 truncate">{r.designation}</div>}
-                    </div>
-                    {/* Metrics */}
-                    <div className="hidden sm:flex items-center gap-5 shrink-0">
-                      <Metric value={r.added.month} label="Added" sub={`${r.added.today} today`} color="#2563EB" />
-                      <Metric value={r.interviews.month} label="Interviews" sub={`${r.interviews.today} today`} color="#FF6A00" />
-                      <Metric value={r.joined.month} label="Joined" color="#16A34A" />
-                    </div>
-                    {/* Target chips */}
-                    <div className="hidden md:flex flex-col gap-1 w-24 shrink-0">
-                      <TargetChip label="Daily" value={r.interviews.today} target={t.dailyInterviews} />
-                      <TargetChip label="Joins" value={r.joined.month} target={t.monthlyJoin} />
-                    </div>
-                    {/* Mobile compact metrics */}
-                    <div className="sm:hidden text-right shrink-0">
-                      <div className="text-sm font-extrabold text-[#050A1F]">{r.joined.month} <span className="text-[10px] font-semibold text-slate-400">joined</span></div>
-                      <div className="text-[10px] text-slate-400">{r.added.month} added · {r.interviews.month} iv</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="px-5 py-3 text-[10px] text-slate-400 border-t border-slate-50">Added = candidates on the platform · Interviews = booked through the platform · Joined = accepted &amp; on Hired stage.</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                  <th className="text-left py-2 w-8">#</th>
+                  <th className="text-left py-2">HR name</th>
+                  <th className="text-right py-2">Candidates added</th>
+                  <th className="text-right py-2">Interviews scheduled</th>
+                  <th className="text-right py-2">Joined</th>
+                  <th className="text-right py-2">Daily target</th>
+                  <th className="text-right py-2">Monthly target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.rows.map((r) => {
+                  const t = r.targetInfo || {};
+                  const dailyCls = t.dailyMet == null ? 'text-slate-300' : t.dailyMet ? 'text-green-600' : 'text-slate-500';
+                  const joinCls = t.monthlyJoinMet == null ? 'text-slate-300' : t.monthlyJoinMet ? 'text-green-600' : 'text-slate-500';
+                  return (
+                    <tr key={r.id} className="border-b border-slate-50">
+                      <td className="py-2"><span className={`text-xs font-extrabold ${r.rank === 1 ? 'text-[#FF4500]' : 'text-slate-300'}`}>{r.rank}</span></td>
+                      <td className="py-2">
+                        <span className="font-bold text-slate-600">{r.name}</span>
+                        {r.rank === 1 && <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[#FF4500]">Leading</span>}
+                      </td>
+                      <td className="py-2 text-right"><span className="font-bold text-[#2563EB]">{r.added.month}</span> <span className="text-slate-300 font-normal">/ {r.added.today} today</span></td>
+                      <td className="py-2 text-right"><span className="font-bold text-[#FF6A00]">{r.interviews.month}</span> <span className="text-slate-300 font-normal">/ {r.interviews.today} today</span></td>
+                      <td className="py-2 text-right font-bold text-[#16A34A]">{r.joined.month}</td>
+                      <td className={`py-2 text-right font-bold ${dailyCls}`}>{r.interviews.today}<span className="font-normal text-slate-300"> / {t.dailyInterviews || '—'}</span></td>
+                      <td className={`py-2 text-right font-bold ${joinCls}`}>{r.joined.month}<span className="font-normal text-slate-300"> / {t.monthlyJoin || '—'}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {showAnnModal && <AnnouncementModal onClose={() => setShowAnnModal(false)} onSaved={() => { setShowAnnModal(false); loadAnnouncements(); }} />}
 

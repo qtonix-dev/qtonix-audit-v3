@@ -203,7 +203,9 @@ function MonthBars({ data, valueKey = 'salesUsd', color = '#7DC5E8', money = tru
 export default function Analytics({ user, mode = 'analytics', onModeChange }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [activityData, setActivityData] = useState(null);
   useEffect(() => { api('/leads/dashboard').then(setData).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { api('/leads/agent-activity').then(setActivityData).catch(() => {}); }, []);
 
   if (err) return <div className="text-red-500 text-sm">{err}</div>;
   if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Loading analytics…</div>;
@@ -320,6 +322,44 @@ export default function Analytics({ user, mode = 'analytics', onModeChange }) {
           </div>
         </Widget>
       </div>
+
+      {/* Per-agent email & call activity */}
+      {activityData && activityData.rows && activityData.rows.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5 mt-6">
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="text-sm font-bold text-[#050A1F]">📞 Agent activity · calls &amp; emails</div>
+            <div className="text-[11px] text-slate-400">Outbound only</div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
+                  <th className="text-left py-2" rowSpan={2}>Agent</th>
+                  <th className="text-center py-2 border-l border-slate-100" colSpan={3}>Calls</th>
+                  <th className="text-center py-2 border-l border-slate-100" colSpan={3}>Emails</th>
+                </tr>
+                <tr className="text-[9px] uppercase text-slate-300">
+                  <th className="text-right py-1 border-l border-slate-100">Today</th><th className="text-right py-1">Week</th><th className="text-right py-1">Month</th>
+                  <th className="text-right py-1 border-l border-slate-100">Today</th><th className="text-right py-1">Week</th><th className="text-right py-1">Month</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activityData.rows.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-50">
+                    <td className="py-2 font-bold text-slate-600">{r.name}</td>
+                    <td className="py-2 text-right text-slate-500 border-l border-slate-50">{r.calls.today}</td>
+                    <td className="py-2 text-right text-slate-500">{r.calls.week}</td>
+                    <td className="py-2 text-right font-bold text-[#2563EB]">{r.calls.month}</td>
+                    <td className="py-2 text-right text-slate-500 border-l border-slate-50">{r.emails.today}</td>
+                    <td className="py-2 text-right text-slate-500">{r.emails.week}</td>
+                    <td className="py-2 text-right font-bold text-[#FF6A00]">{r.emails.month}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -66,7 +66,11 @@ const sequelize =
           dialect: 'mysql',
           logging: false,
           define: { charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' },
-          pool: { max: 10, min: 0, idle: 10000 },
+          // Both the CRM and HRMS share this pool. AI brief / report generation
+          // hold a connection through long queries, so a small pool starved
+          // everything else once HRMS traffic was added. A larger pool plus an
+          // explicit acquire timeout keeps both systems responsive.
+          pool: { max: Number(process.env.DB_POOL_MAX || 25), min: Number(process.env.DB_POOL_MIN || 2), idle: 10000, acquire: 30000, evict: 1000 },
         }
       );
 
@@ -788,6 +792,36 @@ const LeadEmail = sequelize.define(
   }
 );
 LeadEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Cached HR recruitment emails per candidate. The candidate email view reads
+// from here for instant loading, and refreshes from Gmail in the background so
+// we don't hit the Gmail API on every open.
+const HrEmail = sequelize.define(
+  'HrEmail',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    candidateId: { type: DataTypes.INTEGER, allowNull: false },
+    gmailMessageId: { type: DataTypes.STRING(120), allowNull: false },
+    threadId: { type: DataTypes.STRING(120), defaultValue: '' },
+    rfcMessageId: { type: DataTypes.STRING(255), allowNull: true },
+    direction: { type: DataTypes.STRING(20), defaultValue: 'inbound' },
+    fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
+    fromName: { type: DataTypes.STRING(255), defaultValue: '' },
+    toEmail: { type: DataTypes.TEXT, allowNull: true },
+    ccEmail: { type: DataTypes.TEXT, allowNull: true },
+    subject: { type: DataTypes.TEXT, allowNull: true },
+    snippet: { type: DataTypes.TEXT, allowNull: true },
+    bodyHtml: { type: DataTypes.TEXT('long'), allowNull: true },
+    sentAt: { type: DataTypes.DATE },
+  },
+  {
+    tableName: 'hr_emails',
+    indexes: [
+      { name: 'idx_hremail_cand', fields: ['candidateId'] },
+      { name: 'idx_hremail_msg', unique: true, fields: ['candidateId', 'gmailMessageId'] },
+    ],
+  }
+);
 
 // Emails queued for later delivery. A dispatcher sends them when sendAt passes,
 // via the owning user's connected mailbox. Gmail has no native schedule-send,
@@ -1605,7 +1639,7 @@ CrmSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, t
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

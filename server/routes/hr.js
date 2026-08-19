@@ -853,8 +853,20 @@ router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) 
     const branch = b.branch || (req.isHrManager ? req.hrBranch : '') || 'Bhubaneswar';
     if (!canManageBranch(req, branch)) return res.status(403).json({ error: `You can only add employees to your branch (${req.hrBranch}).` });
 
-    const exists = await HrUser.findOne({ where: { email } });
-    if (exists) return res.status(409).json({ error: 'An HR user with that email already exists.' });
+    // Duplicate guards: email, phone and name must be unique across employees.
+    const phone = String(b.phone || '').trim();
+    const normPhone = (p) => String(p || '').replace(/[^\d]/g, '').slice(-10); // last 10 digits
+    const all = await HrUser.findAll();
+    if (await HrUser.findOne({ where: { email } })) return res.status(409).json({ error: 'An employee with that email already exists.' });
+    if (normPhone(phone) && normPhone(phone).length >= 10 && all.some((u) => normPhone(u.phone) === normPhone(phone))) return res.status(409).json({ error: 'An employee with that phone number already exists.' });
+    if (all.some((u) => (u.name || '').trim().toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: 'An employee with that name already exists.' });
+    // Employee ID must be unique by its NUMBER only — the QB/QK branch prefix is
+    // ignored (QB001 and QK001 collide because the number 001 is the same).
+    const idNum = (v) => String(v || '').replace(/[^\d]/g, '');
+    const newIdNum = idNum(b.employeeId);
+    if (newIdNum && all.some((u) => idNum(u.employeeId) && idNum(u.employeeId) === newIdNum)) {
+      return res.status(409).json({ error: `Employee ID number ${newIdNum} is already in use (the branch prefix like QB/QK is ignored — only the number must be unique).` });
+    }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const row = await HrUser.create({
@@ -892,6 +904,24 @@ router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, nex
     if (!canManageBranch(req, row.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     if (b.branch !== undefined && !canManageBranch(req, b.branch)) return res.status(403).json({ error: 'You can only assign employees to your branch.' });
+    // Duplicate guards (excluding this record).
+    const others = (await HrUser.findAll()).filter((u) => u.id !== row.id);
+    const normPhone = (p) => String(p || '').replace(/[^\d]/g, '').slice(-10);
+    const idNum = (v) => String(v || '').replace(/[^\d]/g, '');
+    if (b.email !== undefined) {
+      const email = String(b.email).toLowerCase().trim();
+      if (email && others.some((u) => (u.email || '').toLowerCase() === email)) return res.status(409).json({ error: 'An employee with that email already exists.' });
+      row.email = email || row.email;
+    }
+    if (b.phone !== undefined && normPhone(b.phone).length >= 10 && others.some((u) => normPhone(u.phone) === normPhone(b.phone))) {
+      return res.status(409).json({ error: 'An employee with that phone number already exists.' });
+    }
+    if (b.name !== undefined && String(b.name).trim() && others.some((u) => (u.name || '').trim().toLowerCase() === String(b.name).trim().toLowerCase())) {
+      return res.status(409).json({ error: 'An employee with that name already exists.' });
+    }
+    if (b.employeeId !== undefined && idNum(b.employeeId) && others.some((u) => idNum(u.employeeId) === idNum(b.employeeId))) {
+      return res.status(409).json({ error: `Employee ID number ${idNum(b.employeeId)} is already in use (branch prefix ignored).` });
+    }
     if (b.name !== undefined) row.name = String(b.name).trim();
     if (b.employeeId !== undefined) row.employeeId = b.employeeId || null;
     if (b.phone !== undefined) row.phone = b.phone;

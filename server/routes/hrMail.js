@@ -8,7 +8,7 @@
  * and the address in Settings.hrMailbox.email.
  */
 const router = require('express').Router();
-const { Op, Settings, HrCandidate, HrJobPost, HrUser, HrDirectorProfile, User } = require('../models');
+const { Op, Settings, HrCandidate, HrJobPost, HrUser, HrDirectorProfile, HrEmail, User } = require('../models');
 
 // Resolve a mixed list of panelist IDs (numeric HrUser ids and 'admin:<id>'
 // director ids) into { id, name, department, email } records for the invite and
@@ -106,34 +106,54 @@ router.post('/mailbox/disconnect', requireHrAccess, async (req, res, next) => {
 // address). Returns normalised messages, newest last.
 router.get('/candidates/:id/emails', requireHrAccess, async (req, res, next) => {
   try {
-    const { s, token, email } = await hrMailbox();
-    if (!token) return res.json({ connected: false, messages: [] });
     const cand = await HrCandidate.findByPk(req.params.id);
     if (!cand) return res.status(404).json({ error: 'Candidate not found.' });
     if (!cand.email) return res.json({ connected: true, messages: [] });
-    const raw = await gmail.searchMessages(s, token, email, `{from:${cand.email} to:${cand.email} cc:${cand.email}}`, 40);
-    const candEmail = cand.email.toLowerCase();
-    const candName = (cand.name || '').toLowerCase();
-    const msgs = raw
-      .filter((m) => {
-        const hay = `${m.fromEmail || ''} ${m.fromName || ''} ${m.toEmail || ''} ${m.ccEmail || ''}`.toLowerCase();
-        return hay.includes(candEmail) || (candName && hay.includes(candName));
-      })
-      .map((m) => ({
-        id: m.gmailMessageId,
-        threadId: m.threadId,
-        messageId: m.rfcMessageId,
-        direction: m.direction,
-        from: m.fromEmail,
-        fromName: m.fromName,
-        to: m.toEmail,
-        subject: m.subject,
-        snippet: m.snippet,
-        bodyHtml: m.bodyHtml || '',
-        date: m.sentAt ? new Date(m.sentAt).toISOString() : null,
-      }))
-      .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-    res.json({ connected: true, mailbox: email, messages: msgs });
+
+    const toClient = (m) => ({
+      id: m.gmailMessageId, threadId: m.threadId, messageId: m.rfcMessageId,
+      direction: m.direction, from: m.fromEmail, fromName: m.fromName, to: m.toEmail,
+      subject: m.subject, snippet: m.snippet, bodyHtml: m.bodyHtml || '',
+      date: m.sentAt ? new Date(m.sentAt).toISOString() : null,
+    });
+
+    // Serve cached emails immediately when we have them (fast path). A refresh
+    // from Gmail runs in the background so the next open is up to date. When the
+    // cache is empty we do a one-time synchronous fetch so the first view works.
+    const cached = await HrEmail.findAll({ where: { candidateId: cand.id }, order: [['sentAt', 'ASC']] });
+    const refresh = async () => {
+      try {
+        const { s, token, email } = await hrMailbox();
+        if (!token) return [];
+        const raw = await gmail.searchMessages(s, token, email, `{from:${cand.email} to:${cand.email} cc:${cand.email}}`, 40);
+        const candEmail = cand.email.toLowerCase();
+        const candName = (cand.name || '').toLowerCase();
+        const matches = raw.filter((m) => {
+          const hay = `${m.fromEmail || ''} ${m.fromName || ''} ${m.toEmail || ''} ${m.ccEmail || ''}`.toLowerCase();
+          return hay.includes(candEmail) || (candName && hay.includes(candName));
+        });
+        for (const m of matches) {
+          await HrEmail.upsert({
+            candidateId: cand.id, gmailMessageId: m.gmailMessageId, threadId: m.threadId || '',
+            rfcMessageId: m.rfcMessageId || null, direction: m.direction, fromEmail: m.fromEmail || '',
+            fromName: m.fromName || '', toEmail: m.toEmail || '', ccEmail: m.ccEmail || '',
+            subject: m.subject || '', snippet: m.snippet || '', bodyHtml: m.bodyHtml || '',
+            sentAt: m.sentAt ? new Date(m.sentAt) : null,
+          }).catch(() => {});
+        }
+        return matches;
+      } catch { return []; }
+    };
+
+    if (cached.length > 0) {
+      res.json({ connected: true, messages: cached.map(toClient), cached: true });
+      refresh(); // fire-and-forget; updates the cache for next time
+      return;
+    }
+    // Cold cache — fetch once synchronously.
+    await refresh();
+    const fresh = await HrEmail.findAll({ where: { candidateId: cand.id }, order: [['sentAt', 'ASC']] });
+    res.json({ connected: true, messages: fresh.map(toClient) });
   } catch (e) { next(e); }
 });
 

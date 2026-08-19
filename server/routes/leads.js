@@ -911,6 +911,45 @@ router.post('/bulk', requireAuth, async (req, res, next) => {
 // visibility scope. Sales are summed from Closed Won deals converted to USD via
 // admin-maintained FX rates, within the current calendar month.
 // ---------------------------------------------------------------------------
+// Per-agent email & call activity (today / this week / this month). Managers
+// and admins see the whole team; an agent sees only their own row.
+router.get('/agent-activity', requireAuth, async (req, res, next) => {
+  try {
+    const { User, CallLog, LeadEmail } = require('../models');
+    const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dow = (now.getDay() + 6) % 7; // week starts Monday
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const users = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'email', 'role'] });
+    const scopeUsers = isManager ? users : users.filter((u) => u.id === req.user.id);
+    const idSet = new Set(scopeUsers.map((u) => u.id));
+
+    // Pull only the current month's rows (covers today/week/month buckets).
+    const calls = await CallLog.findAll({ where: { startTime: { [Op.gte]: startOfMonth } }, attributes: ['agentId', 'direction', 'startTime'] });
+    const emails = await LeadEmail.findAll({ where: { direction: 'outbound', sentAt: { [Op.gte]: startOfMonth } }, attributes: ['userId', 'sentAt'] });
+
+    const blank = () => ({ today: 0, week: 0, month: 0 });
+    const stat = new Map();
+    scopeUsers.forEach((u) => stat.set(u.id, { id: u.id, name: u.name, email: u.email, calls: blank(), emails: blank() }));
+    const bump = (id, metric, ts) => {
+      const s = stat.get(id); if (!s || !ts) return; const d = new Date(ts);
+      s[metric].month += 1;
+      if (d >= startOfWeek) s[metric].week += 1;
+      if (d >= startOfDay) s[metric].today += 1;
+    };
+    calls.forEach((c) => { if (idSet.has(c.agentId)) bump(c.agentId, 'calls', c.startTime); });
+    emails.forEach((e) => { if (idSet.has(e.userId)) bump(e.userId, 'emails', e.sentAt); });
+
+    const rows = Array.from(stat.values())
+      .filter((r) => isManager || r.id === req.user.id)
+      .sort((a, b) => (b.calls.month + b.emails.month) - (a.calls.month + a.emails.month) || a.name.localeCompare(b.name));
+    res.json({ rows, isManager });
+  } catch (e) { next(e); }
+});
+
 router.get('/dashboard', requireAuth, async (req, res, next) => {
   try {
     const { User, Settings } = require('../models');
