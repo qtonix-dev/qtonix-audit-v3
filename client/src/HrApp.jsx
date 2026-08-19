@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase } from './HrParts.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
@@ -499,56 +500,76 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — redesigned as ranked cards with metric blocks */}
-      {board && board.rows && board.rows.length > 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 to-white p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-lg">HR Leaderboard</div></div>
-            {board.leader && <div className="text-xs bg-amber-100 text-amber-700 font-bold rounded-full px-3 py-1">Leading · {board.leader.name}</div>}
-          </div>
-          <div className="space-y-2.5">
-            {board.rows.map((r) => {
-              const t = r.targetInfo || {};
-              const medal = r.rank === 1 ? 'from-amber-400 to-yellow-500 text-white' : r.rank === 2 ? 'from-slate-300 to-slate-400 text-white' : r.rank === 3 ? 'from-orange-300 to-orange-400 text-white' : 'bg-slate-100 text-slate-400';
-              const Metric = ({ label, color, buckets, single }) => (
-                <div className="flex-1 min-w-[130px] rounded-xl bg-white border border-slate-100 px-3 py-2">
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">{label}</div>
-                  {single ? (
-                    <div className="text-2xl font-extrabold" style={{ color }}>{buckets.month}</div>
-                  ) : (
-                    <div className="flex items-end gap-3">
-                      <div><div className="text-2xl font-extrabold leading-none" style={{ color }}>{buckets.month}</div><div className="text-[9px] text-slate-400 mt-0.5">Month</div></div>
-                      <div className="flex gap-2 pb-0.5">
-                        <div className="text-center"><div className="text-sm font-bold text-slate-600 leading-none">{buckets.today}</div><div className="text-[9px] text-slate-400 mt-0.5">Today</div></div>
-                        <div className="text-center"><div className="text-sm font-bold text-slate-600 leading-none">{buckets.week}</div><div className="text-[9px] text-slate-400 mt-0.5">Week</div></div>
+      {/* HR leaderboard — podium for top 3, compact ranked list below */}
+      {board && board.rows && board.rows.length > 0 && (() => {
+        const rows = board.rows;
+        const top3 = rows.slice(0, 3);
+        const rest = rows.slice(3);
+        const podiumOrder = [top3[1], top3[0], top3[2]].filter(Boolean); // 2nd, 1st, 3rd
+        const podStyle = { 1: { h: 'h-24', ring: 'ring-amber-300', badge: 'bg-amber-400', label: '🥇' }, 2: { h: 'h-20', ring: 'ring-slate-300', badge: 'bg-slate-400', label: '🥈' }, 3: { h: 'h-16', ring: 'ring-orange-300', badge: 'bg-orange-400', label: '🥉' } };
+        const Pill = ({ v, color, title }) => <div className="text-center" title={title}><div className="text-sm font-extrabold leading-none" style={{ color }}>{v}</div></div>;
+        return (
+          <div className="rounded-2xl border border-slate-100 bg-white p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2"><span className="text-lg">🏆</span><div className="font-extrabold text-[#050A1F] text-lg">HR Leaderboard</div></div>
+              <div className="text-[11px] text-slate-400">This month</div>
+            </div>
+
+            {/* Podium */}
+            <div className="flex items-end justify-center gap-3 sm:gap-6 mb-6">
+              {podiumOrder.map((r) => {
+                const s = podStyle[r.rank] || podStyle[3];
+                return (
+                  <div key={r.id} className="flex flex-col items-center w-24 sm:w-28">
+                    <div className="relative mb-2">
+                      <span className={`block w-14 h-14 rounded-full bg-slate-100 overflow-hidden ring-4 ${s.ring} flex items-center justify-center text-base font-bold text-slate-500`}>{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                      <span className="absolute -bottom-1 -right-1 text-lg">{s.label}</span>
+                    </div>
+                    <div className="text-xs font-bold text-[#050A1F] text-center truncate w-full">{(r.name || '').split(' ')[0]}</div>
+                    <div className="text-[10px] text-slate-400 mb-1.5">{r.joined.month} joined</div>
+                    <div className={`w-full ${s.h} rounded-t-xl bg-gradient-to-t from-slate-100 to-slate-50 border border-slate-100 border-b-0 flex items-start justify-center pt-2`}>
+                      <div className="text-center">
+                        <div className="text-lg font-extrabold text-[#050A1F] leading-none">{r.added.month + r.interviews.month}</div>
+                        <div className="text-[9px] text-slate-400 mt-0.5">activity</div>
                       </div>
                     </div>
-                  )}
-                </div>
-              );
-              return (
-                <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white border border-slate-100 p-3 hover:shadow-sm transition">
-                  <div className={`shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br ${medal} flex items-center justify-center text-sm font-extrabold`}>{r.rank}</div>
-                  <div className="shrink-0 flex items-center gap-2 w-40 min-w-0">
-                    <span className="w-9 h-9 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                    <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div>{r.designation && <div className="text-[10px] text-slate-400 truncate">{r.designation}</div>}</div>
                   </div>
-                  <div className="flex-1 flex flex-wrap gap-2">
-                    <Metric label="Candidates added" color="#2563EB" buckets={r.added} />
-                    <Metric label="Interviews scheduled" color="#FF6A00" buckets={r.interviews} />
-                    <Metric label="Joined" color="#16A34A" buckets={r.joined} single />
+                );
+              })}
+            </div>
+
+            {/* Column key */}
+            <div className="hidden sm:flex items-center gap-3 px-3 pb-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">
+              <div className="w-8">#</div><div className="flex-1">HR</div>
+              <div className="w-20 text-center">Added</div><div className="w-20 text-center">Interviews</div><div className="w-14 text-center">Joined</div><div className="w-28 text-center">Targets</div>
+            </div>
+            {/* Full ranked list */}
+            <div className="space-y-1">
+              {rows.map((r) => {
+                const t = r.targetInfo || {};
+                const rankCls = r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-400';
+                return (
+                  <div key={r.id} className="flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-slate-50">
+                    <div className={`shrink-0 w-8 h-8 rounded-lg ${rankCls} flex items-center justify-center text-xs font-extrabold`}>{r.rank}</div>
+                    <div className="flex-1 flex items-center gap-2 min-w-0">
+                      <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                      <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm truncate">{r.name}</div><div className="text-[10px] text-slate-400 truncate sm:hidden">A {r.added.month} · I {r.interviews.month} · J {r.joined.month}</div></div>
+                    </div>
+                    <div className="hidden sm:block w-20 text-center"><div className="text-base font-extrabold text-[#2563EB] leading-none">{r.added.month}</div><div className="text-[9px] text-slate-400">{r.added.today}t · {r.added.week}w</div></div>
+                    <div className="hidden sm:block w-20 text-center"><div className="text-base font-extrabold text-[#FF6A00] leading-none">{r.interviews.month}</div><div className="text-[9px] text-slate-400">{r.interviews.today}t · {r.interviews.week}w</div></div>
+                    <div className="hidden sm:block w-14 text-center"><div className="text-base font-extrabold text-[#16A34A] leading-none">{r.joined.month}</div></div>
+                    <div className="hidden sm:block w-28 space-y-1">
+                      <TargetBar label="Daily iv" done={r.interviews.today} target={t.dailyInterviews || 0} color="#FF6A00" />
+                      <TargetBar label="Mo. joins" done={r.joined.month} target={t.monthlyJoin || 0} color="#16A34A" />
+                    </div>
                   </div>
-                  <div className="shrink-0 w-32 space-y-1.5">
-                    <TargetBar label="Daily interviews" done={r.interviews.today} target={t.dailyInterviews || 0} color="#FF6A00" />
-                    <TargetBar label="Monthly joins" done={r.joined.month} target={t.monthlyJoin || 0} color="#16A34A" />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-3">Added = candidates on the platform · Interviews = booked through the platform · Joined = accepted &amp; on Hired stage. t = today, w = this week.</div>
           </div>
-          <div className="text-[10px] text-slate-400 mt-3">Candidates added = candidates on the platform. Interviews scheduled = booked through the platform. Joined = accepted the offer and on the Hired stage.</div>
-        </div>
-      )}
+        );
+      })()}
 
       {showAnnModal && <AnnouncementModal onClose={() => setShowAnnModal(false)} onSaved={() => { setShowAnnModal(false); loadAnnouncements(); }} />}
 
@@ -596,7 +617,18 @@ function TargetBar({ label, done, target, color }) {
 // --- Recruitment -----------------------------------------------------------
 
 function HrRecruitment({ isAdmin, me, intent }) {
-  const [tab, setTab] = useState(intent && intent.tab ? intent.tab : 'jobs');
+  const rNav = useNavigate();
+  const rLoc = useLocation();
+  const RTABS = ['jobs', 'candidates', 'pipeline'];
+  const urlTab = (() => { const seg = (rLoc.pathname.split('/')[3] || '').toLowerCase(); return RTABS.includes(seg) ? seg : null; })();
+  const [tab, setTabRaw] = useState(urlTab || (intent && intent.tab ? intent.tab : 'jobs'));
+  const setTab = (t) => { setTabRaw(t); const target = `/hr/recruitment/${t}`; if (rLoc.pathname !== target) rNav(target); };
+  useEffect(() => { if (urlTab && urlTab !== tab) setTabRaw(urlTab); }, [urlTab]);
+  // Ensure the URL reflects the initial tab (e.g. arriving via an intent).
+  useEffect(() => { if (!urlTab) { const target = `/hr/recruitment/${tab}`; if (rLoc.pathname !== target) rNav(target, { replace: true }); } }, []);
+  // When a candidate/detail view is open inside a sub-tab, hide the tab row.
+  const [detailOpen, setDetailOpen] = useState(false);
+  useEffect(() => { setDetailOpen(false); }, [tab]);
   const [mode, setMode] = useState('list'); // list | choose | build
   const [builderSeed, setBuilderSeed] = useState(null);
   const [jobs, setJobs] = useState([]);
@@ -633,11 +665,14 @@ function HrRecruitment({ isAdmin, me, intent }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
-        {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
-      </div>
+      {!detailOpen && (
+        <div className="flex items-center justify-between mb-5">
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">Recruitment</h1>
+          {tab === 'jobs' && <button onClick={() => startBuilder(null)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Post a Job</button>}
+        </div>
+      )}
       {err && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+      {!detailOpen && (
       <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
         <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
           {tabs.map(([id, label]) => (
@@ -657,7 +692,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
           const list = candList || 'active';
           const Btn = (active, onClick, label) => <button onClick={onClick} className={`px-3 py-1.5 rounded-md text-xs font-bold ${active ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>;
           return (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
                 {Btn(scope === 'mine', () => setCandScope('mine'), 'My candidates')}
                 {Btn(scope === 'all', () => setCandScope('all'), 'All candidates')}
@@ -677,9 +712,10 @@ function HrRecruitment({ isAdmin, me, intent }) {
           </div>
         )}
       </div>
+      )}
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} scope={jobScope || (isAdmin ? 'all' : 'mine')} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} listMode={candList || 'active'} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
-      {tab === 'pipeline' && <RecruitPipeline jobs={jobs} scope={candScope || (isAdmin ? 'all' : 'mine')} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} listMode={candList || 'active'} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} onDetailOpen={setDetailOpen} />}
+      {tab === 'pipeline' && <RecruitPipeline jobs={jobs} scope={candScope || (isAdmin ? 'all' : 'mine')} onDetailOpen={setDetailOpen} />}
     </div>
   );
 }
@@ -968,10 +1004,11 @@ function RejectionSummary({ count, filters }) {
   );
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, listMode, weekOnly, openCandidateId, openCandidateTab }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, listMode, weekOnly, openCandidateId, openCandidateTab, onDetailOpen }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [viewTab, setViewTab] = useState(null);
+  useEffect(() => { if (onDetailOpen) onDetailOpen(!!viewId); }, [viewId]);
   const [notesFor, setNotesFor] = useState(null);
   const [sel, setSel] = useState([]); // selected candidate ids for bulk actions
   const [page, setPage] = useState(1);
@@ -1740,11 +1777,12 @@ function StageRejectModal({ candidate, onClose, onDone }) {
   );
 }
 
-function RecruitPipeline({ jobs, scope }) {
+function RecruitPipeline({ jobs, scope, onDetailOpen }) {
   const published = jobs.filter((j) => j.status === 'published' || j.status === 'paused');
   const [jobId, setJobId] = useState(published[0]?._id || null);
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
+  useEffect(() => { if (onDetailOpen) onDetailOpen(!!viewId); }, [viewId]);
   const [dragId, setDragId] = useState(null);
   const [moveFor, setMoveFor] = useState(null); // candidate to move via popup
   const [me, setMe] = useState(null);
@@ -3743,12 +3781,26 @@ function SurveyTakeModal({ survey, onClose, onDone }) {
 }
 
 export default function HrApp() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Derive the current view from the URL path (/hr/<view>) so refresh and deep
+  // links keep the user on the same page. Falls back to dashboard.
+  const VALID_VIEWS = ['dashboard', 'recruitment', 'interview', 'email', 'employees', 'profile', 'templates', 'signature', 'admin'];
+  const pathView = (() => {
+    const seg = (location.pathname.replace(/^\/hr\/?/, '').split('/')[0] || '').toLowerCase();
+    return VALID_VIEWS.includes(seg) ? seg : 'dashboard';
+  })();
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
-  const [view, setView] = useState('dashboard');
+  const [view, setViewRaw] = useState(pathView);
   const [profileTarget, setProfileTarget] = useState(null);
   const [navKey, setNavKey] = useState(0); // bump to force a fresh sub-view on nav
+  const [mobileNav, setMobileNav] = useState(false);
   const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
+  // setView also writes a clean URL (/hr/<view>).
+  const setView = (v) => { setViewRaw(v); const target = `/hr/${v}`; if (location.pathname !== target) navigate(target); };
+  // Keep view in sync when the user navigates back/forward.
+  useEffect(() => { if (pathView !== view) setViewRaw(pathView); }, [pathView]);
   const goRecruit = (intent) => { setRecruitIntent(intent || null); setView('recruitment'); setProfileTarget(null); setNavKey((k) => k + 1); };
 
   // Restore session.
@@ -3783,13 +3835,14 @@ export default function HrApp() {
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <header className="bg-[#050A1F] text-white">
-        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
-          <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span></div>
-            <AppSwitcher current="hr" />
-          </div>
-            <nav className="flex gap-0.5">
+        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14 gap-2">
+          <div className="flex items-center gap-3 md:gap-6 min-w-0">
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-lg font-extrabold tracking-tight">Qtonix<span className="text-[#FF6A00]">.</span></div>
+              <AppSwitcher current="hr" />
+            </div>
+            {/* Desktop nav */}
+            <nav className="hidden md:flex gap-0.5">
               {nav.map((n) => (
                 <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${effectiveView === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
@@ -3798,11 +3851,26 @@ export default function HrApp() {
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <NotificationBell onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />
             <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={logout} isAdmin={isAdmin} />
+            {/* Mobile menu toggle */}
+            <button onClick={() => setMobileNav((v) => !v)} className="md:hidden rounded-lg p-2 text-slate-300 hover:text-white hover:bg-white/10" aria-label="Menu">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d={mobileNav ? 'M6 6l12 12M6 18L18 6' : 'M4 7h16M4 12h16M4 17h16'} strokeLinecap="round" /></svg>
+            </button>
           </div>
         </div>
+        {/* Mobile nav drawer */}
+        {mobileNav && (
+          <nav className="md:hidden border-t border-white/10 px-2 py-2 flex flex-col gap-0.5">
+            {nav.map((n) => (
+              <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); setMobileNav(false); }}
+                className={`text-left rounded-lg px-3 py-2.5 text-sm font-bold transition-colors ${effectiveView === n.id ? 'bg-white/10 text-[#FF6A00]' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}>
+                {n.label}
+              </button>
+            ))}
+          </nav>
+        )}
       </header>
       {!isAdmin && <SurveyGate />}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
