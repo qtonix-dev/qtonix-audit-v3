@@ -499,40 +499,60 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         );
       })()}
 
-      {/* HR leaderboard — candidates added, interviews scheduled, joined */}
+      {/* HR leaderboard — added & interviews (today/week/month), joined + targets */}
       {board && board.rows && board.rows.length > 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-5">
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 overflow-x-auto">
           <div className="flex items-center justify-between mb-3">
             <div className="font-extrabold text-[#050A1F]">🏆 HR leaderboard</div>
             {board.leader && <div className="text-xs text-slate-500">Leading: <b className="text-[#050A1F]">{board.leader.name}</b></div>}
           </div>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[760px]">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
-                <th className="pb-2 w-10">#</th><th className="pb-2">HR name</th>
-                <th className="pb-2 text-center">Candidates added</th>
-                <th className="pb-2 text-center">Interviews scheduled</th>
-                <th className="pb-2 text-center">Joined</th>
+                <th className="pb-2 w-10" rowSpan={2}>#</th><th className="pb-2" rowSpan={2}>HR name</th>
+                <th className="pb-2 text-center border-l border-slate-100" colSpan={3}>Candidates added</th>
+                <th className="pb-2 text-center border-l border-slate-100" colSpan={3}>Interviews scheduled</th>
+                <th className="pb-2 text-center border-l border-slate-100" colSpan={1}>Joined</th>
+                <th className="pb-2 text-center border-l border-slate-100" rowSpan={2}>Targets</th>
+              </tr>
+              <tr className="text-left text-[9px] uppercase tracking-wide text-slate-300">
+                <th className="pb-1 text-center border-l border-slate-100">Today</th><th className="pb-1 text-center">Week</th><th className="pb-1 text-center">Month</th>
+                <th className="pb-1 text-center border-l border-slate-100">Today</th><th className="pb-1 text-center">Week</th><th className="pb-1 text-center">Month</th>
+                <th className="pb-1 text-center border-l border-slate-100">Month</th>
               </tr>
             </thead>
             <tbody>
-              {board.rows.map((r) => (
-                <tr key={r.id} className="border-t border-slate-50">
-                  <td className="py-2.5 w-10"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
-                  <td className="py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
-                      <span className="font-bold text-[#050A1F] truncate">{r.name}</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 text-center font-extrabold text-[#2563EB]">{r.added}</td>
-                  <td className="py-2.5 text-center font-extrabold text-[#FF6A00]">{r.interviews}</td>
-                  <td className="py-2.5 text-center font-extrabold text-[#16A34A]">{r.joined}</td>
-                </tr>
-              ))}
+              {board.rows.map((r) => {
+                const t = r.targetInfo || {};
+                const chip = (met) => met === null ? null : <span className={`inline-block w-2 h-2 rounded-full ${met ? 'bg-green-500' : 'bg-red-400'}`} />;
+                return (
+                  <tr key={r.id} className="border-t border-slate-50">
+                    <td className="py-2.5 w-10"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-extrabold ${r.rank === 1 ? 'bg-amber-100 text-amber-700' : r.rank === 2 ? 'bg-slate-200 text-slate-600' : r.rank === 3 ? 'bg-orange-100 text-orange-700' : 'text-slate-400'}`}>{r.rank}</span></td>
+                    <td className="py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]}</span>
+                        <span className="font-bold text-[#050A1F] truncate">{r.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 text-center text-slate-500 border-l border-slate-50">{r.added.today}</td>
+                    <td className="py-2.5 text-center text-slate-500">{r.added.week}</td>
+                    <td className="py-2.5 text-center font-extrabold text-[#2563EB]">{r.added.month}</td>
+                    <td className="py-2.5 text-center text-slate-500 border-l border-slate-50">{r.interviews.today}</td>
+                    <td className="py-2.5 text-center text-slate-500">{r.interviews.week}</td>
+                    <td className="py-2.5 text-center font-extrabold text-[#FF6A00]">{r.interviews.month}</td>
+                    <td className="py-2.5 text-center font-extrabold text-[#16A34A] border-l border-slate-50">{r.joined.month}</td>
+                    <td className="py-2.5 border-l border-slate-50">
+                      <div className="flex flex-col gap-0.5 text-[11px] text-slate-500">
+                        <span className="flex items-center gap-1.5">{chip(t.dailyMet)} Daily {r.interviews.today}/{t.dailyInterviews || '—'}</span>
+                        <span className="flex items-center gap-1.5">{chip(t.monthlyJoinMet)} Join {r.joined.month}/{t.monthlyJoin || '—'}</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          <div className="text-[10px] text-slate-400 mt-2">Candidates added = candidates on the platform. Interviews scheduled = interviews booked through the platform. Joined = accepted the offer and on the Hired stage.</div>
+          <div className="text-[10px] text-slate-400 mt-2">Candidates added = candidates on the platform. Interviews scheduled = booked through the platform. Joined = accepted the offer and on the Hired stage. Green/red dots show whether the HR met their daily interview and monthly join targets.</div>
         </div>
       )}
 
@@ -596,7 +616,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
   const [candScope, setCandScope] = useState(intent && intent.candScope ? intent.candScope : null); // 'all' | 'mine' | null
   const [candWeekOnly, setCandWeekOnly] = useState(!!(intent && intent.weekOnly));
   const [jobScope, setJobScope] = useState(intent && intent.jobScope ? intent.jobScope : null); // 'mine' | 'all' | null
-  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
+  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline'], ['hired', 'Hired']];
 
   const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
   useEffect(() => {
@@ -635,7 +655,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
             <button onClick={() => setJobScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(jobScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My jobs</button>
           </div>
         )}
-        {tab === 'candidates' && (
+        {(tab === 'candidates' || tab === 'pipeline' || tab === 'hired') && (
           <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
             <button onClick={() => setCandScope('mine')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'mine' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>My candidates</button>
             <button onClick={() => setCandScope('all')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${(candScope || (isAdmin ? 'all' : 'mine')) === 'all' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>All candidates</button>
@@ -644,7 +664,8 @@ function HrRecruitment({ isAdmin, me, intent }) {
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} scope={jobScope || (isAdmin ? 'all' : 'mine')} />}
       {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
-      {tab === 'pipeline' && <RecruitPipeline jobs={jobs} />}
+      {tab === 'pipeline' && <RecruitPipeline jobs={jobs} scope={candScope || (isAdmin ? 'all' : 'mine')} />}
+      {tab === 'hired' && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} scope={candScope || (isAdmin ? 'all' : 'mine')} hiredOnly />}
     </div>
   );
 }
@@ -870,7 +891,7 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, weekOnly, openCandidateId, openCandidateTab }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, weekOnly, hiredOnly, openCandidateId, openCandidateTab }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [viewTab, setViewTab] = useState(null);
@@ -891,11 +912,16 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
   const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
   // Keyword search runs server-side (covers resume text); other filters are local.
+  // The Hired tab passes hiredOnly → only hired candidates; the normal list
+  // hides hired candidates (they moved to the Hired tab).
   const load = (kw) => {
-    const qs = kw && kw.trim() ? `?q=${encodeURIComponent(kw.trim())}` : '';
+    const params = new URLSearchParams();
+    if (kw && kw.trim()) params.set('q', kw.trim());
+    if (hiredOnly) params.set('hired', 'only');
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return hrApi(`/candidates${qs}`).then(setCands).catch(() => {});
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [hiredOnly]);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
   useEffect(() => { setSourceFilter(initialSource || ''); }, [initialSource]);
@@ -1493,14 +1519,13 @@ function AddCandidateModal({ job, onClose, onSaved }) {
   );
 }
 
-function RecruitPipeline({ jobs }) {
+function RecruitPipeline({ jobs, scope }) {
   const published = jobs.filter((j) => j.status === 'published' || j.status === 'paused');
   const [jobId, setJobId] = useState(published[0]?._id || null);
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [moveFor, setMoveFor] = useState(null); // candidate to move via popup
-  const [mine, setMine] = useState(false);
   const [me, setMe] = useState(null);
   const [stageSearch, setStageSearch] = useState({}); // { [stageId]: query } for stages with many cards
   const load = () => { if (jobId) hrApi(`/candidates?jobPostId=${jobId}`).then(setCands).catch(() => {}); };
@@ -1510,6 +1535,8 @@ function RecruitPipeline({ jobs }) {
   const stages = (job && job.stages) || [];
   const myId = me && (me._id || me.id);
   const isMine = (c) => myId && (c.recruiterId === myId || (me.name && c.recruiterName === me.name));
+  // Scope ('mine' | 'all') is controlled from the recruitment tab row.
+  const mine = scope === 'mine';
   const visible = mine ? cands.filter(isMine) : cands;
   const move = async (c, stage) => {
     if (c.stage === stage) return;
@@ -1539,10 +1566,6 @@ function RecruitPipeline({ jobs }) {
           <select className={inp + ' max-w-xs'} value={jobId || ''} onChange={(e) => setJobId(Number(e.target.value))}>
             {published.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
           </select>
-          <div className="inline-flex bg-slate-100 rounded-xl p-1">
-            <button onClick={() => setMine(false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition ${!mine ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All candidates</button>
-            <button onClick={() => setMine(true)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition ${mine ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>My candidates</button>
-          </div>
         </div>
         <div className="text-sm text-slate-400">{visible.length} candidates · drag or use ⇄ to move</div>
       </div>

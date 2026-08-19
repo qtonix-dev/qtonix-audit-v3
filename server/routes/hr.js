@@ -1236,6 +1236,12 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     }
     const tag = String(req.query.tag || '').toLowerCase().trim();
     if (tag) rows = rows.filter((r) => (r.tags || []).some((t) => String(t).toLowerCase() === tag));
+    // Hired candidates live in their own "Hired" tab. The main candidate list
+    // hides them; the Hired tab (?hired=only) shows only them.
+    const hiredMode = String(req.query.hired || '').toLowerCase();
+    const isHired = (r) => isHiredCandidate(r);
+    if (hiredMode === 'only') rows = rows.filter(isHired);
+    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r));
     // Strip the big resumeText from list payloads.
     res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
@@ -2902,33 +2908,72 @@ router.delete('/employees/:id/onboarding/:taskId', requireHrAccess, requireSched
 
 // ---- Reset an employee's password (admin only) ----
 // ---- Dashboard: HR leaderboard ----
-// Per-HR productivity across three metrics: candidates added to the platform,
-// interviews scheduled through the platform, and candidates joined (offer
-// accepted and sitting in a Hired stage). Ranked for the whole team.
+// Per-HR productivity: candidates added and interviews scheduled (each split
+// today / this week / this month), plus joined this month (offer accepted and
+// on a Hired stage). Each metric is compared against the HR's own targets.
 router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
   try {
-    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'designation', 'type'] });
+    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'designation', 'type', 'targets'] });
     const cands = await HrCandidate.findAll();
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    // Week starts Monday.
+    const dow = (now.getDay() + 6) % 7;
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow).getTime();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const workingDaysInMonth = 26; // for scaling a daily target to a monthly expectation
+
     const stat = new Map();
-    users.forEach((u) => stat.set(u.id, { id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '', added: 0, interviews: 0, joined: 0 }));
-    const bump = (id, key, n = 1) => { const s = stat.get(id); if (s) s[key] += n; };
-    const nameToId = new Map(users.map((u) => [u.name, u.id]));
-    cands.forEach((c) => {
-      // Candidates added — credited to the recruiter who owns the candidate.
-      const ownerId = c.recruiterId || nameToId.get(c.recruiterName);
-      if (ownerId) bump(ownerId, 'added');
-      // Interviews scheduled through the platform — credited to whoever scheduled.
-      (c.interviews || []).forEach((iv) => {
-        const id = iv.scheduledById || nameToId.get(iv.createdBy) || nameToId.get(iv.by) || ownerId;
-        if (id) bump(id, 'interviews');
+    users.forEach((u) => {
+      const t = u.targets || {};
+      stat.set(u.id, {
+        id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '',
+        added: { today: 0, week: 0, month: 0 }, interviews: { today: 0, week: 0, month: 0 }, joined: { month: 0 },
+        targets: { daily: Number(t.dailyInterviews) || 0, monthlyJoin: Number(t.monthlyOnboarding) || 0 },
       });
-      // Joined — offer accepted AND currently in a Hired stage.
-      const joined = c.offer && c.offer.status === 'accepted' && HIRED_STAGE_IDS.has(String(c.stage || '').toLowerCase());
-      if (joined && ownerId) bump(ownerId, 'joined');
     });
-    let rows = Array.from(stat.values()).filter((r) => r.added > 0 || r.interviews > 0 || r.joined > 0);
-    // Rank by joined, then interviews, then added.
-    rows.sort((a, b) => (b.joined - a.joined) || (b.interviews - a.interviews) || (b.added - a.added) || a.name.localeCompare(b.name));
+    const nameToId = new Map(users.map((u) => [u.name, u.id]));
+    const bump = (id, metric, ts) => {
+      const s = stat.get(id); if (!s) return;
+      if (ts >= startOfMonth) s[metric].month += 1;
+      if (s[metric].week !== undefined && ts >= startOfWeek) s[metric].week += 1;
+      if (s[metric].today !== undefined && ts >= startOfDay) s[metric].today += 1;
+    };
+    const idTs = (iv) => {
+      if (iv.createdAt) return new Date(iv.createdAt).getTime();
+      const m = /^iv(\d+)$/.exec(iv.id || ''); return m ? Number(m[1]) : (iv.at ? new Date(iv.at).getTime() : 0);
+    };
+    cands.forEach((c) => {
+      const ownerId = c.recruiterId || nameToId.get(c.recruiterName);
+      // Candidates added — time-bucketed by when the candidate was created.
+      if (ownerId && c.createdAt) bump(ownerId, 'added', new Date(c.createdAt).getTime());
+      // Interviews scheduled — bucketed by when they were scheduled.
+      (c.interviews || []).forEach((iv) => {
+        const id = iv.scheduledById || nameToId.get(iv.by) || ownerId;
+        if (id) bump(id, 'interviews', idTs(iv));
+      });
+      // Joined this month — offer accepted AND on a Hired stage.
+      const joined = c.offer && c.offer.status === 'accepted' && HIRED_STAGE_IDS.has(String(c.stage || '').toLowerCase());
+      if (joined && ownerId) {
+        const doneAt = (c.offer.offerLetter && c.offer.offerLetter.sentAt) || c.updatedAt;
+        const ts = doneAt ? new Date(doneAt).getTime() : startOfMonth;
+        if (ts >= startOfMonth) { const s = stat.get(ownerId); if (s) s.joined.month += 1; }
+      }
+    });
+    // Attach target comparisons: daily target applies to today's interviews;
+    // a monthly interview expectation = daily × working days.
+    let rows = Array.from(stat.values()).map((s) => ({
+      ...s,
+      targetInfo: {
+        dailyInterviews: s.targets.daily,
+        monthlyInterviews: s.targets.daily * workingDaysInMonth,
+        monthlyJoin: s.targets.monthlyJoin,
+        dailyMet: s.targets.daily ? s.interviews.today >= s.targets.daily : null,
+        monthlyInterviewMet: s.targets.daily ? s.interviews.month >= s.targets.daily * workingDaysInMonth : null,
+        monthlyJoinMet: s.targets.monthlyJoin ? s.joined.month >= s.targets.monthlyJoin : null,
+      },
+    })).filter((r) => r.added.month > 0 || r.interviews.month > 0 || r.joined.month > 0);
+    rows.sort((a, b) => (b.joined.month - a.joined.month) || (b.interviews.month - a.interviews.month) || (b.added.month - a.added.month) || a.name.localeCompare(b.name));
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
     res.json({ rows, leader: rows[0] || null });
   } catch (e) { next(e); }

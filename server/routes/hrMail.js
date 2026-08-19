@@ -226,6 +226,7 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
       mode: b.mode || 'online', round: b.round || '', roundLabel, notes: b.notes || '',
       by: req.hrActor.name, scheduledById: req.hrActor.kind === 'hr' ? req.hrActor.id : null,
       scheduledByAdmin: req.hrActor.kind === 'admin' ? req.hrActor.id : null,
+      createdAt: new Date().toISOString(),
       meetLink: event.meetLink, eventLink: event.htmlLink,
       panelists, feedbackByPanelist: {},
     };
