@@ -1241,9 +1241,13 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     const hiredMode = String(req.query.hired || '').toLowerCase();
     const rejectedMode = String(req.query.rejected || '').toLowerCase();
     const isHired = (r) => isHiredCandidate(r);
-    if (rejectedMode === 'only') rows = rows.filter((r) => r.rejected);
-    else if (hiredMode === 'only') rows = rows.filter((r) => !r.rejected && isHired(r));
-    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !r.rejected);
+    // A candidate counts as rejected if the flag is set OR they sit in a
+    // rejected-type stage (covers older data rejected before the flag existed).
+    const REJECTED_STAGES = new Set(['rejected', 'reject', 'declined', 'disqualified']);
+    const isRejected = (r) => r.rejected || REJECTED_STAGES.has(String(r.stage || '').toLowerCase());
+    if (rejectedMode === 'only') rows = rows.filter(isRejected);
+    else if (hiredMode === 'only') rows = rows.filter((r) => !isRejected(r) && isHired(r));
+    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !isRejected(r));
     // Strip the big resumeText from list payloads.
     res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
@@ -2130,18 +2134,34 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         break;
       case 'set_status':
         if (b.status === 'accepted') {
-          // The candidate must have agreed on a specific logged salary offer.
           const list = offer.salaryDiscussions || [];
           if (!list.length) return res.status(400).json({ error: 'Log at least one salary offer before marking accepted.' });
-          const chosen = list.find((d) => d.id === b.acceptedOfferId);
-          if (!chosen) return res.status(400).json({ error: 'Select which salary offer the candidate accepted.' });
+          // Use the chosen offer if given, else the most recent logged offer.
+          const chosen = list.find((d) => d.id === b.acceptedOfferId) || list[0];
+          const finalPrice = (b.finalPrice != null && String(b.finalPrice).trim()) ? String(b.finalPrice).trim() : (chosen.offered || '');
           offer.acceptedOfferId = chosen.id;
-          offer.acceptedAmount = chosen.offered || '';
-          if (!offer.finalCtc && chosen.offered) offer.finalCtc = chosen.offered;
-          pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${chosen.offered ? ` at ${chosen.offered}` : ''}.`, by: req.hrActor.name });
+          offer.acceptedAmount = finalPrice;
+          offer.finalCtc = finalPrice || offer.finalCtc;
+          if (b.note) offer.acceptNote = String(b.note).slice(0, 500);
+          offer.status = 'accepted';
+          pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${finalPrice ? ` at ${finalPrice}` : ''}${b.note ? ` — ${String(b.note).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
+        } else if (b.status === 'declined') {
+          // Record the final numbers, then move the candidate to Rejected.
+          if (b.candidateAsk != null || b.offered != null) {
+            offer.declinedSummary = { candidateAsk: String(b.candidateAsk || '').slice(0, 60), offered: String(b.offered || '').slice(0, 60) };
+          }
+          if (b.note) offer.declineNote = String(b.note).slice(0, 500);
+          offer.status = 'declined';
+          const reasonBits = [];
+          if (b.offered) reasonBits.push(`offered ${b.offered}`);
+          if (b.candidateAsk) reasonBits.push(`asked ${b.candidateAsk}`);
+          const reasonText = `Offer declined${reasonBits.length ? ` (${reasonBits.join(', ')})` : ''}${b.note ? ` — ${String(b.note).slice(0, 150)}` : ''}`;
+          row.rejected = true; row.stage = 'rejected'; row.rejectedAt = new Date();
+          row.rejectionReason = reasonText.slice(0, 300);
+          pushTimeline(row, { type: 'reject', text: `${reasonText}. Moved to Rejected by ${req.hrActor.name}.`, by: req.hrActor.name });
+        } else {
+          offer.status = b.status || offer.status;
         }
-        offer.status = b.status || offer.status;
-        if (b.status === 'declined') pushTimeline(row, { type: 'offer', text: `Candidate declined the offer.`, by: req.hrActor.name });
         break;
       default: return res.status(400).json({ error: 'Unknown offer operation.' });
     }

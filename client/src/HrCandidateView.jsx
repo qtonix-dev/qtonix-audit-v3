@@ -1329,8 +1329,8 @@ function OfferTab({ c, isAdmin, reload }) {
           <span className="rounded-full bg-orange-100 text-orange-700 px-2.5 py-0.5 text-xs font-bold">{STATUS[offer.status] || offer.status}</span>
         </div>
         <div className="flex gap-2">
-          {offer.status !== 'accepted' && <button onClick={() => setModal('accept')} className="rounded-lg border border-green-200 text-green-600 px-3 py-1.5 text-xs font-bold">Mark accepted</button>}
-          {offer.status !== 'accepted' && <button onClick={() => op({ op: 'set_status', status: 'declined' })} className="rounded-lg border border-red-200 text-red-500 px-3 py-1.5 text-xs font-bold">Mark declined</button>}
+          {offer.status !== 'accepted' && offer.status !== 'declined' && (offer.salaryDiscussions || []).length > 0 && <button onClick={() => setModal('accept')} className="rounded-lg border border-green-200 text-green-600 px-3 py-1.5 text-xs font-bold">Mark accepted</button>}
+          {offer.status !== 'accepted' && offer.status !== 'declined' && (offer.salaryDiscussions || []).length > 0 && <button onClick={() => setModal('decline')} className="rounded-lg border border-red-200 text-red-500 px-3 py-1.5 text-xs font-bold">Mark declined</button>}
         </div>
       </div>
 
@@ -1402,7 +1402,8 @@ function OfferTab({ c, isAdmin, reload }) {
       </Card>
 
       {modal === 'discussion' && <DiscussionModal candidateId={c.id} onClose={() => setModal(null)} onSaved={() => { setModal(null); reload(); }} />}
-      {modal === 'accept' && <AcceptOfferModal offers={offer.salaryDiscussions || []} onClose={() => setModal(null)} onAccept={async (offerId) => { await op({ op: 'set_status', status: 'accepted', acceptedOfferId: offerId }); setModal(null); }} />}
+      {modal === 'accept' && <AcceptOfferModal offer={offer} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} candidateId={c.id} />}
+      {modal === 'decline' && <DeclineOfferModal offer={offer} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} candidateId={c.id} />}
       {modal === 'approval' && <ApprovalModal onClose={() => setModal(null)} onSubmit={async (b) => { await op({ op: 'request_approval', ...b }); setModal(null); }} />}
       {modal === 'loi' && <LoiModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
       {modal === 'letter' && <OfferLetterModal candidate={c} onClose={() => setModal(null)} onSent={() => { setModal(null); reload(); }} />}
@@ -1464,31 +1465,61 @@ function ApprovalModal({ onClose, onSubmit }) {
   );
 }
 
-function AcceptOfferModal({ offers, onClose, onAccept }) {
-  const [sel, setSel] = useState(offers[0] ? offers[0].id : '');
+// Mark Accepted — shows the last offered price (editable) + a note. Sets the
+// final offered price (shown in the Hired tab) and moves to the Hired stage.
+function AcceptOfferModal({ offer, candidateId, onClose, onDone }) {
+  const last = (offer.salaryDiscussions || [])[0] || {};
+  const [price, setPrice] = useState(last.offered || offer.finalCtc || '');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const go = async () => { if (!sel) return; setBusy(true); try { await onAccept(sel); } catch (e) { alert(e.message); setBusy(false); } };
+  const go = async () => {
+    if (!price.trim()) return alert('Enter the final offered price.');
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'accepted', acceptedOfferId: last.id, finalPrice: price.trim(), note: note.trim() }) }); onDone(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
   return (
     <Modal title="Mark offer accepted" onClose={onClose}>
-      {offers.length === 0 ? (
-        <div className="text-sm text-slate-500">Log at least one salary offer before marking the candidate as accepted.</div>
-      ) : (
-        <div className="space-y-2">
-          <div className="text-sm text-slate-500 mb-1">Select the salary offer the candidate agreed to:</div>
-          {offers.map((d) => (
-            <label key={d.id} className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer ${sel === d.id ? 'border-orange-400 bg-orange-50' : 'border-slate-200'}`}>
-              <input type="radio" name="accepted-offer" checked={sel === d.id} onChange={() => setSel(d.id)} />
-              <div className="flex-1">
-                <div className="text-sm font-bold text-[#050A1F]">Offered: {d.offered || '—'} <span className="text-slate-400 font-normal">· Asked: {d.candidateAsk || '—'}</span></div>
-                {d.notes && <div className="text-xs text-slate-500">{d.notes}</div>}
-              </div>
-            </label>
-          ))}
-        </div>
-      )}
+      <div className="space-y-3">
+        <div className="text-sm text-slate-500">Confirm the final offered salary the candidate accepted. This shows in the Hired list, and the candidate moves to Hired.</div>
+        <div><Lbl>Final offered price</Lbl><input className={inp} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 8L" /></div>
+        {last.candidateAsk && <div className="text-xs text-slate-400">Candidate had asked: <b className="text-slate-600">{last.candidateAsk}</b></div>}
+        <div><Lbl>Note</Lbl><textarea rows={3} className={inp} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note about the acceptance…" /></div>
+      </div>
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-        <button onClick={go} disabled={busy || !sel} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#16A34A' }}>{busy ? 'Saving…' : 'Confirm accepted'}</button>
+        <button onClick={go} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#16A34A' }}>{busy ? 'Saving…' : 'Confirm accepted'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Mark Declined — pre-fills the last candidate ask and our offered salary (both
+// editable) + a note. Moves the candidate to Rejected.
+function DeclineOfferModal({ offer, candidateId, onClose, onDone }) {
+  const last = (offer.salaryDiscussions || [])[0] || {};
+  const [ask, setAsk] = useState(last.candidateAsk || '');
+  const [offered, setOffered] = useState(last.offered || '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'declined', candidateAsk: ask.trim(), offered: offered.trim(), note: note.trim() }) }); onDone(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title="Mark offer declined" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="text-sm text-slate-500">Record the final numbers on the table. The candidate will be moved to Rejected.</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Candidate ask</Lbl><input className={inp} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. 10L" /></div>
+          <div><Lbl>Our offer</Lbl><input className={inp} value={offered} onChange={(e) => setOffered(e.target.value)} placeholder="e.g. 8L" /></div>
+        </div>
+        <div><Lbl>Note</Lbl><textarea rows={3} className={inp} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason / context for declining…" /></div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={go} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Saving…' : 'Confirm declined'}</button>
       </div>
     </Modal>
   );

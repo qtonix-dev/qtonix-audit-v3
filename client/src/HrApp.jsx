@@ -614,8 +614,9 @@ function HrRecruitment({ isAdmin, me, intent }) {
   // Scope hints carried in from the dashboard cards (e.g. show all candidates,
   // or only this week's applications).
   const [candScope, setCandScope] = useState(intent && intent.candScope ? intent.candScope : null); // 'all' | 'mine' | null
-  // Candidate List view: My / All (scope) plus Hired / Rejected sub-lists.
-  const [candView, setCandView] = useState(intent && intent.candView ? intent.candView : null); // 'mine' | 'all' | 'hired' | 'rejected'
+  // Candidate List view: scope (My/All) plus which list (active/hired/rejected).
+  const [candView, setCandView] = useState(intent && intent.candView ? intent.candView : null); // legacy, unused
+  const [candList, setCandList] = useState(intent && intent.candList ? intent.candList : 'active'); // 'active' | 'hired' | 'rejected'
   const [candWeekOnly, setCandWeekOnly] = useState(!!(intent && intent.weekOnly));
   const [jobScope, setJobScope] = useState(intent && intent.jobScope ? intent.jobScope : null); // 'mine' | 'all' | null
   const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
@@ -658,11 +659,20 @@ function HrRecruitment({ isAdmin, me, intent }) {
           </div>
         )}
         {tab === 'candidates' && (() => {
-          const view = candView || (isAdmin ? 'all' : 'mine');
-          const B = ({ id, label }) => <button onClick={() => setCandView(id)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>;
+          const scope = candScope || (isAdmin ? 'all' : 'mine');
+          const list = candList || 'active';
+          const Btn = (active, onClick, label) => <button onClick={onClick} className={`px-3 py-1.5 rounded-md text-xs font-bold ${active ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>;
           return (
-            <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-              <B id="mine" label="My candidates" /><B id="all" label="All candidates" /><B id="hired" label="Hired" /><B id="rejected" label="Rejected" />
+            <div className="flex items-center gap-2">
+              <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                {Btn(scope === 'mine', () => setCandScope('mine'), 'My candidates')}
+                {Btn(scope === 'all', () => setCandScope('all'), 'All candidates')}
+              </div>
+              <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                {Btn(list === 'active', () => setCandList('active'), 'Active')}
+                {Btn(list === 'hired', () => setCandList('hired'), 'Hired')}
+                {Btn(list === 'rejected', () => setCandList('rejected'), 'Rejected')}
+              </div>
             </div>
           );
         })()}
@@ -674,7 +684,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
         )}
       </div>
       {tab === 'jobs' && <JobList jobs={jobs} isAdmin={isAdmin} me={me} onEdit={(j) => startBuilder(j)} reload={loadJobs} onViewApplicants={viewApplicants} scope={jobScope || (isAdmin ? 'all' : 'mine')} />}
-      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} view={candView || (isAdmin ? 'all' : 'mine')} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
+      {tab === "candidates" && <CandidateList jobs={jobs} isAdmin={isAdmin} me={me} initialJobFilter={candFilterJob} initialSource={candSourceFilter} scope={candScope || (isAdmin ? 'all' : 'mine')} listMode={candList || 'active'} weekOnly={candWeekOnly} openCandidateId={intent && intent.openCandidateId} openCandidateTab={intent && intent.openCandidateTab} />}
       {tab === 'pipeline' && <RecruitPipeline jobs={jobs} scope={candScope || (isAdmin ? 'all' : 'mine')} />}
     </div>
   );
@@ -964,7 +974,7 @@ function RejectionSummary({ count, filters }) {
   );
 }
 
-function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, view, weekOnly, openCandidateId, openCandidateTab }) {
+function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, scope, listMode, weekOnly, openCandidateId, openCandidateTab }) {
   const [cands, setCands] = useState([]);
   const [viewId, setViewId] = useState(null);
   const [viewTab, setViewTab] = useState(null);
@@ -982,14 +992,20 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, vie
   const [hrFilter, setHrFilter] = useState('');
   const [monthOnly, setMonthOnly] = useState(false); // "This month" for hired/rejected views
   const [rejReason, setRejReason] = useState(null); // candidate whose rejection reason is shown
-  const [hrList, setHrList] = useState([]); // for the HR filter on hired/rejected views
-  useEffect(() => { hrApi('/employees').then((r) => setHrList((r || []).filter((u) => !String(u._id).startsWith('admin:')))).catch(() => {}); }, []);
+  const [hrList, setHrList] = useState([]); // HR-department staff for the HR filter
+  useEffect(() => {
+    hrApi('/employees').then((r) => {
+      const HR_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
+      const inHrDept = (u) => /^(hr|human resources)$/i.test(String(u.department || '').trim());
+      setHrList((r || []).filter((u) => !String(u._id).startsWith('admin:') && u.active !== false && (inHrDept(u) || HR_TYPES.includes(u.type))));
+    }).catch(() => {});
+  }, []);
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
-  const curView = view || (isAdmin ? 'all' : 'mine');
-  const isHiredView = curView === 'hired';
-  const isRejectedView = curView === 'rejected';
+  const curView = listMode || 'active';
+  const isHiredView = listMode === 'hired';
+  const isRejectedView = listMode === 'rejected';
   const myId = me && (me._id || me.id);
-  const mineOnly = curView === 'mine';
+  const mineOnly = (scope || (isAdmin ? 'all' : 'mine')) === 'mine';
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
   const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
   const isThisMonth = (c) => { const iso = c.rejectedAt || c.updatedAt || c.createdAt; if (!iso) return false; const d = new Date(iso); const now = new Date(); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); };
@@ -1051,45 +1067,45 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, vie
       {isRejectedView && <RejectionSummary count={filtered.length} filters={{ dept: deptFilter, job: jobFilter, hr: hrFilter, monthOnly }} />}
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        {!isHiredView && !isRejectedView && <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>}
-        {(isHiredView || isRejectedView) && <button onClick={() => setMonthOnly((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${monthOnly ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This month</button>}
-        <input className={F + ' flex-1 min-w-[200px]'} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills or resume…" />
-        <select className={F} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
+      <div className={`flex items-center gap-2 mb-4 ${(isHiredView || isRejectedView) ? 'flex-nowrap overflow-x-auto pb-1' : 'flex-wrap'}`}>
+        {!isHiredView && !isRejectedView && <button onClick={() => setWeekFilter((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border shrink-0 ${weekFilter ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This week</button>}
+        {(isHiredView || isRejectedView) && <button onClick={() => setMonthOnly((v) => !v)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border shrink-0 ${monthOnly ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>This month</button>}
+        <input className={F + ((isHiredView || isRejectedView) ? ' shrink min-w-[140px]' : ' flex-1 min-w-[200px]')} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, skills…" />
+        <select className={F + ' shrink-0'} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
           <option value="">All positions</option>
           {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
         </select>
         {(isHiredView || isRejectedView) && (
-          <select className={F} value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+          <select className={F + ' shrink-0'} value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
             <option value="">All departments</option>
             {Array.from(new Set(jobs.map((j) => j.department).filter(Boolean))).map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         )}
         {!isHiredView && !isRejectedView && (
-          <select className={F} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+          <select className={F + ' shrink-0'} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
             <option value="">All stages</option>
             {allStages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            <option value="rejected">Rejected</option>
+            {!allStages.some((s) => String(s.id).toLowerCase() === 'rejected') && <option value="rejected">Rejected</option>}
           </select>
         )}
-        <select className={F} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+        <select className={F + ' shrink-0'} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
           <option value="">All sources</option>
           <option value="manual">Manual</option>
           <option value="public_form">Application form</option>
         </select>
         {(isHiredView || isRejectedView) && (
-          <select className={F} value={hrFilter} onChange={(e) => setHrFilter(e.target.value)}>
+          <select className={F + ' shrink-0'} value={hrFilter} onChange={(e) => setHrFilter(e.target.value)}>
             <option value="">All HR</option>
             {hrList.map((u) => <option key={u._id} value={u._id}>{u.name}</option>)}
           </select>
         )}
         {allTags.length > 0 && !isHiredView && !isRejectedView && (
-          <select className={F} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+          <select className={F + ' shrink-0'} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
             <option value="">All tags</option>
             {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         )}
-        {(q || jobFilter || stageFilter || sourceFilter || tagFilter || deptFilter || hrFilter || monthOnly) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); setDeptFilter(''); setHrFilter(''); setMonthOnly(false); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+        {(q || jobFilter || stageFilter || sourceFilter || tagFilter || deptFilter || hrFilter || monthOnly) && <button onClick={() => { setQ(''); setJobFilter(''); setStageFilter(''); setSourceFilter(''); setTagFilter(''); setDeptFilter(''); setHrFilter(''); setMonthOnly(false); }} className="text-xs font-bold text-slate-400 hover:text-slate-600 shrink-0">Clear</button>}
       </div>
 
       {/* Bulk action bar */}
@@ -1114,6 +1130,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, vie
                 <th className="px-2.5 py-2.5"><input type="checkbox" checked={allShownSelected} onChange={toggleAll} /></th>
                 <th className="px-2.5 py-2.5">Candidate</th><th className="px-2.5 py-2.5">Phone</th><th className="px-2.5 py-2.5">Position</th>
                 <th className="px-2.5 py-2.5">Exp</th><th className="px-2.5 py-2.5">Match</th><th className="px-2.5 py-2.5">Status</th>
+                {isHiredView && <th className="px-2.5 py-2.5">Hired at</th>}
                 <th className="px-2.5 py-2.5">Recruiter</th><th className="px-2.5 py-2.5">Updated</th><th className="px-2.5 py-2.5 text-right">Actions</th>
               </tr></thead>
               <tbody>
@@ -1138,6 +1155,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, vie
                       <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{totalExperience(c)}</td>
                       <td className="px-2.5 py-2"><ResumeMatchBadge match={c.resumeMatch} /></td>
                       <td className="px-2.5 py-2"><span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ background: st.color + '18', color: st.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />{st.label}</span></td>
+                      {isHiredView && <td className="px-2.5 py-2 whitespace-nowrap font-bold text-green-700">{(c.offer && (c.offer.acceptedAmount || c.offer.finalCtc)) || '—'}</td>}
                       <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{titleCase((c.recruiterName || '—').split(' ')[0])}</td>
                       <td className="px-2.5 py-2 text-slate-400 text-[11px] whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
                       <td className="px-2.5 py-2">
