@@ -309,7 +309,9 @@ router.get('/:id/results', requireAuth, requireAdmin, async (req, res, next) => 
       period, total, analysed: withSent.length,
       sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
       good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
+      departmentSummaries: analysis && analysis.departmentSummaries ? analysis.departmentSummaries : [],
       byBranch: groupBy((r) => r.branch), // team split
+      byDepartment: groupBy((r) => r.department), // department split
       responses: responseDetail,
       analysedAt: analysis ? analysis.at : null,
     });
@@ -342,10 +344,10 @@ router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) =>
       const fu = (r.followups || []).map((f) => `${f.question} → ${f.answer}`).join('; ');
       return { department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, text: txt + (fu ? ` | Follow-ups: ${fu}` : '') };
     });
-    let agg = { good: [], improve: [], summary: '' };
+    let agg = { good: [], improve: [], summary: '', departmentSummaries: [] };
     try { agg = await aggregateAnalysis(key, { surveyName: survey.name, blobs }); } catch {}
     const nextAnalysis = { ...(survey.analysis || {}) };
-    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary };
+    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, departmentSummaries: agg.departmentSummaries || [] };
     survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
     res.json({ ok: true });
   } catch (e) { next(e); }

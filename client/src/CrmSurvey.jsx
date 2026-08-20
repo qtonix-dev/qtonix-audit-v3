@@ -296,6 +296,9 @@ function SurveyResults({ surveys }) {
 // Shared results renderer (used by the live results tab and the test-results modal).
 function ResultsBody({ data }) {
   if (data.total === 0) return <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No responses yet for this period.</div>;
+  const good = data.good || [];
+  const improve = data.improve || [];
+  const deptSummaries = data.departmentSummaries || [];
   return (
     <div className="space-y-6">
       <div className="text-xs text-slate-400">{data.total} response{data.total === 1 ? '' : 's'} · {data.analysed} analysed{data.analysedAt ? ` · last analysed ${new Date(data.analysedAt).toLocaleString()}` : ''}</div>
@@ -305,28 +308,78 @@ function ResultsBody({ data }) {
         <SentimentCircle label="Neutral Sentiment" pct={data.sentiment.neutral} color="#F59E0B" />
         <SentimentCircle label="Negative Sentiment" pct={data.sentiment.negative} color="#DC2626" />
       </div>
-      {(data.summary || data.good.length || data.improve.length) && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-green-100 p-5"><div className="text-sm font-extrabold text-green-700 mb-2">Top 3 good points</div><ul className="space-y-1.5">{(data.good.length ? data.good : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-green-500">✔</span>{g}</li>)}</ul></div>
-          <div className="bg-white rounded-2xl border border-amber-100 p-5"><div className="text-sm font-extrabold text-amber-700 mb-2">Top 3 to improve</div><ul className="space-y-1.5">{(data.improve.length ? data.improve : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-amber-500">▲</span>{g}</li>)}</ul></div>
+
+      {/* Detailed overall summary */}
+      {data.summary && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">Overall mood — detailed read</div>
+          <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{data.summary}</p>
         </div>
       )}
-      {data.summary && <div className="bg-white rounded-2xl border border-slate-200/70 p-5 text-sm text-slate-600"><b className="text-[#050A1F]">Overall mood:</b> {data.summary}</div>}
+
+      {/* Top 5 good / Top 5 to improve */}
+      {(good.length || improve.length) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-green-100 p-5">
+            <div className="text-sm font-extrabold text-green-700 mb-2">Top 5 good points</div>
+            <ol className="space-y-1.5">{(good.length ? good : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="font-bold text-green-500 shrink-0">{i + 1}.</span>{g}</li>)}</ol>
+          </div>
+          <div className="bg-white rounded-2xl border border-amber-100 p-5">
+            <div className="text-sm font-extrabold text-amber-700 mb-2">Top 5 to improve</div>
+            <ol className="space-y-1.5">{(improve.length ? improve : ['—']).map((g, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="font-bold text-amber-500 shrink-0">{i + 1}.</span>{g}</li>)}</ol>
+          </div>
+        </div>
+      )}
+
+      {/* By department — graph + AI summary per department */}
+      {(data.byDepartment && data.byDepartment.length > 0) && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-3">By department</div>
+          <div className="space-y-3">
+            {data.byDepartment.map((r) => {
+              const ds = deptSummaries.find((d) => (d.name || '').toLowerCase() === (r.key || '').toLowerCase());
+              return (
+                <div key={r.key} className="rounded-xl border border-slate-100 p-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-32 truncate text-sm font-bold text-slate-700">{r.key}</div>
+                    <div className="flex-1 h-4 rounded-full overflow-hidden flex bg-slate-100">
+                      <div style={{ width: `${r.positive}%`, background: '#16A34A' }} title={`Positive ${r.positive}%`} />
+                      <div style={{ width: `${r.neutral}%`, background: '#F59E0B' }} title={`Neutral ${r.neutral}%`} />
+                      <div style={{ width: `${r.negative}%`, background: '#DC2626' }} title={`Negative ${r.negative}%`} />
+                    </div>
+                    <div className="text-xs text-slate-400 w-24 text-right">{r.count} resp · {r.avgScore != null ? `${r.avgScore}/5` : '—'}</div>
+                  </div>
+                  {ds && ds.summary && <p className="text-[13px] text-slate-500 leading-relaxed mt-2 pl-1">{ds.summary}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* By team (branch) — kept as a compact graph */}
       <SentimentBreakdown title="By team" rows={data.byBranch} />
+
+      {/* Individual responses — now with the AI's read of what each person thinks */}
       {data.responses && data.responses.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
           <div className="text-sm font-extrabold text-[#050A1F] mb-1">Individual responses</div>
-          <div className="text-[11px] text-slate-400 mb-3">Hesitation = lingered noticeably or heavily self-edited on a question — a hint they may have answered diplomatically. Fed to the AI for a deeper read.</div>
-          <div className="space-y-1.5">{data.responses.map((r) => {
+          <div className="text-[11px] text-slate-400 mb-3">Each card shows the AI’s read of what the person actually thinks and feels. Hesitation = lingered noticeably or heavily self-edited on a question — a hint they may have answered diplomatically.</div>
+          <div className="space-y-2">{data.responses.map((r) => {
             const sent = r.sentiment && r.sentiment.label;
             const sc = sent === 'positive' ? 'bg-green-100 text-green-700' : sent === 'negative' ? 'bg-red-100 text-red-700' : sent === 'neutral' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400';
             return (
-              <div key={r._id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2">
-                <div className="w-36 min-w-0"><div className="text-sm font-bold text-[#050A1F] truncate">{r.employeeName || 'User'}</div><div className="text-[10px] text-slate-400 truncate">{r.branch || '—'}</div></div>
-                <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sc}`}>{sent || 'not analysed'}</span>
-                {r.sentiment && r.sentiment.tone && <span className="text-[11px] text-slate-500 italic">{r.sentiment.tone}</span>}
-                {r.hesitationCount > 0 && <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-purple-100 text-purple-700" title={r.hesitationQuestions.join(' · ')}>⚠ hesitation ×{r.hesitationCount}</span>}
-                <div className="ml-auto text-xs text-slate-400 shrink-0">{r.avgScore != null ? `${r.avgScore.toFixed(1)}/5` : '—'}</div>
+              <div key={r._id} className="rounded-xl border border-slate-100 px-3 py-2.5">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-36 min-w-0"><div className="text-sm font-bold text-[#050A1F] truncate">{r.employeeName || 'User'}</div><div className="text-[10px] text-slate-400 truncate">{r.department || '—'}{r.branch ? ` · ${r.branch}` : ''}</div></div>
+                  <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sc}`}>{sent || 'not analysed'}</span>
+                  {r.sentiment && r.sentiment.tone && <span className="text-[11px] text-slate-500 italic">{r.sentiment.tone}</span>}
+                  {r.hesitationCount > 0 && <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-purple-100 text-purple-700" title={r.hesitationQuestions.join(' · ')}>⚠ hesitation ×{r.hesitationCount}</span>}
+                  <div className="ml-auto text-xs text-slate-400 shrink-0">{r.avgScore != null ? `${r.avgScore.toFixed(1)}/5` : '—'}</div>
+                </div>
+                {r.sentiment && r.sentiment.summary
+                  ? <p className="text-[13px] text-slate-600 leading-relaxed mt-2">{r.sentiment.summary}</p>
+                  : (r.sentiment && r.sentiment.note ? <p className="text-[13px] text-slate-500 leading-relaxed mt-2">{r.sentiment.note}</p> : null)}
               </div>
             );
           })}</div>

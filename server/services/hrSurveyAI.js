@@ -101,37 +101,48 @@ async function analyseResponse(apiKey, { questions, answers, followups, avgScore
     'ALSO weigh response behaviour: lingering long on a question or heavily self-editing often signals',
     'the person wanted to say something but softened it out of caution or fear — read past the diplomatic surface.',
     'Classify overall sentiment as exactly one of: positive, neutral, negative.',
-    'Give a one-word tone (e.g. frustrated, hopeful, disengaged, content, anxious, guarded) and a short note (<=24 words)',
-    'that, where relevant, calls out any guardedness the behaviour suggests.',
-    'Return STRICT JSON: {"label":"...","tone":"...","note":"..."}. No commentary.',
+    'Give a one-word tone (e.g. frustrated, hopeful, disengaged, content, anxious, guarded), a short note (<=24 words),',
+    'and a "summary": a 2-3 sentence plain-language read of what THIS person actually thinks and feels — the substance of',
+    'their view, what is driving it, and anything they seem to be holding back. Do not use their name.',
+    'Return STRICT JSON: {"label":"...","tone":"...","note":"...","summary":"..."}. No commentary.',
   ].join(' ');
-  const out = await callClaude(apiKey, { system, maxTokens: 300, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}${behaviourText}` }] });
+  const out = await callClaude(apiKey, { system, maxTokens: 500, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}${behaviourText}` }] });
   const p = parseJson(out);
   const label = ['positive', 'neutral', 'negative'].includes(p.label) ? p.label : 'neutral';
-  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 200) };
+  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 200), summary: String(p.summary || '').slice(0, 600) };
 }
 
 /**
- * Monthly roll-up across all responses. `responses` is an array of
+ * Roll-up across all responses. `responses` is an array of
  * { department, branch, avgScore, sentiment, answers-as-text }. Returns
- * { good:[3], improve:[3], summary }. Sentiment %s and dept/branch splits are
- * computed in the route from stored per-response sentiment; this call adds the
- * qualitative good/improvement points.
+ * { good:[5], improve:[5], summary, departmentSummaries:[{name, summary, ...}] }.
+ * Sentiment %s and dept/branch splits are computed in the route from stored
+ * per-response sentiment; this call adds the qualitative analysis.
  */
 async function aggregateAnalysis(apiKey, { surveyName, blobs }) {
+  // Which departments are present, so we can ask for a per-department read.
+  const depts = Array.from(new Set(blobs.map((b) => (b.department || '').trim()).filter(Boolean)));
+  const deptLine = depts.length
+    ? `The responses span these departments: ${depts.join(', ')}. For departmentSummaries, produce one entry PER department listed, each a 2-3 sentence read of how that department specifically feels and why (grounded in their responses). If a department has too few responses to read confidently, say so briefly in its summary.`
+    : 'There are no distinct departments; return an empty departmentSummaries array.';
   const system = [
     'You are a people-analytics AI summarising an employee-mood survey for leadership.',
-    'From the anonymised set of employee responses, identify the strongest themes.',
-    'Give exactly 3 "good" points (what is working well) and exactly 3 "improve" points (where action is needed).',
-    'Each point: a short, specific phrase (<=12 words), grounded in the responses, no names.',
-    'Also give a 1-2 sentence overall summary of the mood.',
-    'Return STRICT JSON: {"good":["","",""],"improve":["","",""],"summary":"..."}. No commentary.',
+    'From the anonymised set of employee responses, produce a thorough, decision-useful analysis.',
+    'Give exactly 5 "good" points (what is working well) and exactly 5 "improve" points (where action is needed).',
+    'Each point: a specific, grounded phrase (<=16 words), no names.',
+    'Write a DETAILED overall summary (4-6 sentences): the general mood, the main drivers behind it,',
+    'any notable tensions or divides, how strongly people feel, and what leadership should pay attention to first.',
+    deptLine,
+    'Return STRICT JSON: {"good":["","","","",""],"improve":["","","","",""],"summary":"...","departmentSummaries":[{"name":"","summary":""}]}. No commentary.',
   ].join(' ');
   const joined = blobs.slice(0, 200).map((b, i) => `#${i + 1} [${b.department || '—'} / ${b.branch || '—'}] score ${b.avgScore != null ? b.avgScore.toFixed(1) : '—'} · ${b.sentiment || '—'}\n${b.text}`).join('\n\n');
-  const out = await callClaude(apiKey, { system, maxTokens: 700, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nResponses:\n\n${joined}` }] });
+  const out = await callClaude(apiKey, { system, maxTokens: 1600, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nResponses:\n\n${joined}` }] });
   const p = parseJson(out);
-  const trim3 = (a) => (Array.isArray(a) ? a.slice(0, 3).map((s) => String(s).slice(0, 120)) : []);
-  return { good: trim3(p.good), improve: trim3(p.improve), summary: String(p.summary || '').slice(0, 400) };
+  const trimN = (a, n, len) => (Array.isArray(a) ? a.slice(0, n).map((s) => String(s).slice(0, len)) : []);
+  const deptSummaries = Array.isArray(p.departmentSummaries)
+    ? p.departmentSummaries.slice(0, 40).map((d) => ({ name: String(d.name || '').slice(0, 80), summary: String(d.summary || '').slice(0, 600) })).filter((d) => d.name)
+    : [];
+  return { good: trimN(p.good, 5, 140), improve: trimN(p.improve, 5, 140), summary: String(p.summary || '').slice(0, 1200), departmentSummaries: deptSummaries };
 }
 
 /**
