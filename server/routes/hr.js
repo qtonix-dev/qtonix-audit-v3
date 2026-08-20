@@ -11,6 +11,33 @@ const imagekit = require('../services/imagekit');
 const router = express.Router();
 
 const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'trainee', 'intern', 'employee'];
+
+// Resolve the recruitment mailbox address: the legacy single hrMailbox if set,
+// else the 'default' (or first) entry from the hrMailboxes list. Mirrors the
+// resilient lookup used by the careers auto-emails.
+function mailboxEmail(s) {
+  if (s && s.hrMailbox && s.hrMailbox.email) return s.hrMailbox.email;
+  const list = (s && Array.isArray(s.hrMailboxes)) ? s.hrMailboxes : [];
+  const def = list.find((m) => m.id === 'default') || list[0];
+  return (def && def.email) || '';
+}
+
+// Signature block for a rejection email from the acting HR person.
+async function rejectSignature(hrActor, mailbox) {
+  let email = mailbox || 'career@qtonix.com';
+  let name = (hrActor && hrActor.name) || 'Qtonix Recruitment Team';
+  let title = 'Talent Acquisition · Qtonix';
+  try {
+    if (hrActor && hrActor.kind === 'hr') {
+      const u = await HrUser.findByPk(hrActor.id);
+      if (u) { name = u.name || name; if (u.designation) title = `${u.designation} · Qtonix`; if (u.email) email = u.email; }
+    } else if (hrActor && hrActor.kind === 'admin') {
+      const u = await User.findByPk(hrActor.id);
+      if (u && u.email) email = u.email;
+    }
+  } catch {}
+  return { name, title, email };
+}
 // Roles that count as "HR staff" for edit permissions on locked profile
 // sections (payroll, performance, identity). Everyone else is view-only there.
 const HR_STAFF_TYPES = ['hr', 'recruiter'];
@@ -1596,16 +1623,21 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
     if (req.body.sendEmail && row.email && req.body.subject && req.body.body) {
       try {
         const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
         const s = await Settings.findOne({ where: { singleton: 'settings' } });
         const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
-        const from = (s && s.hrMailbox) || null;
-        if (token && from) {
-          await gmail.sendMessage(s, token, from, { from, to: row.email, subject: String(req.body.subject).slice(0, 200), bodyHtml: String(req.body.body).slice(0, 8000), attachments: [] });
+        const mailbox = mailboxEmail(s);
+        if (token && mailbox) {
+          const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+          const sig = await rejectSignature(req.hrActor, mailbox);
+          // Wrap the HR-reviewed draft body in the branded rejection template.
+          const bodyHtml = hrEmail.rejectionEmail({ role: job ? job.title : '', bodyHtml: String(req.body.body).slice(0, 8000), signature: sig });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] });
           emailed = true;
           pushTimeline(row, { type: 'rejection', text: `Rejection email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
           await row.save();
         }
-      } catch { /* email is best-effort */ }
+      } catch (e) { console.error('[reject] email failed:', e.message); }
     }
     res.json({ ...row.toJSON(), emailed });
   } catch (e) { next(e); }
@@ -1661,9 +1693,9 @@ router.post('/candidates/:id/reject-email/draft', requireHrAccess, async (req, r
       // Ensure existing <p> tags carry spacing even if the client strips classes.
       body = body.replace(/<p(?![^>]*style=)/gi, '<p style="margin:0 0 14px;line-height:1.6;"');
     }
-    // Always append a signature — the HR's own if set, else a clean default.
-    if (hrSig) body += `<br>${hrSig}`;
-    else body += `<p style="margin:14px 0 0;line-height:1.6;">Warm regards,<br>${req.hrActor.name}<br>Talent Acquisition, Qtonix</p>`;
+    // The branded rejection template appends the HR signature block on send, so
+    // the draft body stays as clean message paragraphs. If the HR has a custom
+    // signature, it's still applied by the template via their profile.
     res.json({ subject: parsed.subject || `Update on your application${job ? ` — ${job.title}` : ''}`, body });
   } catch (e) { next(e); }
 });
@@ -1760,11 +1792,14 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
       const ivs = (row.interviews || []).map((iv) => {
         if (iv.id !== targetIvId) return iv;
         const fbp = { ...(iv.feedbackByPanelist || {}) };
-        const panelHasAdmin = (iv.panelists || []).some((p) => String(p.id) === adminKey);
-        const rawMatch = (iv.panelists || []).some((p) => String(p.id) === String(actorId));
-        // Key it however the panelist is stored; set both to be safe.
-        if (panelHasAdmin) fbp[adminKey] = true;
-        if (rawMatch || !panelHasAdmin) fbp[actorId] = true;
+        // Mark ONLY the submitting person's own panelist entry, so a co-panelist's
+        // pending reminder is untouched. Match the actor against how they're stored
+        // in the panel (raw id, 'admin:<id>', or by name), and flag that exact key.
+        for (const p of (iv.panelists || [])) {
+          const pid = String(p.id);
+          const isMe = pid === String(actorId) || pid === adminKey || pid.replace(/^admin:/, '') === String(actorId) || (p.name && p.name === req.hrActor.name);
+          if (isMe) fbp[p.id] = true;
+        }
         return { ...iv, feedbackByPanelist: fbp };
       });
       row.interviews = ivs; row.changed('interviews', true);
@@ -2858,8 +2893,13 @@ router.get('/pending-offers', requireHrAccess, async (req, res, next) => {
 
 router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canViewInternal(req)) return res.json({ stillOpen: 0, items: [], byOwner: [] });
+    // Schedulers/admins get the full missed-commitments view. Regular employees
+    // who sit on interview panels still need to see THEIR OWN pending interview
+    // feedback, so we don't block them entirely — we just restrict them to their
+    // own feedback items below (panelOnly).
+    const fullView = canViewInternal(req);
     const isAdmin = !!req.isHrAdmin;
+    const panelOnly = !fullView;
     const meId = req.hrActor.id;
     const meName = req.hrActor.name;
     const now = Date.now();
@@ -2885,14 +2925,32 @@ router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
       for (const iv of (c.interviews || [])) {
         const at = iv.at ? new Date(iv.at).getTime() : 0;
         if (!at || now < at + GRACE) continue; // not yet past the interview + grace
+        // A fully-completed interview clears all its feedback reminders.
+        if (iv.completed) continue;
         const fb = iv.feedbackByPanelist || {};
+        // Feedback entries logged against this interview, for resolving whether a
+        // specific panelist has submitted even if the panelist-key wasn't set.
+        const ivFeedback = (c.feedback || []).filter((f) => f.interviewId === iv.id);
+        // Has THIS panelist submitted? True if their panelist-key is flagged, or
+        // a feedback entry for this interview was authored by them (matched by
+        // id, admin:<id>, or name). This keeps tracking per-panelist: one
+        // panelist submitting never clears another's pending reminder.
+        const panelistSubmitted = (p) => {
+          if (fb[p.id]) return true;
+          const pidRaw = String(p.id).replace(/^admin:/, '');
+          return ivFeedback.some((f) => String(f.byId) === pidRaw || `admin:${f.byId}` === String(p.id) || (f.by && p.name && f.by === p.name));
+        };
         for (const p of (iv.panelists || [])) {
-          if (fb[p.id]) continue; // submitted
+          if (panelistSubmitted(p)) continue; // this panelist has submitted
           const aid = `fb-${c.id}-${iv.id}-${p.id}`;
           if (dismissed.includes(aid)) continue;
-          // Visibility: admin sees all; a panelist sees their own missing feedback;
-          // the assigned recruiter sees it for their candidate.
-          const relevant = isAdmin || p.id === meId || mineOwner(c);
+          // Does this panelist entry refer to the current viewer?
+          const pidRaw = String(p.id).replace(/^admin:/, '');
+          const isMe = String(p.id) === String(meId) || pidRaw === String(meId) || (p.name && p.name === meName);
+          // Visibility: in panel-only mode a viewer sees ONLY their own pending
+          // feedback. In full view, admins see all, the recruiter sees their
+          // candidate's, and a panelist sees their own.
+          const relevant = panelOnly ? isMe : (isAdmin || isMe || mineOwner(c));
           if (!relevant) continue;
           items.push({ activityId: aid, candidateId: c.id, candidateName: c.name, kind: 'feedback',
             title: `Interview feedback pending — ${iv.roundLabel || iv.round || 'interview'}`,
@@ -2901,6 +2959,10 @@ router.get('/missed-commitments', requireHrAccess, async (req, res, next) => {
           bump(p.id, p.name || ownerName);
         }
       }
+
+      // Panel-only viewers see just their own feedback reminders — skip the
+      // recruiter-oriented sections (calls, tasks, stalled stages, etc.).
+      if (panelOnly) continue;
 
       // 2) Overdue calls / tasks.
       for (const a of (c.activities || [])) {

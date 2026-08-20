@@ -42,7 +42,7 @@ function shell(opts) {
   const {
     kicker = 'Qtonix Recruitment', headline = '', subhead = '',
     greetingName = '', introHtml = '', details = [], ctaLabel, ctaUrl, ctaNote = '',
-    outroHtml = '', signature = {},
+    outroHtml = '', signature = {}, rawBody = null,
   } = opts;
 
   const detailRows = details.map((d) => detailRow(d.label, d.value)).join('');
@@ -91,8 +91,10 @@ function shell(opts) {
       </td></tr>
 
       <tr><td style="padding:32px 44px 6px;">
-        <p style="font-size:16px;color:${INK};line-height:1.65;margin:0 0 15px;">Hi ${esc(firstName(greetingName))},</p>
-        <div style="font-size:16px;color:${INK};line-height:1.65;">${introHtml}</div>
+        ${rawBody != null
+          ? `<div style="font-size:16px;color:${INK};line-height:1.65;">${rawBody}</div>`
+          : `<p style="font-size:16px;color:${INK};line-height:1.65;margin:0 0 15px;">Hi ${esc(firstName(greetingName))},</p>
+        <div style="font-size:16px;color:${INK};line-height:1.65;">${introHtml}</div>`}
       </td></tr>
 
       ${detailsCard}
@@ -234,7 +236,21 @@ function applicationInternalNotice({ candidateName, role, candidateEmail, candid
   });
 }
 
+// Candidate rejection — wraps the AI-drafted body (already paragraphed) in the
+// branded shell. No CTA button; a gentle, respectful tone. The body already
+// contains its own greeting, so it's passed as rawBody.
+function rejectionEmail({ role, bodyHtml, signature }) {
+  return shell({
+    kicker: 'Update on Your Application',
+    headline: 'An update on your application',
+    subhead: role || '',
+    rawBody: bodyHtml || '',
+    signature,
+  });
+}
+
 module.exports = {
+  rejectionEmail,
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,
 };

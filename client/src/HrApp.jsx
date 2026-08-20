@@ -2067,13 +2067,16 @@ function MyInterviews() {
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [dayModal, setDayModal] = useState(null); // {dateKey, items}
   const [partModal, setPartModal] = useState(null); // interview whose participants are shown
+  const [viewAction, setViewAction] = useState(null); // initial action for the candidate view
   const load = () => {
     hrApi('/all-interviews').then((r) => setInterviews(r.interviews || [])).catch(() => setInterviews([]));
     hrApi('/my-schedule-requests').then((r) => setReqs(r.requests || [])).catch(() => {});
   };
   useEffect(() => { load(); }, []);
   const confirmSlots = async (candidateId, slotIds) => { try { await hrApi(`/candidates/${candidateId}/self-schedule/confirm`, { method: 'POST', body: JSON.stringify({ slotIds }) }); load(); } catch (e) { alert(e.message); } };
-  if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
+  // Jump to the candidate's Feedback tab and mark the interview completed.
+  const completeFromPopup = (iv) => { setPartModal(null); setViewAction({ type: 'completeInterview', interviewId: iv.interviewId || iv.id }); setViewId(iv.candidateId); };
+  if (viewId) return <HrCandidateView candidateId={viewId} initialTab={viewAction ? 'feedback' : undefined} initialAction={viewAction} onBack={() => { setViewId(null); setViewAction(null); load(); }} />;
   if (!interviews) return <div className="text-slate-400 text-sm">Loading…</div>;
 
   const dateKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
@@ -2168,7 +2171,7 @@ function MyInterviews() {
       )}
 
       {dayModal && <DayInterviewsModal day={dayModal} onClose={() => setDayModal(null)} onPick={(iv) => { setDayModal(null); setPartModal(iv); }} />}
-      {partModal && <InterviewParticipantsModal iv={partModal} onClose={() => setPartModal(null)} onOpen={(cid) => { setPartModal(null); setViewId(cid); }} />}
+      {partModal && <InterviewParticipantsModal iv={partModal} onClose={() => setPartModal(null)} onOpen={(cid) => { setPartModal(null); setViewId(cid); }} onComplete={completeFromPopup} />}
     </div>
   );
 }
@@ -2192,7 +2195,7 @@ function DayInterviewsModal({ day, onClose, onPick }) {
   );
 }
 
-function InterviewParticipantsModal({ iv, onClose, onOpen }) {
+function InterviewParticipantsModal({ iv, onClose, onOpen, onComplete }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -2220,11 +2223,14 @@ function InterviewParticipantsModal({ iv, onClose, onOpen }) {
             </div>
           </div>
         </div>
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-between gap-2">
+        <div className="px-6 py-4 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
           <button onClick={() => onOpen(iv.candidateId)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Open candidate</button>
-          {iv.meetLink
-            ? <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Join Google Meet</a>
-            : <span className="rounded-lg px-5 py-2 text-sm font-bold text-slate-400 bg-slate-100">No Meet link</span>}
+          <div className="flex gap-2">
+            <button onClick={() => onComplete && onComplete(iv)} className="rounded-lg border border-green-300 text-green-700 px-4 py-2 text-sm font-bold hover:bg-green-50">✓ Interview completed</button>
+            {iv.meetLink
+              ? <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Join Google Meet</a>
+              : <span className="rounded-lg px-5 py-2 text-sm font-bold text-slate-400 bg-slate-100">No Meet link</span>}
+          </div>
         </div>
       </div>
     </div>

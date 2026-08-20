@@ -36,9 +36,10 @@ function TabIcon({ name, active }) {
 // WhatsApp glyph.
 const WA_PATH = 'M12 2a10 10 0 0 0-8.5 15.2L2 22l4.9-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-4-4.7-4.2-.1-.2-1-1.4-1-2.6s.6-1.8.9-2.1c.2-.2.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.3 0 .5l-.4.5-.3.3c-.1.1-.2.3-.1.5.1.2.6 1 1.3 1.6.9.8 1.6 1 1.8 1.1.2.1.4.1.5-.1l.6-.8c.2-.2.4-.2.5-.1l1.8.9c.2.1.4.2.4.3.1.2.1.6 0 1z';
 
-export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose, onDeleted, initialTab }) {
+export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose, onDeleted, initialTab, initialAction }) {
   const [c, setC] = useState(null);
   const [tab, setTab] = useState(initialTab || 'resume');
+  const [actionDone, setActionDone] = useState(false);
   const [err, setErr] = useState('');
   const [pendingHintShown, setPendingHintShown] = useState(false);
   const [offerNotice, setOfferNotice] = useState('');
@@ -59,6 +60,17 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [candidateId]);
+  // Handle an initial action passed in from elsewhere (e.g. the interview
+  // popup's "Interview completed" button): mark the interview completed and open
+  // the feedback modal on the Feedback tab. Runs once, after the candidate loads.
+  useEffect(() => {
+    if (!c || actionDone || !initialAction) return;
+    if (initialAction.type === 'completeInterview') {
+      const iv = (c.interviews || []).find((x) => x.id === initialAction.interviewId) || (c.interviews || [])[0];
+      if (iv) { setActionDone(true); completeInterview(iv); }
+      else { setActionDone(true); setTab('feedback'); setShowFeedback(true); }
+    }
+  }, [c, actionDone, initialAction]);
   // If this candidate was marked for hire but the offer isn't complete, guide HR
   // straight to the Offer tab (once).
   useEffect(() => {
