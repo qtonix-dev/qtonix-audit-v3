@@ -275,22 +275,24 @@ function SurveyDetail({ survey, surveyId, onBack, reload }) {
   const loadResults = () => { setBusy(true); api(`/surveys/${surveyId}/results${period ? `?period=${encodeURIComponent(period)}` : ''}`).then(setData).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
   useEffect(() => { loadResults(); }, [surveyId, period]);
   const analyze = async () => { setAnalyzing(true); setErr(''); try { await api(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { setErr(e.message); } finally { setAnalyzing(false); } };
-  // Fetch the report PDF as a blob (correct token key = qtx_token) and return an
-  // object URL. Used by both Preview and Download so auth is consistent.
-  const fetchPdfBlob = async () => {
-    const token = localStorage.getItem('qtx_token');
-    const res = await fetch(`/api/surveys/${surveyId}/report.pdf${period ? `?period=${encodeURIComponent(period)}` : ''}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Could not generate the report.'); }
-    return URL.createObjectURL(await res.blob());
+  // Preview shows the HTML report in an iframe (browsers block PDFs in iframes).
+  // Download fetches the PDF as a blob with the correct auth token.
+  const preview = () => {
+    setErr('');
+    const token = localStorage.getItem('qtx_token') || '';
+    const url = `/api/surveys/${surveyId}/report.html?period=${encodeURIComponent(period || '')}&token=${encodeURIComponent(token)}`;
+    setPreviewUrl(url);
   };
-  const preview = async () => {
+  const downloadPdf = async () => {
     setPdfBusy(true); setErr('');
-    try { const url = await fetchPdfBlob(); setPreviewUrl(url); }
-    catch (e) { setErr(e.message); } finally { setPdfBusy(false); }
-  };
-  const downloadFromUrl = (url) => {
-    const a = document.createElement('a'); a.href = url; a.download = `${(survey && survey.name ? survey.name : 'survey').replace(/[^a-z0-9]+/gi, '-')}-${period}.pdf`;
-    document.body.appendChild(a); a.click(); a.remove();
+    try {
+      const token = localStorage.getItem('qtx_token');
+      const res = await fetch(`/api/surveys/${surveyId}/report.pdf${period ? `?period=${encodeURIComponent(period)}` : ''}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Could not generate the report.'); }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = blobUrl; a.download = `${(survey && survey.name ? survey.name : 'survey').replace(/[^a-z0-9]+/gi, '-')}-${period}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(blobUrl);
+    } catch (e) { setErr(e.message); } finally { setPdfBusy(false); }
   };
 
   return (
@@ -304,22 +306,22 @@ function SurveyDetail({ survey, surveyId, onBack, reload }) {
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">{periods.map((p) => <option key={p} value={p}>{p}</option>)}</select>}
           <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
-          <button onClick={preview} disabled={pdfBusy || !data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />{pdfBusy ? 'Preparing…' : 'Preview report'}</button>
+          <button onClick={preview} disabled={!data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />Preview report</button>
         </div>
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
       {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : <ResultsBody data={data} />}
       {previewUrl && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={() => setPreviewUrl(null)}>
           <div className="bg-white rounded-2xl w-full max-w-4xl h-[90vh] shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
               <div className="font-extrabold text-[#050A1F]">{survey ? survey.name : 'Survey'} — Report preview</div>
               <div className="flex items-center gap-2">
-                <button onClick={() => downloadFromUrl(previewUrl)} className="rounded-lg px-4 py-1.5 text-sm font-bold text-white" style={{ background: ORANGE }}>↓ Download PDF</button>
-                <button onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }} className="text-slate-400 text-xl leading-none px-1">×</button>
+                <button onClick={downloadPdf} disabled={pdfBusy} className="rounded-lg px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{pdfBusy ? 'Preparing…' : '↓ Download PDF'}</button>
+                <button onClick={() => setPreviewUrl(null)} className="text-slate-400 text-xl leading-none px-1">×</button>
               </div>
             </div>
-            <iframe title="survey-report" src={previewUrl} className="flex-1 w-full border-0 rounded-b-2xl" />
+            <iframe title="survey-report" src={previewUrl} className="flex-1 w-full border-0 rounded-b-2xl bg-white" />
           </div>
         </div>
       )}

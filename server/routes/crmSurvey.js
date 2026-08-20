@@ -333,6 +333,23 @@ router.get('/:id/results', requireAuth, requireAdmin, async (req, res, next) => 
 });
 
 // Detailed PDF report for a survey period.
+// HTML preview of the survey report (same content as the PDF, but viewable in
+// an iframe — browsers block PDFs in iframes). Auth via ?token= so the iframe
+// can load it. Mirrors the Site Analysis report /view flow.
+router.get('/:id/report.html', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const survey = await CrmSurvey.findByPk(req.params.id);
+    if (!survey) return res.status(404).send('Survey not found.');
+    const period = req.query.period || survey.period;
+    const data = await buildResults(survey, period);
+    if (!data.total) return res.status(400).send('No responses to report for this period yet.');
+    const { renderHtml } = require('../services/surveyReport');
+    const html = await renderHtml({ ...data, survey: { id: survey.id, name: survey.name } }, { forWeb: true });
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.type('html').send(html);
+  } catch (e) { next(e); }
+});
+
 router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const survey = await CrmSurvey.findByPk(req.params.id);
