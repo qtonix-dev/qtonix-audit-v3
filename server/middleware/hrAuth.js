@@ -39,7 +39,9 @@ async function requireHrAccess(req, res, next) {
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
-    req.isHrManager = !!hr.isHrManager; // branch-scoped admin-lite
+    // An HR user gets manager access either via the explicit isHrManager flag or
+    // by having the "manager" job type — both mean branch-scoped admin-lite.
+    req.isHrManager = !!hr.isHrManager || hr.type === 'manager';
     req.hrBranch = hr.branch || '';
     return next();
   }

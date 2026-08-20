@@ -230,6 +230,10 @@ const Report = sequelize.define(
     isDemo: { type: DataTypes.BOOLEAN, defaultValue: false },
     pdfPath: DataTypes.STRING(255),
     htmlPath: DataTypes.STRING(255),
+    // Public shareable report link + open/download tracking.
+    publicSlug: { type: DataTypes.STRING(80), allowNull: true, unique: true },
+    publicEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+    publicViews: { type: DataTypes.JSON, defaultValue: [] }, // [{at, ip, ua, type:'view'|'download'}]
     creditsUsed: DataTypes.INTEGER,
     durationMs: DataTypes.INTEGER,
     completedAt: DataTypes.DATE,

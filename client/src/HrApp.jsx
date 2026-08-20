@@ -1217,7 +1217,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                       <td className="px-2.5 py-2">
                         <div className="flex items-center justify-end gap-1">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
-                          {isRejectedView && <button onClick={() => setRejReason(c)} className="rounded-lg border border-red-200 text-red-600 px-2 py-1 text-[11px] font-bold hover:bg-red-50">Reason</button>}
+                          {isRejectedView && <CandIconBtn icon="info" label="Rejection reason" onClick={() => setRejReason(c)} />}
                           {isHiredView
                             ? <CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} />
                             : <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />}
@@ -1420,6 +1420,9 @@ function CandIconBtn({ icon, label, onClick }) {
     // A speech-bubble note icon (distinct from the edit/pencil used elsewhere).
     note: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
     trash: 'M3 6h18M8 6V4h8v2m-9 0v14h10V6M10 11v6M14 11v6',
+    // Info-circle for the rejection reason (matches the info style used elsewhere).
+    info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 8h.01M11 12h1v4h1',
+    edit: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
   };
   const extra = icon === 'eye' ? <circle cx="12" cy="12" r="3" /> : null;
   const danger = icon === 'trash';

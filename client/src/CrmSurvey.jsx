@@ -19,14 +19,14 @@ const IconLive = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0
 const IconOpen = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 6l6 6-6 6" /></svg>;
 const IconPdf = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>;
 
-// Small icon button with a hover tooltip, used across the survey list.
+// Small bordered icon button matching the CRM/HRMS action-icon style.
 function IconBtn({ title, onClick, children, color = 'slate', danger }) {
-  const cls = danger ? 'text-red-400 hover:bg-red-50 hover:text-red-600'
-    : color === 'green' ? 'text-green-600 hover:bg-green-50'
-    : color === 'blue' ? 'text-blue-600 hover:bg-blue-50'
-    : color === 'orange' ? 'text-[#FF4500] hover:bg-orange-50'
-    : 'text-slate-500 hover:bg-slate-100';
-  return <button title={title} onClick={onClick} className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition ${cls}`}>{children}</button>;
+  const cls = danger ? 'border-red-200 text-red-400 hover:bg-red-50 hover:text-red-500'
+    : color === 'green' ? 'border-slate-300 text-green-600 hover:bg-green-50'
+    : color === 'blue' ? 'border-slate-300 text-blue-600 hover:bg-blue-50'
+    : color === 'orange' ? 'border-slate-300 text-[#FF4500] hover:bg-orange-50'
+    : 'border-slate-300 text-slate-500 hover:bg-slate-50';
+  return <button title={title} aria-label={title} onClick={onClick} className={`inline-flex items-center justify-center w-8 h-8 rounded-lg border transition ${cls}`}>{children}</button>;
 }
 
 // ============================ ADMIN ============================
@@ -88,7 +88,6 @@ export default function CrmSurveyAdmin() {
 // The survey list table with icon actions.
 function SurveyList({ surveys, reload, setErr, onOpen, onEdit }) {
   const [testTake, setTestTake] = useState(null);
-  const [testResults, setTestResults] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
   const activate = (s) => setConfirmModal({ title: 'Make this survey live?', body: `“${s.name}” will be sent to the sales team. Any test responses are cleared and a fresh response period begins.`, confirmLabel: 'Make live', tone: 'orange', onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); reload(); } });
@@ -131,16 +130,14 @@ function SurveyList({ surveys, reload, setErr, onOpen, onEdit }) {
                   <td className="px-2 py-3 text-center font-bold text-amber-600">{s.pending != null ? s.pending : '—'}</td>
                   <td className="px-2 py-3">{statusPill}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-0.5">
+                    <div className="flex items-center justify-end gap-1">
                       <IconBtn title="View results" color="slate" onClick={() => onOpen(s)}><IconResults /></IconBtn>
                       <IconBtn title="Edit" color="slate" onClick={() => onEdit(s)}><IconEdit /></IconBtn>
                       <IconBtn title="Test the survey" color="blue" onClick={() => setTestTake(s)}><IconTest /></IconBtn>
-                      <IconBtn title="Test results" color="slate" onClick={() => setTestResults(s)}><IconResults size={15} /></IconBtn>
                       {s.status === 'draft' && <IconBtn title="Make live" color="orange" onClick={() => activate(s)}><IconLive /></IconBtn>}
                       {s.status === 'active' && <IconBtn title="Close survey" color="slate" onClick={() => closeSurvey(s)}><IconClose /></IconBtn>}
                       {s.status === 'closed' && <IconBtn title="Re-run survey" color="orange" onClick={() => rerun(s)}><IconRerun /></IconBtn>}
                       <IconBtn title="Delete" danger onClick={() => del(s)}><Trash /></IconBtn>
-                      <IconBtn title="Open detail page" color="slate" onClick={() => onOpen(s)}><IconOpen /></IconBtn>
                     </div>
                   </td>
                 </tr>
@@ -150,7 +147,6 @@ function SurveyList({ surveys, reload, setErr, onOpen, onEdit }) {
         </table>
       </div>
       {testTake && <SurveyTakeModal survey={testTake} testMode onClose={() => setTestTake(null)} onDone={() => setTestTake(null)} />}
-      {testResults && <TestResultsModal survey={testResults} onClose={() => setTestResults(null)} />}
       {confirmModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setConfirmModal(null)}>
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -273,21 +269,28 @@ function SurveyDetail({ survey, surveyId, onBack, reload }) {
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => { api(`/surveys/${surveyId}/periods`).then((r) => { setPeriods(r.periods || []); setPeriod((r.periods && r.periods[0]) || ''); }).catch(() => {}); }, [surveyId]);
   const loadResults = () => { setBusy(true); api(`/surveys/${surveyId}/results${period ? `?period=${encodeURIComponent(period)}` : ''}`).then(setData).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
   useEffect(() => { loadResults(); }, [surveyId, period]);
   const analyze = async () => { setAnalyzing(true); setErr(''); try { await api(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { setErr(e.message); } finally { setAnalyzing(false); } };
-  const downloadPdf = async () => {
+  // Fetch the report PDF as a blob (correct token key = qtx_token) and return an
+  // object URL. Used by both Preview and Download so auth is consistent.
+  const fetchPdfBlob = async () => {
+    const token = localStorage.getItem('qtx_token');
+    const res = await fetch(`/api/surveys/${surveyId}/report.pdf${period ? `?period=${encodeURIComponent(period)}` : ''}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Could not generate the report.'); }
+    return URL.createObjectURL(await res.blob());
+  };
+  const preview = async () => {
     setPdfBusy(true); setErr('');
-    try {
-      const res = await fetch(`/api/surveys/${surveyId}/report.pdf${period ? `?period=${encodeURIComponent(period)}` : ''}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Could not generate the PDF.'); }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `${(survey && survey.name ? survey.name : 'survey').replace(/[^a-z0-9]+/gi, '-')}-${period}.pdf`;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    } catch (e) { setErr(e.message); } finally { setPdfBusy(false); }
+    try { const url = await fetchPdfBlob(); setPreviewUrl(url); }
+    catch (e) { setErr(e.message); } finally { setPdfBusy(false); }
+  };
+  const downloadFromUrl = (url) => {
+    const a = document.createElement('a'); a.href = url; a.download = `${(survey && survey.name ? survey.name : 'survey').replace(/[^a-z0-9]+/gi, '-')}-${period}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
   };
 
   return (
@@ -301,11 +304,25 @@ function SurveyDetail({ survey, surveyId, onBack, reload }) {
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">{periods.map((p) => <option key={p} value={p}>{p}</option>)}</select>}
           <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
-          <button onClick={downloadPdf} disabled={pdfBusy || !data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />{pdfBusy ? 'Preparing…' : 'Download PDF'}</button>
+          <button onClick={preview} disabled={pdfBusy || !data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />{pdfBusy ? 'Preparing…' : 'Preview report'}</button>
         </div>
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
       {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : <ResultsBody data={data} />}
+      {previewUrl && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
+          <div className="bg-white rounded-2xl w-full max-w-4xl h-[90vh] shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="font-extrabold text-[#050A1F]">{survey ? survey.name : 'Survey'} — Report preview</div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => downloadFromUrl(previewUrl)} className="rounded-lg px-4 py-1.5 text-sm font-bold text-white" style={{ background: ORANGE }}>↓ Download PDF</button>
+                <button onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }} className="text-slate-400 text-xl leading-none px-1">×</button>
+              </div>
+            </div>
+            <iframe title="survey-report" src={previewUrl} className="flex-1 w-full border-0 rounded-b-2xl" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -528,6 +545,7 @@ function SurveyTakeModal({ survey, onClose, onDone, testMode }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [showTestResults, setShowTestResults] = useState(false);
   const fuPath = testMode ? 'test-followups' : 'followups';
   const respondPath = testMode ? 'test-respond' : 'respond';
   const behavior = useRef({});
@@ -595,7 +613,10 @@ function SurveyTakeModal({ survey, onClose, onDone, testMode }) {
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div><div className="text-lg font-extrabold text-[#050A1F]">{survey.name}</div>{survey.description && phase !== 'done' && <div className="text-xs text-slate-400 mt-0.5">{survey.description}</div>}</div>
-          {phase !== 'done' && <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>}
+          <div className="flex items-center gap-2">
+            {testMode && <button onClick={() => setShowTestResults(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View test results</button>}
+            {phase !== 'done' && <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>}
+          </div>
         </div>
         <div className="p-6 overflow-y-auto">
           {testMode && phase !== 'done' && <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs font-bold text-blue-700">🧪 Test mode — this response is saved separately and won't affect live results.</div>}
@@ -615,6 +636,7 @@ function SurveyTakeModal({ survey, onClose, onDone, testMode }) {
           {phase === 'done' && <button onClick={onDone} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Close</button>}
         </div>
       </div>
+      {showTestResults && <TestResultsModal survey={survey} onClose={() => setShowTestResults(false)} />}
     </div>
   );
 }

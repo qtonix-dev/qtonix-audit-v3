@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v237';
+const APP_VERSION = 'v239';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -116,6 +116,10 @@ app.get('/schedule/:token', (req, res) => {
 app.get('/careers/:token', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/careers-page.html'));
 });
+
+// Public shareable Site Analysis report links (/r/:slug), no auth. Served before
+// the SPA catch-all so the customer sees the branded report + download button.
+app.use('/', require('./routes/publicReports'));
 
 // Lightweight liveness probe — never touches the DB, so the platform can tell
 // the process is up even during a database blip and won't kill the container.

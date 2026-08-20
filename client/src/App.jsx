@@ -632,6 +632,73 @@ const StatusPill = ({ status }) => {
 
 // Attach an existing, unlinked report to a lead. Searches leads by name/website
 // and links the chosen one via PATCH /reports/:id/link.
+// Public link manager: generate/copy the short branded URL and show the
+// customer's open/download tracking (time + IP).
+function ShareReportModal({ report, onClose }) {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState('');
+  const load = () => api(`/reports/${report._id}/share`).then(setInfo).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const enable = async () => { setBusy(true); setErr(''); try { const r = await api(`/reports/${report._id}/share`, { method: 'POST' }); await load(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  const disable = async () => { setBusy(true); try { await api(`/reports/${report._id}/share/disable`, { method: 'POST' }); await load(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  const copy = () => { if (info && info.url) { navigator.clipboard.writeText(info.url); setCopied(true); setTimeout(() => setCopied(false), 1800); } };
+  const fmt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">Public report link</div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2">{err}</div>}
+          <p className="text-sm text-slate-500 mb-4">Share a link to this report with the customer. When they open or download it, you'll see it logged below with the time and IP — so you know they've seen it.</p>
+
+          {!info ? <div className="text-slate-400 text-sm">Loading…</div> : !info.enabled ? (
+            <button onClick={enable} disabled={busy} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Creating…' : 'Create public link'}</button>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-4">
+                <input readOnly value={info.url} className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm bg-slate-50 font-mono" />
+                <button onClick={copy} className="rounded-lg px-4 py-2 text-sm font-bold text-white shrink-0" style={{ background: '#2563EB' }}>{copied ? 'Copied!' : 'Copy'}</button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="rounded-lg border border-slate-200 p-3 text-center"><div className="text-xl font-extrabold text-[#050A1F]">{info.viewCount}</div><div className="text-[10px] uppercase font-bold text-slate-400">Opens</div></div>
+                <div className="rounded-lg border border-slate-200 p-3 text-center"><div className="text-xl font-extrabold text-[#050A1F]">{info.downloadCount}</div><div className="text-[10px] uppercase font-bold text-slate-400">Downloads</div></div>
+                <div className="rounded-lg border border-slate-200 p-3 text-center"><div className="text-xs font-bold text-[#050A1F] mt-1">{info.lastViewedAt ? fmt(info.lastViewedAt) : '—'}</div><div className="text-[10px] uppercase font-bold text-slate-400">Last seen</div></div>
+              </div>
+              {(info.views || []).length > 0 && (
+                <div className="rounded-lg border border-slate-200 overflow-hidden mb-4">
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-[10px] uppercase text-slate-400 bg-slate-50"><th className="text-left px-3 py-2 font-bold">When</th><th className="text-left px-3 py-2 font-bold">Action</th><th className="text-left px-3 py-2 font-bold">IP</th></tr></thead>
+                      <tbody>
+                        {info.views.slice().reverse().map((v, i) => (
+                          <tr key={i} className="border-t border-slate-50">
+                            <td className="px-3 py-1.5 text-slate-600">{fmt(v.at)}</td>
+                            <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${v.type === 'download' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{v.type === 'download' ? 'Downloaded' : 'Opened'}</span></td>
+                            <td className="px-3 py-1.5 text-slate-500 font-mono">{v.ip || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-between items-center">
+                <a href={info.url} target="_blank" rel="noreferrer" className="text-sm font-bold text-blue-600 hover:underline">Preview the public page ↗</a>
+                <button onClick={disable} disabled={busy} className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50">Disable link</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LinkToLeadModal({ report, onClose, onLinked }) {
   const [q, setQ] = useState(report.businessName || report.domain || '');
   const [results, setResults] = useState([]);
@@ -1595,6 +1662,7 @@ export default function App() {
     catch { return null; }
   });
   const [linkReport, setLinkReport] = useState(null); // report being linked to a lead
+  const [shareReport, setShareReport] = useState(null); // report whose public link is managed
   const [activeReport, setActiveReport] = useState(null);
   const [booting, setBooting] = useState(true);
   // Inactivity warning popup: null when hidden, else shows a countdown before
@@ -2008,6 +2076,9 @@ export default function App() {
                 {!activeReport.leadId && !IS_DEMO && (
                   <button onClick={() => setLinkReport(activeReport)} className="rounded-lg border border-orange-300 px-4 py-2 text-sm font-bold text-[#FF4500] hover:bg-orange-50">🔗 Link to lead</button>
                 )}
+                {!IS_DEMO && (
+                  <button onClick={() => setShareReport(activeReport)} className="rounded-lg border border-blue-300 px-4 py-2 text-sm font-bold text-blue-600 hover:bg-blue-50">🌐 Public link</button>
+                )}
                 <button onClick={async () => {
                   if (!confirm('Re-run this analysis with fresh data? This uses API credits and replaces the current results.')) return;
                   try {
@@ -2063,6 +2134,7 @@ export default function App() {
             onLinked={(lead) => { setActiveReport({ ...linkReport, leadId: lead._id }); setLinkReport(null); }}
           />
         )}
+        {shareReport && <ShareReportModal report={shareReport} onClose={() => setShareReport(null)} />}
       </main>
     </div>
   );

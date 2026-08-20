@@ -583,4 +583,68 @@ router.patch('/:id/link', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// -- Public share link management --------------------------------------------
+
+// Make a URL-safe, brand-y slug from the business name, keeping it short and
+// unique. e.g. "Teamz Motorsports" -> "teamzmotorsports" (+ short suffix if taken).
+function slugifyBusiness(name) {
+  const base = String(name || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40) || 'report';
+  return base;
+}
+
+/** POST /api/reports/:id/share — create (or return) the public link. Admin/owner only. */
+router.post('/:id/share', requireAuth, async (req, res, next) => {
+  try {
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) {
+      return res.status(403).json({ error: 'This report belongs to another agent.' });
+    }
+    if (!report.publicSlug) {
+      let slug = slugifyBusiness(report.businessName);
+      // Ensure uniqueness with a short random suffix if needed.
+      let exists = await Report.findOne({ where: { publicSlug: slug } });
+      if (exists && exists.id !== report.id) {
+        slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      }
+      report.publicSlug = slug;
+    }
+    report.publicEnabled = true;
+    await report.save();
+    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    res.json({ slug: report.publicSlug, url: `${base}/r/${report.publicSlug}`, enabled: true });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/reports/:id/share/disable — turn the public link off. */
+router.post('/:id/share/disable', requireAuth, async (req, res, next) => {
+  try {
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
+    report.publicEnabled = false; await report.save();
+    res.json({ enabled: false });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/reports/:id/share — current link + view/download tracking log. */
+router.get('/:id/share', requireAuth, async (req, res, next) => {
+  try {
+    const report = await Report.findByPk(req.params.id);
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+    if (req.user.role !== 'admin' && report.agentId !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
+    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const views = Array.isArray(report.publicViews) ? report.publicViews : [];
+    res.json({
+      slug: report.publicSlug, enabled: !!report.publicEnabled,
+      url: report.publicSlug ? `${base}/r/${report.publicSlug}` : null,
+      views,
+      viewCount: views.filter((v) => v.type === 'view').length,
+      downloadCount: views.filter((v) => v.type === 'download').length,
+      lastViewedAt: views.length ? views[views.length - 1].at : null,
+    });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
+module.exports.renderWithLiveSettings = renderWithLiveSettings;

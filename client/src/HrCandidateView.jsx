@@ -43,6 +43,12 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [pendingHintShown, setPendingHintShown] = useState(false);
   const [offerNotice, setOfferNotice] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackIv, setFeedbackIv] = useState(null); // interview context for feedback
+  // Mark an interview completed, then jump to Feedback with the modal open.
+  const completeInterview = async (iv) => {
+    try { await hrApi(`/candidates/${c.id}/interview/${iv.id}/complete`, { method: 'POST' }); } catch {}
+    setFeedbackIv(iv); setTab('feedback'); setShowFeedback(true); load();
+  };
   const [showInterview, setShowInterview] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [activityModal, setActivityModal] = useState(null); // 'task' | 'call'
@@ -209,7 +215,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
           {effectiveTab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
           {effectiveTab === 'comments' && <CommentsTab c={c} reload={load} />}
           {effectiveTab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
-          {effectiveTab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} />}
+          {effectiveTab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} onCompleteInterview={completeInterview} />}
           {effectiveTab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
           {effectiveTab === 'mail' && <MailTab c={c} />}
           {effectiveTab === 'timeline' && <TimelineTab c={c} />}
@@ -217,8 +223,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         </div>
       </div>
 
-      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)}
-        onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify(payload) })); setShowFeedback(false); setTab('feedback'); }} />}
+      {showFeedback && <FeedbackModal iv={feedbackIv} onClose={() => { setShowFeedback(false); setFeedbackIv(null); }}
+        onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify({ ...payload, interviewId: feedbackIv ? feedbackIv.id : undefined, roundLabel: feedbackIv ? feedbackIv.roundLabel : undefined, round: feedbackIv ? feedbackIv.round : undefined }) })); setShowFeedback(false); setFeedbackIv(null); setTab('feedback'); }} />}
       {showInterview && <InterviewModal candidateId={c.id} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
@@ -565,7 +571,15 @@ function FeedbackTab({ c, onAdd }) {
               </div>
               <div className="flex flex-wrap gap-2">
                 {(iv.panelists || []).map((p) => {
-                  const done = (iv.feedbackByPanelist || {})[p.id];
+                  const fbp = iv.feedbackByPanelist || {};
+                  // A panelist counts as done if their id matches under any key
+                  // form: raw id, "admin:<id>", or (fallback) a submitted
+                  // feedback entry by the same person for this interview.
+                  const pid = String(p.id);
+                  const bareId = pid.replace(/^admin:/, '');
+                  const done = !!(fbp[pid] || fbp[`admin:${bareId}`] || fbp[bareId]
+                    || (c.feedback || []).some((f) => f.interviewId === iv.id && (String(f.byId) === bareId || `admin:${f.byId}` === pid))
+                    || (c.feedback || []).some((f) => (f.by || '') === p.name && (f.interviewId === iv.id || !f.interviewId)));
                   return (
                     <span key={p.id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${done ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-green-500' : 'bg-amber-500'}`} />
@@ -971,12 +985,12 @@ function AttachmentsTab({ c, reload }) {
 }
 
 // ---------- Activity (tasks & calls) ----------
-function CandidateInterviewParticipants({ iv, candidate, onClose }) {
+function CandidateInterviewParticipants({ iv, candidate, onClose, onComplete }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div><div className="text-lg font-extrabold text-[#050A1F]">{iv.roundLabel || 'Interview'}</div><div className="text-xs text-slate-400 mt-0.5">{fmt(iv.at)}{iv.by ? ` · scheduled by ${iv.by}` : ''}</div></div>
+          <div><div className="text-lg font-extrabold text-[#050A1F]">{iv.roundLabel || 'Interview'}</div><div className="text-xs text-slate-400 mt-0.5">{fmt(iv.at)}{iv.by ? ` · scheduled by ${iv.by}` : ''}{iv.completed ? ' · Completed' : ''}</div></div>
           <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
         </div>
         <div className="p-6 space-y-3">
@@ -995,17 +1009,18 @@ function CandidateInterviewParticipants({ iv, candidate, onClose }) {
             {!(iv.panelists || []).length && <div className="text-xs text-slate-400 px-1">No panelists assigned.</div>}
           </div>
         </div>
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-between items-center gap-2">
+          <button onClick={() => onComplete && onComplete(iv)} className="rounded-lg border border-green-300 text-green-700 px-4 py-2 text-sm font-bold hover:bg-green-50">✓ Mark completed &amp; add feedback</button>
           {iv.meetLink
             ? <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Join Google Meet</a>
-            : <span className="rounded-lg px-5 py-2 text-sm font-bold text-slate-400 bg-slate-100">No Meet link</span>}
+            : <span className="rounded-lg px-4 py-2 text-sm font-bold text-slate-400 bg-slate-100">No Meet link</span>}
         </div>
       </div>
     </div>
   );
 }
 
-function ActivityTab({ c, reload, onAddTask, onAddCall }) {
+function ActivityTab({ c, reload, onAddTask, onAddCall, onCompleteInterview }) {
   const list = c.activities || [];
   const interviews = (c.interviews || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
   const [partIv, setPartIv] = useState(null); // interview shown in participant popup
@@ -1045,7 +1060,7 @@ function ActivityTab({ c, reload, onAddTask, onAddCall }) {
           <button onClick={onAddCall} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>📞 Add Call</button>
         </div>
       </div>
-      {partIv && <CandidateInterviewParticipants iv={partIv} candidate={c} onClose={() => setPartIv(null)} />}
+      {partIv && <CandidateInterviewParticipants iv={partIv} candidate={c} onClose={() => setPartIv(null)} onComplete={(iv) => { setPartIv(null); onCompleteInterview && onCompleteInterview(iv); }} />}
       {list.length === 0 ? <Empty>No tasks or calls yet.</Empty> : (
         <div className="space-y-2">
           {list.map((a) => (
@@ -1136,7 +1151,7 @@ function ActivityModal({ kind, candidateId, onClose, onSaved }) {
 }
 
 // ---------- Feedback modal (add) ----------
-function FeedbackModal({ onClose, onSubmit }) {
+function FeedbackModal({ onClose, onSubmit, iv }) {
   const [attrs, setAttrs] = useState(DEFAULT_ATTRS.map((name) => ({ name, rating: 0 })));
   const [verdict, setVerdict] = useState('');
   const [note, setNote] = useState('');
@@ -1147,6 +1162,7 @@ function FeedbackModal({ onClose, onSubmit }) {
   const submit = async () => { setBusy(true); await onSubmit({ skills: attrs.filter((a) => a.name.trim()), verdict: verdict || 'not_sure', note }); setBusy(false); };
   return (
     <Modal title="Feedback Form" onClose={onClose}>
+      {iv && <div className="rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 mb-3">Feedback for <strong>{iv.roundLabel || 'the interview'}</strong>{iv.at ? ` · ${fmt(iv.at)}` : ''}</div>}
       <div className="text-sm font-bold text-slate-600 mb-2">Skills / Attributes</div>
       {attrs.map((at, i) => (
         <div key={i} className="flex items-center justify-between gap-2 mb-2">

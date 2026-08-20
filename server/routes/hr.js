@@ -115,7 +115,7 @@ router.get('/me', requireHrAccess, (req, res) => {
   if (req.hrActor.kind === 'admin') {
     return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true, isHrManager: false });
   }
-  res.json({ ...req.hrUser.toJSON(), isAdmin: false, completion: profileCompletion(req.hrUser) });
+  res.json({ ...req.hrUser.toJSON(), isAdmin: false, isHrManager: req.isHrManager, completion: profileCompletion(req.hrUser) });
 });
 
 // --- Dashboard --------------------------------------------------------------
@@ -1696,6 +1696,21 @@ router.post('/candidates/:id/comments', requireHrAccess, async (req, res, next) 
 });
 
 // Submit feedback (any HR / senior can add their own).
+// Mark an interview as completed (used by the "Mark completed" action).
+router.post('/candidates/:id/interview/:ivId/complete', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const ivs = (row.interviews || []).map((iv) => iv.id === req.params.ivId ? { ...iv, completed: true, completedAt: iv.completedAt || new Date().toISOString(), completedBy: iv.completedBy || req.hrActor.name } : iv);
+    const found = ivs.some((iv) => iv.id === req.params.ivId);
+    if (!found) return res.status(404).json({ error: 'Interview not found.' });
+    row.interviews = ivs; row.changed('interviews', true);
+    pushTimeline(row, { type: 'interview', text: `${req.hrActor.name} marked the interview completed.`, by: req.hrActor.name });
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
@@ -1712,17 +1727,34 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
       roundLabel: b.roundLabel || '',
     };
     const list = Array.isArray(row.feedback) ? row.feedback.slice() : [];
+    // Resolve which interview this feedback is for. If not given explicitly,
+    // attach it to the interview where this submitter is a panelist (the most
+    // recent one if several), so panel "Pending/Submitted" status updates.
+    const actorId = req.hrActor.id;
+    const adminKey = `admin:${actorId}`;
+    const isPanelistOn = (iv) => (iv.panelists || []).some((p) => {
+      const pid = String(p.id); return pid === String(actorId) || pid === adminKey || pid.replace(/^admin:/, '') === String(actorId) || (p.name && p.name === req.hrActor.name);
+    });
+    let targetIvId = b.interviewId || null;
+    if (!targetIvId) {
+      const mine = (row.interviews || []).filter(isPanelistOn).sort((a, z) => new Date(z.at) - new Date(a.at));
+      if (mine.length) targetIvId = mine[0].id;
+    }
+    entry.interviewId = targetIvId;
+    if (targetIvId && !entry.roundLabel) { const iv0 = (row.interviews || []).find((iv) => iv.id === targetIvId); if (iv0) { entry.roundLabel = iv0.roundLabel || ''; entry.round = iv0.round || ''; } }
     list.unshift(entry);
     row.feedback = list; row.changed('feedback', true);
-    // Mark this panelist as having submitted for the interview. An admin acting
-    // as a Director panelist is stored under the 'admin:<id>' panelist key.
-    if (b.interviewId) {
+    // Mark this panelist as having submitted for the interview. Store under the
+    // matching panelist key (raw id or 'admin:<id>') so status resolves.
+    if (targetIvId) {
       const ivs = (row.interviews || []).map((iv) => {
-        if (iv.id !== b.interviewId) return iv;
+        if (iv.id !== targetIvId) return iv;
         const fbp = { ...(iv.feedbackByPanelist || {}) };
-        const adminKey = `admin:${req.hrActor.id}`;
         const panelHasAdmin = (iv.panelists || []).some((p) => String(p.id) === adminKey);
-        fbp[req.isHrAdmin && panelHasAdmin ? adminKey : req.hrActor.id] = true;
+        const rawMatch = (iv.panelists || []).some((p) => String(p.id) === String(actorId));
+        // Key it however the panelist is stored; set both to be safe.
+        if (panelHasAdmin) fbp[adminKey] = true;
+        if (rawMatch || !panelHasAdmin) fbp[actorId] = true;
         return { ...iv, feedbackByPanelist: fbp };
       });
       row.interviews = ivs; row.changed('interviews', true);
