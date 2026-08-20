@@ -18,21 +18,51 @@ function buildVm(data, opts = {}) {
   const good = data.good || [];
   const improve = data.improve || [];
   const deptSummaries = data.departmentSummaries || [];
+  const branchSummaries = data.branchSummaries || [];
   const byDepartment = (data.byDepartment || []).map((d) => {
     const ds = deptSummaries.find((x) => (x.name || '').toLowerCase() === (d.key || '').toLowerCase());
     return { ...d, summary: ds ? ds.summary : '' };
   });
-  const people = (data.responses || [])
+
+  const allPeople = (data.responses || [])
     .filter((r) => r.sentiment && r.sentiment.label)
     .map((r) => ({
       name: r.employeeName || 'Employee',
-      department: r.department || '—',
+      department: r.department || 'Unassigned',
+      branch: r.branch || 'Unspecified',
+      avgScoreNum: r.avgScore != null ? r.avgScore : null,
       avgScore: r.avgScore != null ? r.avgScore.toFixed(1) : '—',
       sentiment: r.sentiment.label,
       cls: clsFor(r.sentiment.label),
       summary: (r.sentiment.summary || r.sentiment.note || '').trim() || 'No detailed read available.',
+      recommendation: (r.sentiment.recommendation || '').trim(),
     }));
+
+  // Group employees by branch → team, with per-branch/team sentiment stats.
+  const pct = (n, total) => total ? Math.round((n / total) * 100) : 0;
+  const statsFor = (list) => {
+    const p = list.filter((x) => x.sentiment === 'positive').length;
+    const nu = list.filter((x) => x.sentiment === 'neutral').length;
+    const ng = list.filter((x) => x.sentiment === 'negative').length;
+    const scored = list.filter((x) => x.avgScoreNum != null);
+    const avg = scored.length ? (scored.reduce((a, x) => a + x.avgScoreNum, 0) / scored.length) : null;
+    return { count: list.length, positive: pct(p, list.length), neutral: pct(nu, list.length), negative: pct(ng, list.length), avgScore: avg != null ? avg.toFixed(1) : '—' };
+  };
+  const branchMap = {};
+  allPeople.forEach((pn) => { (branchMap[pn.branch] = branchMap[pn.branch] || []).push(pn); });
+  const branches = Object.keys(branchMap).sort().map((bname) => {
+    const list = branchMap[bname];
+    const teamMap = {};
+    list.forEach((pn) => { (teamMap[pn.department] = teamMap[pn.department] || []).push(pn); });
+    const teams = Object.keys(teamMap).sort().map((tname) => ({ name: tname, ...statsFor(teamMap[tname]), people: teamMap[tname] }));
+    const bs = branchSummaries.find((x) => (x.name || '').toLowerCase() === bname.toLowerCase());
+    return { name: bname, ...statsFor(list), summary: bs ? bs.summary : '', teams };
+  });
+
   const completionPct = data.participants ? Math.round((data.total / data.participants) * 100) : 0;
+  const insights = data.insights || { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
+  // Normalise action items to {action, why, how} in case older data stored strings.
+  const normAct = (arr) => (arr || []).map((x) => typeof x === 'string' ? { action: x, why: '', how: '' } : x);
   return {
     forWeb: !!opts.forWeb,
     fontDir: 'file://' + FONT_DIR,
@@ -46,8 +76,14 @@ function buildVm(data, opts = {}) {
     summary: data.summary || '',
     good, improve, hasThemes: !!(good.length || improve.length),
     byDepartment,
-    insights: data.insights || { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] },
-    people,
+    branches,
+    hasBranches: branches.length > 0,
+    multiBranch: branches.length > 1,
+    insights: {
+      attention: insights.attention || [], oneToOne: insights.oneToOne || [],
+      forHR: normAct(insights.forHR), forManager: normAct(insights.forManager), forManagement: normAct(insights.forManagement),
+    },
+    people: allPeople,
   };
 }
 

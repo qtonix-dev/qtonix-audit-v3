@@ -314,6 +314,7 @@ async function buildResults(survey, period) {
     period, total, participants, analysed: withSent.length,
     sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
     good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
+    branchSummaries: analysis && analysis.branchSummaries ? analysis.branchSummaries : [],
     departmentSummaries: analysis && analysis.departmentSummaries ? analysis.departmentSummaries : [],
     insights: analysis && analysis.insights ? analysis.insights : null,
     byBranch: groupBy((r) => r.branch),
@@ -398,11 +399,11 @@ router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) =>
     // Management-report insights (names used — internal report only).
     let insights = { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
     try {
-      const people = responses.map((r) => ({ name: r.employeeName, department: r.department, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, summary: r.sentiment && r.sentiment.summary }));
+      const people = responses.map((r) => ({ name: r.employeeName, department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, summary: r.sentiment && r.sentiment.summary }));
       insights = await surveyReportInsights(key, { surveyName: survey.name, people });
     } catch {}
     const nextAnalysis = { ...(survey.analysis || {}) };
-    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, departmentSummaries: agg.departmentSummaries || [], insights };
+    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, branchSummaries: agg.branchSummaries || [], departmentSummaries: agg.departmentSummaries || [], insights };
     survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
     res.json({ ok: true });
   } catch (e) { next(e); }

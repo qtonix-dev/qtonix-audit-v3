@@ -102,14 +102,15 @@ async function analyseResponse(apiKey, { questions, answers, followups, avgScore
     'the person wanted to say something but softened it out of caution or fear — read past the diplomatic surface.',
     'Classify overall sentiment as exactly one of: positive, neutral, negative.',
     'Give a one-word tone (e.g. frustrated, hopeful, disengaged, content, anxious, guarded), a short note (<=24 words),',
-    'and a "summary": a 2-3 sentence plain-language read of what THIS person actually thinks and feels — the substance of',
-    'their view, what is driving it, and anything they seem to be holding back. Do not use their name.',
-    'Return STRICT JSON: {"label":"...","tone":"...","note":"...","summary":"..."}. No commentary.',
+    'a "summary": a DETAILED 4-6 sentence plain-language read of what THIS person actually thinks and feels — the substance of',
+    'their view, what is driving it, what they appreciate, what frustrates them, and anything they seem to be holding back. Do not use their name.',
+    'and a "recommendation": 1-2 sentences on what their manager/HR should do for this person specifically (a concrete next step).',
+    'Return STRICT JSON: {"label":"...","tone":"...","note":"...","summary":"...","recommendation":"..."}. No commentary.',
   ].join(' ');
-  const out = await callClaude(apiKey, { system, maxTokens: 500, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}${behaviourText}` }] });
+  const out = await callClaude(apiKey, { system, maxTokens: 800, messages: [{ role: 'user', content: `Average score: ${avgScore != null ? avgScore.toFixed(2) : 'n/a'}/5\n\n${summary}${behaviourText}` }] });
   const p = parseJson(out);
   const label = ['positive', 'neutral', 'negative'].includes(p.label) ? p.label : 'neutral';
-  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 200), summary: String(p.summary || '').slice(0, 600) };
+  return { label, tone: String(p.tone || '').slice(0, 40), note: String(p.note || '').slice(0, 200), summary: String(p.summary || '').slice(0, 1000), recommendation: String(p.recommendation || '').slice(0, 400) };
 }
 
 /**
@@ -120,29 +121,39 @@ async function analyseResponse(apiKey, { questions, answers, followups, avgScore
  * per-response sentiment; this call adds the qualitative analysis.
  */
 async function aggregateAnalysis(apiKey, { surveyName, blobs }) {
-  // Which departments are present, so we can ask for a per-department read.
+  // Which departments/branches are present, so we can ask for per-group reads.
   const depts = Array.from(new Set(blobs.map((b) => (b.department || '').trim()).filter(Boolean)));
+  const branches = Array.from(new Set(blobs.map((b) => (b.branch || '').trim()).filter(Boolean)));
   const deptLine = depts.length
-    ? `The responses span these departments: ${depts.join(', ')}. For departmentSummaries, produce one entry PER department listed, each a 2-3 sentence read of how that department specifically feels and why (grounded in their responses). If a department has too few responses to read confidently, say so briefly in its summary.`
+    ? `The responses span these departments/teams: ${depts.join(', ')}. For departmentSummaries, produce one entry PER department listed, each a 2-3 sentence read of how that team specifically feels and why (grounded in their responses).`
     : 'There are no distinct departments; return an empty departmentSummaries array.';
+  const branchLine = branches.length
+    ? `The responses span these branches (offices): ${branches.join(', ')}. For branchSummaries, produce one entry PER branch, each a DETAILED 3-5 sentence read: the overall mood at that office, the teams within it and how they differ, the main drivers, and the single most important thing to act on for that branch. Ground everything in that branch's own responses.`
+    : 'There are no distinct branches; return an empty branchSummaries array.';
   const system = [
     'You are a people-analytics AI summarising an employee-mood survey for leadership.',
-    'From the anonymised set of employee responses, produce a thorough, decision-useful analysis.',
+    'From the anonymised set of employee responses, produce a thorough, decision-useful analysis in plain, easy-to-understand language.',
     'Give exactly 5 "good" points (what is working well) and exactly 5 "improve" points (where action is needed).',
-    'Each point: a specific, grounded phrase (<=16 words), no names.',
-    'Write a DETAILED overall summary (4-6 sentences): the general mood, the main drivers behind it,',
-    'any notable tensions or divides, how strongly people feel, and what leadership should pay attention to first.',
+    'Each point: a specific, grounded phrase (<=18 words), no names.',
+    'Write a DETAILED overall summary (5-7 sentences) in clear everyday language: the general mood, the main drivers behind it,',
+    'any notable tensions or divides between offices or teams, how strongly people feel, and what leadership should pay attention to first.',
+    branchLine,
     deptLine,
-    'Return STRICT JSON: {"good":["","","","",""],"improve":["","","","",""],"summary":"...","departmentSummaries":[{"name":"","summary":""}]}. No commentary.',
+    'Return STRICT JSON: {"good":["","","","",""],"improve":["","","","",""],"summary":"...","branchSummaries":[{"name":"","summary":""}],"departmentSummaries":[{"name":"","summary":""}]}. No commentary.',
   ].join(' ');
-  const joined = blobs.slice(0, 200).map((b, i) => `#${i + 1} [${b.department || '—'} / ${b.branch || '—'}] score ${b.avgScore != null ? b.avgScore.toFixed(1) : '—'} · ${b.sentiment || '—'}\n${b.text}`).join('\n\n');
-  const out = await callClaude(apiKey, { system, maxTokens: 1600, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nResponses:\n\n${joined}` }] });
+  const joined = blobs.slice(0, 200).map((b, i) => `#${i + 1} [branch: ${b.branch || '—'} · team: ${b.department || '—'}] score ${b.avgScore != null ? b.avgScore.toFixed(1) : '—'} · ${b.sentiment || '—'}\n${b.text}`).join('\n\n');
+  const out = await callClaude(apiKey, { system, maxTokens: 2400, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nResponses:\n\n${joined}` }] });
   const p = parseJson(out);
   const trimN = (a, n, len) => (Array.isArray(a) ? a.slice(0, n).map((s) => String(s).slice(0, len)) : []);
-  const deptSummaries = Array.isArray(p.departmentSummaries)
-    ? p.departmentSummaries.slice(0, 40).map((d) => ({ name: String(d.name || '').slice(0, 80), summary: String(d.summary || '').slice(0, 600) })).filter((d) => d.name)
+  const mapSummaries = (arr, len) => Array.isArray(arr)
+    ? arr.slice(0, 40).map((d) => ({ name: String(d.name || '').slice(0, 80), summary: String(d.summary || '').slice(0, len) })).filter((d) => d.name)
     : [];
-  return { good: trimN(p.good, 5, 140), improve: trimN(p.improve, 5, 140), summary: String(p.summary || '').slice(0, 1200), departmentSummaries: deptSummaries };
+  return {
+    good: trimN(p.good, 5, 160), improve: trimN(p.improve, 5, 160),
+    summary: String(p.summary || '').slice(0, 1600),
+    branchSummaries: mapSummaries(p.branchSummaries, 900),
+    departmentSummaries: mapSummaries(p.departmentSummaries, 600),
+  };
 }
 
 /**
@@ -177,30 +188,34 @@ async function successMessage(apiKey, { employeeName, avgScore, sentimentLabel, 
 async function surveyReportInsights(apiKey, { surveyName, people }) {
   const system = [
     'You are a senior people-analytics advisor preparing a confidential management report from an employee-mood survey.',
-    'You are given each employee\'s name, average score, sentiment and a short read of their responses.',
+    'You are given each employee\'s name, branch (office), team, average score, sentiment and a short read of their responses.',
+    'Write in plain, easy-to-understand language a busy manager can act on immediately.',
     'Produce STRICT JSON with these keys:',
-    '"attention": array of {name, reason} — employees whose mood/answers suggest they need attention now (<=25 words reason).',
-    '"oneToOne": array of {name, reason} — employees who would benefit from a 1:1 conversation (<=25 words).',
-    '"forHR": array of strings — concrete points the HR team should discuss or act on (<=20 words each).',
-    '"forManager": array of strings — points for the Team Lead / Manager to address with their team (<=20 words each).',
-    '"forManagement": array of strings — strategic actions senior management should take (<=20 words each).',
-    'Base everything strictly on the provided data. Only list people who genuinely warrant it — empty arrays are fine.',
+    '"attention": array of {name, reason} — employees whose mood/answers suggest they need attention now (<=30 words reason, mention their branch/team).',
+    '"oneToOne": array of {name, reason} — employees who would benefit from a 1:1 conversation (<=30 words).',
+    '"forHR": array of {action, why, how} — concrete steps HR should take. action = short imperative (<=12 words); why = the evidence/reason (<=25 words); how = a practical first step (<=25 words).',
+    '"forManager": array of {action, why, how} — steps for the Team Lead / Manager, same shape.',
+    '"forManagement": array of {action, why, how} — strategic steps for senior management, same shape.',
+    'Give 3-6 items in each of forHR, forManager, forManagement when the data supports it. Base everything strictly on the provided data.',
+    'Only list people who genuinely warrant it — empty arrays are fine.',
     'Return ONLY the JSON object. No commentary.',
   ].join(' ');
-  const roster = people.slice(0, 200).map((p, i) => `#${i + 1} ${p.name || 'Employee'} [${p.department || '—'}] score ${p.avgScore != null ? p.avgScore.toFixed(1) : '—'} · ${p.sentiment || 'unrated'}${p.summary ? ` — ${p.summary}` : ''}`).join('\n');
+  const roster = people.slice(0, 200).map((p, i) => `#${i + 1} ${p.name || 'Employee'} [branch: ${p.branch || '—'} · team: ${p.department || '—'}] score ${p.avgScore != null ? p.avgScore.toFixed(1) : '—'} · ${p.sentiment || 'unrated'}${p.summary ? ` — ${p.summary}` : ''}`).join('\n');
   try {
-    const out = await callClaude(apiKey, { system, maxTokens: 2000, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nEmployees:\n\n${roster}` }] });
+    const out = await callClaude(apiKey, { system, maxTokens: 3000, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nEmployees:\n\n${roster}` }] });
     const p = parseJson(out);
-    const arrOf = (a, keys) => Array.isArray(a) ? a.slice(0, 30).map((x) => {
-      if (typeof x === 'string') return x.slice(0, 200);
-      const o = {}; keys.forEach((k) => { o[k] = String(x[k] || '').slice(0, 200); }); return o;
-    }) : [];
+    const people2 = (a) => Array.isArray(a) ? a.slice(0, 30).map((x) => ({ name: String(x.name || '').slice(0, 80), reason: String(x.reason || '').slice(0, 240) })).filter((x) => x.name) : [];
+    // Action items accept either the new {action,why,how} shape or a plain string.
+    const actions = (a) => Array.isArray(a) ? a.slice(0, 12).map((x) => {
+      if (typeof x === 'string') return { action: x.slice(0, 160), why: '', how: '' };
+      return { action: String(x.action || '').slice(0, 160), why: String(x.why || '').slice(0, 260), how: String(x.how || '').slice(0, 260) };
+    }).filter((x) => x.action) : [];
     return {
-      attention: arrOf(p.attention, ['name', 'reason']).filter((x) => x.name),
-      oneToOne: arrOf(p.oneToOne, ['name', 'reason']).filter((x) => x.name),
-      forHR: arrOf(p.forHR).filter(Boolean),
-      forManager: arrOf(p.forManager).filter(Boolean),
-      forManagement: arrOf(p.forManagement).filter(Boolean),
+      attention: people2(p.attention),
+      oneToOne: people2(p.oneToOne),
+      forHR: actions(p.forHR),
+      forManager: actions(p.forManager),
+      forManagement: actions(p.forManagement),
     };
   } catch {
     return { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
