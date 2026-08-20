@@ -2645,8 +2645,16 @@ function ResetPasswordModal({ user, onClose, onDone }) {
 }
 function RecruitmentMailbox({ isAdmin, setErr }) {
   const [data, setData] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const load = () => hrApi('/mailboxes').then(setData).catch((e) => setErr && setErr(e.message));
   useEffect(() => { load(); }, []);
+  const runTest = async () => {
+    setTesting(true); setTestResult(null);
+    try { const r = await hrApi('/mailbox/selftest', { method: 'POST', body: JSON.stringify({}) }); setTestResult(r); }
+    catch (e) { setTestResult({ error: e.message }); }
+    finally { setTesting(false); }
+  };
   const connect = async () => {
     try {
       const { url } = await hrApi('/mailboxes/connect');
@@ -2693,9 +2701,30 @@ function RecruitmentMailbox({ isAdmin, setErr }) {
                   <div className="text-sm font-bold text-green-700 flex items-center gap-2">✓ {mb.email}{mb.isDefault && <span className="text-[9px] bg-white text-green-600 border border-green-200 rounded px-1.5 py-0.5">PRIMARY</span>}</div>
                   <div className="text-xs text-slate-500">{mb.label}{mb.connectedAt ? ` · linked ${new Date(mb.connectedAt).toLocaleDateString()}` : ''}</div>
                 </div>
-                {isAdmin && <button onClick={() => disconnect(mb)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 shrink-0">Disconnect</button>}
+                {isAdmin && <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={runTest} disabled={testing} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-white disabled:opacity-50">{testing ? 'Testing…' : 'Test mailbox'}</button>
+                  <button onClick={() => disconnect(mb)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">Disconnect</button>
+                </div>}
               </div>
             ))}
+            {testResult && (
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
+                {testResult.error ? (
+                  <div className="text-red-600">Test failed: {testResult.error}</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="font-bold text-[#050A1F]">Test results for {testResult.email}</div>
+                    <div className={testResult.send && testResult.send.ok ? 'text-green-700' : 'text-red-600'}>
+                      {testResult.send && testResult.send.ok ? `✓ Email sending works — a test email was sent to ${testResult.send.to}. Check that inbox.` : `✗ Email send failed: ${testResult.send && testResult.send.error}`}
+                    </div>
+                    <div className={testResult.calendar && testResult.calendar.ok ? 'text-green-700' : 'text-red-600'}>
+                      {testResult.calendar && testResult.calendar.ok ? `✓ Calendar works${testResult.calendar.meetLink ? ' (Meet link created)' : ''} — a temporary test event was created and removed.` : `✗ Calendar failed: ${testResult.calendar && testResult.calendar.error}`}
+                    </div>
+                    {testResult.send && testResult.send.ok && testResult.calendar && testResult.calendar.ok && <div className="text-xs text-slate-500 pt-1">Both work. If interview invites still aren't arriving, check the candidate's spam folder.</div>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

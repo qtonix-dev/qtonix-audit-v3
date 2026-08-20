@@ -76,6 +76,50 @@ router.get('/mailbox/status', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Self-test the recruitment mailbox: send a test email to a chosen address and
+// create + delete a test calendar event. Returns exactly what worked or the
+// precise Google error, so scheduling problems can be diagnosed directly.
+router.post('/mailbox/selftest', requireHrAccess, requireScheduler, async (req, res, next) => {
+  const out = { email: null, send: { ok: false }, calendar: { ok: false } };
+  try {
+    const { s, token, email } = await hrMailbox();
+    out.email = email;
+    if (!token) return res.status(400).json({ error: 'The recruitment mailbox isn’t linked. Link it in HR Admin → API keys → Gmail.' });
+    // Default the test recipient to the person running the test (so they can
+    // confirm receipt), falling back to the mailbox's own address.
+    let actorEmail = '';
+    try {
+      if (req.hrActor.kind === 'hr') { const { HrUser } = require('../models'); const u = await HrUser.findByPk(req.hrActor.id); actorEmail = u && u.email; }
+      else { const { User } = require('../models'); const u = await User.findByPk(req.hrActor.id); actorEmail = u && u.email; }
+    } catch {}
+    const to = (req.body && req.body.to) || actorEmail || email;
+    // 1) Test send
+    try {
+      await gmail.sendMessage(s, token, email, { from: email, to, subject: 'Qtonix mailbox test', bodyHtml: '<p>This is a test email from the Qtonix recruitment mailbox. If you received it, sending works.</p>' });
+      out.send = { ok: true, to };
+    } catch (e) {
+      out.send = { ok: false, to, error: (e && e.response && e.response.data ? JSON.stringify(e.response.data) : e.message) };
+    }
+    // 2) Test calendar create + delete
+    try {
+      const now = new Date();
+      const ev = await gmail.createCalendarEvent(s, token, {
+        summary: 'Qtonix calendar test (safe to ignore)',
+        description: 'Temporary test event created by the mailbox self-test.',
+        start: new Date(now.getTime() + 3600000).toISOString(),
+        end: new Date(now.getTime() + 5400000).toISOString(),
+        attendees: [to].filter(Boolean), timeZone: 'Asia/Kolkata',
+      });
+      out.calendar = { ok: true, eventId: ev.eventId, meetLink: ev.meetLink, mode: ev.mode };
+      // Clean up the test event immediately.
+      try { if (ev.eventId) await gmail.deleteCalendarEvent(s, token, ev.eventId); } catch {}
+    } catch (e) {
+      out.calendar = { ok: false, error: gmail.calendarErrorMessage ? gmail.calendarErrorMessage(e) : (e && e.message) };
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 // Begin linking the shared mailbox (HR admin only). Reuses the same Google
 // OAuth app as the CRM; the state marks this as the HR mailbox.
 router.get('/mailbox/connect', requireHrAccess, async (req, res, next) => {

@@ -419,11 +419,15 @@ async function createCalendarEvent(settings, refreshToken, { summary, descriptio
   // route), so Google itself must NOT also email the attendees — otherwise the
   // candidate gets two invites. Hence sendUpdates:'none' throughout; the event
   // still lands on career@qtonix.com's calendar with the Meet link.
+  // Let Google email a proper calendar invitation to every attendee
+  // (sendUpdates:'all'). On Workspace this reliably delivers to any provider —
+  // @gmail, Outlook, etc. — and adds the event to their calendars. This is far
+  // more reliable than a hand-built email, so it is the primary path.
   const attempts = [
+    { label: 'meet+attendees+notify', params: { calendarId: 'primary', conferenceDataVersion: 1, sendUpdates: 'all', requestBody: { ...baseBody, attendees: attendeeList, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } } },
+    { label: 'attendees+notify', params: { calendarId: 'primary', sendUpdates: 'all', requestBody: { ...baseBody, attendees: attendeeList } } },
     { label: 'meet+attendees', params: { calendarId: 'primary', conferenceDataVersion: 1, sendUpdates: 'none', requestBody: { ...baseBody, attendees: attendeeList, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } } },
-    { label: 'attendees-only', params: { calendarId: 'primary', sendUpdates: 'none', requestBody: { ...baseBody, attendees: attendeeList } } },
-    { label: 'plain-event', params: { calendarId: 'primary', conferenceDataVersion: 1, requestBody: { ...baseBody, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } } },
-    { label: 'plain-no-meet', params: { calendarId: 'primary', requestBody: { ...baseBody } } },
+    { label: 'plain-no-meet', params: { calendarId: 'primary', sendUpdates: 'all', requestBody: { ...baseBody, attendees: attendeeList } } },
   ];
 
   let lastErr;
