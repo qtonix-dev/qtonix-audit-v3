@@ -225,7 +225,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
       {showFeedback && <FeedbackModal iv={feedbackIv} onClose={() => { setShowFeedback(false); setFeedbackIv(null); }}
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify({ ...payload, interviewId: feedbackIv ? feedbackIv.id : undefined, roundLabel: feedbackIv ? feedbackIv.roundLabel : undefined, round: feedbackIv ? feedbackIv.round : undefined }) })); setShowFeedback(false); setFeedbackIv(null); setTab('feedback'); }} />}
-      {showInterview && <InterviewModal candidateId={c.id} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
+      {showInterview && <InterviewModal candidateId={c.id} candidateStage={c.stage} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
       {showReject && <RejectModal candidateId={c.id} candidateEmail={c.email} onClose={() => setShowReject(false)} onReject={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify(payload) })); setShowReject(false); }} />}
@@ -1191,11 +1191,12 @@ function FeedbackModal({ onClose, onSubmit, iv }) {
 }
 
 // ---------- Interview modal (calendar + Meet) ----------
-function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
+function InterviewModal({ candidateId, candidateStage, stages, roundPanels, onClose, onDone }) {
   const [at, setAt] = useState('');
   const [duration, setDuration] = useState(30);
   const [mode, setMode] = useState('online');
-  const [round, setRound] = useState('');
+  // Default the round to the candidate's current stage (if it's a real stage).
+  const [round, setRound] = useState(() => (stages || []).some((s) => s.id === candidateStage) ? candidateStage : '');
   const [notes, setNotes] = useState('');
   const [sendEmail, setSendEmail] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -1852,7 +1853,7 @@ function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
                 drafting ? <div className="text-sm text-slate-400 py-8 text-center">✨ Drafting a thoughtful rejection email…</div> : (
                   <div className="space-y-3">
                     <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
-                    <div><Lbl>Message</Lbl><div className="rounded-lg border border-slate-300 min-h-[180px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+                    <div><Lbl>Message</Lbl><MailEditor value={body} onChange={setBody} minHeight={200} maxHeight={360} placeholder="Write your message…" /></div>
                     <div className="text-[11px] text-slate-400">Drafted by AI — review and edit before sending.</div>
                   </div>
                 )

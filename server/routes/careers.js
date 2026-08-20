@@ -160,26 +160,57 @@ async function sendApplicationConfirmation(cand, job) {
   if (!cand.email) return;
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
   const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
-  const mailbox = s && s.hrMailbox ? s.hrMailbox.email : '';
+  const mailbox = recruitmentMailboxEmail(s);
   if (!token || !mailbox) return;
   const gmail = require('../services/gmail');
-  const first = String(cand.name || 'there').split(' ')[0];
-  const bodyHtml = `<p>Hi ${first},</p><p>Thanks for applying for the <b>${job.title}</b> role at Qtonix. We've received your application and our team will review it shortly.</p><p>If your profile matches, we'll be in touch about next steps.</p><p>Warm regards,<br/>The Talent Team</p>`;
-  try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, subject: `We received your application — ${job.title}`, bodyHtml }); } catch {}
+  const hrEmail = require('../services/hrEmailTemplate');
+  const bodyHtml = hrEmail.applicationThankYou({
+    candidateName: cand.name, role: job.title,
+    signature: { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox || 'career@qtonix.com' },
+  });
+  try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, subject: `We received your application — ${job.title}`, bodyHtml }); } catch (e) { console.error('[careers] confirmation email failed:', e.message); }
+}
+
+// Resolve the recruitment mailbox address: the legacy single hrMailbox if
+// present, else the 'default' entry (or first) from the hrMailboxes list.
+function recruitmentMailboxEmail(s) {
+  if (s && s.hrMailbox && s.hrMailbox.email) return s.hrMailbox.email;
+  const list = (s && Array.isArray(s.hrMailboxes)) ? s.hrMailboxes : [];
+  const def = list.find((m) => m.id === 'default') || list[0];
+  return (def && def.email) || '';
 }
 
 async function notifyNewApplication(cand, job) {
+  // (1) In-app notifications to HR/recruiters.
   try {
     const hrRoute = require('./hr');
-    if (!hrRoute.notify) return;
-    // Notify the job creator (if HR) and all recruiters/HR.
-    const recruiters = await HrUser.findAll({ where: { active: true } });
-    for (const u of recruiters) {
-      if (['hr', 'recruiter', 'manager', 'tl'].includes(u.type)) {
-        await hrRoute.notify(u.id, { type: 'application', text: `New application from ${cand.name} for ${job.title}.`, candidateId: cand.id });
+    if (hrRoute.notify) {
+      const recruiters = await HrUser.findAll({ where: { active: true } });
+      for (const u of recruiters) {
+        if (['hr', 'recruiter', 'manager', 'tl'].includes(u.type)) {
+          await hrRoute.notify(u.id, { type: 'application', text: `New application from ${cand.name} for ${job.title}.`, candidateId: cand.id });
+        }
       }
     }
   } catch (e) { /* best-effort */ }
+  // (2) Email the recruitment inbox (career@qtonix.com) with the applicant's
+  // details so the team is alerted even when not logged in.
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    const mailbox = recruitmentMailboxEmail(s);
+    if (!token || !mailbox) return;
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+    const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+    const jobLocation = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : '';
+    const bodyHtml = hrEmail.applicationInternalNotice({
+      candidateName: cand.name, role: job.title, candidateEmail: cand.email, candidatePhone: cand.phone,
+      jobLocation, source: 'Careers page',
+      viewUrl: appUrl ? `${appUrl}/hr/recruitment` : '',
+    });
+    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: mailbox, subject: `New application — ${job.title} (${cand.name})`, bodyHtml });
+  } catch (e) { console.error('[careers] internal notice email failed:', e.message); }
 }
 
 // Public careers landing: list all published jobs + branding.

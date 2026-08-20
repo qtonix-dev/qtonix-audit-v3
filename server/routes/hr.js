@@ -1650,10 +1650,20 @@ router.post('/candidates/:id/reject-email/draft', requireHrAccess, async (req, r
     if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
     let parsed = {};
     try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
-    // Append the HR's signature (or a simple sign-off) below the drafted body.
-    let body = parsed.body || '';
-    if (hrSig) body += `<br><br>${hrSig}`;
-    else body += `<br><p>Warm regards,<br>${req.hrActor.name}<br>Talent Acquisition, Qtonix</p>`;
+    // Normalize the drafted body so paragraphs always have visible spacing:
+    // if the model returned plain text or <br>-joined lines instead of <p>
+    // blocks, convert double-newlines / stray lines into proper paragraphs.
+    let body = String(parsed.body || '').trim();
+    if (body && !/<p[\s>]/i.test(body)) {
+      const parts = body.split(/\n{2,}|<br\s*\/?>\s*<br\s*\/?>/i).map((x) => x.trim()).filter(Boolean);
+      body = parts.map((p) => `<p style="margin:0 0 14px;line-height:1.6;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+    } else {
+      // Ensure existing <p> tags carry spacing even if the client strips classes.
+      body = body.replace(/<p(?![^>]*style=)/gi, '<p style="margin:0 0 14px;line-height:1.6;"');
+    }
+    // Always append a signature — the HR's own if set, else a clean default.
+    if (hrSig) body += `<br>${hrSig}`;
+    else body += `<p style="margin:14px 0 0;line-height:1.6;">Warm regards,<br>${req.hrActor.name}<br>Talent Acquisition, Qtonix</p>`;
     res.json({ subject: parsed.subject || `Update on your application${job ? ` — ${job.title}` : ''}`, body });
   } catch (e) { next(e); }
 });

@@ -9,6 +9,36 @@
  */
 const router = require('express').Router();
 const { Op, Settings, HrCandidate, HrJobPost, HrUser, HrDirectorProfile, HrEmail, User } = require('../models');
+const hrEmail = require('../services/hrEmailTemplate');
+
+// Build the signature block for recruitment emails from the acting HR person.
+// Falls back to the recruitment team identity when we can't resolve a name.
+async function actorSignature(hrActor, mailboxEmail) {
+  let email = mailboxEmail || 'career@qtonix.com';
+  let name = (hrActor && hrActor.name) || 'Qtonix Recruitment Team';
+  let title = 'Talent Acquisition · Qtonix';
+  try {
+    if (hrActor && hrActor.kind === 'hr') {
+      const u = await HrUser.findByPk(hrActor.id);
+      if (u) { name = u.name || name; if (u.designation) title = `${u.designation} · Qtonix`; if (u.email) email = u.email; }
+    } else if (hrActor && hrActor.kind === 'admin') {
+      const u = await User.findByPk(hrActor.id);
+      if (u && u.email) email = u.email;
+    }
+  } catch {}
+  return { name, title, email };
+}
+
+// Resolve the round label to show in the invite. Prefer the explicitly-picked
+// round; otherwise fall back to the candidate's CURRENT stage label. Returns
+// { label, resolved } — resolved=false means neither was available and the
+// caller (UI) should ask HR to enter a round.
+function resolveRoundLabel(job, roundId, candidateStage) {
+  const stages = (job && job.stages) || [];
+  if (roundId) { const st = stages.find((x) => x.id === roundId); if (st) return { label: st.label, resolved: true }; return { label: String(roundId), resolved: true }; }
+  if (candidateStage) { const st = stages.find((x) => x.id === candidateStage); if (st) return { label: st.label, resolved: true }; }
+  return { label: '', resolved: false };
+}
 
 // Resolve a mixed list of panelist IDs (numeric HrUser ids and 'admin:<id>'
 // director ids) into { id, name, department, email } records for the invite and
@@ -270,7 +300,13 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
       panelIds = job.roundPanels[b.round];
     }
     const panelists = await resolvePanelists(panelIds);
-    const roundLabel = (() => { const st = (job && job.stages || []).find((x) => x.id === b.round); return st ? st.label : (b.round || ''); })();
+    const rr = resolveRoundLabel(job, b.round, cand.stage);
+    // If neither an explicit round nor the candidate's stage resolves to a
+    // label, ask HR to enter one (unless they've already typed a title).
+    if (!rr.resolved && !b.title && b.requireRound !== false) {
+      return res.status(422).json({ error: 'ROUND_REQUIRED', message: 'We couldn’t determine the interview round from the candidate’s stage. Please choose or enter a round.' });
+    }
+    const roundLabel = rr.label;
     const title = b.title || `${roundLabel ? roundLabel + ' — ' : 'Interview: '}${cand.name}${job ? ` (${job.title})` : ''}`;
     let event = {};
     try {
@@ -330,28 +366,29 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
       catch (e) { console.error('[interview] email to', to, 'failed:', e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message)); failed.push(to); }
     };
 
+    const sig = await actorSignature(req.hrActor, email);
+    const roleTitle = job ? job.title : '';
+
     // Candidate invite.
     if (b.sendEmail !== false && cand.email) {
-      const bodyHtml = `<p>Hi ${cand.name.split(' ')[0]},</p>
-<p>We'd like to invite you to ${roundLabel ? `the <strong>${roundLabel}</strong>` : 'an interview'}${job ? ` for the <strong>${job.title}</strong> role` : ''}.</p>
-<p><strong>When:</strong> ${when}<br>${event.meetLink ? `<strong>Google Meet:</strong> <a href="${event.meetLink}">${event.meetLink}</a>` : ''}</p>
-${b.notes ? `<p>${b.notes}</p>` : ''}
-<p>A calendar invite is attached — open it to add the meeting to your calendar and confirm you can make it.</p>
-<p>Best regards,<br>${req.hrActor.name}</p>`;
-      await sendTo(cand.email, bodyHtml, `Interview invitation${job ? ` — ${job.title}` : ''}`);
+      const bodyHtml = hrEmail.interviewInviteCandidate({
+        candidateName: cand.name, role: roleTitle, roundLabel,
+        whenText: when, durationMins: Number(b.durationMins) || 30, mode: b.mode || 'online',
+        meetLink: event.meetLink, notes: b.notes || '', signature: sig,
+      });
+      await sendTo(cand.email, bodyHtml, `Interview invitation${roleTitle ? ` — ${roleTitle}` : ''}`);
     }
 
     // Panel invites — each panelist gets the same event with the Meet link.
     if (b.sendEmail !== false) {
       for (const p of panelists) {
         if (!p.email) continue;
-        const bodyHtml = `<p>Hi ${(p.name || '').split(' ')[0] || 'there'},</p>
-<p>You're on the panel for ${roundLabel ? `the <strong>${roundLabel}</strong>` : 'an interview'} with <strong>${cand.name}</strong>${job ? ` for the <strong>${job.title}</strong> role` : ''}.</p>
-<p><strong>When:</strong> ${when}<br>${event.meetLink ? `<strong>Google Meet:</strong> <a href="${event.meetLink}">${event.meetLink}</a>` : ''}</p>
-${b.notes ? `<p>${b.notes}</p>` : ''}
-<p>A calendar invite is attached. Please add it to your calendar.</p>
-<p>— Qtonix Recruitment</p>`;
-        await sendTo(p.email, bodyHtml, `Interview panel${job ? ` — ${job.title}` : ''} (${cand.name})`);
+        const bodyHtml = hrEmail.interviewInvitePanel({
+          panelistName: p.name, candidateName: cand.name, role: roleTitle, roundLabel,
+          whenText: when, durationMins: Number(b.durationMins) || 30, mode: b.mode || 'online',
+          meetLink: event.meetLink, notes: b.notes || '', signature: sig,
+        });
+        await sendTo(p.email, bodyHtml, `Interview panel${roleTitle ? ` — ${roleTitle}` : ''} (${cand.name})`);
       }
     }
     const notes = [];
@@ -418,16 +455,23 @@ router.post('/candidates/:id/interview/:ivId/reschedule', requireHrAccess, requi
     const emailed = [], failed = [];
     if (b.sendEmail !== false) {
       const when = istStr(start);
-      const recipients = [cand.email, ...panelists.map((p) => p.email)].filter(Boolean);
+      const sig = await actorSignature(req.hrActor, email);
+      const roleTitle = job ? job.title : '';
+      const durationMins = Math.round((end - start) / 60000);
       const buildIcs = () => {
-        const ics = gmail.buildIcsInvite({ uid: iv.iCalUID || `${iv.id}@qtonix`, summary: title, description: iv.notes || '', start: start.toISOString(), end: end.toISOString(), organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment', attendees: recipients, meetLink: iv.meetLink, location: iv.meetLink || 'Online', timeZone: b.timeZone || 'Asia/Kolkata', sequence: 1 });
+        const ics = gmail.buildIcsInvite({ uid: iv.iCalUID || `${iv.id}@qtonix`, summary: title, description: iv.notes || '', start: start.toISOString(), end: end.toISOString(), organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment', attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean), meetLink: iv.meetLink, location: iv.meetLink || 'Online', timeZone: b.timeZone || 'Asia/Kolkata', sequence: 1 });
         return [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
       };
-      for (const to of recipients) {
-        const bodyHtml = `<p>Hi,</p><p>The interview${job ? ` for <strong>${job.title}</strong>` : ''} with <strong>${cand.name}</strong> has been <strong>rescheduled</strong>.</p><p><strong>New time:</strong> ${when}<br>${iv.meetLink ? `<strong>Google Meet:</strong> <a href="${iv.meetLink}">${iv.meetLink}</a>` : ''}</p><p>An updated calendar invite is attached.</p><p>— Qtonix Recruitment</p>`;
-        try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject: `Interview rescheduled${job ? ` — ${job.title}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
+      const sendReschedule = async (to, recipientName, isPanel) => {
+        const bodyHtml = hrEmail.interviewReschedule({
+          recipientName, isPanel, candidateName: cand.name, role: roleTitle, roundLabel: iv.roundLabel || '',
+          whenText: when, durationMins, mode: iv.mode || 'online', meetLink: iv.meetLink, notes: iv.notes || '', signature: sig,
+        });
+        try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject: `Interview rescheduled${roleTitle ? ` — ${roleTitle}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
         catch (e) { console.error('[interview] reschedule email to', to, 'failed:', e.message); failed.push(to); }
-      }
+      };
+      if (cand.email) await sendReschedule(cand.email, cand.name, false);
+      for (const p of panelists) { if (p.email) await sendReschedule(p.email, p.name, true); }
     }
     res.json({ ok: true, interview: iv, emailed, failed, emailSummary: emailed.length ? `Update emailed to ${emailed.length} recipient${emailed.length === 1 ? '' : 's'}.` : 'No emails sent.' });
   } catch (e) { next(e); }
