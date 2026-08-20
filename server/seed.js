@@ -7,7 +7,7 @@ const { initDb, User, sequelize } = require('./models');
   await initDb();
   console.log(`Database ready (${sequelize.getDialect()}). Tables created.`);
 
-  const email = (process.env.ADMIN_EMAIL || 'admin@qtonix.com').toLowerCase();
+  const email = (process.env.ADMIN_EMAIL || 'adam@qtonix.com').toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
   if (!password) {
     console.error('Set ADMIN_PASSWORD in .env before seeding.');
@@ -28,7 +28,7 @@ const { initDb, User, sequelize } = require('./models');
   }
 
   await User.create({
-    name: process.env.ADMIN_NAME || 'Admin',
+    name: process.env.ADMIN_NAME || 'Sandeep',
     email,
     passwordHash: await bcrypt.hash(password, 12),
     role: 'admin',

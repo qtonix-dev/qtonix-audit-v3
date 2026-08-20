@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v235';
+const APP_VERSION = 'v237';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -196,6 +196,58 @@ async function connectWithRetry(attempt = 1) {
 connectWithRetry()
   .then(async (connected) => {
     if (connected) {
+    // -- One-time, idempotent migration: rename the old default admin
+    // (admin@qtonix.com) to the real owner account. Name "Sandeep" with the
+    // sales alias "Adam G", email adam@qtonix.com. Runs in place (rename, not
+    // delete+recreate) so the account never "comes back" as a new admin, and
+    // repairs denormalized owner/agent names on leads and reports. Runs BEFORE
+    // the boot safety-net so a stale ADMIN_EMAIL env can't recreate the old
+    // account first. Safe to leave in: once renamed there is nothing to do.
+    try {
+      const fromEmail = (process.env.RENAME_ADMIN_FROM || 'admin@qtonix.com').toLowerCase().trim();
+      const toEmail = (process.env.RENAME_ADMIN_TO || 'adam@qtonix.com').toLowerCase().trim();
+      const toName = process.env.RENAME_ADMIN_NAME || 'Sandeep';
+      const toAlias = process.env.RENAME_ADMIN_ALIAS || 'Adam G';
+      const old = await User.findOne({ where: { email: fromEmail } });
+      if (old) {
+        const clash = await User.findOne({ where: { email: toEmail } });
+        if (clash && clash.id !== old.id) {
+          console.log(`[admin-rename] ${toEmail} already exists (id ${clash.id}); leaving ${fromEmail} untouched.`);
+        } else {
+          const oldName = old.name;
+          old.email = toEmail; old.name = toName;
+          const aliases = Array.isArray(old.aliases) ? old.aliases.filter(Boolean) : [];
+          if (!aliases.includes(toAlias)) aliases.unshift(toAlias);
+          old.aliases = aliases; old.changed('aliases', true);
+          old.role = 'admin'; old.active = true;
+          // Apply the password from ADMIN_PASSWORD as part of the rename. Because
+          // the rename only fires while admin@qtonix.com still exists (i.e. once),
+          // this is inherently a one-time password set — no RESET_ADMIN needed.
+          // RENAME_ADMIN_SET_PASSWORD=false opts out if you want to keep the
+          // existing password untouched.
+          const setPw = String(process.env.RENAME_ADMIN_SET_PASSWORD || 'true').toLowerCase() !== 'false';
+          const pw = process.env.ADMIN_PASSWORD;
+          let pwNote = '';
+          if (setPw && pw) {
+            const bcrypt = require('bcryptjs');
+            old.passwordHash = await bcrypt.hash(pw, 12);
+            pwNote = ' Password set from ADMIN_PASSWORD.';
+          }
+          await old.save();
+          const { Lead, Report } = require('./models');
+          try { await Lead.update({ ownerName: toName }, { where: { ownerId: old.id } }); } catch {}
+          try { await Report.update({ agentName: toName }, { where: { agentId: old.id } }); } catch {}
+          if (oldName) {
+            try { await Lead.update({ ownerName: toName }, { where: { ownerName: oldName } }); } catch {}
+            try { await Report.update({ agentName: toName }, { where: { agentName: oldName } }); } catch {}
+          }
+          console.log(`[admin-rename] ${fromEmail} → ${toEmail} (name "${toName}", alias "${toAlias}"). Owner names repaired.${pwNote}`);
+        }
+      }
+    } catch (e) {
+      console.error('[admin-rename] skipped:', e.message);
+    }
+
     // -- Boot-time admin safety net. Never throws (so it can't cause a 502).
     // Ensures an admin can always sign in. IMPORTANT: it only recreates the
     // default admin when NO active admin exists at all. Once ownership has been
@@ -205,7 +257,7 @@ connectWithRetry()
     // password on the existing default account when present.
     try {
       const bcrypt = require('bcryptjs');
-      const email = (process.env.ADMIN_EMAIL || 'admin@qtonix.com').toLowerCase().trim();
+      const email = (process.env.ADMIN_EMAIL || 'adam@qtonix.com').toLowerCase().trim();
       const password = process.env.ADMIN_PASSWORD;
       if (password) {
         const existing = await User.findOne({ where: { email } });
@@ -216,7 +268,7 @@ connectWithRetry()
             console.log('[admin] default account absent but an active admin exists — not recreating.');
           } else {
             await User.create({
-              name: process.env.ADMIN_NAME || 'Admin',
+              name: process.env.ADMIN_NAME || 'Sandeep',
               email,
               passwordHash: await bcrypt.hash(password, 12),
               role: 'admin',

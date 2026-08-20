@@ -13,7 +13,7 @@ const { initDb, User, sequelize } = require('./models');
   await initDb();
   console.log(`DB ready (${sequelize.getDialect()}).`);
 
-  const email = (process.env.ADMIN_EMAIL || 'admin@qtonix.com').toLowerCase().trim();
+  const email = (process.env.ADMIN_EMAIL || 'adam@qtonix.com').toLowerCase().trim();
   const password = process.env.ADMIN_PASSWORD;
   if (!password) {
     console.error('ADMIN_PASSWORD is not set. Add it in Railway Variables, then redeploy.');
@@ -30,7 +30,7 @@ const { initDb, User, sequelize } = require('./models');
     console.log('Admin password RESET for:', email);
   } else {
     await User.create({
-      name: process.env.ADMIN_NAME || 'Adam G',
+      name: process.env.ADMIN_NAME || 'Sandeep',
       email,
       passwordHash,
       role: 'admin',
