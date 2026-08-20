@@ -1740,6 +1740,148 @@ function OfferLetterModal({ candidate, onClose, onSent }) {
   );
 }
 
+function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
+  const [reasons, setReasons] = useState([]);
+  const [picked, setPicked] = useState('');
+  const [custom, setCustom] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState('reason'); // reason | email
+  const [sendEmail, setSendEmail] = useState(true);
+  const [drafting, setDrafting] = useState(false);
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => { hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {}); }, []);
+  const addReason = async () => {
+    const v = custom.trim(); if (!v) return;
+    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { alert(e.message); }
+  };
+  const goEmail = async () => {
+    if (!picked) return;
+    setStep('email');
+    if (candidateEmail && !body) {
+      setDrafting(true); setErr('');
+      try { const r = await hrApi(`/candidates/${candidateId}/reject-email/draft`, { method: 'POST', body: JSON.stringify({ reason: picked }) }); setSubject(r.subject || ''); setBody(r.body || ''); }
+      catch (e) { setErr(e.message); setSendEmail(false); }
+      finally { setDrafting(false); }
+    }
+  };
+  const submit = async () => {
+    setBusy(true);
+    await onReject({ reason: picked, sendEmail: sendEmail && !!candidateEmail, subject, body });
+  };
+  return (
+    <Modal title="Reject candidate" onClose={onClose} wide={step === 'email'}>
+      {step === 'reason' ? (
+        <>
+          <div className="text-sm text-slate-500 mb-3">Pick a reason before sending the rejection. This is recorded on the candidate.</div>
+          <div className="space-y-2 max-h-64 overflow-auto">
+            {reasons.map((r) => (
+              <label key={r} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                <input type="radio" name="reason" checked={picked === r} onChange={() => setPicked(r)} />
+                <span className="text-slate-700">{r}</span>
+              </label>
+            ))}
+          </div>
+          {adding ? (
+            <div className="flex gap-2 mt-2">
+              <input className={inp} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
+              <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>Add</button>
+            </div>
+          ) : <button onClick={() => setAdding(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
+          <div className="flex justify-end gap-2 mt-5">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={goEmail} disabled={!picked} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>Next: email →</button>
+          </div>
+        </>
+      ) : (
+        <>
+          {err && <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">{err}</div>}
+          {!candidateEmail ? (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-sm text-slate-500 mb-3">No email on file for this candidate — they'll be rejected without an email.</div>
+          ) : (
+            <>
+              <label className="flex items-center gap-2 text-sm text-slate-600 mb-3"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Send a rejection email to {candidateEmail}</label>
+              {sendEmail && (
+                drafting ? <div className="text-sm text-slate-400 py-8 text-center">✨ Drafting a thoughtful rejection email…</div> : (
+                  <div className="space-y-3">
+                    <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+                    <div><Lbl>Message</Lbl><MailEditor value={body} onChange={setBody} minHeight={200} maxHeight={360} placeholder="Write your message…" /></div>
+                    <div className="text-[11px] text-slate-400">Drafted by AI — review and edit before sending.</div>
+                  </div>
+                )
+              )}
+            </>
+          )}
+          <div className="flex justify-between gap-2 mt-5">
+            <button onClick={() => setStep('reason')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">← Back</button>
+            <button onClick={submit} disabled={busy || (sendEmail && candidateEmail && drafting)} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : (sendEmail && candidateEmail ? 'Reject & send email' : 'Reject candidate')}</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ---------- small helpers ----------
+function Modal({ title, children, onClose, wide }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4">
+      <div className={`bg-white rounded-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} shadow-2xl max-h-[90vh] flex flex-col`}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">{title}</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
+        </div>
+        <div className="p-6 overflow-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+function Stars({ value, onChange, readOnly }) {
+  return <div className="flex gap-0.5">{[1, 2, 3, 4, 5].map((n) => <button key={n} disabled={readOnly} onClick={() => onChange && onChange(n)} className={n <= value ? 'text-amber-400' : 'text-slate-300'}>★</button>)}</div>;
+}
+// Candidate quick-rating (click a star; click the same star again to clear).
+function RatingStars({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[11px] font-bold text-slate-400">Rating</span>
+      <div className="flex gap-0.5">{[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} onClick={() => onChange(n === value ? 0 : n)} className={n <= value ? 'text-amber-400' : 'text-slate-300 hover:text-amber-300'}>★</button>
+      ))}</div>
+    </div>
+  );
+}
+// Editable tag chips.
+function TagEditor({ tags, onChange }) {
+  const [adding, setAdding] = useState(false);
+  const [val, setVal] = useState('');
+  const add = () => { const t = val.trim(); if (t && !tags.includes(t)) onChange([...tags, t]); setVal(''); setAdding(false); };
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {tags.map((t) => (
+        <span key={t} className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[11px] font-semibold">
+          {t}<button onClick={() => onChange(tags.filter((x) => x !== t))} className="text-slate-400 hover:text-red-500">×</button>
+        </span>
+      ))}
+      {adding ? (
+        <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onBlur={add} onKeyDown={(e) => { if (e.key === 'Enter') add(); if (e.key === 'Escape') { setAdding(false); setVal(''); } }}
+          className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] w-24" placeholder="tag…" />
+      ) : (
+        <button onClick={() => setAdding(true)} className="rounded-full border border-dashed border-slate-300 text-slate-400 hover:text-slate-600 px-2 py-0.5 text-[11px] font-semibold">+ Tag</button>
+      )}
+    </div>
+  );
+}
+function Card({ title, action, children }) {
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="flex items-center justify-between mb-3"><div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{title}</div>{action}</div>
+      {children}
+    </div>
+  );
+}
+
 // Assign an assessment task to a candidate: pick reviewer employees (same panel
 // picker as scheduling) + task details, then email the candidate an upload link.
 function AssignTaskModal({ candidate, onClose, onDone }) {
