@@ -23,6 +23,10 @@ body{ font-family:'Plus Jakarta Sans',system-ui,sans-serif; color:var(--ink); fo
 
 {{#unless forWeb}}
 @page{ size:Letter; margin:0.7in 0.8in; }
+/* The cover uses a dedicated page with NO margin so its gradient bleeds to the
+   paper edge; the inset comes from the cover's own padding. */
+@page cover{ size:Letter; margin:0; }
+.cover{ page:cover; }
 /* Each top-level .page block starts on a fresh sheet (the cover is first, so it
    doesn't need one before it). This gives deterministic pagination. */
 .page{ break-before:page; }
@@ -32,15 +36,16 @@ body{ font-family:'Plus Jakarta Sans',system-ui,sans-serif; color:var(--ink); fo
 {{#if forWeb}}
 body{ background:#F3F4F6; padding:1px 0; }
 .page{ max-width:8.1in; margin:20px auto; background:#fff; padding:0.7in 0.8in; box-shadow:0 1px 8px rgba(0,0,0,.08); border-radius:4px; }
-.cover.page{ padding:0; box-shadow:0 1px 8px rgba(0,0,0,.08); }
+/* Cover: full-bleed gradient card — no inner white padding, no rounding gaps. */
+.cover.page{ padding:0; box-shadow:0 1px 8px rgba(0,0,0,.08); overflow:hidden; }
 {{/if}}
 
 /* ---------- Cover ---------- */
 .cover{
   background:linear-gradient(150deg,#0A0E28 0%,#0435AC 100%);
   color:#fff; padding:0.9in 0.8in;
-  {{#unless forWeb}}height:9.6in;{{/unless}}
-  {{#if forWeb}}border-radius:4px; min-height:8.6in; display:flex; flex-direction:column;{{/if}}
+  {{#unless forWeb}}height:11in; width:8.5in;{{/unless}}
+  {{#if forWeb}}border-radius:4px; min-height:9.6in; display:flex; flex-direction:column;{{/if}}
   position:relative; break-after:page;
 }
 .cover .brand{ font-size:15pt; font-weight:800; }

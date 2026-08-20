@@ -1,13 +1,14 @@
 /**
- * Sales-CRM pulse surveys — ported from the HRMS survey system. Admins create
- * and analyse; all active CRM users respond. Results split by team. Reuses the
- * shared survey AI service (adaptive follow-ups, sentiment, aggregate, personal
- * success message).
+ * HRMS employee pulse surveys — the full survey system (list, test mode, AI
+ * sentiment analysis, branch/team breakdown, PDF/HTML report, OpenAI rewrite),
+ * ported from the Sales-CRM survey. Admins create and analyse; all active HR
+ * employees respond (admins excluded). Branch = HrUser.branch, team =
+ * HrUser.department. Reuses the shared survey AI + report services.
  */
 const express = require('express');
 const router = express.Router();
-const { Op, CrmSurvey, CrmSurveyResponse, User, Settings } = require('../models');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { Op, HrSurvey, HrSurveyResponse, HrUser, Settings } = require('../models');
+const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 
 const DEFAULT_MOOD_QUESTIONS = [
   { id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] },
@@ -56,42 +57,41 @@ async function settingsKey(name) {
 }
 
 // ---- Admin: list / create / update / delete ----
-router.get('/', requireAuth, requireAdmin, async (req, res, next) => {
+router.get('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const { User } = require('../models');
-    // Participants = active non-admin CRM users (admins never take surveys).
-    const eligible = await User.count({ where: { active: true, role: { [Op.ne]: 'admin' } } });
-    const rows = await CrmSurvey.findAll({ where: { active: true }, order: [['createdAt', 'DESC']] });
+    // Participants = active HR employees (admins never take surveys).
+    const eligible = await HrUser.count({ where: { active: true } });
+    const rows = await HrSurvey.findAll({ where: { active: true }, order: [['createdAt', 'DESC']] });
     const out = [];
     for (const s of rows) {
       await ensureSurveyPeriod(s);
-      const completed = await CrmSurveyResponse.count({ where: { surveyId: s.id, period: s.period } });
+      const completed = await HrSurveyResponse.count({ where: { surveyId: s.id, period: s.period } });
       out.push({ ...s.toJSON(), responseCount: completed, participants: eligible, completed, pending: Math.max(0, eligible - completed) });
     }
     res.json({ surveys: out });
   } catch (e) { next(e); }
 });
 
-router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
+router.post('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Survey name is required.' });
     const frequency = ['one_time', 'weekly', 'monthly'].includes(b.frequency) ? b.frequency : 'one_time';
     const qs = sanitizeQuestions(b.questions);
     const questions = qs.length ? qs : DEFAULT_MOOD_QUESTIONS;
-    const row = await CrmSurvey.create({
+    const row = await HrSurvey.create({
       name: String(b.name).slice(0, 160), description: String(b.description || '').slice(0, 2000),
       template: 'employee_mood', frequency, questions, status: 'draft',
       period: surveyPeriodKey(frequency), periodStartedAt: new Date(),
-      createdById: req.user.id, createdByName: req.user.name,
+      createdById: req.hrActor.id, createdByName: req.hrActor.name,
     });
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
 
-router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
+router.put('/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const row = await CrmSurvey.findByPk(req.params.id);
+    const row = await HrSurvey.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Survey not found.' });
     const b = req.body || {};
     if (b.name !== undefined) row.name = String(b.name).slice(0, 160);
@@ -104,9 +104,9 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
+router.delete('/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const row = await CrmSurvey.findByPk(req.params.id);
+    const row = await HrSurvey.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Survey not found.' });
     row.active = false; row.status = 'closed'; await row.save();
     res.json({ ok: true });
@@ -114,24 +114,24 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
 });
 
 // ---- Employee (any active CRM user): pending / follow-ups / respond ----
-router.get('/pending', requireAuth, async (req, res, next) => {
+router.get('/pending', requireHrAccess, async (req, res, next) => {
   try {
     // Admins manage surveys — they are never prompted to answer them.
-    if (req.user.role === 'admin') return res.json({ pending: [] });
-    const surveys = await CrmSurvey.findAll({ where: { active: true, status: 'active' } });
+    if (req.hrActor.kind === 'admin') return res.json({ pending: [] });
+    const surveys = await HrSurvey.findAll({ where: { active: true, status: 'active' } });
     const pending = [];
     for (const s of surveys) {
       await ensureSurveyPeriod(s);
-      const done = await CrmSurveyResponse.count({ where: { surveyId: s.id, period: s.period, employeeId: req.user.id } });
+      const done = await HrSurveyResponse.count({ where: { surveyId: s.id, period: s.period, employeeId: req.hrActor.id } });
       if (!done) pending.push({ _id: s.id, name: s.name, description: s.description, questions: s.questions, frequency: s.frequency, period: s.period });
     }
     res.json({ pending });
   } catch (e) { next(e); }
 });
 
-router.post('/:id/followups', requireAuth, async (req, res, next) => {
+router.post('/:id/followups', requireHrAccess, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const key = await anthropicKey();
     if (!key) return res.json({ questions: [] });
@@ -141,14 +141,14 @@ router.post('/:id/followups', requireAuth, async (req, res, next) => {
   } catch (e) { res.json({ questions: [] }); }
 });
 
-router.post('/:id/respond', requireAuth, async (req, res, next) => {
+router.post('/:id/respond', requireHrAccess, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey || survey.status !== 'active') return res.status(404).json({ error: 'This survey is not accepting responses.' });
     await ensureSurveyPeriod(survey);
-    const already = await CrmSurveyResponse.findOne({ where: { surveyId: survey.id, period: survey.period, employeeId: req.user.id } });
+    const already = await HrSurveyResponse.findOne({ where: { surveyId: survey.id, period: survey.period, employeeId: req.hrActor.id } });
     if (already) return res.status(409).json({ error: 'You’ve already responded to this survey for this period.' });
-    const me = await User.findByPk(req.user.id);
+    const me = await HrUser.findByPk(req.hrActor.id);
 
     const b = req.body || {};
     const raw = (b.answers && typeof b.answers === 'object') ? b.answers : {};
@@ -180,9 +180,9 @@ router.post('/:id/respond', requireAuth, async (req, res, next) => {
     const avgScore = scores.length ? scores.reduce((a, c) => a + c, 0) / scores.length : null;
     const hasLow = scores.some((n) => n <= 3);
 
-    const row = await CrmSurveyResponse.create({
+    const row = await HrSurveyResponse.create({
       surveyId: survey.id, period: survey.period, employeeId: me.id, employeeName: me.name,
-      department: me.role || '', branch: me.team || '', answers, followups, avgScore, behavior,
+      department: me.department || '', branch: me.branch || '', answers, followups, avgScore, behavior,
     });
 
     let message = `Thank you, ${(me.name || '').split(' ')[0]}. Your feedback truly helps us improve.`;
@@ -225,16 +225,16 @@ function buildResponseData(survey, b, user) {
 
 // Activate (make live) a draft survey. Resets the period so live responses start
 // fresh, and clears any test responses so they don't mix into real results.
-router.post('/:id/activate', requireAuth, requireAdmin, async (req, res, next) => {
+router.post('/:id/activate', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     survey.status = 'active';
     survey.period = surveyPeriodKey(survey.frequency);
     survey.periodStartedAt = new Date();
     await survey.save();
     // Remove test responses + test analysis so live starts clean.
-    await CrmSurveyResponse.destroy({ where: { surveyId: survey.id, period: TEST_PERIOD } });
+    await HrSurveyResponse.destroy({ where: { surveyId: survey.id, period: TEST_PERIOD } });
     if (survey.analysis && survey.analysis[TEST_PERIOD]) { const a = { ...survey.analysis }; delete a[TEST_PERIOD]; survey.analysis = a; survey.changed('analysis', true); await survey.save(); }
     res.json(survey.toJSON());
   } catch (e) { next(e); }
@@ -243,15 +243,15 @@ router.post('/:id/activate', requireAuth, requireAdmin, async (req, res, next) =
 // Take the survey in TEST mode (admin preview). Writes into the reserved `test`
 // period. Multiple test submissions are allowed (no once-per-period guard) so
 // the admin can try different answers. Works whether draft or active.
-router.post('/:id/test-respond', requireAuth, requireAdmin, async (req, res, next) => {
+router.post('/:id/test-respond', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
-    const me = await User.findByPk(req.user.id);
+    const me = await HrUser.findByPk(req.hrActor.id);
     const { answers, followups, behavior, avgScore } = buildResponseData(survey, req.body || {}, me);
-    const row = await CrmSurveyResponse.create({
+    const row = await HrSurveyResponse.create({
       surveyId: survey.id, period: TEST_PERIOD, employeeId: me.id, employeeName: `${me.name} (test)`,
-      department: me.role || '', branch: me.team || '', answers, followups, avgScore, behavior,
+      department: me.department || '', branch: me.branch || '', answers, followups, avgScore, behavior,
     });
     let message = 'Test response saved. Open “View test results” to see how it looks.';
     res.json({ ok: true, id: row.id, message, test: true });
@@ -259,9 +259,9 @@ router.post('/:id/test-respond', requireAuth, requireAdmin, async (req, res, nex
 });
 
 // Test follow-ups (same as live, but admin-only and doesn't require active).
-router.post('/:id/test-followups', requireAuth, requireAdmin, async (req, res, next) => {
+router.post('/:id/test-followups', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const key = await anthropicKey();
     if (!key) return res.json({ questions: [] });
@@ -272,28 +272,27 @@ router.post('/:id/test-followups', requireAuth, requireAdmin, async (req, res, n
 });
 
 // Clear all test responses/analysis for a survey.
-router.delete('/:id/test-responses', requireAuth, requireAdmin, async (req, res, next) => {
+router.delete('/:id/test-responses', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
-    await CrmSurveyResponse.destroy({ where: { surveyId: survey.id, period: TEST_PERIOD } });
+    await HrSurveyResponse.destroy({ where: { surveyId: survey.id, period: TEST_PERIOD } });
     if (survey.analysis && survey.analysis[TEST_PERIOD]) { const a = { ...survey.analysis }; delete a[TEST_PERIOD]; survey.analysis = a; survey.changed('analysis', true); await survey.save(); }
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
 // ---- Admin: results & analysis ----
-router.get('/:id/periods', requireAuth, requireAdmin, async (req, res, next) => {
+router.get('/:id/periods', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const rows = await CrmSurveyResponse.findAll({ where: { surveyId: req.params.id }, attributes: ['period'], group: ['period'], order: [['period', 'DESC']] });
+    const rows = await HrSurveyResponse.findAll({ where: { surveyId: req.params.id }, attributes: ['period'], group: ['period'], order: [['period', 'DESC']] });
     res.json({ periods: rows.map((r) => r.period).filter((p) => p && p !== 'test') });
   } catch (e) { next(e); }
 });
 
 async function buildResults(survey, period) {
-  const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
-  const { User } = require('../models');
-  const participants = await User.count({ where: { active: true, role: { [Op.ne]: 'admin' } } });
+  const responses = await HrSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+  const participants = await HrUser.count({ where: { active: true } });
   const total = responses.length;
   const analysis = (survey.analysis && survey.analysis[period]) || null;
   const tally = (list) => { const t = { positive: 0, neutral: 0, negative: 0 }; list.forEach((r) => { const l = r.sentiment && r.sentiment.label; if (t[l] != null) t[l] += 1; }); return t; };
@@ -329,9 +328,9 @@ async function buildResults(survey, period) {
   };
 }
 
-router.get('/:id/results', requireAuth, requireAdmin, async (req, res, next) => {
+router.get('/:id/results', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const period = req.query.period || survey.period;
     res.json(await buildResults(survey, period));
@@ -342,9 +341,9 @@ router.get('/:id/results', requireAuth, requireAdmin, async (req, res, next) => 
 // HTML preview of the survey report (same content as the PDF, but viewable in
 // an iframe — browsers block PDFs in iframes). Auth via ?token= so the iframe
 // can load it. Mirrors the Site Analysis report /view flow.
-router.get('/:id/report.html', requireAuth, requireAdmin, async (req, res, next) => {
+router.get('/:id/report.html', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).send('Survey not found.');
     const period = req.query.period || survey.period;
     // If the stored analysis is missing the newer fields (good/improve/branches),
@@ -364,9 +363,9 @@ router.get('/:id/report.html', requireAuth, requireAdmin, async (req, res, next)
   } catch (e) { next(e); }
 });
 
-router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) => {
+router.get('/:id/report.pdf', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const period = req.query.period || survey.period;
     const stored = survey.analysis && survey.analysis[period];
@@ -391,7 +390,7 @@ router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) 
 // /analyze endpoint and the report routes (which auto-analyse if the stored
 // analysis is stale/missing the newer fields). Returns the stored analysis.
 async function runAnalysis(survey, period, key) {
-  const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+  const responses = await HrSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
   if (!responses.length) return null;
   const { analyseResponse, aggregateAnalysis, surveyReportInsights } = require('../services/hrSurveyAI');
   const { rewriteSummaries } = require('../services/summaryRewrite');
@@ -427,7 +426,7 @@ async function runAnalysis(survey, period, key) {
   try {
     const openaiKey = await settingsKey('openai');
     if (!openaiKey) {
-      console.log('[survey] OpenAI rewrite skipped — no OpenAI key set in Admin → API keys.');
+      console.log('[hr-survey] OpenAI rewrite skipped — no OpenAI key set in Admin -> API keys.');
     } else {
       const rew = await rewriteSummaries(openaiKey, {
         overall: agg.summary,
@@ -440,19 +439,18 @@ async function runAnalysis(survey, period, key) {
         if (Array.isArray(rew.departments)) agg.departmentSummaries = rew.departments;
         rewritten = true;
       } else {
-        console.warn('[survey] OpenAI rewrite of aggregate summaries returned nothing — keeping Claude originals.');
+        console.warn('[hr-survey] OpenAI rewrite of aggregate summaries returned nothing — keeping Claude originals.');
       }
-      // Also simplify each employee's individual summary.
       for (const r of responses) {
         if (r.sentiment && r.sentiment.summary) {
           try {
             const simpler = await rewriteSummaries(openaiKey, { overall: r.sentiment.summary });
             if (simpler && simpler.overall) { r.sentiment = { ...r.sentiment, summary: simpler.overall }; r.changed('sentiment', true); await r.save(); }
-          } catch (e) { console.warn('[survey] OpenAI rewrite of an employee summary failed:', e.message); }
+          } catch (e) { console.warn('[hr-survey] OpenAI rewrite of an employee summary failed:', e.message); }
         }
       }
     }
-  } catch (e) { console.error('[survey] OpenAI rewrite pass errored:', e.message); }
+  } catch (e) { console.error('[hr-survey] OpenAI rewrite pass errored:', e.message); }
 
   const nextAnalysis = { ...(survey.analysis || {}) };
   nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, branchSummaries: agg.branchSummaries || [], departmentSummaries: agg.departmentSummaries || [], insights, rewritten };
@@ -460,9 +458,9 @@ async function runAnalysis(survey, period, key) {
   return nextAnalysis[period];
 }
 
-// True when a stored analysis should be regenerated: missing the newer fields
-// (good/improve/branches), or not yet simplified by OpenAI while an OpenAI key
-// is available (so adding the key later refreshes existing reports).
+// True when a stored analysis is missing the newer fields (branch summaries /
+// good / improve) — i.e. it was produced by an older version and should be
+// re-run so the report isn't half-empty.
 function analysisStale(a, openaiAvailable) {
   if (!a) return true;
   if (!Array.isArray(a.good) || !a.good.length) return true;
@@ -471,9 +469,9 @@ function analysisStale(a, openaiAvailable) {
   return false;
 }
 
-router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) => {
+router.post('/:id/analyze', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
-    const survey = await CrmSurvey.findByPk(req.params.id);
+    const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const key = await anthropicKey();
     if (!key) return res.status(400).json({ error: 'AI isn’t configured. Add an Anthropic API key in Admin → API keys.' });
