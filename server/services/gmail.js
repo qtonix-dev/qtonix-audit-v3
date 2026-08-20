@@ -230,6 +230,53 @@ function buildRaw({ from, to, cc, bcc, subject, bodyHtml, inReplyTo, attachments
   return Buffer.from(body, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/**
+ * Build a standard iCalendar (.ics) invitation with METHOD:REQUEST. Attaching
+ * this to the invite email makes every mail client — Gmail, Outlook, Apple Mail,
+ * Yahoo — render Accept/Decline buttons and add the event to the recipient's
+ * calendar, independent of whether they use Google. The Meet/join link is
+ * embedded in both LOCATION and DESCRIPTION so it's always reachable.
+ */
+function buildIcsInvite({ uid, summary, description, start, end, organizerEmail, organizerName, attendees = [], location, meetLink, timeZone = 'Asia/Kolkata', sequence = 0, method = 'REQUEST', status = 'CONFIRMED' }) {
+  const toUtc = (d) => {
+    const dt = new Date(d);
+    return dt.getUTCFullYear().toString().padStart(4, '0')
+      + (dt.getUTCMonth() + 1).toString().padStart(2, '0')
+      + dt.getUTCDate().toString().padStart(2, '0') + 'T'
+      + dt.getUTCHours().toString().padStart(2, '0')
+      + dt.getUTCMinutes().toString().padStart(2, '0')
+      + dt.getUTCSeconds().toString().padStart(2, '0') + 'Z';
+  };
+  const esc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  const loc = location || meetLink || '';
+  const desc = [description || '', meetLink ? `\\n\\nJoin: ${meetLink}` : ''].join('');
+  const lines = [
+    'BEGIN:VCALENDAR', 'PRODID:-//Qtonix//HRMS//EN', 'VERSION:2.0', `METHOD:${method}`, 'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${toUtc(new Date())}`,
+    `DTSTART:${toUtc(start)}`,
+    `DTEND:${toUtc(end)}`,
+    `SEQUENCE:${sequence}`,
+    `SUMMARY:${esc(summary)}`,
+    `DESCRIPTION:${esc(desc)}`,
+    loc ? `LOCATION:${esc(loc)}` : '',
+    `ORGANIZER;CN=${esc(organizerName || organizerEmail)}:mailto:${organizerEmail}`,
+    ...attendees.filter(Boolean).map((a) => `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${esc(a)}:mailto:${a}`),
+    `STATUS:${status}`,
+    'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].filter(Boolean);
+  // Fold lines >75 octets per RFC 5545, and use CRLF line endings.
+  const folded = lines.map((l) => {
+    if (l.length <= 74) return l;
+    let out = l.slice(0, 74); let rest = l.slice(74);
+    while (rest.length > 73) { out += '\r\n ' + rest.slice(0, 73); rest = rest.slice(73); }
+    return out + '\r\n ' + rest;
+  });
+  return folded.join('\r\n');
+}
+
 async function sendMessage(settings, refreshToken, connectedEmail, opts) {
   const gmail = gmailFor(settings, refreshToken);
   const raw = buildRaw({ from: opts.from || connectedEmail, ...opts });
@@ -362,24 +409,36 @@ async function createCalendarEvent(settings, refreshToken, { summary, descriptio
     summary, description,
     start: { dateTime: start, timeZone },
     end: { dateTime: end, timeZone },
-    attendees: attendeeList,
   };
-  // First try with a Google Meet link attached. If conferencing fails (some
-  // accounts can't create Meet links via API), fall back to a plain event so
-  // scheduling still succeeds.
-  let res;
-  try {
-    res = await calendar.events.insert({
-      calendarId: 'primary', conferenceDataVersion: 1, sendUpdates: 'all',
-      requestBody: { ...baseBody, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } },
-    });
-  } catch (confErr) {
-    // Retry without conferenceData — keeps the invite working without Meet.
-    res = await calendar.events.insert({ calendarId: 'primary', sendUpdates: 'all', requestBody: baseBody });
+
+  // Try progressively simpler requests so a single unsupported feature (Meet
+  // conferencing, attendee invites on a personal Gmail account, or update
+  // emails) can't block the whole event. We record why each attempt failed so
+  // the surfaced error names the real cause.
+  // We attach our own branded .ics to the invite email (see the schedule
+  // route), so Google itself must NOT also email the attendees — otherwise the
+  // candidate gets two invites. Hence sendUpdates:'none' throughout; the event
+  // still lands on career@qtonix.com's calendar with the Meet link.
+  const attempts = [
+    { label: 'meet+attendees', params: { calendarId: 'primary', conferenceDataVersion: 1, sendUpdates: 'none', requestBody: { ...baseBody, attendees: attendeeList, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } } },
+    { label: 'attendees-only', params: { calendarId: 'primary', sendUpdates: 'none', requestBody: { ...baseBody, attendees: attendeeList } } },
+    { label: 'plain-event', params: { calendarId: 'primary', conferenceDataVersion: 1, requestBody: { ...baseBody, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } } },
+    { label: 'plain-no-meet', params: { calendarId: 'primary', requestBody: { ...baseBody } } },
+  ];
+
+  let lastErr;
+  for (const a of attempts) {
+    try {
+      const res = await calendar.events.insert(a.params);
+      const ev = res.data;
+      const meetLink = (ev.conferenceData && ev.conferenceData.entryPoints || []).find((e) => e.entryPointType === 'video');
+      return { htmlLink: ev.htmlLink, meetLink: meetLink ? meetLink.uri : '', eventId: ev.id, iCalUID: ev.iCalUID || ev.id, mode: a.label };
+    } catch (e) {
+      lastErr = e;
+      console.error(`[calendar] attempt "${a.label}" failed:`, e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message));
+    }
   }
-  const ev = res.data;
-  const meetLink = (ev.conferenceData && ev.conferenceData.entryPoints || []).find((e) => e.entryPointType === 'video');
-  return { htmlLink: ev.htmlLink, meetLink: meetLink ? meetLink.uri : '', eventId: ev.id };
+  throw lastErr || new Error('Calendar event could not be created.');
 }
 
 // Extract the human-readable reason from a Google API error, so the UI can show
@@ -400,5 +459,5 @@ module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
   listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
-  createCalendarEvent, calendarErrorMessage, oauthClient, gmailFor,
+  createCalendarEvent, calendarErrorMessage, buildIcsInvite, oauthClient, gmailFor,
 };

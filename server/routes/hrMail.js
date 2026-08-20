@@ -260,18 +260,35 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     cand.timeline = t; cand.changed('timeline', true);
     await cand.save();
 
-    // Optionally email the candidate the invite details.
+    // Optionally email the candidate the invite details, with an .ics attachment
+    // so any mail client (Gmail, Outlook, Apple Mail, Yahoo) shows Accept/Decline
+    // and adds it to their calendar — independent of their email provider.
     if (b.sendEmail !== false && cand.email) {
       const when = start.toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' });
       const bodyHtml = `<p>Hi ${cand.name.split(' ')[0]},</p>
 <p>We'd like to invite you to ${roundLabel ? `the <strong>${roundLabel}</strong>` : 'an interview'}${job ? ` for the <strong>${job.title}</strong> role` : ''}.</p>
 <p><strong>When:</strong> ${when}<br>${event.meetLink ? `<strong>Google Meet:</strong> <a href="${event.meetLink}">${event.meetLink}</a>` : ''}</p>
 ${b.notes ? `<p>${b.notes}</p>` : ''}
-<p>A calendar invite has been sent to your email. Please confirm you can make it.</p>
+<p>A calendar invite is attached — click <strong>Yes</strong> to add it to your calendar and confirm you can make it.</p>
 <p>Best regards,<br>${req.hrActor.name}</p>`;
-      try { await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: `Interview invitation${job ? ` — ${job.title}` : ''}`, bodyHtml, attachments: [] }); } catch { /* invite already created; email is best-effort */ }
+      let attachments = [];
+      try {
+        const ics = gmail.buildIcsInvite({
+          uid: event.iCalUID || `${iv.id}@qtonix`,
+          summary: title,
+          description: `${b.notes || `Interview with ${cand.name}${job ? ` for ${job.title}` : ''}.`}`,
+          start: start.toISOString(), end: end.toISOString(),
+          organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || 'career@qtonix.com', organizerName: 'Qtonix Recruitment',
+          attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean),
+          meetLink: event.meetLink, location: event.meetLink || 'Online',
+          timeZone: b.timeZone || 'Asia/Kolkata',
+        });
+        attachments = [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
+      } catch (e) { console.error('[calendar] ics build failed:', e.message); }
+      try { await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: `Interview invitation${job ? ` — ${job.title}` : ''}`, bodyHtml, attachments }); } catch { /* invite already created; email is best-effort */ }
     }
-    res.json({ ok: true, meetLink: event.meetLink, eventLink: event.htmlLink, interview: iv });
+    res.json({ ok: true, meetLink: event.meetLink, eventLink: event.htmlLink, interview: iv,
+      note: event.meetLink ? '' : 'The calendar event was created, but a Google Meet link couldn’t be generated automatically (common on personal Gmail accounts). Add a meeting link manually if needed.' });
   } catch (e) { next(e); }
 });
 
