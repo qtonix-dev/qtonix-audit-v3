@@ -272,7 +272,23 @@ function taskAssignment({ candidateName, role, taskTitle, taskDetailsHtml, deadl
   });
 }
 
+// Candidate's resume has been shortlisted — they've passed the initial review
+// and will be moving forward to the interview stage. Warm, encouraging tone; no
+// CTA button (HR schedules the interview separately and sends the invite).
+function shortlistedEmail({ candidateName, role, signature }) {
+  return shell({
+    kicker: 'Application Update',
+    headline: 'Great news — you\u2019ve been shortlisted!',
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `We're pleased to let you know that your application${role ? ` for the <strong>${esc(role)}</strong> role` : ''} has been <strong>shortlisted</strong>. After reviewing your profile, our team would like to take your candidacy forward to the interview stage.`,
+    outroHtml: `Our recruitment team will be in touch shortly with the interview details and next steps. There's nothing you need to do right now \u2014 just keep an eye on your inbox. Congratulations, and we look forward to speaking with you soon!`,
+    signature,
+  });
+}
+
 module.exports = {
+  shortlistedEmail,
   taskAssignment,
   rejectionEmail,
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,

@@ -1449,6 +1449,9 @@ const HrCandidate = sequelize.define('HrCandidate', {
   //   createdBy, createdAt, deadline(ISO), status(pending|submitted|expired),
   //   submittedAt, files:[{name,url,at}], reactivatedAt }
   tasks: { type: DataTypes.JSON, defaultValue: [] },
+  // Set true once the "resume shortlisted" auto-email has been sent, so moving
+  // between later stages (or back and forward) never re-sends it.
+  shortlistEmailSent: { type: DataTypes.BOOLEAN, defaultValue: false },
   // interviews: [...]
   interviews: { type: DataTypes.JSON, defaultValue: [] },
   // activities: [{ id, kind:'task'|'call', mode:'scheduled'|'done', title/agenda,

@@ -22,6 +22,32 @@ function mailboxEmail(s) {
   return (def && def.email) || '';
 }
 
+// Pre-shortlist pipeline stages — moving INTO one of these never triggers the
+// "resume shortlisted" email. Anything beyond these (interview, offered, hired,
+// or a custom later stage) means the candidate has passed the Contacted stage.
+const PRE_SHORTLIST_STAGES = new Set(['sourced', 'source', 'applied', 'contacted', 'rejected', 'reject', 'declined', 'disqualified']);
+
+// Send the "resume shortlisted for interview" auto-email (best-effort). Sets the
+// shortlistEmailSent flag on success so it only ever goes out once. Returns true
+// if emailed.
+async function sendShortlistEmail(row, hrActor) {
+  if (!row.email || row.shortlistEmailSent) return false;
+  try {
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    const mailbox = mailboxEmail(s);
+    if (!token || !mailbox) return false;
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const sig = await rejectSignature(hrActor, mailbox);
+    const bodyHtml = hrEmail.shortlistedEmail({ candidateName: row.name, role: job ? job.title : '', signature: sig });
+    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml });
+    row.shortlistEmailSent = true;
+    return true;
+  } catch (e) { console.error('[shortlist] email failed:', e.message); return false; }
+}
+
 // Signature block for a rejection email from the acting HR person.
 async function rejectSignature(hrActor, mailbox) {
   let email = mailbox || 'career@qtonix.com';
@@ -1600,9 +1626,17 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
       }
     }
     pushTimeline(row, { type: 'stage', text: `Moved to ${stageLabel(requested)}.`, by: req.hrActor.name });
+    // Auto-email: the candidate has passed the Contacted stage (moved to a stage
+    // other than sourced/applied/contacted/rejected) — their resume is
+    // shortlisted for interview. Sends once, tracked by shortlistEmailSent.
+    let shortlisted = false;
+    if (!PRE_SHORTLIST_STAGES.has(requested.toLowerCase())) {
+      shortlisted = await sendShortlistEmail(row, req.hrActor);
+      if (shortlisted) pushTimeline(row, { type: 'email', text: `Shortlist email sent to ${row.name}.`, by: req.hrActor.name });
+    }
     await row.save();
     hrLog(req, 'candidate.stage', `${row.name} → ${stageLabel(requested)}`);
-    res.json(row.toJSON());
+    res.json({ ...row.toJSON(), shortlistEmailed: shortlisted });
   } catch (e) { next(e); }
 });
 
