@@ -248,7 +248,7 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
       by: req.hrActor.name, scheduledById: req.hrActor.kind === 'hr' ? req.hrActor.id : null,
       scheduledByAdmin: req.hrActor.kind === 'admin' ? req.hrActor.id : null,
       createdAt: new Date().toISOString(),
-      meetLink: event.meetLink, eventLink: event.htmlLink,
+      meetLink: event.meetLink, eventLink: event.htmlLink, eventId: event.eventId, iCalUID: event.iCalUID,
       panelists, feedbackByPanelist: {},
     };
     const list = Array.isArray(cand.interviews) ? cand.interviews.slice() : [];
@@ -256,41 +256,183 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     cand.interviews = list; cand.changed('interviews', true);
     const t = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
     const panelNames = panelists.map((p) => p.name).join(', ');
-    t.unshift({ id: `t${Date.now()}`, type: 'interview', text: `${roundLabel || 'Interview'} scheduled by ${req.hrActor.name} for ${start.toLocaleString()}${event.meetLink ? ' (Google Meet)' : ''}${panelNames ? ` · Panel: ${panelNames}` : ''}.`, by: req.hrActor.name, at: new Date().toISOString() });
+    const istStr = (d) => { try { return new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }); } catch { return new Date(d).toLocaleString(); } };
+    t.unshift({ id: `t${Date.now()}`, type: 'interview', text: `${roundLabel || 'Interview'} scheduled by ${req.hrActor.name} for ${istStr(start)}${event.meetLink ? ' (Google Meet)' : ''}${panelNames ? ` · Panel: ${panelNames}` : ''}.`, by: req.hrActor.name, at: new Date().toISOString() });
     cand.timeline = t; cand.changed('timeline', true);
     await cand.save();
 
-    // Optionally email the candidate the invite details, with an .ics attachment
-    // so any mail client (Gmail, Outlook, Apple Mail, Yahoo) shows Accept/Decline
-    // and adds it to their calendar — independent of their email provider.
+    // Email the candidate AND each panelist the invite, each with an .ics
+    // attachment so any mail client shows Accept/Decline and adds it to their
+    // calendar — independent of their provider. We track exactly who was
+    // emailed so the UI reports the true result instead of assuming success.
+    const buildIcs = (forAttendee) => {
+      const ics = gmail.buildIcsInvite({
+        uid: event.iCalUID || `${iv.id}@qtonix`,
+        summary: title,
+        description: `${b.notes || `Interview with ${cand.name}${job ? ` for ${job.title}` : ''}.`}`,
+        start: start.toISOString(), end: end.toISOString(),
+        organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment',
+        attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean),
+        meetLink: event.meetLink, location: event.meetLink || 'Online',
+        timeZone: b.timeZone || 'Asia/Kolkata',
+      });
+      return [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
+    };
+    const when = start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+    const emailed = [];
+    const failed = [];
+    const sendTo = async (to, bodyHtml, subject) => {
+      try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject, attachments: buildIcs(to) }); emailed.push(to); }
+      catch (e) { console.error('[interview] email to', to, 'failed:', e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message)); failed.push(to); }
+    };
+
+    // Candidate invite.
     if (b.sendEmail !== false && cand.email) {
-      const when = start.toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' });
       const bodyHtml = `<p>Hi ${cand.name.split(' ')[0]},</p>
 <p>We'd like to invite you to ${roundLabel ? `the <strong>${roundLabel}</strong>` : 'an interview'}${job ? ` for the <strong>${job.title}</strong> role` : ''}.</p>
 <p><strong>When:</strong> ${when}<br>${event.meetLink ? `<strong>Google Meet:</strong> <a href="${event.meetLink}">${event.meetLink}</a>` : ''}</p>
 ${b.notes ? `<p>${b.notes}</p>` : ''}
-<p>A calendar invite is attached — click <strong>Yes</strong> to add it to your calendar and confirm you can make it.</p>
+<p>A calendar invite is attached — open it to add the meeting to your calendar and confirm you can make it.</p>
 <p>Best regards,<br>${req.hrActor.name}</p>`;
-      let attachments = [];
-      try {
-        const ics = gmail.buildIcsInvite({
-          uid: event.iCalUID || `${iv.id}@qtonix`,
-          summary: title,
-          description: `${b.notes || `Interview with ${cand.name}${job ? ` for ${job.title}` : ''}.`}`,
-          start: start.toISOString(), end: end.toISOString(),
-          organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || 'career@qtonix.com', organizerName: 'Qtonix Recruitment',
-          attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean),
-          meetLink: event.meetLink, location: event.meetLink || 'Online',
-          timeZone: b.timeZone || 'Asia/Kolkata',
-        });
-        attachments = [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
-      } catch (e) { console.error('[calendar] ics build failed:', e.message); }
-      try { await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: `Interview invitation${job ? ` — ${job.title}` : ''}`, bodyHtml, attachments }); } catch { /* invite already created; email is best-effort */ }
+      await sendTo(cand.email, bodyHtml, `Interview invitation${job ? ` — ${job.title}` : ''}`);
     }
-    res.json({ ok: true, meetLink: event.meetLink, eventLink: event.htmlLink, interview: iv,
-      note: event.meetLink ? '' : 'The calendar event was created, but a Google Meet link couldn’t be generated automatically (common on personal Gmail accounts). Add a meeting link manually if needed.' });
+
+    // Panel invites — each panelist gets the same event with the Meet link.
+    if (b.sendEmail !== false) {
+      for (const p of panelists) {
+        if (!p.email) continue;
+        const bodyHtml = `<p>Hi ${(p.name || '').split(' ')[0] || 'there'},</p>
+<p>You're on the panel for ${roundLabel ? `the <strong>${roundLabel}</strong>` : 'an interview'} with <strong>${cand.name}</strong>${job ? ` for the <strong>${job.title}</strong> role` : ''}.</p>
+<p><strong>When:</strong> ${when}<br>${event.meetLink ? `<strong>Google Meet:</strong> <a href="${event.meetLink}">${event.meetLink}</a>` : ''}</p>
+${b.notes ? `<p>${b.notes}</p>` : ''}
+<p>A calendar invite is attached. Please add it to your calendar.</p>
+<p>— Qtonix Recruitment</p>`;
+        await sendTo(p.email, bodyHtml, `Interview panel${job ? ` — ${job.title}` : ''} (${cand.name})`);
+      }
+    }
+    const notes = [];
+    if (!event.meetLink) notes.push('The calendar event was created, but a Google Meet link couldn’t be generated automatically. Add one manually if needed.');
+    if (failed.length) notes.push(`Could not email: ${failed.join(', ')}. Check the recruitment mailbox connection in HR Admin.`);
+    res.json({
+      ok: true, meetLink: event.meetLink, eventLink: event.htmlLink, interview: iv,
+      emailed, failed,
+      emailSummary: emailed.length ? `Invite emailed to ${emailed.length} recipient${emailed.length === 1 ? '' : 's'}${failed.length ? `; ${failed.length} failed` : ''}.` : (b.sendEmail === false ? 'Email sending was turned off.' : 'No invite emails were sent.'),
+      note: notes.join(' '),
+    });
   } catch (e) { next(e); }
 });
+
+// Reschedule an existing interview: move the Google Calendar event, update the
+// stored record, and re-send the invite (with a fresh .ics) to candidate + panel.
+router.post('/candidates/:id/interview/:ivId/reschedule', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const { s, token, email } = await hrMailbox();
+    if (!token) return res.status(400).json({ error: 'The recruitment mailbox isn’t linked yet.' });
+    const cand = await HrCandidate.findByPk(req.params.id);
+    if (!cand) return res.status(404).json({ error: 'Candidate not found.' });
+    const list = Array.isArray(cand.interviews) ? cand.interviews.slice() : [];
+    const idx = list.findIndex((x) => x.id === req.params.ivId);
+    if (idx < 0) return res.status(404).json({ error: 'Interview not found.' });
+    const iv = { ...list[idx] };
+    const b = req.body || {};
+    if (!b.start) return res.status(400).json({ error: 'Pick a new date and time.' });
+    const start = new Date(b.start);
+    const end = new Date(start.getTime() + (Number(b.durationMins) || (iv.end && iv.at ? (new Date(iv.end) - new Date(iv.at)) / 60000 : 30)) * 60000);
+    const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    const panelists = Array.isArray(iv.panelists) ? iv.panelists : [];
+    const title = `${iv.roundLabel ? iv.roundLabel + ' — ' : 'Interview: '}${cand.name}${job ? ` (${job.title})` : ''}`;
+
+    // Move the calendar event if we have one; otherwise create a fresh one.
+    let event = { meetLink: iv.meetLink, htmlLink: iv.eventLink, eventId: iv.eventId, iCalUID: iv.iCalUID };
+    try {
+      if (iv.eventId) {
+        event = await gmail.updateCalendarEvent(s, token, iv.eventId, {
+          start: start.toISOString(), end: end.toISOString(), timeZone: b.timeZone || 'Asia/Kolkata',
+          summary: title, attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean),
+        });
+        event.meetLink = event.meetLink || iv.meetLink;
+      } else {
+        event = await gmail.createCalendarEvent(s, token, { summary: title, description: iv.notes || '', start: start.toISOString(), end: end.toISOString(), attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean), timeZone: b.timeZone || 'Asia/Kolkata' });
+      }
+    } catch (ex) {
+      console.error('[calendar] reschedule failed:', ex && (ex.response && ex.response.data ? JSON.stringify(ex.response.data) : ex.message));
+      return res.status(502).json({ error: gmail.calendarErrorMessage ? gmail.calendarErrorMessage(ex) : 'Could not update the calendar event.' });
+    }
+
+    iv.at = start.toISOString(); iv.end = end.toISOString();
+    iv.meetLink = event.meetLink || iv.meetLink; iv.eventLink = event.htmlLink || iv.eventLink;
+    iv.eventId = event.eventId || iv.eventId; iv.iCalUID = event.iCalUID || iv.iCalUID;
+    iv.rescheduledAt = new Date().toISOString(); iv.rescheduledBy = req.hrActor.name;
+    list[idx] = iv; cand.interviews = list; cand.changed('interviews', true);
+    const istStr = (d) => { try { return new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }); } catch { return new Date(d).toLocaleString(); } };
+    const tl = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
+    tl.unshift({ id: `t${Date.now()}`, type: 'interview', text: `${iv.roundLabel || 'Interview'} rescheduled by ${req.hrActor.name} to ${istStr(start)}.`, by: req.hrActor.name, at: new Date().toISOString() });
+    cand.timeline = tl; cand.changed('timeline', true);
+    await cand.save();
+
+    // Re-send invite (updated .ics with higher SEQUENCE so clients update).
+    const emailed = [], failed = [];
+    if (b.sendEmail !== false) {
+      const when = istStr(start);
+      const recipients = [cand.email, ...panelists.map((p) => p.email)].filter(Boolean);
+      const buildIcs = () => {
+        const ics = gmail.buildIcsInvite({ uid: iv.iCalUID || `${iv.id}@qtonix`, summary: title, description: iv.notes || '', start: start.toISOString(), end: end.toISOString(), organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment', attendees: recipients, meetLink: iv.meetLink, location: iv.meetLink || 'Online', timeZone: b.timeZone || 'Asia/Kolkata', sequence: 1 });
+        return [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
+      };
+      for (const to of recipients) {
+        const bodyHtml = `<p>Hi,</p><p>The interview${job ? ` for <strong>${job.title}</strong>` : ''} with <strong>${cand.name}</strong> has been <strong>rescheduled</strong>.</p><p><strong>New time:</strong> ${when}<br>${iv.meetLink ? `<strong>Google Meet:</strong> <a href="${iv.meetLink}">${iv.meetLink}</a>` : ''}</p><p>An updated calendar invite is attached.</p><p>— Qtonix Recruitment</p>`;
+        try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject: `Interview rescheduled${job ? ` — ${job.title}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
+        catch (e) { console.error('[interview] reschedule email to', to, 'failed:', e.message); failed.push(to); }
+      }
+    }
+    res.json({ ok: true, interview: iv, emailed, failed, emailSummary: emailed.length ? `Update emailed to ${emailed.length} recipient${emailed.length === 1 ? '' : 's'}.` : 'No emails sent.' });
+  } catch (e) { next(e); }
+});
+
+// Cancel an interview: delete the Google Calendar event, remove it from the
+// candidate, and notify candidate + panel.
+router.post('/candidates/:id/interview/:ivId/cancel', requireHrAccess, requireScheduler, async (req, res, next) => {
+  try {
+    const { s, token, email } = await hrMailbox();
+    const cand = await HrCandidate.findByPk(req.params.id);
+    if (!cand) return res.status(404).json({ error: 'Candidate not found.' });
+    const list = Array.isArray(cand.interviews) ? cand.interviews.slice() : [];
+    const idx = list.findIndex((x) => x.id === req.params.ivId);
+    if (idx < 0) return res.status(404).json({ error: 'Interview not found.' });
+    const iv = list[idx];
+    const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    const b = req.body || {};
+
+    // Best-effort: remove the Google Calendar event.
+    if (token && iv.eventId) {
+      try { await gmail.deleteCalendarEvent(s, token, iv.eventId); }
+      catch (e) { console.error('[calendar] delete failed:', e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message)); }
+    }
+
+    list.splice(idx, 1); cand.interviews = list; cand.changed('interviews', true);
+    const tl = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
+    tl.unshift({ id: `t${Date.now()}`, type: 'interview', text: `${iv.roundLabel || 'Interview'} cancelled by ${req.hrActor.name}.`, by: req.hrActor.name, at: new Date().toISOString() });
+    cand.timeline = tl; cand.changed('timeline', true);
+    await cand.save();
+
+    // Notify with a CANCEL .ics so it drops off attendees' calendars.
+    const emailed = [], failed = [];
+    if (token && b.sendEmail !== false) {
+      const panelists = Array.isArray(iv.panelists) ? iv.panelists : [];
+      const recipients = [cand.email, ...panelists.map((p) => p.email)].filter(Boolean);
+      const title = `${iv.roundLabel ? iv.roundLabel + ' — ' : 'Interview: '}${cand.name}${job ? ` (${job.title})` : ''}`;
+      const ics = gmail.buildIcsInvite({ uid: iv.iCalUID || `${iv.id}@qtonix`, summary: title, description: 'This interview has been cancelled.', start: iv.at, end: iv.end || iv.at, organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment', attendees: recipients, timeZone: 'Asia/Kolkata', method: 'CANCEL', status: 'CANCELLED', sequence: 2 });
+      const att = [{ filename: 'cancel.ics', mimeType: 'text/calendar; method=CANCEL; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
+      for (const to of recipients) {
+        const bodyHtml = `<p>Hi,</p><p>The interview${job ? ` for <strong>${job.title}</strong>` : ''} with <strong>${cand.name}</strong> has been <strong>cancelled</strong>.</p>${b.reason ? `<p>${b.reason}</p>` : ''}<p>— Qtonix Recruitment</p>`;
+        try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject: `Interview cancelled${job ? ` — ${job.title}` : ''}`, attachments: att }); emailed.push(to); }
+        catch (e) { console.error('[interview] cancel email to', to, 'failed:', e.message); failed.push(to); }
+      }
+    }
+    res.json({ ok: true, emailed, failed, emailSummary: emailed.length ? `Cancellation emailed to ${emailed.length} recipient${emailed.length === 1 ? '' : 's'}.` : 'Interview cancelled.' });
+  } catch (e) { next(e); }
+});
+
 
 // Create a lightweight Google Meet for a salary discussion (Offer tab).
 router.post('/candidates/:id/offer-meet', requireHrAccess, requireScheduler, async (req, res, next) => {

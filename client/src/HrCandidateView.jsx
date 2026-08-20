@@ -1009,6 +1009,8 @@ function ActivityTab({ c, reload, onAddTask, onAddCall }) {
   const list = c.activities || [];
   const interviews = (c.interviews || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
   const [partIv, setPartIv] = useState(null); // interview shown in participant popup
+  const [rescheduleIv, setRescheduleIv] = useState(null); // interview being rescheduled
+  const [cancelIv, setCancelIv] = useState(null); // interview being cancelled
   const del = async (id) => { if (!window.confirm('Delete this activity?')) return; try { await hrApi(`/candidates/${c.id}/activities/${id}`, { method: 'DELETE' }); reload(); } catch {} };
   const toggleDone = async (a) => { try { await hrApi(`/candidates/${c.id}/activities/${a.id}`, { method: 'PATCH', body: JSON.stringify({ done: !a.done, mode: !a.done ? 'done' : 'scheduled' }) }); reload(); } catch {} };
   const prColor = (p) => p === 'High' ? '#DC2626' : p === 'Low' ? '#64748B' : '#F59E0B';
@@ -1024,12 +1026,18 @@ function ActivityTab({ c, reload, onAddTask, onAddCall }) {
                   <div className="text-sm font-bold text-slate-700 flex items-center gap-2">📹 {iv.roundLabel || 'Interview'}{iv.meetLink && <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[10px] font-bold">Google Meet</span>}</div>
                   <div className="text-xs text-slate-400 mt-0.5">{fmt(iv.at)}{(iv.panelists || []).length ? ` · ${iv.panelists.length} panelist${iv.panelists.length === 1 ? '' : 's'}` : ''}{iv.by ? ` · by ${iv.by}` : ''}</div>
                 </div>
-                <button onClick={() => setPartIv(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 shrink-0">View</button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => setPartIv(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">View</button>
+                  <button onClick={() => setRescheduleIv(iv)} title="Reschedule" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50">Edit</button>
+                  <button onClick={() => setCancelIv(iv)} title="Cancel interview" className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50">Cancel</button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
+      {rescheduleIv && <RescheduleInterviewModal candidateId={c.id} iv={rescheduleIv} onClose={() => setRescheduleIv(null)} onDone={() => { setRescheduleIv(null); reload(); }} />}
+      {cancelIv && <CancelInterviewModal candidateId={c.id} iv={cancelIv} onClose={() => setCancelIv(null)} onDone={() => { setCancelIv(null); reload(); }} />}
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm text-slate-500">Tasks and calls for this candidate.</div>
         <div className="flex gap-2">
@@ -1197,7 +1205,12 @@ function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
   const schedule = async () => {
     if (!at) { setErr('Pick a date and time.'); return; }
     setBusy(true); setErr('');
-    try { const r = await hrApi(`/candidates/${candidateId}/schedule-interview`, { method: 'POST', body: JSON.stringify({ start: at, durationMins: duration, mode, round, notes, sendEmail, panelistIds: picked }) }); setResult(r); onDone && onDone(); }
+    // The datetime-local value is a wall-clock string with no timezone (e.g.
+    // "2026-08-20T05:30"). The business runs on IST, so append the +05:30 offset
+    // to make it an unambiguous instant. This way the server, Google Calendar and
+    // the .ics all agree regardless of the server's own timezone (Railway = UTC).
+    const startIso = new Date(`${at}:00+05:30`).toISOString();
+    try { const r = await hrApi(`/candidates/${candidateId}/schedule-interview`, { method: 'POST', body: JSON.stringify({ start: startIso, durationMins: duration, mode, round, notes, sendEmail, panelistIds: picked, timeZone: 'Asia/Kolkata' }) }); setResult(r); onDone && onDone(); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
@@ -1207,7 +1220,9 @@ function InterviewModal({ candidateId, stages, roundPanels, onClose, onDone }) {
           <div className="text-3xl mb-2">✅</div>
           <div className="font-bold text-[#050A1F] mb-2">Interview scheduled</div>
           {result.meetLink && <a href={result.meetLink} target="_blank" rel="noreferrer" className="text-orange-600 font-semibold text-sm block mb-2">{result.meetLink}</a>}
-          <div className="text-xs text-slate-400">A Google Calendar invite{sendEmail ? ' and email' : ''} was sent to the candidate{picked.length ? ' and the panel' : ''}.</div>
+          <div className="text-xs text-slate-500">{result.emailSummary || (sendEmail ? 'Invites sent.' : 'Email sending was off.')}</div>
+          {result.emailed && result.emailed.length > 0 && <div className="text-[11px] text-slate-400 mt-1">Emailed: {result.emailed.join(', ')}</div>}
+          {result.note && <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[11px] px-3 py-2 text-left">{result.note}</div>}
           <button onClick={onClose} className="mt-4 rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Done</button>
         </div>
       ) : (
@@ -1898,4 +1913,92 @@ function Card({ title, action, children }) {
 function H({ children }) { return <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">{children}</div>; }
 function Lbl({ children }) { return <div className="text-[11px] font-bold text-slate-500 mb-1">{children}</div>; }
 function Empty({ children }) { return <div className="text-center text-slate-400 text-sm py-10">{children}</div>; }
-function fmt(iso) { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString(); }
+// Reschedule an existing interview to a new IST date/time.
+function RescheduleInterviewModal({ candidateId, iv, onClose, onDone }) {
+  // Pre-fill the picker with the current time in IST wall-clock.
+  const toLocalInput = (iso) => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+      const g = (t) => (parts.find((p) => p.type === t) || {}).value;
+      let hh = g('hour'); if (hh === '24') hh = '00';
+      return `${g('year')}-${g('month')}-${g('day')}T${hh}:${g('minute')}`;
+    } catch { return ''; }
+  };
+  const [at, setAt] = useState(toLocalInput(iv.at));
+  const durationDefault = iv.end && iv.at ? Math.round((new Date(iv.end) - new Date(iv.at)) / 60000) : 30;
+  const [duration, setDuration] = useState(durationDefault || 30);
+  const [sendEmail, setSendEmail] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null);
+  const submit = async () => {
+    if (!at) { setErr('Pick a new date and time.'); return; }
+    setBusy(true); setErr('');
+    const startIso = new Date(`${at}:00+05:30`).toISOString();
+    try { const r = await hrApi(`/candidates/${candidateId}/interview/${iv.id}/reschedule`, { method: 'POST', body: JSON.stringify({ start: startIso, durationMins: duration, sendEmail, timeZone: 'Asia/Kolkata' }) }); setResult(r); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Reschedule interview</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        {result ? (
+          <div className="p-6 text-center">
+            <div className="text-3xl mb-2">✅</div>
+            <div className="font-bold text-[#050A1F] mb-1">Interview rescheduled</div>
+            <div className="text-xs text-slate-500">{result.emailSummary}</div>
+            <button onClick={onDone} className="mt-4 rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Done</button>
+          </div>
+        ) : (
+          <>
+            <div className="p-6 space-y-3">
+              {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+              <div className="text-xs text-slate-500">Current: {fmt(iv.at)}</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><div className="text-xs font-bold text-slate-500 mb-1">New date &amp; time (IST)</div><input type="datetime-local" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={at} onChange={(e) => setAt(e.target.value)} /></div>
+                <div><div className="text-xs font-bold text-slate-500 mb-1">Duration (mins)</div><input type="number" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Email the updated invite to candidate &amp; panel</label>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Reschedule'}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Cancel an interview (deletes the calendar event and notifies attendees).
+function CancelInterviewModal({ candidateId, iv, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [sendEmail, setSendEmail] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const submit = async () => {
+    setBusy(true); setErr('');
+    try { await hrApi(`/candidates/${candidateId}/interview/${iv.id}/cancel`, { method: 'POST', body: JSON.stringify({ reason, sendEmail }) }); onDone(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Cancel interview</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+          <div className="text-sm text-slate-600">Cancel the <strong>{iv.roundLabel || 'interview'}</strong> on {fmt(iv.at)}? This removes the Google Calendar event and notifies the candidate and panel.</div>
+          <div><div className="text-xs font-bold text-slate-500 mb-1">Reason (optional)</div><textarea rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Shown in the cancellation email." /></div>
+          <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Email a cancellation to candidate &amp; panel</label>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Keep interview</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Cancelling…' : 'Cancel interview'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function fmt(iso) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; try { return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }); } catch { return d.toLocaleString(); } }

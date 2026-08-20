@@ -455,9 +455,36 @@ function calendarErrorMessage(ex) {
   return ex && ex.message ? `Could not create the calendar event: ${ex.message}` : 'Could not create the calendar event.';
 }
 
+// Update an existing calendar event's time (and optionally attendees). Used
+// when an interview is rescheduled. Keeps the same event + Meet link.
+async function updateCalendarEvent(settings, refreshToken, eventId, { start, end, timeZone = 'Asia/Kolkata', summary, description, attendees } = {}) {
+  const client = oauthClient(settings);
+  client.setCredentials({ refresh_token: refreshToken });
+  const calendar = google.calendar({ version: 'v3', auth: client });
+  const patch = {};
+  if (start) patch.start = { dateTime: start, timeZone };
+  if (end) patch.end = { dateTime: end, timeZone };
+  if (summary !== undefined) patch.summary = summary;
+  if (description !== undefined) patch.description = description;
+  if (Array.isArray(attendees)) patch.attendees = attendees.filter(Boolean).map((email) => ({ email }));
+  const res = await calendar.events.patch({ calendarId: 'primary', eventId, sendUpdates: 'none', requestBody: patch });
+  const ev = res.data;
+  const meetLink = (ev.conferenceData && ev.conferenceData.entryPoints || []).find((e) => e.entryPointType === 'video');
+  return { htmlLink: ev.htmlLink, meetLink: meetLink ? meetLink.uri : '', eventId: ev.id, iCalUID: ev.iCalUID || ev.id };
+}
+
+// Delete a calendar event (used when an interview is cancelled).
+async function deleteCalendarEvent(settings, refreshToken, eventId) {
+  const client = oauthClient(settings);
+  client.setCredentials({ refresh_token: refreshToken });
+  const calendar = google.calendar({ version: 'v3', auth: client });
+  await calendar.events.delete({ calendarId: 'primary', eventId, sendUpdates: 'none' });
+  return { ok: true };
+}
+
 module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
   listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
-  createCalendarEvent, calendarErrorMessage, buildIcsInvite, oauthClient, gmailFor,
+  createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, calendarErrorMessage, buildIcsInvite, oauthClient, gmailFor,
 };
