@@ -49,6 +49,11 @@ async function anthropicKey() {
   const s = await Settings.findOne();
   return s && s.getKey ? s.getKey('anthropic') : null;
 }
+// Fetch any named API key from Settings (e.g. 'openai'), decrypted.
+async function settingsKey(name) {
+  const s = await Settings.findOne();
+  return s && s.getKey ? s.getKey(name) : null;
+}
 
 // ---- Admin: list / create / update / delete ----
 router.get('/', requireAuth, requireAdmin, async (req, res, next) => {
@@ -342,6 +347,13 @@ router.get('/:id/report.html', requireAuth, requireAdmin, async (req, res, next)
     const survey = await CrmSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).send('Survey not found.');
     const period = req.query.period || survey.period;
+    // If the stored analysis is missing the newer fields (good/improve/branches),
+    // re-run it so the report isn't half-empty.
+    const stored = survey.analysis && survey.analysis[period];
+    if (analysisStale(stored)) {
+      const key = await anthropicKey();
+      if (key) { try { await runAnalysis(survey, period, key); await survey.reload(); } catch {} }
+    }
     const data = await buildResults(survey, period);
     if (!data.total) return res.status(400).send('No responses to report for this period yet.');
     const { renderHtml } = require('../services/surveyReport');
@@ -356,6 +368,11 @@ router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) 
     const survey = await CrmSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const period = req.query.period || survey.period;
+    const stored = survey.analysis && survey.analysis[period];
+    if (analysisStale(stored)) {
+      const key = await anthropicKey();
+      if (key) { try { await runAnalysis(survey, period, key); await survey.reload(); } catch {} }
+    }
     const data = await buildResults(survey, period);
     if (!data.total) return res.status(400).json({ error: 'No responses to report for this period yet.' });
     const { renderSurveyReport } = require('../services/surveyReport');
@@ -368,6 +385,81 @@ router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) 
   } catch (e) { next(e); }
 });
 
+// Runs the full AI analysis for a survey period and stores it. Shared by the
+// /analyze endpoint and the report routes (which auto-analyse if the stored
+// analysis is stale/missing the newer fields). Returns the stored analysis.
+async function runAnalysis(survey, period, key) {
+  const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+  if (!responses.length) return null;
+  const { analyseResponse, aggregateAnalysis, surveyReportInsights } = require('../services/hrSurveyAI');
+  const { rewriteSummaries } = require('../services/summaryRewrite');
+  for (const r of responses) {
+    if (r.sentiment && r.sentiment.label && r.sentiment.summary) continue;
+    try { const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore, behavior: r.behavior }); r.sentiment = sent; r.changed('sentiment', true); await r.save(); } catch {}
+  }
+  const blobs = responses.map((r) => {
+    const txt = (survey.questions || []).map((q) => {
+      const a = (r.answers || {})[q.id] || {}; let ans = '—';
+      if (q.type === 'scale5') ans = a.score != null ? `${a.score}/5` : '—';
+      else if (q.type === 'single_choice') ans = a.choice != null ? a.choice : '—';
+      else if (q.type === 'multi_choice') ans = Array.isArray(a.choices) && a.choices.length ? a.choices.join(', ') : '—';
+      else if (q.type === 'short_answer') ans = a.text || '—';
+      return `${q.text}: ${ans}${a.comment ? ` — "${a.comment}"` : ''}`;
+    }).join('; ');
+    const fu = (r.followups || []).map((f) => `${f.question} → ${f.answer}`).join('; ');
+    return { department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, text: txt + (fu ? ` | Follow-ups: ${fu}` : '') };
+  });
+  let agg = { good: [], improve: [], summary: '', branchSummaries: [], departmentSummaries: [] };
+  try { agg = await aggregateAnalysis(key, { surveyName: survey.name, blobs }); } catch {}
+  let insights = { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
+  try {
+    const people = responses.map((r) => ({ name: r.employeeName, department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, summary: r.sentiment && r.sentiment.summary }));
+    insights = await surveyReportInsights(key, { surveyName: survey.name, people });
+  } catch {}
+
+  // Optional OpenAI rewrite pass: simplify the generated summaries into plain,
+  // easy-to-read language. Falls back silently to the originals if no OpenAI key.
+  try {
+    const openaiKey = await settingsKey('openai');
+    if (openaiKey) {
+      const rew = await rewriteSummaries(openaiKey, {
+        overall: agg.summary,
+        branches: agg.branchSummaries,
+        departments: agg.departmentSummaries,
+      });
+      if (rew) {
+        if (rew.overall) agg.summary = rew.overall;
+        if (Array.isArray(rew.branches)) agg.branchSummaries = rew.branches;
+        if (Array.isArray(rew.departments)) agg.departmentSummaries = rew.departments;
+      }
+      // Also simplify each employee's individual summary.
+      for (const r of responses) {
+        if (r.sentiment && r.sentiment.summary) {
+          try {
+            const simpler = await rewriteSummaries(openaiKey, { overall: r.sentiment.summary });
+            if (simpler && simpler.overall) { r.sentiment = { ...r.sentiment, summary: simpler.overall }; r.changed('sentiment', true); await r.save(); }
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  const nextAnalysis = { ...(survey.analysis || {}) };
+  nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, branchSummaries: agg.branchSummaries || [], departmentSummaries: agg.departmentSummaries || [], insights, rewritten: true };
+  survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
+  return nextAnalysis[period];
+}
+
+// True when a stored analysis is missing the newer fields (branch summaries /
+// good / improve) — i.e. it was produced by an older version and should be
+// re-run so the report isn't half-empty.
+function analysisStale(a) {
+  if (!a) return true;
+  if (!Array.isArray(a.good) || !a.good.length) return true;
+  if (!Array.isArray(a.improve) || !a.improve.length) return true;
+  return false;
+}
+
 router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const survey = await CrmSurvey.findByPk(req.params.id);
@@ -375,36 +467,8 @@ router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) =>
     const key = await anthropicKey();
     if (!key) return res.status(400).json({ error: 'AI isn’t configured. Add an Anthropic API key in Admin → API keys.' });
     const period = req.body && req.body.period ? req.body.period : survey.period;
-    const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
-    if (!responses.length) return res.status(400).json({ error: 'No responses to analyse for this period yet.' });
-    const { analyseResponse, aggregateAnalysis, surveyReportInsights } = require('../services/hrSurveyAI');
-    for (const r of responses) {
-      if (r.sentiment && r.sentiment.label) continue;
-      try { const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore, behavior: r.behavior }); r.sentiment = sent; r.changed('sentiment', true); await r.save(); } catch {}
-    }
-    const blobs = responses.map((r) => {
-      const txt = (survey.questions || []).map((q) => {
-        const a = (r.answers || {})[q.id] || {}; let ans = '—';
-        if (q.type === 'scale5') ans = a.score != null ? `${a.score}/5` : '—';
-        else if (q.type === 'single_choice') ans = a.choice != null ? a.choice : '—';
-        else if (q.type === 'multi_choice') ans = Array.isArray(a.choices) && a.choices.length ? a.choices.join(', ') : '—';
-        else if (q.type === 'short_answer') ans = a.text || '—';
-        return `${q.text}: ${ans}${a.comment ? ` — "${a.comment}"` : ''}`;
-      }).join('; ');
-      const fu = (r.followups || []).map((f) => `${f.question} → ${f.answer}`).join('; ');
-      return { department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, text: txt + (fu ? ` | Follow-ups: ${fu}` : '') };
-    });
-    let agg = { good: [], improve: [], summary: '', departmentSummaries: [] };
-    try { agg = await aggregateAnalysis(key, { surveyName: survey.name, blobs }); } catch {}
-    // Management-report insights (names used — internal report only).
-    let insights = { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
-    try {
-      const people = responses.map((r) => ({ name: r.employeeName, department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, summary: r.sentiment && r.sentiment.summary }));
-      insights = await surveyReportInsights(key, { surveyName: survey.name, people });
-    } catch {}
-    const nextAnalysis = { ...(survey.analysis || {}) };
-    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, branchSummaries: agg.branchSummaries || [], departmentSummaries: agg.departmentSummaries || [], insights };
-    survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
+    const out = await runAnalysis(survey, period, key);
+    if (!out) return res.status(400).json({ error: 'No responses to analyse for this period yet.' });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

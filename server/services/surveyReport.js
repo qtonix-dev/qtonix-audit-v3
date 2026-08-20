@@ -63,6 +63,11 @@ function buildVm(data, opts = {}) {
   const insights = data.insights || { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
   // Normalise action items to {action, why, how} in case older data stored strings.
   const normAct = (arr) => (arr || []).map((x) => typeof x === 'string' ? { action: x, why: '', how: '' } : x);
+  const hasAttention = !!(insights.attention && insights.attention.length);
+  const hasOneToOne = !!(insights.oneToOne && insights.oneToOne.length);
+  // If sections 4 (attention) and 5 (1:1) both have data, push section 6 (action
+  // plan) onto its own page. If both are empty, 4/5/6 sit together on one page.
+  const sixSeparate = hasAttention || hasOneToOne;
   return {
     forWeb: !!opts.forWeb,
     fontDir: 'file://' + FONT_DIR,
@@ -79,6 +84,7 @@ function buildVm(data, opts = {}) {
     branches,
     hasBranches: branches.length > 0,
     multiBranch: branches.length > 1,
+    sixSeparate,
     insights: {
       attention: insights.attention || [], oneToOne: insights.oneToOne || [],
       forHR: normAct(insights.forHR), forManager: normAct(insights.forManager), forManagement: normAct(insights.forManagement),
