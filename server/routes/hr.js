@@ -2927,6 +2927,45 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
   } catch (e) { next(e); }
 });
 
+// ---- Send test emails (admin) — verify all recruitment email designs render
+// correctly in a real inbox. Sends one of each designed template with sample
+// data to the given address.
+router.post('/settings/test-emails', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const to = String((req.body || {}).email || '').trim();
+    if (!to || !/^[^@]+@[^@]+\.[^@]+$/.test(to)) return res.status(400).json({ error: 'Enter a valid email address to send the test emails to.' });
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    const mailbox = mailboxEmail(s);
+    if (!token || !mailbox) return res.status(400).json({ error: 'Link the recruitment mailbox first — test emails send from it.' });
+
+    const sig = { name: req.hrActor.name || 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox };
+    const role = 'Senior Frontend Engineer';
+    const when = 'Tuesday, 26 August 2026, 5:30 PM IST';
+    const rejectBody = '<p style="margin:0 0 14px;line-height:1.6;">Dear Ava,</p><p style="margin:0 0 14px;line-height:1.6;">Thank you for taking the time to apply and for sharing your background with us.</p><p style="margin:0 0 14px;line-height:1.6;">After careful consideration, we have decided to move forward with other candidates. We wish you the very best.</p>';
+    // Each: [label, subject, html]
+    const samples = [
+      ['Interview invite (candidate)', `Interview invitation — ${role}`, hrEmail.interviewInviteCandidate({ candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: when, durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig })],
+      ['Interview invite (panel)', `Interview panel — ${role} (Ava Thompson)`, hrEmail.interviewInvitePanel({ panelistName: 'Rahul Verma', candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: when, durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig })],
+      ['Interview reschedule', `Interview rescheduled — ${role}`, hrEmail.interviewReschedule({ recipientName: 'Ava Thompson', isPanel: false, candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: 'Thursday, 28 August 2026, 3:00 PM IST', durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig })],
+      ['Application thank-you', `We received your application — ${role}`, hrEmail.applicationThankYou({ candidateName: 'Ava Thompson', role, signature: { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox } })],
+      ['New application (internal)', `New application — ${role} (Ava Thompson)`, hrEmail.applicationInternalNotice({ candidateName: 'Ava Thompson', role, candidateEmail: 'ava@example.com', candidatePhone: '+91 98765 43210', jobLocation: 'Bhubaneswar', source: 'Careers page', viewUrl: `${(process.env.APP_URL || '').replace(/\/$/, '')}/hr/recruitment` })],
+      ['Shortlisted', `You've been shortlisted — ${role}`, hrEmail.shortlistedEmail({ candidateName: 'Ava Thompson', role, signature: sig })],
+      ['Assessment task', `Assessment task — ${role}`, hrEmail.taskAssignment({ candidateName: 'Ava Thompson', role, taskTitle: 'Build a responsive dashboard component', taskDetailsHtml: 'Build a small React dashboard with a chart and a filterable table. Include a short README.', deadlineText: 'Sunday, 24 August 2026, 5:30 PM IST', uploadUrl: `${(process.env.APP_URL || '').replace(/\/$/, '')}/task/sample-token`, signature: sig })],
+      ['Rejection', `Update on your application — ${role}`, hrEmail.rejectionEmail({ role, bodyHtml: rejectBody, signature: sig })],
+    ];
+    const sentList = [], failed = [];
+    for (const [label, subject, html] of samples) {
+      try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: `[TEST] ${subject}`, bodyHtml: html }); sentList.push(label); }
+      catch (e) { console.error('[test-email]', label, 'failed:', e.message); failed.push(label); }
+    }
+    hrLog(req, 'settings.test-emails', `to ${to} — ${sentList.length} sent`);
+    res.json({ ok: true, to, sent: sentList, failed, count: sentList.length });
+  } catch (e) { next(e); }
+});
+
 // ---- HR leave / attendance policy (Admin only) ----
 const DEFAULT_HR_POLICY = {
   categories: [{ id: 'default', name: 'Default', allocation: { casual: 12, medical: 12, privilege: 12, wfh: 24 } }],

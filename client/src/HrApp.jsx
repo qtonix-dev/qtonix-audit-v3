@@ -2750,6 +2750,37 @@ function IconBtn({ title, onClick, children, danger }) {
 }
 
 // API tab — ImageKit config + Claude/OpenAI usage tracking.
+// Send one of each designed recruitment email to a chosen address, to verify
+// formatting in a real inbox.
+function TestEmailCard() {
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState('');
+  const send = async () => {
+    setBusy(true); setErr(''); setResult(null);
+    try { const r = await hrApi('/settings/test-emails', { method: 'POST', body: JSON.stringify({ email: email.trim() }) }); setResult(r); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="text-xs text-slate-500 mb-3 max-w-lg">Send a copy of every recruitment email design (interview invite, panel, reschedule, application thank-you, new-application notice, shortlisted, assessment task, and rejection) to an address of your choice — each prefixed with <span className="font-mono text-[11px]">[TEST]</span> — so you can check they render correctly.</div>
+      <div className="flex gap-2 max-w-md">
+        <input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !busy && email.trim() && send()} />
+        <button onClick={send} disabled={busy || !email.trim()} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 shrink-0" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send test emails'}</button>
+      </div>
+      {err && <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+      {result && (
+        <div className="mt-3 rounded-lg bg-green-50 border border-green-100 px-3 py-2.5 text-sm">
+          <div className="font-bold text-green-700">✓ Sent {result.count} test email{result.count === 1 ? '' : 's'} to {result.to}</div>
+          {result.failed && result.failed.length > 0 && <div className="text-amber-600 text-xs mt-1">Couldn't send: {result.failed.join(', ')}</div>}
+          <div className="text-xs text-slate-500 mt-1">Check the inbox (and spam folder) — they may take a moment to arrive.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Settings tab — auto-scoring toggle + recruitment mailbox + API (usage + ImageKit).
 // Admin editor for the default onboarding checklist (seeds each new employee).
 function OnboardingTemplateEditor() {
@@ -2852,6 +2883,14 @@ function HrSettingsTab({ isAdmin, setErr }) {
         <div className="text-sm font-bold text-[#050A1F] mb-3">Recruitment mailbox</div>
         <RecruitmentMailbox isAdmin={isAdmin} setErr={setErr} />
       </div>
+
+      {/* Test recruitment emails */}
+      {isAdmin && (
+        <div className="max-w-2xl">
+          <div className="text-sm font-bold text-[#050A1F] mb-3">Test recruitment emails</div>
+          <TestEmailCard />
+        </div>
+      )}
 
       {/* Onboarding checklist template */}
       <div className="max-w-2xl">
@@ -3464,106 +3503,125 @@ function HrOrgChart({ users, reporting }) {
 // colored header band per level (navy = management, blue = second level,
 // green = the rest), avatar + role in the band and name/phone/email below,
 // connector lines, and collapse/expand toggles. Built from the reporting graph.
+// Full-screen organization directory — white background, grouped as: admins
+// (management) on top, then each department, and within a department ordered by
+// hierarchy (Manager -> Team Lead -> Senior -> Junior -> the rest). Each person
+// is a white card: circular photo on the left, name/designation/phone/email on
+// the right.
+// Full-screen organization chart — tree format (top-down with connector lines
+// and collapse toggles), white cards. Admins (management) sit at the top; under
+// them the departments branch out; within each department, people are ordered by
+// hierarchy (Manager -> Team Lead -> Senior -> Junior -> the rest) in a vertical
+// chain. Each card: circular photo left, name/designation/phone/email right.
 function HrOrgChartModal({ users, reporting, onClose }) {
   const active = (users || []).filter((u) => u.active);
-  const byId = {};
-  active.forEach((u) => { byId[u._id] = { key: `hr:${u._id}`, id: u._id, kind: 'hr', name: u.name, role: ROLE_LABELS[u.type] || u.type, type: u.type, avatar: u.avatar, phone: u.phone, email: u.email, department: u.department, branch: u.branch, branchIncharge: u.branchIncharge, children: [] }; });
-  const adminBuckets = {};
-  const roots = [];
-  active.forEach((u) => {
-    const node = byId[u._id];
-    if (u.reportsToId && byId[u.reportsToId]) byId[u.reportsToId].children.push(node);
-    else if (u.reportsToAdminId) (adminBuckets[u.reportsToAdminId] = adminBuckets[u.reportsToAdminId] || []).push(node);
-    else roots.push(node);
-  });
-  const sortKids = (n) => { n.children.sort((a, b) => (ROLE_LEVEL[a.type] ?? 9) - (ROLE_LEVEL[b.type] ?? 9)); n.children.forEach(sortKids); };
-  const admins = reporting.admins || [];
-  const adminIdSet = new Set(admins.map((a) => a.id));
-  // Build admin (management) nodes as the top of the tree.
-  const adminNodes = admins.map((a) => {
-    const kids = (adminBuckets[a.id] || []);
-    kids.forEach(sortKids);
-    kids.sort((x, y) => (ROLE_LEVEL[x.type] ?? 9) - (ROLE_LEVEL[y.type] ?? 9));
-    return { key: `admin:${a.id}`, id: a.id, kind: 'admin', name: a.name, role: 'Management', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email, children: kids };
-  });
-  // Orphaned reports (admin no longer present) + true roots become extra tops.
-  const orphaned = Object.entries(adminBuckets).filter(([aid]) => !adminIdSet.has(Number(aid)) && !adminIdSet.has(aid)).flatMap(([, arr]) => arr);
-  roots.forEach(sortKids); orphaned.forEach(sortKids);
-  const extraTops = [...roots, ...orphaned];
-  const tops = [...adminNodes, ...extraTops];
-
-  // Collapse state — collapsed node keys.
+  const admins = (reporting.admins || []);
   const [collapsed, setCollapsed] = useState({});
   const toggle = (k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
-  // Band color by depth: 0 = navy, 1 = blue, 2+ = green.
-  const bandColor = (depth) => depth === 0 ? '#0A1F44' : depth === 1 ? '#1CA0E8' : '#A4C639';
+  const ringFor = (type) => {
+    if (type === 'director' || type === 'admin') return '#0A1F44';
+    if (type === 'manager') return '#1CA0E8';
+    if (type === 'tl') return '#7C3AED';
+    if (type === 'hr' || type === 'recruiter') return '#0EA5E9';
+    return '#A4C639';
+  };
+  const PhoneIcon = () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 5, flexShrink: 0 }}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>;
+  const MailIcon = () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 5, flexShrink: 0 }}><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></svg>;
 
-  const OrgCard = ({ n, depth }) => {
-    const band = bandColor(depth);
-    const lightText = depth === 0; // navy band = white role text; others already light bg
+  // A person card. 20px left/right margin so adjacent columns never touch.
+  const PersonCard = ({ p, w = 270 }) => (
+    <div className="inline-flex items-center gap-3 bg-white border border-slate-200 rounded-xl" style={{ padding: '13px 15px', boxShadow: '0 2px 6px rgba(10,20,60,.07)', width: w, margin: '0 20px', textAlign: 'left' }}>
+      <div className="shrink-0 rounded-full overflow-hidden flex items-center justify-center text-white font-bold" style={{ width: 48, height: 48, fontSize: 19, background: ringFor(p.type) }}>
+        {p.avatar ? <img src={p.avatar} alt="" className="w-full h-full object-cover" /> : (p.name || '?')[0]}
+      </div>
+      <div className="min-w-0 overflow-hidden">
+        <div className="text-[13px] font-bold text-[#0A0E28] truncate">{p.name}{p.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</div>
+        <div className="text-[11px] font-semibold text-[#FF6A00] truncate" style={{ marginBottom: 3 }}>{p.designation || ROLE_LABELS[p.type] || p.type}</div>
+        <div className="text-[11px] text-slate-500 truncate flex items-center"><PhoneIcon />{p.phone || '—'}</div>
+        <div className="text-[11px] text-slate-500 truncate flex items-center"><MailIcon />{p.email || '—'}</div>
+      </div>
+    </div>
+  );
+
+  // Vertical connector segment.
+  const VConn = ({ h = 18 }) => <div style={{ width: 1, height: h, background: '#cbd5e1', margin: '0 auto' }} />;
+  // Collapse toggle under a node.
+  const Toggle = ({ k }) => (
+    <div className="flex flex-col items-center">
+      <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
+      <button onClick={() => toggle(k)} className="rounded-full border border-slate-300 bg-white text-slate-500 flex items-center justify-center hover:bg-slate-50 leading-none" style={{ width: 18, height: 18, fontSize: 12 }}>{collapsed[k] ? '+' : '\u2212'}</button>
+    </div>
+  );
+
+  // Group employees by department, ordered by role level within each.
+  const byDept = {};
+  active.forEach((u) => { const d = (u.department && String(u.department).trim()) || 'Unassigned'; (byDept[d] = byDept[d] || []).push(u); });
+  const deptNames = Object.keys(byDept).sort((a, b) => (a === 'Unassigned') - (b === 'Unassigned') || a.localeCompare(b));
+  deptNames.forEach((d) => byDept[d].sort((a, b) => (ROLE_LEVEL[a.type] ?? 9) - (ROLE_LEVEL[b.type] ?? 9) || (a.name || '').localeCompare(b.name || '')));
+
+  // A department column: navy pill + toggle + vertical chain of people.
+  const DeptColumn = ({ name }) => {
+    const people = byDept[name] || [];
+    const dk = `dept:${name}`;
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
-        {/* Card */}
-        <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden" style={{ width: 250 }}>
-          <div className="flex">
-            <div className="shrink-0 flex items-center justify-center bg-slate-50" style={{ width: 62 }}>
-              {n.avatar ? <img src={n.avatar} alt="" className="w-full h-full object-cover" style={{ height: depth === 0 ? 96 : 92 }} />
-                : <div className="flex items-center justify-center w-full text-white font-bold" style={{ height: depth === 0 ? 96 : 92, background: band }}>{(n.name || '?')[0]}</div>}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="px-3 py-2 text-center font-bold text-[14px] truncate" style={{ background: band, color: '#fff' }}>{n.role || ''}</div>
-              <div className="px-3 py-2 text-center">
-                <div className="text-[13px] font-bold text-[#0A0E28] italic truncate">{n.name}</div>
-                {n.phone && <div className="text-[12px] text-slate-500 italic truncate">{n.phone}</div>}
-                {n.email && <div className="text-[12px] text-slate-500 italic truncate">{n.email}</div>}
+        <div className="inline-block text-white font-extrabold uppercase" style={{ background: '#0A1F44', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>{name}</div>
+        {people.length > 0 && <Toggle k={dk} />}
+        {!collapsed[dk] && people.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            {people.map((u, i) => (
+              <div key={u._id} className="flex flex-col items-center">
+                <PersonCard p={u} />
+                {i < people.length - 1 && <VConn />}
               </div>
-            </div>
+            ))}
           </div>
-        </div>
-        {/* Collapse toggle + children */}
-        {n.children && n.children.length > 0 && (
-          <>
-            <div className="relative flex flex-col items-center">
-              <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
-              <button onClick={() => toggle(n.key)} className="w-5 h-5 rounded-full border border-slate-300 bg-white text-slate-500 text-xs font-bold flex items-center justify-center hover:bg-slate-50 leading-none" style={{ marginTop: -1 }}>
-                {collapsed[n.key] ? '+' : '−'}
-              </button>
-            </div>
-            {!collapsed[n.key] && (
-              <div className="relative flex justify-center" style={{ paddingTop: 14 }}>
-                {/* horizontal connector across children */}
-                {n.children.length > 1 && <div style={{ position: 'absolute', top: 0, left: '12.5%', right: '12.5%', height: 1, background: '#cbd5e1' }} />}
-                <div className="flex items-start gap-6">
-                  {n.children.map((c) => (
-                    <div key={c.key} className="relative flex flex-col items-center">
-                      {/* vertical drop into each child */}
-                      <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
-                      <OrgCard n={c} depth={depth + 1} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
         )}
       </div>
     );
   };
 
+  const hasAny = admins.length > 0 || active.length > 0;
+  // The top management node — use the first admin as the tree root; if there are
+  // several admins, show them side by side as co-roots above the departments.
   return (
-    <div className="fixed inset-0 bg-black/60 z-[140] flex flex-col" onClick={onClose}>
-      <div className="bg-white/95 backdrop-blur border-b border-slate-200 px-5 py-3 flex items-center justify-between shrink-0" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/50 z-[140] flex flex-col" onClick={onClose}>
+      <div className="bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between shrink-0" onClick={(e) => e.stopPropagation()}>
         <div className="text-sm font-extrabold text-[#050A1F]">Organization chart</div>
         <div className="flex items-center gap-2">
           <button onClick={() => setCollapsed({})} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Expand all</button>
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Close</button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto p-10" onClick={(e) => e.stopPropagation()}>
-        {tops.length === 0 ? <div className="text-slate-400 text-sm text-center py-20">No active employees to chart yet.</div> : (
-          <div className="min-w-max mx-auto flex justify-center gap-12">
-            {tops.map((t) => <OrgCard key={t.key} n={t} depth={0} />)}
+      <div className="flex-1 overflow-auto bg-white p-10" onClick={(e) => e.stopPropagation()}>
+        {!hasAny ? <div className="text-slate-400 text-sm text-center py-20">No active employees to chart yet.</div> : (
+          <div className="min-w-max mx-auto flex flex-col items-center">
+            {/* Management row (admins) */}
+            {admins.length > 0 && (
+              <div className="flex items-start justify-center gap-8">
+                {admins.map((a) => <PersonCard key={`admin:${a.id}`} p={{ name: a.name, designation: 'Director \u00B7 Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />)}
+              </div>
+            )}
+            {/* Toggle + horizontal branch into departments */}
+            {deptNames.length > 0 && (
+              <>
+                <Toggle k="__depts__" />
+                {!collapsed['__depts__'] && (
+                  <div style={{ paddingTop: 14 }} className="relative">
+                    {deptNames.length > 1 && <div style={{ position: 'absolute', top: 0, left: '10%', right: '10%', height: 1, background: '#cbd5e1' }} />}
+                    <div className="flex items-start justify-center">
+                      {deptNames.map((d) => (
+                        <div key={d} className="relative flex flex-col items-center">
+                          <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                          <DeptColumn name={d} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
