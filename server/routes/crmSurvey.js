@@ -53,9 +53,16 @@ async function anthropicKey() {
 // ---- Admin: list / create / update / delete ----
 router.get('/', requireAuth, requireAdmin, async (req, res, next) => {
   try {
+    const { User } = require('../models');
+    // Participants = active non-admin CRM users (admins never take surveys).
+    const eligible = await User.count({ where: { active: true, role: { [Op.ne]: 'admin' } } });
     const rows = await CrmSurvey.findAll({ where: { active: true }, order: [['createdAt', 'DESC']] });
     const out = [];
-    for (const s of rows) { await ensureSurveyPeriod(s); const count = await CrmSurveyResponse.count({ where: { surveyId: s.id, period: s.period } }); out.push({ ...s.toJSON(), responseCount: count }); }
+    for (const s of rows) {
+      await ensureSurveyPeriod(s);
+      const completed = await CrmSurveyResponse.count({ where: { surveyId: s.id, period: s.period } });
+      out.push({ ...s.toJSON(), responseCount: completed, participants: eligible, completed, pending: Math.max(0, eligible - completed) });
+    }
     res.json({ surveys: out });
   } catch (e) { next(e); }
 });
@@ -278,43 +285,68 @@ router.get('/:id/periods', requireAuth, requireAdmin, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+async function buildResults(survey, period) {
+  const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
+  const { User } = require('../models');
+  const participants = await User.count({ where: { active: true, role: { [Op.ne]: 'admin' } } });
+  const total = responses.length;
+  const analysis = (survey.analysis && survey.analysis[period]) || null;
+  const tally = (list) => { const t = { positive: 0, neutral: 0, negative: 0 }; list.forEach((r) => { const l = r.sentiment && r.sentiment.label; if (t[l] != null) t[l] += 1; }); return t; };
+  const withSent = responses.filter((r) => r.sentiment && r.sentiment.label);
+  const counts = tally(withSent);
+  const pct = (n) => withSent.length ? Math.round((n / withSent.length) * 100) : 0;
+  const groupBy = (keyFn) => {
+    const g = {}; responses.forEach((r) => { const k = keyFn(r) || '—'; (g[k] = g[k] || []).push(r); });
+    return Object.entries(g).map(([k, list]) => {
+      const c = tally(list.filter((r) => r.sentiment && r.sentiment.label)); const n = list.filter((r) => r.sentiment && r.sentiment.label).length;
+      const avg = list.filter((r) => r.avgScore != null);
+      return { key: k, count: list.length, avgScore: avg.length ? +(avg.reduce((a, r) => a + r.avgScore, 0) / avg.length).toFixed(2) : null,
+        positive: n ? Math.round(c.positive / n * 100) : 0, neutral: n ? Math.round(c.neutral / n * 100) : 0, negative: n ? Math.round(c.negative / n * 100) : 0 };
+    }).sort((a, b) => b.count - a.count);
+  };
+  const responseDetail = responses.map((r) => {
+    const beh = r.behavior || {}; const flagged = Array.isArray(beh.flagged) ? beh.flagged : [];
+    const flaggedQ = flagged.map((qid) => { const q = (survey.questions || []).find((x) => x.id === qid); return q ? q.text : null; }).filter(Boolean);
+    return { _id: r.id, employeeName: r.employeeName, department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment || null, hesitationCount: flagged.length, hesitationQuestions: flaggedQ };
+  });
+  return {
+    survey: { _id: survey.id, id: survey.id, name: survey.name, frequency: survey.frequency, questions: survey.questions },
+    period, total, participants, analysed: withSent.length,
+    sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
+    good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
+    departmentSummaries: analysis && analysis.departmentSummaries ? analysis.departmentSummaries : [],
+    insights: analysis && analysis.insights ? analysis.insights : null,
+    byBranch: groupBy((r) => r.branch),
+    byDepartment: groupBy((r) => r.department),
+    responses: responseDetail,
+    analysedAt: analysis ? analysis.at : null,
+  };
+}
+
 router.get('/:id/results', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const survey = await CrmSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
     const period = req.query.period || survey.period;
-    const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
-    const total = responses.length;
-    const analysis = (survey.analysis && survey.analysis[period]) || null;
-    const tally = (list) => { const t = { positive: 0, neutral: 0, negative: 0 }; list.forEach((r) => { const l = r.sentiment && r.sentiment.label; if (t[l] != null) t[l] += 1; }); return t; };
-    const withSent = responses.filter((r) => r.sentiment && r.sentiment.label);
-    const counts = tally(withSent);
-    const pct = (n) => withSent.length ? Math.round((n / withSent.length) * 100) : 0;
-    const groupBy = (keyFn) => {
-      const g = {}; responses.forEach((r) => { const k = keyFn(r) || '—'; (g[k] = g[k] || []).push(r); });
-      return Object.entries(g).map(([k, list]) => {
-        const c = tally(list.filter((r) => r.sentiment && r.sentiment.label)); const n = list.filter((r) => r.sentiment && r.sentiment.label).length;
-        const avg = list.filter((r) => r.avgScore != null);
-        return { key: k, count: list.length, avgScore: avg.length ? +(avg.reduce((a, r) => a + r.avgScore, 0) / avg.length).toFixed(2) : null,
-          positive: n ? Math.round(c.positive / n * 100) : 0, neutral: n ? Math.round(c.neutral / n * 100) : 0, negative: n ? Math.round(c.negative / n * 100) : 0 };
-      }).sort((a, b) => b.count - a.count);
-    };
-    const responseDetail = responses.map((r) => {
-      const beh = r.behavior || {}; const flagged = Array.isArray(beh.flagged) ? beh.flagged : [];
-      const flaggedQ = flagged.map((qid) => { const q = (survey.questions || []).find((x) => x.id === qid); return q ? q.text : null; }).filter(Boolean);
-      return { _id: r.id, employeeName: r.employeeName, department: r.department, branch: r.branch, avgScore: r.avgScore, sentiment: r.sentiment || null, hesitationCount: flagged.length, hesitationQuestions: flaggedQ };
-    });
-    res.json({
-      survey: { _id: survey.id, name: survey.name, frequency: survey.frequency, questions: survey.questions },
-      period, total, analysed: withSent.length,
-      sentiment: { positive: pct(counts.positive), neutral: pct(counts.neutral), negative: pct(counts.negative) },
-      good: analysis ? analysis.good : [], improve: analysis ? analysis.improve : [], summary: analysis ? analysis.summary : '',
-      departmentSummaries: analysis && analysis.departmentSummaries ? analysis.departmentSummaries : [],
-      byBranch: groupBy((r) => r.branch), // team split
-      byDepartment: groupBy((r) => r.department), // department split
-      responses: responseDetail,
-      analysedAt: analysis ? analysis.at : null,
-    });
+    res.json(await buildResults(survey, period));
+  } catch (e) { next(e); }
+});
+
+// Detailed PDF report for a survey period.
+router.get('/:id/report.pdf', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const survey = await CrmSurvey.findByPk(req.params.id);
+    if (!survey) return res.status(404).json({ error: 'Survey not found.' });
+    const period = req.query.period || survey.period;
+    const data = await buildResults(survey, period);
+    if (!data.total) return res.status(400).json({ error: 'No responses to report for this period yet.' });
+    const { renderSurveyReport } = require('../services/surveyReport');
+    const { pdfPath } = await renderSurveyReport({ ...data, survey: { id: survey.id, name: survey.name } });
+    const fsSync = require('fs');
+    const safeName = String(survey.name || 'survey').replace(/[^a-z0-9]+/gi, '-').slice(0, 60);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}-${period}.pdf"`);
+    fsSync.createReadStream(pdfPath).pipe(res);
   } catch (e) { next(e); }
 });
 
@@ -327,7 +359,7 @@ router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) =>
     const period = req.body && req.body.period ? req.body.period : survey.period;
     const responses = await CrmSurveyResponse.findAll({ where: { surveyId: survey.id, period } });
     if (!responses.length) return res.status(400).json({ error: 'No responses to analyse for this period yet.' });
-    const { analyseResponse, aggregateAnalysis } = require('../services/hrSurveyAI');
+    const { analyseResponse, aggregateAnalysis, surveyReportInsights } = require('../services/hrSurveyAI');
     for (const r of responses) {
       if (r.sentiment && r.sentiment.label) continue;
       try { const sent = await analyseResponse(key, { questions: survey.questions, answers: r.answers, followups: r.followups, avgScore: r.avgScore, behavior: r.behavior }); r.sentiment = sent; r.changed('sentiment', true); await r.save(); } catch {}
@@ -346,8 +378,14 @@ router.post('/:id/analyze', requireAuth, requireAdmin, async (req, res, next) =>
     });
     let agg = { good: [], improve: [], summary: '', departmentSummaries: [] };
     try { agg = await aggregateAnalysis(key, { surveyName: survey.name, blobs }); } catch {}
+    // Management-report insights (names used — internal report only).
+    let insights = { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
+    try {
+      const people = responses.map((r) => ({ name: r.employeeName, department: r.department, avgScore: r.avgScore, sentiment: r.sentiment && r.sentiment.label, summary: r.sentiment && r.sentiment.summary }));
+      insights = await surveyReportInsights(key, { surveyName: survey.name, people });
+    } catch {}
     const nextAnalysis = { ...(survey.analysis || {}) };
-    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, departmentSummaries: agg.departmentSummaries || [] };
+    nextAnalysis[period] = { at: new Date().toISOString(), good: agg.good, improve: agg.improve, summary: agg.summary, departmentSummaries: agg.departmentSummaries || [], insights };
     survey.analysis = nextAnalysis; survey.changed('analysis', true); await survey.save();
     res.json({ ok: true });
   } catch (e) { next(e); }

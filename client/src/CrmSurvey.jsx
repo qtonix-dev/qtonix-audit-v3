@@ -10,45 +10,175 @@ const SURVEY_TEMPLATES = [
   { id: 'work_culture', name: 'Work Culture', available: false, desc: 'Coming soon.' },
 ];
 const Trash = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13" /></svg>;
+const IconEdit = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>;
+const IconTest = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3h6M10 3v6l-4 8a2 2 0 0 0 1.8 3h8.4a2 2 0 0 0 1.8-3l-4-8V3" /></svg>;
+const IconResults = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18M7 15l3-3 3 2 4-5" /></svg>;
+const IconClose = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>;
+const IconRerun = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5" /></svg>;
+const IconLive = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 3l14 9-14 9V3z" /></svg>;
+const IconOpen = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 6l6 6-6 6" /></svg>;
+const IconPdf = ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>;
+
+// Small icon button with a hover tooltip, used across the survey list.
+function IconBtn({ title, onClick, children, color = 'slate', danger }) {
+  const cls = danger ? 'text-red-400 hover:bg-red-50 hover:text-red-600'
+    : color === 'green' ? 'text-green-600 hover:bg-green-50'
+    : color === 'blue' ? 'text-blue-600 hover:bg-blue-50'
+    : color === 'orange' ? 'text-[#FF4500] hover:bg-orange-50'
+    : 'text-slate-500 hover:bg-slate-100';
+  return <button title={title} onClick={onClick} className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition ${cls}`}>{children}</button>;
+}
 
 // ============================ ADMIN ============================
 export default function CrmSurveyAdmin() {
-  const [tab, setTab] = useState('create');
   const [surveys, setSurveys] = useState([]);
   const [err, setErr] = useState('');
+  const [detailId, setDetailId] = useState(null); // survey being viewed in detail
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editSurvey, setEditSurvey] = useState(null); // survey being edited in the popup
+  const [templatePick, setTemplatePick] = useState(false); // template chooser popup
   const load = () => api('/surveys').then((r) => setSurveys(r.surveys || [])).catch(() => {});
   useEffect(() => { load(); }, []);
+
+  if (detailId) {
+    const s = surveys.find((x) => x._id === detailId);
+    return <SurveyDetail survey={s} surveyId={detailId} onBack={() => { setDetailId(null); load(); }} reload={load} />;
+  }
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-extrabold text-[#050A1F]">Team survey</h2>
+          <h2 className="text-lg font-extrabold text-[#050A1F]">Team surveys</h2>
           <p className="text-sm text-slate-500">Run mood pulse surveys with the sales team. Responses are analysed with AI.</p>
         </div>
+        <button onClick={() => setTemplatePick(true)} className="rounded-lg px-4 py-2.5 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Create survey</button>
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
-      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5 w-max">
-        <button onClick={() => setTab('create')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'create' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Create Survey</button>
-        <button onClick={() => setTab('results')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'results' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Comments &amp; Sentiment Analysis</button>
-      </div>
-      {tab === 'create' && <SurveyCreate surveys={surveys} reload={load} setErr={setErr} />}
-      {tab === 'results' && <SurveyResults surveys={surveys} />}
+
+      <SurveyList surveys={surveys} reload={load} setErr={setErr}
+        onOpen={(s) => setDetailId(s._id)}
+        onEdit={(s) => { setEditSurvey(s); setCreateOpen(true); }} />
+
+      {/* Template chooser → opens the create popup for the available template. */}
+      {templatePick && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setTemplatePick(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4"><div className="text-lg font-extrabold text-[#050A1F]">Choose a template</div><button onClick={() => setTemplatePick(false)} className="text-slate-400 text-xl leading-none">×</button></div>
+            <div className="space-y-2">
+              {SURVEY_TEMPLATES.map((t) => (
+                <button key={t.id} disabled={!t.available} onClick={() => { if (!t.available) return; setEditSurvey(null); setTemplatePick(false); setCreateOpen(true); }}
+                  className={`w-full text-left rounded-xl border p-3.5 transition ${t.available ? 'border-slate-200 hover:border-orange-300 hover:bg-orange-50/40' : 'opacity-60 cursor-not-allowed border-slate-200'}`}>
+                  <div className="flex items-center justify-between"><span className="font-bold text-[#050A1F] text-sm">{t.name}</span>{!t.available && <span className="text-[10px] font-bold rounded-full bg-slate-200 text-slate-500 px-2 py-0.5">Coming Soon</span>}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{t.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {createOpen && (
+        <SurveyCreateModal survey={editSurvey} reload={load} setErr={setErr}
+          onClose={() => { setCreateOpen(false); setEditSurvey(null); }} />
+      )}
     </div>
   );
 }
 
-function SurveyCreate({ surveys, reload, setErr }) {
-  const [template, setTemplate] = useState('employee_mood');
-  const [editId, setEditId] = useState(null); // survey being edited (null = creating new)
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [frequency, setFrequency] = useState('one_time');
-  const [questions, setQuestions] = useState([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
+// The survey list table with icon actions.
+function SurveyList({ surveys, reload, setErr, onOpen, onEdit }) {
+  const [testTake, setTestTake] = useState(null);
+  const [testResults, setTestResults] = useState(null);
+  const [confirmModal, setConfirmModal] = useState(null);
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const activate = (s) => setConfirmModal({ title: 'Make this survey live?', body: `“${s.name}” will be sent to the sales team. Any test responses are cleared and a fresh response period begins.`, confirmLabel: 'Make live', tone: 'orange', onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); reload(); } });
+  const rerun = (s) => setConfirmModal({ title: 'Re-run this survey?', body: `“${s.name}” re-opens for a new response period. Previous responses stay saved under their own period.`, confirmLabel: 'Re-run', tone: 'orange', onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); reload(); } });
+  const closeSurvey = (s) => setConfirmModal({ title: 'Close this survey?', body: `“${s.name}” stops accepting responses. You can re-run it later.`, confirmLabel: 'Close', tone: 'slate', onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); } });
+  const del = (s) => setConfirmModal({ title: 'Delete this survey?', body: `“${s.name}” will be removed. This can’t be undone.`, confirmLabel: 'Delete', tone: 'red', onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'DELETE' }); reload(); } });
+
+  if (!surveys.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-10 text-center text-slate-400 text-sm">No surveys yet. Click “Create survey” to run your first one.</div>;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50/50">
+              <th className="text-left px-4 py-3 font-bold">Sl</th>
+              <th className="text-left px-2 py-3 font-bold">Date</th>
+              <th className="text-left px-2 py-3 font-bold">Survey name</th>
+              <th className="text-center px-2 py-3 font-bold">Participants</th>
+              <th className="text-center px-2 py-3 font-bold">Completed</th>
+              <th className="text-center px-2 py-3 font-bold">Pending</th>
+              <th className="text-left px-2 py-3 font-bold">Status</th>
+              <th className="text-right px-4 py-3 font-bold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {surveys.map((s, i) => {
+              const statusPill = s.status === 'active' ? <span className="inline-block rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Active</span>
+                : s.status === 'draft' ? <span className="inline-block rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">Draft</span>
+                : <span className="inline-block rounded-full bg-slate-100 text-slate-500 px-2 py-0.5 text-[10px] font-bold">Closed</span>;
+              return (
+                <tr key={s._id} className="border-b border-slate-50 hover:bg-slate-50/40">
+                  <td className="px-4 py-3 text-slate-400 font-bold">{i + 1}</td>
+                  <td className="px-2 py-3 text-slate-500 whitespace-nowrap text-xs">{fmtDate(s.createdAt)}</td>
+                  <td className="px-2 py-3">
+                    <button onClick={() => onOpen(s)} className="font-bold text-[#050A1F] hover:text-[#FF4500] text-left">{s.name}</button>
+                    <div className="text-[11px] text-slate-400">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'}</div>
+                  </td>
+                  <td className="px-2 py-3 text-center font-bold text-slate-600">{s.participants != null ? s.participants : '—'}</td>
+                  <td className="px-2 py-3 text-center font-bold text-green-600">{s.completed != null ? s.completed : (s.responseCount || 0)}</td>
+                  <td className="px-2 py-3 text-center font-bold text-amber-600">{s.pending != null ? s.pending : '—'}</td>
+                  <td className="px-2 py-3">{statusPill}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <IconBtn title="View results" color="slate" onClick={() => onOpen(s)}><IconResults /></IconBtn>
+                      <IconBtn title="Edit" color="slate" onClick={() => onEdit(s)}><IconEdit /></IconBtn>
+                      <IconBtn title="Test the survey" color="blue" onClick={() => setTestTake(s)}><IconTest /></IconBtn>
+                      <IconBtn title="Test results" color="slate" onClick={() => setTestResults(s)}><IconResults size={15} /></IconBtn>
+                      {s.status === 'draft' && <IconBtn title="Make live" color="orange" onClick={() => activate(s)}><IconLive /></IconBtn>}
+                      {s.status === 'active' && <IconBtn title="Close survey" color="slate" onClick={() => closeSurvey(s)}><IconClose /></IconBtn>}
+                      {s.status === 'closed' && <IconBtn title="Re-run survey" color="orange" onClick={() => rerun(s)}><IconRerun /></IconBtn>}
+                      <IconBtn title="Delete" danger onClick={() => del(s)}><Trash /></IconBtn>
+                      <IconBtn title="Open detail page" color="slate" onClick={() => onOpen(s)}><IconOpen /></IconBtn>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {testTake && <SurveyTakeModal survey={testTake} testMode onClose={() => setTestTake(null)} onDone={() => setTestTake(null)} />}
+      {testResults && <TestResultsModal survey={testResults} onClose={() => setTestResults(null)} />}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setConfirmModal(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 pt-5 pb-3"><div className="text-lg font-extrabold text-[#050A1F]">{confirmModal.title}</div><div className="text-sm text-slate-500 mt-1.5 leading-relaxed">{confirmModal.body}</div></div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setConfirmModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={async () => { const fn = confirmModal.onConfirm; setConfirmModal(null); try { await fn(); } catch (e) { setErr(e.message); } }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: confirmModal.tone === 'red' ? '#DC2626' : confirmModal.tone === 'slate' ? '#475569' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{confirmModal.confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Create/Edit survey popup. Reuses the question builder in a modal.
+function SurveyCreateModal({ survey, reload, setErr, onClose }) {
+  const editId = survey ? survey._id : null;
+  const [name, setName] = useState(survey ? survey.name || '' : '');
+  const [description, setDescription] = useState(survey ? survey.description || '' : '');
+  const [frequency, setFrequency] = useState(survey ? survey.frequency || 'one_time' : 'one_time');
+  const [questions, setQuestions] = useState(
+    survey && (survey.questions || []).length
+      ? survey.questions.map((q) => ({ ...q, options: q.options || [] }))
+      : [{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]
+  );
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [testTake, setTestTake] = useState(null); // survey being test-taken
-  const [testResults, setTestResults] = useState(null); // survey whose test results are shown
-  const [confirmModal, setConfirmModal] = useState(null); // { title, body, confirmLabel, tone, onConfirm }
+  const [localErr, setLocalErr] = useState('');
   const Q_TYPES = [['scale5', 'Rating scale (1–5)'], ['single_choice', 'Multiple choice (pick one)'], ['multi_choice', 'Multiple choice (pick many)'], ['short_answer', 'Short answer']];
   const isChoice = (t) => t === 'single_choice' || t === 'multi_choice';
   const addQ = () => setQuestions((qs) => [...qs, { id: `q${Date.now()}`, text: '', type: 'scale5', comment: false, options: [] }]);
@@ -59,79 +189,28 @@ function SurveyCreate({ surveys, reload, setErr }) {
   const delOpt = (qi, oi) => setQuestions((qs) => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
   const validQuestions = () => questions.filter((q) => { if (!q.text.trim()) return false; if (isChoice(q.type) && (q.options || []).filter((o) => o.trim()).length < 2) return false; return true; });
 
-  const resetForm = () => {
-    setEditId(null); setName(''); setDescription(''); setFrequency('one_time');
-    setQuestions([{ id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] }]);
-  };
-  const startEdit = (s) => {
-    setEditId(s._id); setName(s.name || ''); setDescription(s.description || ''); setFrequency(s.frequency || 'one_time');
-    setQuestions((s.questions || []).length ? s.questions.map((q) => ({ ...q, options: q.options || [] })) : [{ id: 'q1', text: '', type: 'scale5', comment: false, options: [] }]);
-    setMsg(''); setErr('');
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const launch = async () => {
-    setMsg('');
-    if (!name.trim()) return setErr('Survey name is required.');
+  const save = async () => {
+    setLocalErr('');
+    if (!name.trim()) return setLocalErr('Survey name is required.');
     const qs = validQuestions();
-    if (!qs.length) return setErr('Add at least one complete question (choice questions need 2+ options).');
+    if (!qs.length) return setLocalErr('Add at least one complete question (choice questions need 2+ options).');
     setBusy(true);
     try {
-      if (editId) {
-        await api(`/surveys/${editId}`, { method: 'PUT', body: JSON.stringify({ name, description, frequency, questions: qs }) });
-        setMsg('Survey updated. Test it below, then click “Make live” to send it to the team.');
-      } else {
-        await api('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template, frequency, questions: qs }) });
-        setMsg('Survey saved as a draft — test it below, then click “Make live” to send it to the team.');
-      }
-      resetForm(); reload();
-    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+      if (editId) await api(`/surveys/${editId}`, { method: 'PUT', body: JSON.stringify({ name, description, frequency, questions: qs }) });
+      else await api('/surveys', { method: 'POST', body: JSON.stringify({ name, description, template: 'employee_mood', frequency, questions: qs }) });
+      reload(); onClose();
+    } catch (e) { setLocalErr(e.message); setBusy(false); }
   };
-  const closeSurvey = (s) => setConfirmModal({
-    title: 'Close this survey?', body: `“${s.name}” will stop accepting responses. You can re-run it later.`,
-    confirmLabel: 'Close survey', tone: 'slate',
-    onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'PUT', body: JSON.stringify({ status: 'closed' }) }); reload(); },
-  });
-  const activate = (s) => setConfirmModal({
-    title: 'Make this survey live?', body: `“${s.name}” will be sent to the sales team to respond. Any test responses will be cleared and a fresh response period begins.`,
-    confirmLabel: 'Make live', tone: 'orange',
-    onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); setMsg(`“${s.name}” is now live.`); reload(); },
-  });
-  const rerun = (s) => setConfirmModal({
-    title: 'Re-run this survey?', body: `“${s.name}” will be re-opened for a new response period. Previous responses stay saved under their own period; new responses come in fresh.`,
-    confirmLabel: 'Re-run survey', tone: 'orange',
-    onConfirm: async () => { await api(`/surveys/${s._id}/activate`, { method: 'POST' }); setMsg(`“${s.name}” has been re-run and is live again.`); reload(); },
-  });
-  const del = (s) => setConfirmModal({
-    title: 'Delete this survey?', body: `“${s.name}” will be removed. This can’t be undone.`,
-    confirmLabel: 'Delete', tone: 'red',
-    onConfirm: async () => { await api(`/surveys/${s._id}`, { method: 'DELETE' }); if (editId === s._id) resetForm(); reload(); },
-  });
 
   return (
-    <div className="grid lg:grid-cols-2 gap-6">
-      <div>
-        {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
-        {editId ? (
-          <div className="mb-5 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 flex items-center justify-between gap-3">
-            <div className="text-sm font-bold text-orange-700">✏️ Editing “{name || 'survey'}”</div>
-            <button onClick={resetForm} className="text-xs font-bold text-orange-600 underline">Start a new survey instead</button>
-          </div>
-        ) : (
-          <>
-            <div className="text-sm font-bold text-[#050A1F] mb-2">Select a template</div>
-            <div className="space-y-2 mb-5">
-              {SURVEY_TEMPLATES.map((t) => (
-                <button key={t.id} disabled={!t.available} onClick={() => t.available && setTemplate(t.id)}
-                  className={`w-full text-left rounded-xl border p-3 transition ${template === t.id && t.available ? 'border-orange-400 bg-orange-50' : 'border-slate-200'} ${!t.available ? 'opacity-60 cursor-not-allowed' : 'hover:border-slate-300'}`}>
-                  <div className="flex items-center justify-between"><span className="font-bold text-[#050A1F] text-sm">{t.name}</span>{!t.available && <span className="text-[10px] font-bold rounded-full bg-slate-200 text-slate-500 px-2 py-0.5">Coming Soon</span>}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{t.desc}</div>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-3">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="text-lg font-extrabold text-[#050A1F]">{editId ? 'Edit survey' : 'Create survey'}</div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-3 overflow-y-auto">
+          {localErr && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{localErr}</div>}
           <div><div className="text-xs font-bold text-slate-500 mb-1">Survey name</div><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. August Mood Check" /></div>
           <div><div className="text-xs font-bold text-slate-500 mb-1">Survey description</div><textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="A short note shown to the team." /></div>
           <div><div className="text-xs font-bold text-slate-500 mb-1">Frequency</div>
@@ -145,7 +224,7 @@ function SurveyCreate({ surveys, reload, setErr }) {
               {questions.map((q, i) => (
                 <div key={q.id} className="rounded-xl border border-slate-200 p-3">
                   <div className="flex items-start gap-2">
-                    <span className="text-slate-300 text-sm pt-2.5 font-bold">{i + 1}.</span>
+                    <span className="text-xs font-bold text-slate-300 pt-2">{i + 1}</span>
                     <div className="flex-1 space-y-2">
                       <textarea className={inputCls} rows={1} value={q.text} onChange={(e) => patchQ(i, { text: e.target.value })} placeholder="Question text" />
                       <div className="flex items-center gap-2 flex-wrap">
@@ -175,64 +254,62 @@ function SurveyCreate({ surveys, reload, setErr }) {
             </div>
             <button onClick={addQ} className="text-xs font-bold text-[#FF4500] mt-3">+ Add question</button>
           </div>
-          <div className="pt-1 flex items-center gap-2">
-            <button onClick={launch} disabled={busy} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editId ? 'Save changes' : 'Save as draft')}</button>
-            {editId && <button onClick={resetForm} className="rounded-lg px-4 py-2.5 text-sm font-bold text-slate-500 border border-slate-200">Cancel edit</button>}
-          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editId ? 'Save changes' : 'Save as draft')}</button>
         </div>
       </div>
-      <div>
-        <div className="text-sm font-bold text-[#050A1F] mb-2">Surveys</div>
-        {surveys.length === 0 ? <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">No surveys yet.</div> : (
-          <div className="space-y-2">{surveys.map((s) => {
-            const statusPill = s.status === 'active'
-              ? <span className="text-green-600 font-bold">Active</span>
-              : s.status === 'draft' ? <span className="text-amber-600 font-bold">Draft</span> : <span className="text-slate-400">Closed</span>;
-            return (
-            <div key={s._id} className="bg-white rounded-xl border border-slate-200/70 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0"><div className="font-bold text-[#050A1F] text-sm">{s.name}</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{s.frequency.replace('_', '-')} · {(s.questions || []).length} question{(s.questions || []).length === 1 ? '' : 's'} · {statusPill}{s.status === 'active' ? ` · ${s.responseCount || 0} responses this period` : ''}</div>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-                  <button onClick={() => startEdit(s)} className="text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5">Edit</button>
-                  <button onClick={() => setTestTake(s)} className="text-xs font-bold text-blue-600 border border-blue-200 rounded-lg px-2.5 py-1.5">Test</button>
-                  <button onClick={() => setTestResults(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Test results</button>
-                  {s.status === 'draft' && <button onClick={() => activate(s)} className="text-xs font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: ORANGE }}>Make live</button>}
-                  {s.status === 'active' && <button onClick={() => closeSurvey(s)} className="text-xs font-bold text-slate-500 border border-slate-200 rounded-lg px-2.5 py-1.5">Close</button>}
-                  {s.status === 'closed' && <button onClick={() => rerun(s)} className="text-xs font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: ORANGE }}>Re-run</button>}
-                  <button onClick={() => del(s)} className="text-slate-300 hover:text-red-500"><Trash size={16} /></button>
-                </div>
-              </div>
-            </div>);
-          })}
-          </div>
-        )}
-      </div>
-      {testTake && <SurveyTakeModal survey={testTake} testMode onClose={() => setTestTake(null)} onDone={() => { setTestTake(null); }} />}
-      {testResults && <TestResultsModal survey={testResults} onClose={() => setTestResults(null)} />}
-      {confirmModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setConfirmModal(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 pt-5 pb-3">
-              <div className="text-lg font-extrabold text-[#050A1F]">{confirmModal.title}</div>
-              <div className="text-sm text-slate-500 mt-1.5 leading-relaxed">{confirmModal.body}</div>
-            </div>
-            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-              <button onClick={() => setConfirmModal(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-              <button
-                onClick={async () => { const fn = confirmModal.onConfirm; setConfirmModal(null); try { await fn(); } catch (e) { setErr(e.message); } }}
-                className="rounded-lg px-5 py-2 text-sm font-bold text-white"
-                style={{ background: confirmModal.tone === 'red' ? '#DC2626' : confirmModal.tone === 'slate' ? '#475569' : 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                {confirmModal.confirmLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+
+// Survey detail page — lead-detail style. Shows results for a chosen period,
+// AI analysis, and a PDF download.
+function SurveyDetail({ survey, surveyId, onBack, reload }) {
+  const [periods, setPeriods] = useState([]);
+  const [period, setPeriod] = useState('');
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { api(`/surveys/${surveyId}/periods`).then((r) => { setPeriods(r.periods || []); setPeriod((r.periods && r.periods[0]) || ''); }).catch(() => {}); }, [surveyId]);
+  const loadResults = () => { setBusy(true); api(`/surveys/${surveyId}/results${period ? `?period=${encodeURIComponent(period)}` : ''}`).then(setData).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  useEffect(() => { loadResults(); }, [surveyId, period]);
+  const analyze = async () => { setAnalyzing(true); setErr(''); try { await api(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { setErr(e.message); } finally { setAnalyzing(false); } };
+  const downloadPdf = async () => {
+    setPdfBusy(true); setErr('');
+    try {
+      const res = await fetch(`/api/surveys/${surveyId}/report.pdf${period ? `?period=${encodeURIComponent(period)}` : ''}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Could not generate the PDF.'); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `${(survey && survey.name ? survey.name : 'survey').replace(/[^a-z0-9]+/gi, '-')}-${period}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { setErr(e.message); } finally { setPdfBusy(false); }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <button onClick={onBack} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-500 hover:bg-slate-50">← Back</button>
+        <div className="min-w-0">
+          <h2 className="text-lg font-extrabold text-[#050A1F] truncate">{survey ? survey.name : 'Survey'}</h2>
+          <p className="text-xs text-slate-400">Results &amp; AI sentiment analysis</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">{periods.map((p) => <option key={p} value={p}>{p}</option>)}</select>}
+          <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
+          <button onClick={downloadPdf} disabled={pdfBusy || !data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />{pdfBusy ? 'Preparing…' : 'Download PDF'}</button>
+        </div>
+      </div>
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+      {busy ? <div className="text-slate-400 text-sm">Loading…</div> : !data ? null : <ResultsBody data={data} />}
+    </div>
+  );
+}
+
 
 function SentimentCircle({ label, pct, color }) {
   const r = 34, c = 2 * Math.PI * r, off = c - (pct / 100) * c;

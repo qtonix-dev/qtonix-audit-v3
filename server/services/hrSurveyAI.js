@@ -168,4 +168,43 @@ async function successMessage(apiKey, { employeeName, avgScore, sentimentLabel, 
   }
 }
 
-module.exports = { followUpQuestions, analyseResponse, aggregateAnalysis, successMessage };
+/**
+ * Deep report insights for the detailed survey PDF. Takes the same anonymised
+ * blobs plus per-person rows (name + sentiment) and returns action-oriented
+ * sections for leadership. Names ARE used here because this is the internal
+ * management report (not shared with employees).
+ */
+async function surveyReportInsights(apiKey, { surveyName, people }) {
+  const system = [
+    'You are a senior people-analytics advisor preparing a confidential management report from an employee-mood survey.',
+    'You are given each employee\'s name, average score, sentiment and a short read of their responses.',
+    'Produce STRICT JSON with these keys:',
+    '"attention": array of {name, reason} — employees whose mood/answers suggest they need attention now (<=25 words reason).',
+    '"oneToOne": array of {name, reason} — employees who would benefit from a 1:1 conversation (<=25 words).',
+    '"forHR": array of strings — concrete points the HR team should discuss or act on (<=20 words each).',
+    '"forManager": array of strings — points for the Team Lead / Manager to address with their team (<=20 words each).',
+    '"forManagement": array of strings — strategic actions senior management should take (<=20 words each).',
+    'Base everything strictly on the provided data. Only list people who genuinely warrant it — empty arrays are fine.',
+    'Return ONLY the JSON object. No commentary.',
+  ].join(' ');
+  const roster = people.slice(0, 200).map((p, i) => `#${i + 1} ${p.name || 'Employee'} [${p.department || '—'}] score ${p.avgScore != null ? p.avgScore.toFixed(1) : '—'} · ${p.sentiment || 'unrated'}${p.summary ? ` — ${p.summary}` : ''}`).join('\n');
+  try {
+    const out = await callClaude(apiKey, { system, maxTokens: 2000, messages: [{ role: 'user', content: `Survey: ${surveyName}\n\nEmployees:\n\n${roster}` }] });
+    const p = parseJson(out);
+    const arrOf = (a, keys) => Array.isArray(a) ? a.slice(0, 30).map((x) => {
+      if (typeof x === 'string') return x.slice(0, 200);
+      const o = {}; keys.forEach((k) => { o[k] = String(x[k] || '').slice(0, 200); }); return o;
+    }) : [];
+    return {
+      attention: arrOf(p.attention, ['name', 'reason']).filter((x) => x.name),
+      oneToOne: arrOf(p.oneToOne, ['name', 'reason']).filter((x) => x.name),
+      forHR: arrOf(p.forHR).filter(Boolean),
+      forManager: arrOf(p.forManager).filter(Boolean),
+      forManagement: arrOf(p.forManagement).filter(Boolean),
+    };
+  } catch {
+    return { attention: [], oneToOne: [], forHR: [], forManager: [], forManagement: [] };
+  }
+}
+
+module.exports = { followUpQuestions, analyseResponse, aggregateAnalysis, surveyReportInsights, successMessage };
