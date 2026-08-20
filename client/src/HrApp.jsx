@@ -2991,6 +2991,7 @@ function HrAdmin({ user }) {
   const [shifts, setShifts] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [reporting, setReporting] = useState({ hr: [], admins: [] });
+  const [orgChartOpen, setOrgChartOpen] = useState(false);
   const [imagekitReady, setImagekitReady] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [edit, setEdit] = useState(null);
@@ -3136,7 +3137,12 @@ function HrAdmin({ user }) {
       {tab === 'org' && (
         <div className="space-y-6">
           <div>
-            <div className="text-sm font-bold text-[#050A1F] mb-3">Organization chart</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-bold text-[#050A1F]">Organization chart</div>
+              <button onClick={() => setOrgChartOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>
+                <Icon.Globe size={14} /> View chart
+              </button>
+            </div>
             <HrOrgChart users={users} reporting={reporting} />
           </div>
           <div>
@@ -3183,6 +3189,7 @@ function HrAdmin({ user }) {
       {tab === 'careers' && <HrCareersTab />}
 
       {showAdd && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} onClose={() => setShowAdd(false)} onCreated={(n) => { setMsg(`User created: ${n}`); load(); }} />}
+      {orgChartOpen && <HrOrgChartModal users={users} reporting={reporting} onClose={() => setOrgChartOpen(false)} />}
     </div>
   );
 }
@@ -3449,6 +3456,117 @@ function HrOrgChart({ users, reporting }) {
         </div>
       )}
       {active.length === 0 && <div className="text-slate-400 text-sm text-center py-8">No active employees to chart yet.</div>}
+    </div>
+  );
+}
+
+// Full-screen visual organization chart — a top-down tree of cards with a
+// colored header band per level (navy = management, blue = second level,
+// green = the rest), avatar + role in the band and name/phone/email below,
+// connector lines, and collapse/expand toggles. Built from the reporting graph.
+function HrOrgChartModal({ users, reporting, onClose }) {
+  const active = (users || []).filter((u) => u.active);
+  const byId = {};
+  active.forEach((u) => { byId[u._id] = { key: `hr:${u._id}`, id: u._id, kind: 'hr', name: u.name, role: ROLE_LABELS[u.type] || u.type, type: u.type, avatar: u.avatar, phone: u.phone, email: u.email, department: u.department, branch: u.branch, branchIncharge: u.branchIncharge, children: [] }; });
+  const adminBuckets = {};
+  const roots = [];
+  active.forEach((u) => {
+    const node = byId[u._id];
+    if (u.reportsToId && byId[u.reportsToId]) byId[u.reportsToId].children.push(node);
+    else if (u.reportsToAdminId) (adminBuckets[u.reportsToAdminId] = adminBuckets[u.reportsToAdminId] || []).push(node);
+    else roots.push(node);
+  });
+  const sortKids = (n) => { n.children.sort((a, b) => (ROLE_LEVEL[a.type] ?? 9) - (ROLE_LEVEL[b.type] ?? 9)); n.children.forEach(sortKids); };
+  const admins = reporting.admins || [];
+  const adminIdSet = new Set(admins.map((a) => a.id));
+  // Build admin (management) nodes as the top of the tree.
+  const adminNodes = admins.map((a) => {
+    const kids = (adminBuckets[a.id] || []);
+    kids.forEach(sortKids);
+    kids.sort((x, y) => (ROLE_LEVEL[x.type] ?? 9) - (ROLE_LEVEL[y.type] ?? 9));
+    return { key: `admin:${a.id}`, id: a.id, kind: 'admin', name: a.name, role: 'Management', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email, children: kids };
+  });
+  // Orphaned reports (admin no longer present) + true roots become extra tops.
+  const orphaned = Object.entries(adminBuckets).filter(([aid]) => !adminIdSet.has(Number(aid)) && !adminIdSet.has(aid)).flatMap(([, arr]) => arr);
+  roots.forEach(sortKids); orphaned.forEach(sortKids);
+  const extraTops = [...roots, ...orphaned];
+  const tops = [...adminNodes, ...extraTops];
+
+  // Collapse state — collapsed node keys.
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = (k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
+
+  // Band color by depth: 0 = navy, 1 = blue, 2+ = green.
+  const bandColor = (depth) => depth === 0 ? '#0A1F44' : depth === 1 ? '#1CA0E8' : '#A4C639';
+
+  const OrgCard = ({ n, depth }) => {
+    const band = bandColor(depth);
+    const lightText = depth === 0; // navy band = white role text; others already light bg
+    return (
+      <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+        {/* Card */}
+        <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden" style={{ width: 250 }}>
+          <div className="flex">
+            <div className="shrink-0 flex items-center justify-center bg-slate-50" style={{ width: 62 }}>
+              {n.avatar ? <img src={n.avatar} alt="" className="w-full h-full object-cover" style={{ height: depth === 0 ? 96 : 92 }} />
+                : <div className="flex items-center justify-center w-full text-white font-bold" style={{ height: depth === 0 ? 96 : 92, background: band }}>{(n.name || '?')[0]}</div>}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="px-3 py-2 text-center font-bold text-[14px] truncate" style={{ background: band, color: '#fff' }}>{n.role || ''}</div>
+              <div className="px-3 py-2 text-center">
+                <div className="text-[13px] font-bold text-[#0A0E28] italic truncate">{n.name}</div>
+                {n.phone && <div className="text-[12px] text-slate-500 italic truncate">{n.phone}</div>}
+                {n.email && <div className="text-[12px] text-slate-500 italic truncate">{n.email}</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Collapse toggle + children */}
+        {n.children && n.children.length > 0 && (
+          <>
+            <div className="relative flex flex-col items-center">
+              <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
+              <button onClick={() => toggle(n.key)} className="w-5 h-5 rounded-full border border-slate-300 bg-white text-slate-500 text-xs font-bold flex items-center justify-center hover:bg-slate-50 leading-none" style={{ marginTop: -1 }}>
+                {collapsed[n.key] ? '+' : '−'}
+              </button>
+            </div>
+            {!collapsed[n.key] && (
+              <div className="relative flex justify-center" style={{ paddingTop: 14 }}>
+                {/* horizontal connector across children */}
+                {n.children.length > 1 && <div style={{ position: 'absolute', top: 0, left: '12.5%', right: '12.5%', height: 1, background: '#cbd5e1' }} />}
+                <div className="flex items-start gap-6">
+                  {n.children.map((c) => (
+                    <div key={c.key} className="relative flex flex-col items-center">
+                      {/* vertical drop into each child */}
+                      <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                      <OrgCard n={c} depth={depth + 1} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[140] flex flex-col" onClick={onClose}>
+      <div className="bg-white/95 backdrop-blur border-b border-slate-200 px-5 py-3 flex items-center justify-between shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-extrabold text-[#050A1F]">Organization chart</div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setCollapsed({})} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Expand all</button>
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Close</button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-10" onClick={(e) => e.stopPropagation()}>
+        {tops.length === 0 ? <div className="text-slate-400 text-sm text-center py-20">No active employees to chart yet.</div> : (
+          <div className="min-w-max mx-auto flex justify-center gap-12">
+            {tops.map((t) => <OrgCard key={t.key} n={t} depth={0} />)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
