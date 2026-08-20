@@ -50,6 +50,31 @@ router.post('/:token/apply', async (req, res, next) => {
     if (!name) return res.status(400).json({ error: 'Your name is required.' });
     if (!b.email || !/^[^@]+@[^@]+\.[^@]+$/.test(b.email)) return res.status(400).json({ error: 'A valid email is required.' });
 
+    // Phone must be a real Indian mobile: +91 followed by 10 digits (we accept
+    // any separators/spaces and a leading 0 or +91, then normalise).
+    const rawPhone = String(b.phone || '').trim();
+    const digits = rawPhone.replace(/\D/g, '');
+    let phone10 = '';
+    if (digits.length === 10) phone10 = digits;
+    else if (digits.length === 12 && digits.startsWith('91')) phone10 = digits.slice(2);
+    else if (digits.length === 11 && digits.startsWith('0')) phone10 = digits.slice(1);
+    if (!/^[6-9]\d{9}$/.test(phone10)) {
+      return res.status(400).json({ error: 'Enter a valid 10-digit Indian mobile number (e.g. +91 98765 43210).' });
+    }
+    const normalizedPhone = `+91${phone10}`;
+
+    // Salary answers must be plain numbers — reject "15K", "15 lakh", etc. so we
+    // don't store un-parseable values. Only validates when a value was entered.
+    const answersIn = (b.answers && typeof b.answers === 'object') ? b.answers : {};
+    const salaryFields = [['currentCtc', 'Current salary'], ['expectedCtc', 'Expected salary']];
+    for (const [key, label] of salaryFields) {
+      const v = answersIn[key];
+      if (v == null || String(v).trim() === '') continue;
+      if (!/^\d+(\.\d+)?$/.test(String(v).trim())) {
+        return res.status(400).json({ error: `${label} must be a number in rupees (e.g. 15000, not "15K" or "15 lakh").` });
+      }
+    }
+
     const fields = job.formFields || {};
     // Enforce server-side that mandatory fields were provided.
     const answers = (b.answers && typeof b.answers === 'object') ? b.answers : {};
@@ -77,7 +102,7 @@ router.post('/:token/apply', async (req, res, next) => {
     const tl = [{ id: `t${Date.now()}`, type: 'applied', text: `Applied via the careers page to ${job.title}.`, by: name, at: new Date().toISOString() }];
     if (recruiterId) tl.push({ id: `t${Date.now() + 1}`, type: 'assigned', text: `Auto-assigned to ${recruiterName} (job's HR).`, by: 'System', at: new Date().toISOString() });
     const row = await HrCandidate.create({
-      name, email: String(b.email).slice(0, 160), phone: String(b.phone || '').slice(0, 40),
+      name, email: String(b.email).slice(0, 160), phone: normalizedPhone,
       jobPostId: job.id, stage: firstStage,
       recruiterId, recruiterName,
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
@@ -107,9 +132,22 @@ router.post('/:token/upload', async (req, res, next) => {
     if (!job) return res.status(404).json({ error: 'This position is no longer available.' });
     const { base64, fileName, kind } = req.body || {};
     if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    // Resumes must be a document (pdf/doc/docx). Photos allow images.
+    const nameLc = String(fileName || '').toLowerCase();
+    const dataPrefix = String(base64).slice(0, 100).toLowerCase();
+    if (kind !== 'photo') {
+      const okExt = /\.(pdf|doc|docx)$/.test(nameLc);
+      const okMime = dataPrefix.includes('application/pdf') || dataPrefix.includes('msword') || dataPrefix.includes('wordprocessingml') || dataPrefix.includes('application/octet-stream');
+      if (!okExt && !okMime) return res.status(400).json({ error: 'Please upload your resume as a PDF or Word document.' });
+    }
     const imagekit = require('../services/imagekit');
     const sub = kind === 'photo' ? 'Photos' : 'Resumes';
     const out = await imagekit.uploadFile({ base64, fileName: fileName || 'resume', folder: `HRMS/${safeFolder(job.title)}/${sub}` });
+    // Confirm the upload actually produced a usable URL — otherwise the
+    // candidate record would store a blank/broken resume link.
+    if (!out || !out.url || !/^https?:\/\//i.test(out.url)) {
+      return res.status(502).json({ error: 'Upload did not complete. Please try again in a moment.' });
+    }
     res.json({ url: out.url, name: out.name });
   } catch (e) {
     if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'File uploads are not set up yet. Please paste a link instead.' });

@@ -135,17 +135,21 @@ const DEFAULT_PRICING = {
 // Pricing editor
 // ---------------------------------------------------------------------------
 // Report settings groups report Pricing and Report limits under a sub-nav.
-function ReportSettings({ settings, setSettings, say }) {
-  const [sub, setSub] = useState('pricing');
+function ReportSettings({ settings, setSettings, say, reload }) {
+  const [sub, setSub] = useState('branding');
   return (
     <div>
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
+        <button onClick={() => setSub('branding')}
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'branding' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Branding</button>
         <button onClick={() => setSub('pricing')}
           className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'pricing' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Pricing</button>
         <button onClick={() => setSub('limits')}
           className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'limits' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Report limits</button>
       </div>
-      {sub === 'pricing' ? <PricingEditor settings={settings} setSettings={setSettings} say={say} /> : <Limits settings={settings} setSettings={setSettings} />}
+      {sub === 'branding' ? <Branding settings={settings} setSettings={setSettings} say={say} reload={reload} />
+        : sub === 'pricing' ? <PricingEditor settings={settings} setSettings={setSettings} say={say} />
+        : <Limits settings={settings} setSettings={setSettings} />}
     </div>
   );
 }
@@ -908,7 +912,29 @@ function ApiKeys({ settings, setSettings, say }) {
     }
   };
 
+  const [sub, setSub] = useState('api');
+  const SubBtn = ({ id, label }) => (
+    <button onClick={() => setSub(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
+  );
+
   return (
+    <div>
+      <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
+        <SubBtn id="api" label="API" />
+        <SubBtn id="callhippo" label="CallHippo" />
+        <SubBtn id="gmail" label="Gmail" />
+      </div>
+
+      {sub === 'gmail' && <EmailPanel say={say} />}
+
+      {sub === 'callhippo' && (
+        <div className="max-w-2xl">
+          <div className="text-sm font-bold text-[#050A1F] mb-2">CallHippo (calls)</div>
+          <CallHippoPanel settings={settings} setSettings={setSettings} say={say} />
+        </div>
+      )}
+
+      {sub === 'api' && (
     <div className="max-w-2xl space-y-4">
       {Object.entries(RULES).map(([id, r]) => {
         const t = tests[id];
@@ -993,12 +1019,8 @@ function ApiKeys({ settings, setSettings, say }) {
         <div className="text-sm font-bold text-[#050A1F] mb-2">ImageKit (image hosting)</div>
         <ImageKitPanel say={say} usage={ikUsage} />
       </div>
-
-      {/* CallHippo telephony — API token + the webhook URL to paste into CallHippo. */}
-      <div className="pt-2 border-t border-slate-200">
-        <div className="text-sm font-bold text-[#050A1F] mb-2">CallHippo (calls)</div>
-        <CallHippoPanel settings={settings} setSettings={setSettings} say={say} />
-      </div>
+    </div>
+      )}
     </div>
   );
 }
@@ -2393,7 +2415,7 @@ function ActivityLog() {
 // Admin shell
 // ---------------------------------------------------------------------------
 export default function Admin() {
-  const [tab, setTab] = useState('report');
+  const [tab, setTab] = useState('users');
   const [settings, setSettings] = useState(null);
   const [me, setMe] = useState({});
   const [msg, setMsg] = useState(null);
@@ -2416,9 +2438,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['report', 'Report settings'], ['branding', 'Branding'], ['keys', 'API keys'], ['email', 'Email (Gmail)'], ['users', 'Users'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['keys', 'API keys'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'email' && tab !== 'log' && tab !== 'targets';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -2443,10 +2465,8 @@ export default function Admin() {
           {showSave && <Btn onClick={save} disabled={saving} size="sm">{saving ? 'Saving…' : 'Save changes'}</Btn>}
         </div>
 
-        {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} />}
-        {tab === 'branding' && <Branding settings={settings} setSettings={setSettings} say={say} reload={load} />}
+        {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
-        {tab === 'email' && <EmailPanel say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}

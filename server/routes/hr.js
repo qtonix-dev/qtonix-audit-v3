@@ -121,6 +121,19 @@ router.get('/me', requireHrAccess, (req, res) => {
 // --- Dashboard --------------------------------------------------------------
 
 /** GET /api/hr/dashboard — minimal figures for the HR dashboard scaffold. */
+// Recently added (any source) and recently submitted (careers page) candidates
+// for the HR dashboard notification box. Returns up to 5 of each.
+router.get('/recent-candidates', requireHrAccess, async (req, res, next) => {
+  try {
+    const jobs = await HrJobPost.findAll({ attributes: ['id', 'title'] });
+    const jobTitle = (id) => { const j = jobs.find((x) => x.id === id); return j ? j.title : ''; };
+    const shape = (c) => ({ _id: c.id, name: c.name, jobPostId: c.jobPostId, jobTitle: jobTitle(c.jobPostId), recruiterName: c.recruiterName || '', source: c.source, createdAt: c.createdAt, stage: c.stage });
+    const added = await HrCandidate.findAll({ order: [['createdAt', 'DESC']], limit: 5 });
+    const submitted = await HrCandidate.findAll({ where: { source: 'careers_page' }, order: [['createdAt', 'DESC']], limit: 5 });
+    res.json({ added: added.map(shape), submitted: submitted.map(shape) });
+  } catch (e) { next(e); }
+});
+
 router.get('/dashboard', requireHrAccess, async (req, res, next) => {
   try {
     const [staff, openJobs, candidates, allCands] = await Promise.all([
@@ -2151,6 +2164,26 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', notes: b.notes || '', by: req.hrActor.name });
         pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
         break;
+      case 'mark_not_joined':
+        offer.notJoined = true;
+        offer.notJoinedAt = now;
+        offer.notJoinedReason = String(b.reason || '').slice(0, 300);
+        pushTimeline(row, { type: 'offer', text: `Marked as did-not-join by ${req.hrActor.name}${b.reason ? ` — ${String(b.reason).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
+        break;
+      case 'edit_discussion': {
+        const list = offer.salaryDiscussions || [];
+        const d = list.find((x) => x.id === b.discussionId);
+        if (!d) return res.status(404).json({ error: 'Salary offer not found.' });
+        if (b.offered !== undefined) d.offered = String(b.offered).slice(0, 60);
+        if (b.candidateAsk !== undefined) d.candidateAsk = String(b.candidateAsk).slice(0, 60);
+        if (b.notes !== undefined) d.notes = String(b.notes).slice(0, 300);
+        d.editedAt = now; d.editedBy = req.hrActor.name;
+        // If this offer was the accepted one, keep the final amount in sync.
+        if (offer.acceptedOfferId === d.id) { offer.acceptedAmount = d.offered; offer.finalCtc = d.offered || offer.finalCtc; }
+        offer.salaryDiscussions = [...list];
+        pushTimeline(row, { type: 'offer', text: `Salary offer edited by ${req.hrActor.name}${d.offered ? ` (now offered ${d.offered}${d.candidateAsk ? `, asked ${d.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
+        break;
+      }
       case 'request_approval':
         offer.approvals.unshift({ id: `ap${Date.now()}`, requestedBy: req.hrActor.name, candidateAsk: b.candidateAsk || '', justification: b.justification || '', status: 'pending', counterOffer: '', decidedBy: '', at: now });
         offer.status = 'approval_pending';
@@ -2191,8 +2224,9 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
           offer.acceptedAmount = finalPrice;
           offer.finalCtc = finalPrice || offer.finalCtc;
           if (b.note) offer.acceptNote = String(b.note).slice(0, 500);
+          if (b.joiningDate) offer.joiningDate = String(b.joiningDate).slice(0, 40);
           offer.status = 'accepted';
-          pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${finalPrice ? ` at ${finalPrice}` : ''}${b.note ? ` — ${String(b.note).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
+          pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${finalPrice ? ` at ${finalPrice}` : ''}${offer.joiningDate ? `, joining ${offer.joiningDate}` : ''}${b.note ? ` — ${String(b.note).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
         } else if (b.status === 'declined') {
           // Record the final numbers, then move the candidate to Rejected.
           if (b.candidateAsk != null || b.offered != null) {

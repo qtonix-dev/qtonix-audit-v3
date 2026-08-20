@@ -1318,6 +1318,7 @@ function EditModal({ c, onClose, onSaved }) {
 function OfferTab({ c, isAdmin, reload }) {
   const offer = c.offer;
   const [modal, setModal] = useState(null); // 'discussion' | 'approval' | 'loi' | 'letter'
+  const [editDisc, setEditDisc] = useState(null); // salary discussion being edited
   const op = async (body) => { try { await hrApi(`/candidates/${c.id}/offer`, { method: 'POST', body: JSON.stringify(body) }); reload(); } catch (e) { alert(e.message); } };
   const decide = async (approvalId, decision, counterOffer) => { try { await hrApi(`/candidates/${c.id}/offer/approve`, { method: 'POST', body: JSON.stringify({ approvalId, decision, counterOffer }) }); reload(); } catch (e) { alert(e.message); } };
 
@@ -1352,7 +1353,7 @@ function OfferTab({ c, isAdmin, reload }) {
                 <div key={d.id} className={`rounded-lg border p-3 ${accepted ? 'border-green-300 bg-green-50' : 'border-slate-100'}`}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-slate-700 capitalize text-sm">{d.mode}{d.meetLink ? ' · Meet' : ''}</span>
-                    <div className="flex items-center gap-2">{accepted && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">✓ Accepted</span>}<span className="text-xs text-slate-400">{fmt(d.at)}</span></div>
+                    <div className="flex items-center gap-2">{accepted && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">✓ Accepted</span>}<span className="text-xs text-slate-400">{fmt(d.at)}</span>{offer.status !== 'accepted' && offer.status !== 'declined' && <button onClick={() => setEditDisc(d)} className="text-[11px] font-bold text-slate-500 border border-slate-200 rounded px-1.5 py-0.5 hover:bg-slate-50">Edit</button>}</div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="rounded-lg bg-slate-50 px-2.5 py-1.5"><div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Candidate ask</div><div className="font-bold text-[#050A1F]">{d.candidateAsk || '—'}</div></div>
@@ -1411,6 +1412,7 @@ function OfferTab({ c, isAdmin, reload }) {
       </Card>
 
       {modal === 'discussion' && <DiscussionModal candidateId={c.id} onClose={() => setModal(null)} onSaved={() => { setModal(null); reload(); }} />}
+      {editDisc && <EditDiscussionModal candidateId={c.id} disc={editDisc} onClose={() => setEditDisc(null)} onSaved={() => { setEditDisc(null); reload(); }} />}
       {modal === 'accept' && <AcceptOfferModal offer={offer} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} candidateId={c.id} />}
       {modal === 'decline' && <DeclineOfferModal offer={offer} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} candidateId={c.id} />}
       {modal === 'approval' && <ApprovalModal onClose={() => setModal(null)} onSubmit={async (b) => { await op({ op: 'request_approval', ...b }); setModal(null); }} />}
@@ -1455,6 +1457,33 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
   );
 }
 
+// Edit an existing salary offer (candidate ask / offered / remark).
+function EditDiscussionModal({ candidateId, disc, onClose, onSaved }) {
+  const [f, setF] = useState({ offered: disc.offered || '', candidateAsk: disc.candidateAsk || '', notes: disc.notes || '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const save = async () => {
+    setBusy(true);
+    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'edit_discussion', discussionId: disc.id, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes }) }); onSaved(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title="Edit salary offer" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><Lbl>Candidate ask</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
+          <div><Lbl>Offered</Lbl><input className={inp} value={f.offered} onChange={(e) => set('offered', e.target.value)} placeholder="e.g. 8L" /></div>
+        </div>
+        <div><Lbl>Remark</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any notes about this offer / conversation" /></div>
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+        <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save changes'}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function ApprovalModal({ onClose, onSubmit }) {
   const [candidateAsk, setAsk] = useState('');
   const [justification, setJust] = useState('');
@@ -1479,19 +1508,22 @@ function ApprovalModal({ onClose, onSubmit }) {
 function AcceptOfferModal({ offer, candidateId, onClose, onDone }) {
   const last = (offer.salaryDiscussions || [])[0] || {};
   const [price, setPrice] = useState(last.offered || offer.finalCtc || '');
+  const [joiningDate, setJoiningDate] = useState(offer.joiningDate || '');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const go = async () => {
     if (!price.trim()) return alert('Enter the final offered price.');
+    if (!joiningDate) return alert('Select the joining date.');
     setBusy(true);
-    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'accepted', acceptedOfferId: last.id, finalPrice: price.trim(), note: note.trim() }) }); onDone(); }
+    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'accepted', acceptedOfferId: last.id, finalPrice: price.trim(), joiningDate, note: note.trim() }) }); onDone(); }
     catch (e) { alert(e.message); setBusy(false); }
   };
   return (
     <Modal title="Mark offer accepted" onClose={onClose}>
       <div className="space-y-3">
-        <div className="text-sm text-slate-500">Confirm the final offered salary the candidate accepted. This shows in the Hired list, and the candidate moves to Hired.</div>
+        <div className="text-sm text-slate-500">Confirm the final offered salary the candidate accepted and their joining date. This shows in the Hired list, and the candidate moves to Hired.</div>
         <div><Lbl>Final offered price</Lbl><input className={inp} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 8L" /></div>
+        <div><Lbl>Joining date</Lbl><input type="date" className={inp} value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
         {last.candidateAsk && <div className="text-xs text-slate-400">Candidate had asked: <b className="text-slate-600">{last.candidateAsk}</b></div>}
         <div><Lbl>Note</Lbl><textarea rows={3} className={inp} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note about the acceptance…" /></div>
       </div>
