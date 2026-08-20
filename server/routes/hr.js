@@ -1812,6 +1812,143 @@ router.post('/candidates/:id/feedback', requireHrAccess, async (req, res, next) 
   } catch (e) { next(e); }
 });
 
+// ---- Assessment tasks -------------------------------------------------------
+
+// Resolve assigned employee ids (numeric HrUser + 'admin:<id>' directors) into
+// { id, name, email } records for storage + notification.
+async function resolveAssignees(ids) {
+  const out = [];
+  for (const raw of (ids || [])) {
+    const sid = String(raw);
+    if (sid.startsWith('admin:')) {
+      const u = await User.findByPk(sid.slice(6));
+      if (u) out.push({ id: sid, name: u.name, email: u.email });
+    } else {
+      const u = await HrUser.findByPk(sid);
+      if (u) out.push({ id: u.id, name: u.name, email: u.email });
+    }
+  }
+  return out;
+}
+
+const TASK_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+// Assign an assessment task to a candidate: create the task, email the candidate
+// a link to the public upload page (active 48h). HR, an assigned employee, or an
+// admin may send. Old tasks/files are preserved — a re-assign adds a new task.
+router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const details = String(b.details || '').trim();
+    if (!details) return res.status(400).json({ error: 'Please enter the task details.' });
+    const assignees = await resolveAssignees(b.assignedIds || []);
+    // Permission: admins and HR schedulers can always send. A non-scheduler
+    // employee may send only if they're one of the assignees.
+    const meId = String(req.hrActor.id);
+    const isAssignee = assignees.some((a) => String(a.id) === meId || String(a.id) === `admin:${meId}`);
+    if (!req.isHrAdmin && !canViewInternal(req) && !isAssignee) {
+      return res.status(403).json({ error: 'You don’t have permission to assign this task.' });
+    }
+    const now = Date.now();
+    const task = {
+      id: `tk${now}`,
+      title: String(b.title || '').slice(0, 160),
+      details: details.slice(0, 4000),
+      assignedIds: assignees.map((a) => a.id),
+      assignedNames: assignees.map((a) => a.name),
+      token: crypto.randomBytes(12).toString('hex'),
+      createdBy: req.hrActor.name,
+      createdById: req.hrActor.id,
+      createdAt: new Date(now).toISOString(),
+      deadline: new Date(now + TASK_WINDOW_MS).toISOString(),
+      status: 'pending',
+      submittedAt: null,
+      files: [],
+      reactivatedAt: null,
+    };
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    tasks.unshift(task);
+    row.tasks = tasks; row.changed('tasks', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} assigned an assessment task${task.title ? ` (“${task.title}”)` : ''}${assignees.length ? ` · Reviewers: ${assignees.map((a) => a.name).join(', ')}` : ''}.`, by: req.hrActor.name });
+    await row.save();
+
+    // Email the candidate the task + upload link (best-effort).
+    let emailed = false;
+    if (row.email) {
+      try {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+        const mailbox = mailboxEmail(s);
+        if (token && mailbox) {
+          const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+          const sig = await rejectSignature(req.hrActor, mailbox);
+          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const uploadUrl = `${appUrl}/task/${task.token}`;
+          const deadlineText = new Date(task.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+          const bodyHtml = hrEmail.taskAssignment({
+            candidateName: row.name, role: job ? job.title : '', taskTitle: task.title,
+            taskDetailsHtml: task.details.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            deadlineText: `${deadlineText} IST`, uploadUrl, signature: sig,
+          });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          emailed = true;
+        }
+      } catch (e) { console.error('[task] assign email failed:', e.message); }
+    }
+    res.json({ ...row.toJSON(), emailed, taskId: task.id });
+  } catch (e) { next(e); }
+});
+
+// Reactivate an expired (unsubmitted) task link: push the deadline 48h from now
+// and set it back to pending. Same token, so the URL goes live again. HR/admin.
+router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin && !canViewInternal(req)) return res.status(403).json({ error: 'Only HR or an admin can reactivate a task link.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    if (tasks[idx].submittedAt) return res.status(400).json({ error: 'This task was already submitted.' });
+    const now = Date.now();
+    tasks[idx] = { ...tasks[idx], deadline: new Date(now + TASK_WINDOW_MS).toISOString(), status: 'pending', reactivatedAt: new Date(now).toISOString() };
+    row.tasks = tasks; row.changed('tasks', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} reactivated the task upload link (48h).`, by: req.hrActor.name });
+    await row.save();
+
+    // Optionally re-email the candidate.
+    let emailed = false;
+    if (req.body && req.body.notify && row.email) {
+      try {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+        const mailbox = mailboxEmail(s);
+        if (token && mailbox) {
+          const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+          const sig = await rejectSignature(req.hrActor, mailbox);
+          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const t = tasks[idx];
+          const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+          const bodyHtml = hrEmail.taskAssignment({
+            candidateName: row.name, role: job ? job.title : '', taskTitle: t.title,
+            taskDetailsHtml: String(t.details || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
+          });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          emailed = true;
+        }
+      } catch (e) { console.error('[task] reactivate email failed:', e.message); }
+    }
+    res.json({ ...row.toJSON(), emailed });
+  } catch (e) { next(e); }
+});
+
 // One-time maintenance: normalise all existing candidate phone numbers to the
 // +91XXXXXXXXXX format. Uses OpenAI to interpret messy/edge-case numbers when a
 // key is present, with a deterministic fallback. Admin only.

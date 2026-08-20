@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v246';
+const APP_VERSION = 'v247';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -106,6 +106,12 @@ app.get('/careers-shared.js', (req, res) => {
 // Public branded careers listing (all published roles at one URL).
 app.get('/jobs/:token', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/jobs-page.html'));
+});
+
+// Public candidate task-upload page (assessment task). Same standalone-HTML
+// pattern as the careers/schedule pages; the token is in the path.
+app.get('/task/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/task-page.html'));
 });
 
 // Public candidate self-schedule page (Calendly-style). Same pattern as careers.

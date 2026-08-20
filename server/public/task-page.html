@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Submit your task</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; color: #0A0E28; background: #EEF1F8; -webkit-font-smoothing: antialiased; }
+  .band { color: #fff; padding: 38px 24px 92px; background: radial-gradient(1200px 400px at 15% -10%, #123 0%, transparent 60%), linear-gradient(135deg,#0A0E28 0%,#0435AC 100%); position: relative; overflow: hidden; }
+  .band-inner { max-width: 760px; margin: 0 auto; position: relative; z-index: 1; }
+  .brand { font-size: 22px; font-weight: 800; letter-spacing: -.3px; margin-bottom: 22px; }
+  .brand span { color: #FF6A00; }
+  .kicker { font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #8FB4FF; }
+  h1 { font-size: 30px; font-weight: 800; margin: 8px 0 6px; letter-spacing: -.02em; }
+  .sub { color: #C9D8FF; font-size: 14px; }
+  .wrap { max-width: 760px; margin: -64px auto 56px; padding: 0 24px; position: relative; z-index: 2; }
+  .card { background: #fff; border: 1px solid #e7ebf3; border-radius: 20px; box-shadow: 0 20px 50px rgba(4,14,60,.10); overflow: hidden; }
+  .pad { padding: 26px 28px; }
+  .timer { background: linear-gradient(135deg,#0A0E28,#12204a); color: #fff; padding: 20px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
+  .timer .lab { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #8FB4FF; }
+  .timer .deadline { font-size: 13px; color: #C9D8FF; margin-top: 3px; }
+  .clock { display: flex; gap: 10px; }
+  .seg { text-align: center; min-width: 58px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 8px 6px; }
+  .seg .num { font-size: 26px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .seg .unit { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #9fb4dd; margin-top: 5px; }
+  .timer.urgent .seg .num { color: #FFB4A0; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; }
+  @media (max-width: 520px) { .meta { grid-template-columns: 1fr; } .clock { width: 100%; } .seg { flex: 1; } }
+  .meta .k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8FA0BF; }
+  .meta .v { font-size: 15px; font-weight: 700; color: #0A0E28; margin-top: 3px; }
+  .divider { height: 1px; background: #eef1f7; }
+  .stitle { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin: 0 0 12px; }
+  .taskbox { background: #F4F7FE; border: 1px solid #E2E9F8; border-radius: 12px; padding: 16px 18px; font-size: 14px; line-height: 1.65; color: #1c2433; white-space: pre-wrap; }
+  .drop { border: 2px dashed #cbd5e1; border-radius: 14px; padding: 30px; text-align: center; cursor: pointer; transition: .15s; background: #fbfcff; }
+  .drop:hover, .drop.drag { border-color: #FF6A00; background: #fff7ed; }
+  .drop .ic { font-size: 30px; }
+  .drop .big { font-size: 15px; font-weight: 700; color: #334155; margin-top: 6px; }
+  .drop .small { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .files { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .file { display: flex; align-items: center; gap: 10px; border: 1px solid #e7ebf3; border-radius: 10px; padding: 10px 12px; font-size: 13px; background: #fff; }
+  .file .ic { font-size: 16px; }
+  .file .nm { flex: 1; font-weight: 600; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .sz { color: #94a3b8; font-size: 12px; }
+  .file .rm { color: #dc2626; cursor: pointer; font-weight: 700; border: 0; background: none; font-size: 18px; line-height: 1; }
+  .btn { margin-top: 20px; width: 100%; border: 0; border-radius: 12px; padding: 15px; font-size: 15px; font-weight: 800; color: #fff; background: linear-gradient(90deg,#FF6A00,#FF4500); cursor: pointer; transition: .15s; }
+  .btn:hover { filter: brightness(1.03); } .btn:disabled { opacity: .5; cursor: default; filter: none; }
+  .muted { color: #94a3b8; font-size: 12px; }
+  .err { color: #dc2626; font-size: 13px; margin-top: 12px; font-weight: 600; }
+  .prog { height: 6px; background: #eef1f7; border-radius: 6px; overflow: hidden; margin-top: 14px; display: none; }
+  .prog > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg,#FF6A00,#FF4500); transition: width .2s; }
+  .ok { text-align: center; padding: 52px 20px; }
+  .ok .big { font-size: 52px; }
+  .ok h2 { font-size: 22px; margin: 14px 0 8px; }
+  .expired-hero { background: linear-gradient(135deg,#7f1d1d,#b91c1c) !important; }
+</style>
+</head>
+<body>
+<div id="app"><div style="padding:80px;text-align:center" class="muted">Loading…</div></div>
+<script>
+(function () {
+  var token = location.pathname.split('/')[2];
+  var app = document.getElementById('app');
+  var chosen = [];
+  var ticker = null;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function fmtDate(iso) { try { return new Date(iso).toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso; } }
+  function fmtSize(b) { if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(0) + ' KB'; return (b / 1048576).toFixed(1) + ' MB'; }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  fetch('/api/careers/task/' + encodeURIComponent(token))
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) { if (!res.ok) return renderClosed(res.d && res.d.error); render(res.d); })
+    .catch(function () { renderClosed(); });
+  function renderClosed(msg) {
+    if (ticker) clearInterval(ticker);
+    app.innerHTML = '<div class="band expired-hero"><div class="band-inner"><div class="brand">Qtonix<span>.</span></div></div></div>'
+      + '<div class="wrap"><div class="card"><div class="ok"><div class="big">\u23F1\uFE0F</div><h2>This link is no longer active</h2>'
+      + '<p class="muted">' + esc(msg || 'This task upload link has expired. Please contact the recruitment team to have it reactivated.') + '</p></div></div></div>';
+  }
+  function render(d) {
+    if (d.submitted) return renderDone(d, true);
+    var html = '';
+    html += '<div class="band"><div class="band-inner">'
+      + '<div class="brand">Qtonix<span>.</span></div>'
+      + '<div class="kicker">Assessment Task</div>'
+      + '<h1>Submit your task</h1>'
+      + '<div class="sub">Upload your completed files before the deadline.</div>'
+      + '</div></div>';
+    html += '<div class="wrap"><div class="card">';
+    html += '<div class="timer" id="timer">'
+      + '<div><div class="lab">Time remaining</div><div class="deadline">Due ' + esc(fmtDate(d.deadline)) + '</div></div>'
+      + '<div class="clock"><div class="seg"><div class="num" id="c-h">--</div><div class="unit">Hours</div></div>'
+      + '<div class="seg"><div class="num" id="c-m">--</div><div class="unit">Mins</div></div>'
+      + '<div class="seg"><div class="num" id="c-s">--</div><div class="unit">Secs</div></div></div>'
+      + '</div>';
+    html += '<div class="pad"><div class="meta">'
+      + '<div><div class="k">Candidate</div><div class="v">' + esc(d.candidateName) + '</div></div>'
+      + '<div><div class="k">Applied position</div><div class="v">' + esc(d.role || '\u2014') + '</div></div>'
+      + '<div><div class="k">Last date to submit</div><div class="v">' + esc(fmtDate(d.deadline)) + '</div></div>'
+      + (d.taskTitle ? '<div><div class="k">Task</div><div class="v">' + esc(d.taskTitle) + '</div></div>' : '')
+      + '</div></div><div class="divider"></div>';
+    if (d.taskDetails) { html += '<div class="pad"><div class="stitle">Task details</div><div class="taskbox">' + esc(d.taskDetails) + '</div></div><div class="divider"></div>'; }
+    html += '<div class="pad"><div class="stitle">Upload your files</div>';
+    html += '<div class="drop" id="drop"><div class="ic">\uD83D\uDCCE</div><div class="big">Drag files here or click to browse</div><div class="small">Multiple files allowed (PDF, docs, images, zip). Max 25 MB each.</div></div>';
+    html += '<input type="file" id="fileInput" multiple style="display:none" />';
+    html += '<div class="files" id="fileList"></div>';
+    html += '<div class="prog" id="prog"><span></span></div>';
+    html += '<div class="err" id="err" style="display:none"></div>';
+    html += '<button class="btn" id="submitBtn" disabled>Submit task</button>';
+    html += '<div class="muted" style="margin-top:10px;text-align:center">Your files are sent securely to the Qtonix recruitment team.</div>';
+    html += '</div></div></div>';
+    app.innerHTML = html;
+    startTimer(d.deadline);
+    wire(d);
+  }
+  function startTimer(deadline) {
+    var end = new Date(deadline).getTime();
+    var timer = document.getElementById('timer');
+    function tick() {
+      var ms = end - Date.now();
+      if (ms <= 0) { clearInterval(ticker); document.getElementById('c-h').textContent = '00'; document.getElementById('c-m').textContent = '00'; document.getElementById('c-s').textContent = '00'; timer.classList.add('urgent'); return; }
+      var h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000), s = Math.floor((ms % 60000) / 1000);
+      document.getElementById('c-h').textContent = pad(h); document.getElementById('c-m').textContent = pad(m); document.getElementById('c-s').textContent = pad(s);
+      if (ms < 3600000) timer.classList.add('urgent'); else timer.classList.remove('urgent');
+    }
+    tick(); ticker = setInterval(tick, 1000);
+  }
+  function wire(d) {
+    var drop = document.getElementById('drop'), input = document.getElementById('fileInput');
+    var list = document.getElementById('fileList'), btn = document.getElementById('submitBtn'), err = document.getElementById('err'), prog = document.getElementById('prog');
+    function refresh() {
+      list.innerHTML = chosen.map(function (f, i) { return '<div class="file"><span class="ic">\uD83D\uDCC4</span><span class="nm">' + esc(f.name) + '</span><span class="sz">' + fmtSize(f.size) + '</span><button class="rm" data-i="' + i + '">\u00D7</button></div>'; }).join('');
+      Array.prototype.forEach.call(list.querySelectorAll('.rm'), function (b) { b.onclick = function () { chosen.splice(+b.getAttribute('data-i'), 1); refresh(); }; });
+      btn.disabled = chosen.length === 0;
+    }
+    function add(files) { err.style.display = 'none'; for (var i = 0; i < files.length; i++) { var f = files[i]; if (f.size > 25 * 1024 * 1024) { err.textContent = '"' + f.name + '" is larger than 25 MB.'; err.style.display = 'block'; continue; } chosen.push({ file: f, name: f.name, size: f.size }); } refresh(); }
+    drop.onclick = function () { input.click(); };
+    input.onchange = function () { add(input.files); input.value = ''; };
+    drop.ondragover = function (e) { e.preventDefault(); drop.classList.add('drag'); };
+    drop.ondragleave = function () { drop.classList.remove('drag'); };
+    drop.ondrop = function (e) { e.preventDefault(); drop.classList.remove('drag'); add(e.dataTransfer.files); };
+    btn.onclick = function () {
+      if (!chosen.length) return;
+      btn.disabled = true; btn.textContent = 'Uploading\u2026'; err.style.display = 'none'; prog.style.display = 'block'; prog.firstChild.style.width = '15%';
+      var reads = chosen.map(function (f) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res({ name: f.name, base64: String(r.result).split(',')[1] }); }; r.onerror = function () { rej(new Error('read')); }; r.readAsDataURL(f.file); }); });
+      Promise.all(reads).then(function (payload) { prog.firstChild.style.width = '55%'; return fetch('/api/careers/task/' + encodeURIComponent(token) + '/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: payload }) }); })
+        .then(function (r) { return r.json().then(function (dd) { return { ok: r.ok, d: dd }; }); })
+        .then(function (res) { prog.firstChild.style.width = '100%'; if (!res.ok) throw new Error(res.d && res.d.error || 'Upload failed.'); setTimeout(function () { renderDone(d, false); }, 250); })
+        .catch(function (e) { err.textContent = e.message || 'Upload failed. Please try again.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Submit task'; prog.style.display = 'none'; });
+    };
+    refresh();
+  }
+  function renderDone(d, already) {
+    if (ticker) clearInterval(ticker);
+    app.innerHTML = '<div class="band"><div class="band-inner"><div class="brand">Qtonix<span>.</span></div></div></div>'
+      + '<div class="wrap"><div class="card"><div class="ok"><div class="big">\u2705</div>'
+      + '<h2>' + (already ? 'Task already submitted' : 'Task submitted \u2014 thank you!') + '</h2>'
+      + '<p class="muted">' + (already ? 'Your files have already been received. The recruitment team will review them and get back to you.' : 'Your files have been received. Our team will review your submission and be in touch about the next steps.') + '</p>'
+      + '</div></div></div>';
+  }
+})();
+</script>
+</body>
+</html>

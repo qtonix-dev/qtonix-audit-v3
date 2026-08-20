@@ -55,7 +55,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [activityModal, setActivityModal] = useState(null); // 'task' | 'call'
   const [showReject, setShowReject] = useState(false);
   const [rescoring, setRescoring] = useState(false);
-  const [showSelfSchedule, setShowSelfSchedule] = useState(false);
+  const [showAssignTask, setShowAssignTask] = useState(false);
   const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
@@ -185,8 +185,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             <button onClick={() => setShowFeedback(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">💬 Add Feedback</button>
             <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
             <button onClick={() => setActivityModal('call')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📞 Add Call</button>
-            <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule Meeting</button>
-            {c.canViewInternal !== false && <button onClick={() => setShowSelfSchedule(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">🗓️ Schedule Interview</button>}
+            <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule interview</button>
+            <button onClick={() => setShowAssignTask(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📋 Assign task</button>
             <button onClick={reject} disabled={c.rejected} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">⛔ Reject</button>
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
@@ -241,7 +241,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
       {showReject && <RejectModal candidateId={c.id} candidateEmail={c.email} onClose={() => setShowReject(false)} onReject={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify(payload) })); setShowReject(false); }} />}
-      {showSelfSchedule && <SelfScheduleModal candidate={c} onClose={() => setShowSelfSchedule(false)} onSaved={() => { setShowSelfSchedule(false); load(); }} />}
+      {showAssignTask && <AssignTaskModal candidate={c} onClose={() => setShowAssignTask(false)} onDone={() => { setShowAssignTask(false); load(); }} />}
     </div>
   );
 }
@@ -920,6 +920,64 @@ function TimelineTab({ c }) {
 }
 
 // ---------- Attachments ----------
+// Assessment task submissions — shows each assigned task, its status, submitted
+// files (under "Task completed"), and lets HR/admin reactivate an expired link.
+function TaskSubmissions({ c, reload }) {
+  const tasks = Array.isArray(c.tasks) ? c.tasks : [];
+  const [busyId, setBusyId] = useState(null);
+  if (!tasks.length) return null;
+  const now = Date.now();
+  const reactivate = async (t) => {
+    setBusyId(t.id);
+    try { await hrApi(`/candidates/${c.id}/task/${t.id}/reactivate`, { method: 'POST', body: JSON.stringify({ notify: true }) }); reload(); }
+    catch (e) { alert(e.message); } finally { setBusyId(null); }
+  };
+  const copyLink = (t) => { const url = `${window.location.origin}/task/${t.token}`; navigator.clipboard?.writeText(url); };
+  return (
+    <div className="mb-5">
+      {tasks.map((t) => {
+        const expired = !t.submittedAt && new Date(t.deadline).getTime() < now;
+        const submitted = !!t.submittedAt;
+        return (
+          <div key={t.id} className="rounded-xl border border-slate-200 mb-3 overflow-hidden">
+            <div className="flex items-center justify-between gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-extrabold text-[#050A1F] truncate">{t.title || 'Assessment task'}</span>
+                  {submitted ? <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Task completed</span>
+                    : expired ? <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Link expired</span>
+                    : <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">Awaiting submission</span>}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Assigned by {t.createdBy}{t.assignedNames && t.assignedNames.length ? ` · Reviewers: ${t.assignedNames.join(', ')}` : ''} · Due {fmt(t.deadline)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!submitted && <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-500">Copy link</button>}
+                {expired && <button onClick={() => reactivate(t)} disabled={busyId === t.id} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busyId === t.id ? 'Reactivating…' : '↻ Reactivate (48h)'}</button>}
+              </div>
+            </div>
+            {t.details && <div className="px-4 py-2.5 text-[13px] text-slate-600 whitespace-pre-wrap border-b border-slate-50">{t.details}</div>}
+            {submitted && (t.files || []).length > 0 && (
+              <div className="px-4 py-3">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-green-700 mb-2">✅ Task completed — {t.files.length} file{t.files.length === 1 ? '' : 's'}</div>
+                <div className="space-y-1.5">
+                  {t.files.map((f, i) => (
+                    <a key={i} href={f.url} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+                      <span className="flex items-center gap-2 min-w-0"><span>📄</span><span className="text-sm font-semibold text-slate-700 truncate">{f.name}</span></span>
+                      <span className="text-xs text-slate-400 shrink-0">{fmt(f.at)}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AttachmentsTab({ c, reload }) {
   const list = c.attachments || [];
   const [busy, setBusy] = useState(false);
@@ -961,6 +1019,8 @@ function AttachmentsTab({ c, reload }) {
         <input ref={ref} type="file" className="hidden" multiple={docType?.multi} onChange={(e) => upload(e.target.files)} />
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
+
+      <TaskSubmissions c={c} reload={reload} />
 
       {picking && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setPicking(false)}>
@@ -1680,201 +1740,69 @@ function OfferLetterModal({ candidate, onClose, onSent }) {
   );
 }
 
-// Self-schedule setup: HR proposes slots + questions, panelists confirm, then
-// the candidate books via a public link (which creates the Google Meet).
-function SelfScheduleModal({ candidate, onClose, onSaved }) {
-  const existing = candidate.selfSchedule || {};
-  const [roundLabel, setRoundLabel] = useState(existing.roundLabel || 'Technical Round');
-  const [durationMins, setDuration] = useState(existing.durationMins || 45);
-  const [panelistIds, setPanelistIds] = useState(existing.panelistIds || []);
-  const [slots, setSlots] = useState((existing.slots || []).map((s) => ({ id: s.id, at: s.at, confirmedBy: s.confirmedBy || [] })));
-  const [questions, setQuestions] = useState(existing.questions || []);
+// Assign an assessment task to a candidate: pick reviewer employees (same panel
+// picker as scheduling) + task details, then email the candidate an upload link.
+function AssignTaskModal({ candidate, onClose, onDone }) {
+  const [title, setTitle] = useState('');
+  const [details, setDetails] = useState('');
   const [emps, setEmps] = useState([]);
-  const [panelDept, setPanelDept] = useState('');
+  const [dept, setDept] = useState('');
+  const [picked, setPicked] = useState([]);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
-  const panelDepts = [...new Set(emps.map((e) => e.department).filter(Boolean))].sort();
-  const shownPanel = emps.filter((e) => !panelDept || e.department === panelDept);
-
-  const publicLink = existing.token ? `${window.location.origin}/schedule/${existing.token}` : '';
-  const togglePanelist = (id) => setPanelistIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
-  const addSlot = () => setSlots((s) => [...s, { id: `new${Date.now()}`, at: '', confirmedBy: [] }]);
-  const setSlot = (i, at) => setSlots((s) => s.map((x, idx) => idx === i ? { ...x, at } : x));
-  const rmSlot = (i) => setSlots((s) => s.filter((_, idx) => idx !== i));
-  const addQ = (type) => setQuestions((q) => [...q, { id: `newq${Date.now()}`, type, prompt: '' }]);
-  const setQ = (i, prompt) => setQuestions((q) => q.map((x, idx) => idx === i ? { ...x, prompt } : x));
-  const rmQ = (i) => setQuestions((q) => q.filter((_, idx) => idx !== i));
-
-  const nameOf = (id) => { const e = emps.find((x) => x._id === id); return e ? e.name : `#${id}`; };
-  const save = async () => {
-    const cleanSlots = slots.filter((s) => s.at).map((s) => ({ id: s.id.startsWith('new') ? undefined : s.id, at: new Date(s.at).toISOString(), confirmedBy: s.confirmedBy }));
-    if (!cleanSlots.length) { alert('Add at least one time slot.'); return; }
-    setBusy(true);
-    try {
-      await hrApi(`/candidates/${candidate.id}/self-schedule`, { method: 'POST', body: JSON.stringify({ roundLabel, durationMins: Number(durationMins), panelistIds, slots: cleanSlots, questions: questions.filter((q) => q.prompt.trim()) }) });
-      onSaved();
-    } catch (e) { alert(e.message); setBusy(false); }
-  };
-  const toLocalInput = (iso) => { if (!iso) return ''; const d = new Date(iso); const pad = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-
-  return (
-    <Modal title="Schedule Interview" onClose={onClose} wide>
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div><Lbl>Round label</Lbl><input className={inp} value={roundLabel} onChange={(e) => setRoundLabel(e.target.value)} /></div>
-          <div><Lbl>Duration (mins)</Lbl><input type="number" className={inp} value={durationMins} onChange={(e) => setDuration(e.target.value)} /></div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <Lbl>Interview panel (they confirm their availability) {panelistIds.length ? `(${panelistIds.length})` : ''}</Lbl>
-            <select className="text-xs rounded-lg border border-slate-300 px-2 py-1" value={panelDept} onChange={(e) => setPanelDept(e.target.value)}>
-              <option value="">All departments</option>
-              {panelDepts.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
-          <div className="border border-slate-200 rounded-lg max-h-40 overflow-auto divide-y divide-slate-50">
-            {shownPanel.length === 0 ? <div className="p-3 text-xs text-slate-400">No employees found.</div> : shownPanel.map((e) => (
-              <label key={e._id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
-                <input type="checkbox" checked={panelistIds.includes(e._id)} onChange={() => togglePanelist(e._id)} />
-                <span className="font-semibold text-slate-700">{titleCase(e.name)}</span>
-                <span className="text-xs text-slate-400">{e.designation || e.type}{e.department ? ` · ${e.department}` : ''}</span>
-              </label>
-            ))}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">Panelists confirm their availability; the candidate only sees confirmed slots.</div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1"><Lbl>Proposed time slots</Lbl><button onClick={addSlot} className="text-xs font-bold text-orange-600">+ Add slot</button></div>
-          {slots.length === 0 ? <div className="text-xs text-slate-400">No slots yet.</div> : (
-            <div className="space-y-2">
-              {slots.map((s, i) => (
-                <div key={s.id} className="flex items-center gap-2">
-                  <input type="datetime-local" className={inp} value={toLocalInput(s.at)} onChange={(e) => setSlot(i, e.target.value)} />
-                  {(s.confirmedBy || []).length > 0 && <span className="text-[10px] font-bold text-green-600 whitespace-nowrap">✓ {s.confirmedBy.length} confirmed</span>}
-                  <button onClick={() => rmSlot(i)} className="text-slate-300 hover:text-red-500 shrink-0">×</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1"><Lbl>Questions for the candidate</Lbl>
-            <div className="flex gap-2"><button onClick={() => addQ('text')} className="text-xs font-bold text-orange-600">+ Question</button><button onClick={() => addQ('task')} className="text-xs font-bold text-purple-600">+ Task</button></div>
-          </div>
-          {questions.length === 0 ? <div className="text-xs text-slate-400">Optional — e.g. "Why are you leaving your current role?" or assign a take-home task.</div> : (
-            <div className="space-y-2">
-              {questions.map((q, i) => (
-                <div key={q.id} className="flex items-center gap-2">
-                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${q.type === 'task' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-500'}`}>{q.type === 'task' ? 'Task' : 'Q'}</span>
-                  <input className={inp} value={q.prompt} onChange={(e) => setQ(i, e.target.value)} placeholder={q.type === 'task' ? 'Describe the task…' : 'Question…'} />
-                  <button onClick={() => rmQ(i)} className="text-slate-300 hover:text-red-500 shrink-0">×</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {publicLink && (
-          <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
-            <div className="text-[11px] font-bold text-slate-500 mb-1">Candidate booking link {existing.booked ? '(booked ✓)' : ''}</div>
-            <div className="flex items-center gap-2">
-              <input readOnly className={inp + ' text-xs'} value={publicLink} onClick={(e) => e.target.select()} />
-              <button onClick={() => { navigator.clipboard?.writeText(publicLink); }} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Copy</button>
-            </div>
-            {existing.booked && <div className="text-xs text-green-600 font-semibold mt-1">Booked {fmt(existing.booked.at)}{existing.booked.meetLink ? ' · Meet created' : ''}.</div>}
-            <div className="text-[11px] text-slate-400 mt-1">Only slots a panelist has confirmed show to the candidate. Share after panelists confirm.</div>
-          </div>
-        )}
-      </div>
-      <div className="flex justify-end gap-2 mt-5">
-        <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Close</button>
-        <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (publicLink ? 'Update' : 'Create link')}</button>
-      </div>
-    </Modal>
-  );
-}
-
-// Reject with a required reason (HR picks from configured reasons or adds one).
-function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
-  const [reasons, setReasons] = useState([]);
-  const [picked, setPicked] = useState('');
-  const [custom, setCustom] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState('reason'); // reason | email
-  const [sendEmail, setSendEmail] = useState(true);
-  const [drafting, setDrafting] = useState(false);
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
   const [err, setErr] = useState('');
-  useEffect(() => { hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {}); }, []);
-  const addReason = async () => {
-    const v = custom.trim(); if (!v) return;
-    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { alert(e.message); }
-  };
-  const goEmail = async () => {
-    if (!picked) return;
-    setStep('email');
-    if (candidateEmail && !body) {
-      setDrafting(true); setErr('');
-      try { const r = await hrApi(`/candidates/${candidateId}/reject-email/draft`, { method: 'POST', body: JSON.stringify({ reason: picked }) }); setSubject(r.subject || ''); setBody(r.body || ''); }
-      catch (e) { setErr(e.message); setSendEmail(false); }
-      finally { setDrafting(false); }
-    }
-  };
-  const submit = async () => {
-    setBusy(true);
-    await onReject({ reason: picked, sendEmail: sendEmail && !!candidateEmail, subject, body });
+  const [result, setResult] = useState(null);
+  useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
+  const depts = Array.from(new Set(emps.map((e) => e.department).filter(Boolean))).sort();
+  const shown = emps.filter((e) => !dept || e.department === dept);
+  const toggle = (id) => { setPicked((pp) => pp.includes(id) ? pp.filter((x) => x !== id) : [...pp, id]); };
+  const send = async () => {
+    if (!details.trim()) { setErr('Please enter the task details.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidate.id}/assign-task`, { method: 'POST', body: JSON.stringify({ title, details, assignedIds: picked }) });
+      setResult(r); onDone && onDone();
+    } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title="Reject candidate" onClose={onClose} wide={step === 'email'}>
-      {step === 'reason' ? (
-        <>
-          <div className="text-sm text-slate-500 mb-3">Pick a reason before sending the rejection. This is recorded on the candidate.</div>
-          <div className="space-y-2 max-h-64 overflow-auto">
-            {reasons.map((r) => (
-              <label key={r} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
-                <input type="radio" name="reason" checked={picked === r} onChange={() => setPicked(r)} />
-                <span className="text-slate-700">{r}</span>
-              </label>
-            ))}
-          </div>
-          {adding ? (
-            <div className="flex gap-2 mt-2">
-              <input className={inp} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="New reason…" onKeyDown={(e) => { if (e.key === 'Enter') addReason(); }} />
-              <button onClick={addReason} className="rounded-lg px-3 py-2 text-xs font-bold text-white shrink-0" style={{ background: ORANGE }}>Add</button>
-            </div>
-          ) : <button onClick={() => setAdding(true)} className="text-xs font-bold text-orange-600 mt-2">+ Add a new reason</button>}
-          <div className="flex justify-end gap-2 mt-5">
-            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-            <button onClick={goEmail} disabled={!picked} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>Next: email →</button>
-          </div>
-        </>
+    <Modal title="Assign task" onClose={onClose} wide>
+      {result ? (
+        <div className="text-center py-4">
+          <div className="text-3xl mb-2">✅</div>
+          <div className="font-bold text-[#050A1F] mb-2">Task assigned</div>
+          <div className="text-xs text-slate-500">{result.emailed ? `The candidate was emailed a secure upload link (active 48 hours).` : 'Task saved. No email was sent — check the recruitment mailbox connection.'}</div>
+          <button onClick={onClose} className="mt-4 rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Done</button>
+        </div>
       ) : (
         <>
-          {err && <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">{err}</div>}
-          {!candidateEmail ? (
-            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-sm text-slate-500 mb-3">No email on file for this candidate — they'll be rejected without an email.</div>
-          ) : (
-            <>
-              <label className="flex items-center gap-2 text-sm text-slate-600 mb-3"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> Send a rejection email to {candidateEmail}</label>
-              {sendEmail && (
-                drafting ? <div className="text-sm text-slate-400 py-8 text-center">✨ Drafting a thoughtful rejection email…</div> : (
-                  <div className="space-y-3">
-                    <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
-                    <div><Lbl>Message</Lbl><MailEditor value={body} onChange={setBody} minHeight={200} maxHeight={360} placeholder="Write your message…" /></div>
-                    <div className="text-[11px] text-slate-400">Drafted by AI — review and edit before sending.</div>
-                  </div>
-                )
-              )}
-            </>
-          )}
-          <div className="flex justify-between gap-2 mt-5">
-            <button onClick={() => setStep('reason')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">← Back</button>
-            <button onClick={submit} disabled={busy || (sendEmail && candidateEmail && drafting)} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{busy ? 'Rejecting…' : (sendEmail && candidateEmail ? 'Reject & send email' : 'Reject candidate')}</button>
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2 mb-3">{err}</div>}
+          <div className="space-y-3">
+            <div><Lbl>Task title (optional)</Lbl><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Build a responsive dashboard component" /></div>
+            <div><Lbl>Task details</Lbl><textarea className={inp} rows={5} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Describe the task, what to build, and what to submit…" /></div>
+            {/* Assign employees — same picker as the interview panel */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs font-bold text-slate-500">Assign employees {picked.length ? `(${picked.length})` : ''}</div>
+                <select className="text-xs rounded-lg border border-slate-300 px-2 py-1" value={dept} onChange={(e) => setDept(e.target.value)}>
+                  <option value="">All departments</option>
+                  {depts.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div className="border border-slate-200 rounded-lg max-h-40 overflow-auto divide-y divide-slate-50">
+                {shown.length === 0 ? <div className="p-3 text-xs text-slate-400">No employees found.</div> : shown.map((e) => (
+                  <label key={e._id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={picked.includes(e._id)} onChange={() => toggle(e._id)} />
+                    <span className="font-semibold text-slate-700">{titleCase(e.name)}</span>
+                    <span className="text-xs text-slate-400">{e.designation || e.type}{e.department ? ` · ${e.department}` : ''}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Assigned employees can review the submitted files and add feedback.</div>
+            </div>
+            <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-[12px] text-blue-700">The candidate gets an email with the task and a secure link to upload files. The link stays active for 48 hours.</div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={send} disabled={busy || !details.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send task'}</button>
           </div>
         </>
       )}
@@ -1882,63 +1810,6 @@ function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
   );
 }
 
-// ---------- small helpers ----------
-function Modal({ title, children, onClose, wide }) {
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4">
-      <div className={`bg-white rounded-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} shadow-2xl max-h-[90vh] flex flex-col`}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div className="text-lg font-extrabold text-[#050A1F]">{title}</div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">×</button>
-        </div>
-        <div className="p-6 overflow-auto">{children}</div>
-      </div>
-    </div>
-  );
-}
-function Stars({ value, onChange, readOnly }) {
-  return <div className="flex gap-0.5">{[1, 2, 3, 4, 5].map((n) => <button key={n} disabled={readOnly} onClick={() => onChange && onChange(n)} className={n <= value ? 'text-amber-400' : 'text-slate-300'}>★</button>)}</div>;
-}
-// Candidate quick-rating (click a star; click the same star again to clear).
-function RatingStars({ value, onChange }) {
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-[11px] font-bold text-slate-400">Rating</span>
-      <div className="flex gap-0.5">{[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} onClick={() => onChange(n === value ? 0 : n)} className={n <= value ? 'text-amber-400' : 'text-slate-300 hover:text-amber-300'}>★</button>
-      ))}</div>
-    </div>
-  );
-}
-// Editable tag chips.
-function TagEditor({ tags, onChange }) {
-  const [adding, setAdding] = useState(false);
-  const [val, setVal] = useState('');
-  const add = () => { const t = val.trim(); if (t && !tags.includes(t)) onChange([...tags, t]); setVal(''); setAdding(false); };
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      {tags.map((t) => (
-        <span key={t} className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[11px] font-semibold">
-          {t}<button onClick={() => onChange(tags.filter((x) => x !== t))} className="text-slate-400 hover:text-red-500">×</button>
-        </span>
-      ))}
-      {adding ? (
-        <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} onBlur={add} onKeyDown={(e) => { if (e.key === 'Enter') add(); if (e.key === 'Escape') { setAdding(false); setVal(''); } }}
-          className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] w-24" placeholder="tag…" />
-      ) : (
-        <button onClick={() => setAdding(true)} className="rounded-full border border-dashed border-slate-300 text-slate-400 hover:text-slate-600 px-2 py-0.5 text-[11px] font-semibold">+ Tag</button>
-      )}
-    </div>
-  );
-}
-function Card({ title, action, children }) {
-  return (
-    <div className="rounded-xl border border-slate-200 p-4">
-      <div className="flex items-center justify-between mb-3"><div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{title}</div>{action}</div>
-      {children}
-    </div>
-  );
-}
 function H({ children }) { return <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">{children}</div>; }
 function Lbl({ children }) { return <div className="text-[11px] font-bold text-slate-500 mb-1">{children}</div>; }
 function Empty({ children }) { return <div className="text-center text-slate-400 text-sm py-10">{children}</div>; }

@@ -155,7 +155,98 @@ router.post('/:token/upload', async (req, res, next) => {
   }
 });
 
-// --- v177: application confirmation + new-application notification ---
+// --- Assessment task: public fetch + file submission -------------------------
+
+// Find a candidate + task by public token. Returns { cand, task } or null.
+async function findTaskByToken(token) {
+  const rows = await HrCandidate.findAll({ where: { rejected: false } });
+  for (const c of rows) {
+    const t = (Array.isArray(c.tasks) ? c.tasks : []).find((x) => x.token === token);
+    if (t) return { cand: c, task: t };
+  }
+  return null;
+}
+
+// Public: fetch task info for the upload page. 410 when expired/invalid so the
+// page can show its "no longer active" state.
+router.get('/task/:token', async (req, res, next) => {
+  try {
+    const found = await findTaskByToken(req.params.token);
+    if (!found) return res.status(404).json({ error: 'This task link is not valid.' });
+    const { cand, task } = found;
+    if (task.submittedAt) {
+      return res.json({ submitted: true, candidateName: cand.name });
+    }
+    if (new Date(task.deadline).getTime() < Date.now()) {
+      return res.status(410).json({ error: 'This task upload link has expired. Please contact the recruitment team to have it reactivated.' });
+    }
+    const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    res.json({
+      candidateName: cand.name,
+      role: job ? job.title : '',
+      taskTitle: task.title || '',
+      taskDetails: task.details || '',
+      deadline: task.deadline,
+      submitted: false,
+    });
+  } catch (e) { next(e); }
+});
+
+// Public: candidate submits their task files. Uploads each to ImageKit under
+// HRMS/<Job>/Tasks, appends them to the candidate's attachments (tagged as a
+// task submission) and marks the task submitted.
+router.post('/task/:token/submit', async (req, res, next) => {
+  try {
+    const found = await findTaskByToken(req.params.token);
+    if (!found) return res.status(404).json({ error: 'This task link is not valid.' });
+    const { cand, task } = found;
+    if (task.submittedAt) return res.status(400).json({ error: 'This task has already been submitted.' });
+    if (new Date(task.deadline).getTime() < Date.now()) return res.status(410).json({ error: 'This task upload link has expired.' });
+    const files = Array.isArray(req.body && req.body.files) ? req.body.files : [];
+    if (!files.length) return res.status(400).json({ error: 'Please attach at least one file.' });
+
+    const imagekit = require('../services/imagekit');
+    const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    const folder = `HRMS/${safeFolder(job ? job.title : 'job')}/Tasks`;
+    const uploaded = [];
+    for (const f of files) {
+      if (!f || !f.base64) continue;
+      const out = await imagekit.uploadFile({ base64: f.base64, fileName: (f.name || 'task-file').slice(0, 120), folder });
+      if (out && out.url && /^https?:\/\//i.test(out.url)) uploaded.push({ name: out.name || f.name || 'file', url: out.url, at: new Date().toISOString() });
+    }
+    if (!uploaded.length) return res.status(502).json({ error: 'Upload did not complete. Please try again in a moment.' });
+
+    // Persist: mark the task submitted with its files, and mirror the files into
+    // the candidate's attachments so they appear in the Files tab.
+    const tasks = (Array.isArray(cand.tasks) ? cand.tasks : []).map((t) => t.token === task.token
+      ? { ...t, files: uploaded, submittedAt: new Date().toISOString(), status: 'submitted' } : t);
+    cand.tasks = tasks; cand.changed('tasks', true);
+    const atts = Array.isArray(cand.attachments) ? cand.attachments.slice() : [];
+    for (const u of uploaded) atts.push({ id: `att${Date.now()}${Math.random().toString(36).slice(2, 6)}`, name: u.name, url: u.url, at: u.at, source: 'task', taskId: task.id });
+    cand.attachments = atts; cand.changed('attachments', true);
+    const tl = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
+    tl.unshift({ id: `t${Date.now()}`, type: 'task', text: `${cand.name} submitted ${uploaded.length} file${uploaded.length === 1 ? '' : 's'} for the assessment task.`, by: cand.name, at: new Date().toISOString() });
+    cand.timeline = tl; cand.changed('timeline', true);
+    await cand.save();
+
+    // Notify the assigned reviewers + recruitment inbox (best-effort).
+    try {
+      const hrRoute = require('./hr');
+      if (hrRoute.notify) {
+        for (const aid of (task.assignedIds || [])) {
+          const numId = String(aid).startsWith('admin:') ? null : aid;
+          if (numId) await hrRoute.notify(numId, { type: 'task', text: `${cand.name} submitted their assessment task.`, candidateId: cand.id });
+        }
+      }
+    } catch { /* best-effort */ }
+
+    res.json({ ok: true, files: uploaded.length });
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'File uploads are not set up on this account yet.' });
+    next(e);
+  }
+});
+
 async function sendApplicationConfirmation(cand, job) {
   if (!cand.email) return;
   const s = await Settings.findOne({ where: { singleton: 'settings' } });

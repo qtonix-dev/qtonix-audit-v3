@@ -249,7 +249,31 @@ function rejectionEmail({ role, bodyHtml, signature }) {
   });
 }
 
+// Assessment / take-home task assigned to a candidate. CTA links to the public
+// upload page; the details card carries the deadline and what to submit.
+function taskAssignment({ candidateName, role, taskTitle, taskDetailsHtml, deadlineText, uploadUrl, signature }) {
+  const details = [
+    taskTitle ? { label: 'Task', value: esc(taskTitle) } : null,
+    { label: 'Submit by', value: esc(deadlineText) },
+    { label: 'How to submit', value: 'Upload your files on the secure link below' },
+  ].filter(Boolean);
+  return shell({
+    kicker: 'Assessment Task',
+    headline: 'A task for your application',
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `As the next step${role ? ` for the <strong>${esc(role)}</strong> role` : ''}, we'd like you to complete a short task. ${taskDetailsHtml ? 'The details are below.' : ''}${taskDetailsHtml ? `<br><br><div style="background:#F4F7FE;border:1px solid #E2E9F8;border-radius:12px;padding:16px 18px;">${taskDetailsHtml}</div>` : ''}`,
+    details,
+    ctaLabel: uploadUrl ? 'Upload your files' : null,
+    ctaUrl: uploadUrl || null,
+    ctaNote: 'This link is active for 48 hours. You can upload multiple files. If the link expires, reply to this email and we\u2019ll reactivate it.',
+    outroHtml: 'Please complete and submit within the deadline. If you have any questions, just reply to this email. Good luck!',
+    signature,
+  });
+}
+
 module.exports = {
+  taskAssignment,
   rejectionEmail,
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,

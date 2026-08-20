@@ -1444,6 +1444,11 @@ const HrCandidate = sequelize.define('HrCandidate', {
   feedback: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, by, byId, skills:[{name,rating}], verdict, note, at, interviewId, round, panelist }]
   timeline: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, type, text, by, at }]
   attachments: { type: DataTypes.JSON, defaultValue: [] },  // [{ id, name, url, at }]
+  // Assessment tasks assigned to the candidate. Each:
+  // { id, title, details, assignedIds:[], assignedNames:[], token(public),
+  //   createdBy, createdAt, deadline(ISO), status(pending|submitted|expired),
+  //   submittedAt, files:[{name,url,at}], reactivatedAt }
+  tasks: { type: DataTypes.JSON, defaultValue: [] },
   // interviews: [...]
   interviews: { type: DataTypes.JSON, defaultValue: [] },
   // activities: [{ id, kind:'task'|'call', mode:'scheduled'|'done', title/agenda,
