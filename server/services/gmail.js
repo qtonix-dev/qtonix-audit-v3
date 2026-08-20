@@ -74,7 +74,9 @@ async function exchangeCode(settings, code) {
     const me = await oauth2.userinfo.get();
     email = me.data.email || '';
   } catch { /* non-fatal */ }
-  return { refreshToken: tokens.refresh_token || '', email };
+  const grantedScopes = String(tokens.scope || '');
+  const hasCalendar = /calendar\.events|\/calendar(\s|$)/.test(grantedScopes);
+  return { refreshToken: tokens.refresh_token || '', email, grantedScopes, hasCalendar };
 }
 
 /** A Gmail API client authorised as a given user (using their refresh token). */
@@ -355,26 +357,48 @@ async function createCalendarEvent(settings, refreshToken, { summary, descriptio
   const client = oauthClient(settings);
   client.setCredentials({ refresh_token: refreshToken });
   const calendar = google.calendar({ version: 'v3', auth: client });
-  const res = await calendar.events.insert({
-    calendarId: 'primary',
-    conferenceDataVersion: 1,
-    sendUpdates: 'all',
-    requestBody: {
-      summary, description,
-      start: { dateTime: start, timeZone },
-      end: { dateTime: end, timeZone },
-      attendees: attendees.filter(Boolean).map((email) => ({ email })),
-      conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
-    },
-  });
+  const attendeeList = attendees.filter(Boolean).map((email) => ({ email }));
+  const baseBody = {
+    summary, description,
+    start: { dateTime: start, timeZone },
+    end: { dateTime: end, timeZone },
+    attendees: attendeeList,
+  };
+  // First try with a Google Meet link attached. If conferencing fails (some
+  // accounts can't create Meet links via API), fall back to a plain event so
+  // scheduling still succeeds.
+  let res;
+  try {
+    res = await calendar.events.insert({
+      calendarId: 'primary', conferenceDataVersion: 1, sendUpdates: 'all',
+      requestBody: { ...baseBody, conferenceData: { createRequest: { requestId: 'meet-' + Date.now(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } },
+    });
+  } catch (confErr) {
+    // Retry without conferenceData — keeps the invite working without Meet.
+    res = await calendar.events.insert({ calendarId: 'primary', sendUpdates: 'all', requestBody: baseBody });
+  }
   const ev = res.data;
   const meetLink = (ev.conferenceData && ev.conferenceData.entryPoints || []).find((e) => e.entryPointType === 'video');
   return { htmlLink: ev.htmlLink, meetLink: meetLink ? meetLink.uri : '', eventId: ev.id };
+}
+
+// Extract the human-readable reason from a Google API error, so the UI can show
+// what actually went wrong (e.g. "Calendar API not enabled", "insufficient scope").
+function calendarErrorMessage(ex) {
+  const g = ex && ex.response && ex.response.data && ex.response.data.error;
+  if (g && typeof g === 'object' && g.message) {
+    if (/has not been used|is disabled|not enabled/i.test(g.message)) return 'The Google Calendar API isn’t enabled for this Google project. Enable "Google Calendar API" in Google Cloud Console, then try again.';
+    if (/insufficient|scope|permission|Request had insufficient authentication/i.test(g.message)) return 'The mailbox is linked but without Calendar permission. Re-link the mailbox and, on the Google consent screen, ensure the calendar checkbox is ticked.';
+    return `Google Calendar error: ${g.message}`;
+  }
+  if (typeof g === 'string') return `Google Calendar error: ${g}`;
+  if (ex && /invalid_grant/i.test(ex.message || '')) return 'The mailbox link has expired. Please re-link the recruitment mailbox.';
+  return ex && ex.message ? `Could not create the calendar event: ${ex.message}` : 'Could not create the calendar event.';
 }
 
 module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
   searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
   listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
-  createCalendarEvent, oauthClient, gmailFor,
+  createCalendarEvent, calendarErrorMessage, oauthClient, gmailFor,
 };

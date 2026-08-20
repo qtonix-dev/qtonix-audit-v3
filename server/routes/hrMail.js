@@ -238,7 +238,8 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
         timeZone: b.timeZone || 'Asia/Kolkata',
       });
     } catch (ex) {
-      return res.status(502).json({ error: 'Could not create the calendar event. The mailbox may need re-linking to grant Calendar access.' });
+      console.error('[calendar] createCalendarEvent failed:', ex && (ex.response && ex.response.data ? JSON.stringify(ex.response.data) : ex.message));
+      return res.status(502).json({ error: gmail.calendarErrorMessage ? gmail.calendarErrorMessage(ex) : 'Could not create the calendar event. The mailbox may need re-linking to grant Calendar access.' });
     }
     // Record on the candidate.
     const iv = {
@@ -294,7 +295,7 @@ router.post('/candidates/:id/offer-meet', requireHrAccess, requireScheduler, asy
         attendees: [cand.email].filter(Boolean),
         timeZone: b.timeZone || 'Asia/Kolkata',
       });
-    } catch (ex) { return res.status(502).json({ error: 'Could not create the Meet. The mailbox may need re-linking for Calendar access.' }); }
+    } catch (ex) { console.error('[calendar] offer-meet failed:', ex && (ex.response && ex.response.data ? JSON.stringify(ex.response.data) : ex.message)); return res.status(502).json({ error: gmail.calendarErrorMessage ? gmail.calendarErrorMessage(ex) : 'Could not create the Meet. The mailbox may need re-linking for Calendar access.' }); }
     res.json({ ok: true, meetLink: event.meetLink, eventLink: event.htmlLink });
   } catch (e) { next(e); }
 });

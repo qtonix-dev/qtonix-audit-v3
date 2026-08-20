@@ -125,8 +125,10 @@ router.get('/callback', async (req, res) => {
     try { payload = jwt.verify(String(state), process.env.JWT_SECRET || 'change-me-in-production'); }
     catch { return done('This connection link expired. Please try again.', false); }
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const { refreshToken, email } = await gmail.exchangeCode(s, code);
+    const { refreshToken, email, hasCalendar } = await gmail.exchangeCode(s, code);
     if (!refreshToken) return done('Google did not return a refresh token. Remove the app’s access in your Google account and try again.', false);
+    // Warn when the calendar scope wasn't granted — interview scheduling needs it.
+    const calWarn = hasCalendar ? '' : ' NOTE: Calendar access was NOT granted, so interview scheduling won’t work. Re-link and tick the Calendar box on the Google consent screen; if it doesn’t appear, enable the Google Calendar API in your Google Cloud project.';
     if (payload.hrMailbox) {
       // Link a shared HR recruitment mailbox (stored in Settings, used by all
       // recruiters). `hrMailboxId` distinguishes additional mailboxes; when it's
@@ -147,7 +149,7 @@ router.get('/callback', async (req, res) => {
       if (idx >= 0) list[idx] = { ...list[idx], ...entry }; else list.push(entry);
       s.hrMailboxes = list; s.changed('hrMailboxes', true);
       await s.save();
-      return done(`Recruitment mailbox linked: ${email}.`, true);
+      return done(`Recruitment mailbox linked: ${email}.${calWarn}`, true);
     }
     const user = await User.findByPk(payload.uid);
     if (!user) return done('User not found.', false);

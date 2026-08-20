@@ -1353,7 +1353,7 @@ function OfferTab({ c, isAdmin, reload }) {
                 <div key={d.id} className={`rounded-lg border p-3 ${accepted ? 'border-green-300 bg-green-50' : 'border-slate-100'}`}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-slate-700 capitalize text-sm">{d.mode}{d.meetLink ? ' · Meet' : ''}</span>
-                    <div className="flex items-center gap-2">{accepted && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">✓ Accepted</span>}<span className="text-xs text-slate-400">{fmt(d.at)}</span>{offer.status !== 'accepted' && offer.status !== 'declined' && <button onClick={() => setEditDisc(d)} className="text-[11px] font-bold text-slate-500 border border-slate-200 rounded px-1.5 py-0.5 hover:bg-slate-50">Edit</button>}</div>
+                    <div className="flex items-center gap-2">{accepted && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">✓ Accepted</span>}<span className="text-xs text-slate-400">{fmt(d.at)}</span><button onClick={() => setEditDisc(d)} className="text-[11px] font-bold text-slate-500 border border-slate-200 rounded px-1.5 py-0.5 hover:bg-slate-50">Edit</button></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="rounded-lg bg-slate-50 px-2.5 py-1.5"><div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Candidate ask</div><div className="font-bold text-[#050A1F]">{d.candidateAsk || '—'}</div></div>

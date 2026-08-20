@@ -1047,6 +1047,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const [rejReason, setRejReason] = useState(null); // candidate whose rejection reason is shown
   const [hiredOfferFor, setHiredOfferFor] = useState(null); // candidate whose hired offer is being set
   const [notJoinedFor, setNotJoinedFor] = useState(null); // hired candidate who didn't join
+  const [manageHireFor, setManageHireFor] = useState(null); // hired candidate whose hire is being managed
   const [hrList, setHrList] = useState([]); // HR-department staff for the HR filter
   useEffect(() => { hrApi('/employees?hrDept=1').then((r) => setHrList(r || [])).catch(() => {}); }, []);
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
@@ -1209,10 +1210,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                       {isHiredView && <td className="px-2.5 py-2 whitespace-nowrap">
                         {c.offer && c.offer.notJoined
                           ? <span className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-600 px-2 py-0.5 text-[11px] font-bold" title={c.offer.notJoinedReason || ''}>✗ Did not join</span>
-                          : <span className="flex items-center gap-2">
-                              <span className="text-slate-600">{(c.offer && c.offer.joiningDate) ? new Date(c.offer.joiningDate).toLocaleDateString() : '—'}</span>
-                              <button onClick={() => setNotJoinedFor(c)} className="rounded border border-red-200 text-red-500 px-1.5 py-0.5 text-[10px] font-bold hover:bg-red-50" title="Mark that the candidate did not join on the joining date">Didn't join</button>
-                            </span>}
+                          : <span className="text-slate-600">{(c.offer && c.offer.joiningDate) ? new Date(c.offer.joiningDate).toLocaleDateString() : '—'}</span>}
                       </td>}
                       <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{titleCase((c.recruiterName || '—').split(' ')[0])}</td>
                       <td className="px-2.5 py-2 text-slate-400 text-[11px] whitespace-nowrap">{timeAgo(c.updatedAt)}</td>
@@ -1220,7 +1218,9 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                         <div className="flex items-center justify-end gap-1">
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
                           {isRejectedView && <button onClick={() => setRejReason(c)} className="rounded-lg border border-red-200 text-red-600 px-2 py-1 text-[11px] font-bold hover:bg-red-50">Reason</button>}
-                          <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />
+                          {isHiredView
+                            ? <CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} />
+                            : <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />}
                           {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
                         </div>
                       </td>
@@ -1239,6 +1239,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
       {rejReason && <RejReasonModal candidate={rejReason} jobTitle={job(rejReason.jobPostId).title} onClose={() => setRejReason(null)} onSaved={() => { setRejReason(null); load(q); }} />}
       {hiredOfferFor && <HiredOfferModal candidate={hiredOfferFor} onClose={() => setHiredOfferFor(null)} onSaved={() => { setHiredOfferFor(null); load(q); }} />}
       {notJoinedFor && <NotJoinedModal candidate={notJoinedFor} onClose={() => setNotJoinedFor(null)} onSaved={() => { setNotJoinedFor(null); load(q); }} />}
+      {manageHireFor && <ManageHireModal candidate={manageHireFor} onClose={() => setManageHireFor(null)} onSaved={() => { setManageHireFor(null); load(q); }} />}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
   );
@@ -1285,6 +1286,55 @@ function RejReasonModal({ candidate, jobTitle, onClose, onSaved }) {
 
 // Lets HR record the salary details for an already-hired candidate whose offer
 // was never logged (candidate ask, what we offered, remark). Stored on the offer.
+// Manage a hired candidate: edit accepted salary, joining date, and whether
+// they joined or didn't. Replaces the standalone "Didn't join" button.
+function ManageHireModal({ candidate, onClose, onSaved }) {
+  const o = candidate.offer || {};
+  const [salary, setSalary] = useState(o.acceptedAmount || o.finalCtc || '');
+  const [joiningDate, setJoiningDate] = useState(o.joiningDate ? String(o.joiningDate).slice(0, 10) : '');
+  const [joined, setJoined] = useState(o.notJoined ? 'no' : 'yes');
+  const [reason, setReason] = useState(o.notJoinedReason || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    setBusy(true); setErr('');
+    try {
+      await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({
+        op: 'manage_hire',
+        acceptedAmount: salary.trim(),
+        joiningDate: joiningDate || '',
+        notJoined: joined === 'no',
+        notJoinedReason: joined === 'no' ? reason.trim() : '',
+      }) });
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Manage hire — {titleCase(candidate.name)}</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Accepted salary</div><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="e.g. 8L" /></div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining date</div><input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
+          <div>
+            <div className="text-[12px] font-bold text-slate-600 mb-1">Joining status</div>
+            <div className="flex gap-2">
+              <button onClick={() => setJoined('yes')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'yes' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>✓ Joined</button>
+              <button onClick={() => setJoined('no')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'no' ? 'border-red-400 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>✗ Didn't join</button>
+            </div>
+          </div>
+          {joined === 'no' && <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason (optional)</div><textarea rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. accepted another offer, no-show…" /></div>}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Marks a hired candidate as having failed to join on the joining date.
 function NotJoinedModal({ candidate, onClose, onSaved }) {
   const [reason, setReason] = useState('');

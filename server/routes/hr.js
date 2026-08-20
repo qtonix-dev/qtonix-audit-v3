@@ -2164,6 +2164,29 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', notes: b.notes || '', by: req.hrActor.name });
         pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
         break;
+      case 'manage_hire': {
+        // Edit accepted salary, joining date and joined/not-joined in one go.
+        if (b.acceptedAmount !== undefined) {
+          const amt = String(b.acceptedAmount).slice(0, 60);
+          offer.acceptedAmount = amt;
+          offer.finalCtc = amt || offer.finalCtc;
+          // Keep the accepted salary-offer row in sync if there is one.
+          if (offer.acceptedOfferId && Array.isArray(offer.salaryDiscussions)) {
+            const d = offer.salaryDiscussions.find((x) => x.id === offer.acceptedOfferId);
+            if (d) { d.offered = amt; d.editedAt = now; d.editedBy = req.hrActor.name; }
+          }
+        }
+        if (b.joiningDate !== undefined) offer.joiningDate = b.joiningDate ? String(b.joiningDate).slice(0, 40) : '';
+        if (b.notJoined) {
+          offer.notJoined = true;
+          offer.notJoinedAt = offer.notJoinedAt || now;
+          offer.notJoinedReason = String(b.notJoinedReason || '').slice(0, 300);
+        } else {
+          offer.notJoined = false; offer.notJoinedAt = null; offer.notJoinedReason = '';
+        }
+        pushTimeline(row, { type: 'offer', text: `Hire details updated by ${req.hrActor.name}${offer.notJoined ? ' — marked did-not-join' : (offer.joiningDate ? ` — joining ${offer.joiningDate}` : '')}.`, by: req.hrActor.name });
+        break;
+      }
       case 'mark_not_joined':
         offer.notJoined = true;
         offer.notJoinedAt = now;
