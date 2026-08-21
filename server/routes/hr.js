@@ -2406,6 +2406,10 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
     const b = req.body || {};
     const offer = row.offer || { active: true, status: 'discussion', salaryDiscussions: [], approvals: [], loi: null, offerLetter: null, finalCtc: '', joiningDate: '' };
     offer.active = true;
+    // Older offer objects may predate these arrays (or have them as null), which
+    // would make .unshift/.find crash. Normalise them before any operation.
+    if (!Array.isArray(offer.salaryDiscussions)) offer.salaryDiscussions = [];
+    if (!Array.isArray(offer.approvals)) offer.approvals = [];
     const now = new Date().toISOString();
     switch (b.op) {
       case 'add_discussion':
