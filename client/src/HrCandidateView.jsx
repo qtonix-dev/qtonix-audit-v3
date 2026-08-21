@@ -1893,10 +1893,16 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState(null);
+  const existing = Array.isArray(candidate.tasks) ? candidate.tasks : [];
+  // If a task already exists, default to showing it; let HR expand the form to add another.
+  const [showForm, setShowForm] = useState(existing.length === 0);
+  const [tasks, setTasks] = useState(existing);
+  const [busyTaskId, setBusyTaskId] = useState(null);
   useEffect(() => { hrApi('/employees').then((r) => setEmps(r.filter((e) => e.active))).catch(() => {}); }, []);
   const depts = Array.from(new Set(emps.map((e) => e.department).filter(Boolean))).sort();
   const shown = emps.filter((e) => !dept || e.department === dept);
   const toggle = (id) => { setPicked((pp) => pp.includes(id) ? pp.filter((x) => x !== id) : [...pp, id]); };
+  const fmtT = (iso) => { try { return new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch { return iso; } }
   const send = async () => {
     if (!details.trim()) { setErr('Please enter the task details.'); return; }
     setBusy(true); setErr('');
@@ -1905,6 +1911,17 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
       setResult(r); onDone && onDone();
     } catch (e) { setErr(e.message); setBusy(false); }
   };
+  const reactivate = async (t) => {
+    setBusyTaskId(t.id); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidate.id}/task/${t.id}/reactivate`, { method: 'POST', body: JSON.stringify({ notify: true }) });
+      setTasks(Array.isArray(r.tasks) ? r.tasks : tasks.map((x) => x.id === t.id ? { ...x, deadline: new Date(Date.now() + 48 * 3600000).toISOString(), status: 'pending', submittedAt: null } : x));
+      onDone && onDone();
+    } catch (e) { setErr(e.message); } finally { setBusyTaskId(null); }
+  };
+  const copyLink = (t) => { try { navigator.clipboard.writeText(`${window.location.origin}/task/${t.token}`); } catch {} };
+  const now = Date.now();
+
   return (
     <Modal title="Assign task" onClose={onClose} wide>
       {result ? (
@@ -1917,10 +1934,50 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
       ) : (
         <>
           {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2 mb-3">{err}</div>}
+
+          {/* Existing tasks */}
+          {tasks.length > 0 && (
+            <div className="space-y-2 mb-4">
+              <div className="text-xs font-bold text-slate-500">Assigned task{tasks.length > 1 ? 's' : ''}</div>
+              {tasks.map((t) => {
+                const expired = !t.submittedAt && new Date(t.deadline).getTime() < now;
+                const submitted = !!t.submittedAt;
+                return (
+                  <div key={t.id} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-[#050A1F] truncate">{t.title || 'Assessment task'}</span>
+                          {submitted ? <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Submitted</span>
+                            : expired ? <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Link expired</span>
+                            : <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">Awaiting submission</span>}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">Assigned {fmtT(t.createdAt)} by {t.createdBy} · Due {fmtT(t.deadline)}</div>
+                        {t.assignedNames && t.assignedNames.length > 0 && <div className="text-[11px] text-slate-400">Reviewers: {t.assignedNames.join(', ')}</div>}
+                      </div>
+                    </div>
+                    {t.details && <div className="text-[12px] text-slate-600 mt-2 whitespace-pre-wrap line-clamp-3">{t.details}</div>}
+                    {!submitted && (
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <div className="flex-1 min-w-[180px] text-[11px] font-mono text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 truncate">{`${window.location.origin}/task/${t.token}`}</div>
+                        <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Copy link</button>
+                        {expired && <button onClick={() => reactivate(t)} disabled={busyTaskId === t.id} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busyTaskId === t.id ? 'Reactivating…' : '↻ Reactivate (48h)'}</button>}
+                      </div>
+                    )}
+                    {submitted && (t.files || []).length > 0 && <div className="text-[11px] text-green-700 font-semibold mt-2">✅ {t.files.length} file{t.files.length === 1 ? '' : 's'} submitted — see the Files tab.</div>}
+                  </div>
+                );
+              })}
+              {!showForm && <button onClick={() => setShowForm(true)} className="text-xs font-bold text-orange-600 hover:text-orange-700">+ Assign another task</button>}
+            </div>
+          )}
+
+          {/* New task form */}
+          {showForm && (
+          <>
           <div className="space-y-3">
             <div><Lbl>Task title (optional)</Lbl><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Build a responsive dashboard component" /></div>
             <div><Lbl>Task details</Lbl><textarea className={inp} rows={5} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Describe the task, what to build, and what to submit…" /></div>
-            {/* Assign employees — same picker as the interview panel */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold text-slate-500">Assign employees {picked.length ? `(${picked.length})` : ''}</div>
@@ -1946,6 +2003,13 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
             <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
             <button onClick={send} disabled={busy || !details.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send task'}</button>
           </div>
+          </>
+          )}
+          {!showForm && (
+            <div className="flex justify-end mt-2">
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Close</button>
+            </div>
+          )}
         </>
       )}
     </Modal>

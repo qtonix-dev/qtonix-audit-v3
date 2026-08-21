@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v250';
+const APP_VERSION = 'v251';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -104,8 +104,25 @@ app.get('/careers-shared.js', (req, res) => {
 
 // Public listing page — the full job post with the application form on the
 // Public branded careers listing (all published roles at one URL).
-app.get('/jobs/:token', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/jobs-page.html'));
+app.get('/jobs/:token', async (req, res) => {
+  try {
+    const { HrJobPost, Settings } = require('./models');
+    const og = require('./services/ogTags');
+    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token } });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const branding = (s && s.hrCareers) || {};
+    const base = `${req.protocol}://${req.get('host')}`;
+    if (job) {
+      const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : (job.branch || '');
+      const desc = og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
+      const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
+        title: `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`,
+        description: desc, image: branding.logo || '', url: `${base}/jobs/${req.params.token}`,
+      });
+      return res.type('html').send(html);
+    }
+    res.sendFile(path.join(__dirname, 'public/jobs-page.html'));
+  } catch (e) { res.sendFile(path.join(__dirname, 'public/jobs-page.html')); }
 });
 
 // Public candidate task-upload page (assessment task). Same standalone-HTML
@@ -120,8 +137,20 @@ app.get('/schedule/:token', (req, res) => {
 });
 
 // right (the shareable careers page). Same token, no auth.
-app.get('/careers/:token', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/careers-page.html'));
+app.get('/careers/:token', async (req, res) => {
+  try {
+    const { Settings } = require('./models');
+    const og = require('./services/ogTags');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const branding = (s && s.hrCareers) || {};
+    const base = `${req.protocol}://${req.get('host')}`;
+    const html = og.injectIntoHtml(path.join(__dirname, 'public/careers-page.html'), {
+      title: branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix',
+      description: branding.description || 'Explore open roles and join our team at Qtonix.',
+      image: branding.logo || '', url: `${base}/careers/${req.params.token}`,
+    });
+    res.type('html').send(html);
+  } catch (e) { res.sendFile(path.join(__dirname, 'public/careers-page.html')); }
 });
 
 // Public shareable Site Analysis report links (/r/:slug), no auth. Served before

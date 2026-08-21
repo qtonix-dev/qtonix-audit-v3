@@ -182,7 +182,7 @@ router.get('/recent-candidates', requireHrAccess, async (req, res, next) => {
     const jobTitle = (id) => { const j = jobs.find((x) => x.id === id); return j ? j.title : ''; };
     const shape = (c) => ({ _id: c.id, name: c.name, jobPostId: c.jobPostId, jobTitle: jobTitle(c.jobPostId), recruiterName: c.recruiterName || '', source: c.source, createdAt: c.createdAt, stage: c.stage });
     const added = await HrCandidate.findAll({ order: [['createdAt', 'DESC']], limit: 5 });
-    const submitted = await HrCandidate.findAll({ where: { source: 'careers_page' }, order: [['createdAt', 'DESC']], limit: 5 });
+    const submitted = await HrCandidate.findAll({ where: { source: { [Op.in]: ['public_form', 'careers_page'] } }, order: [['createdAt', 'DESC']], limit: 5 });
     res.json({ added: added.map(shape), submitted: submitted.map(shape) });
   } catch (e) { next(e); }
 });
@@ -1103,7 +1103,7 @@ router.get('/job-posts', requireHrAccess, async (req, res, next) => {
     counts.forEach((c) => {
       const n = Number(c.n);
       totalByJob[c.jobPostId] = (totalByJob[c.jobPostId] || 0) + n;
-      if (c.source === 'public_form') appliedByJob[c.jobPostId] = (appliedByJob[c.jobPostId] || 0) + n;
+      if (c.source === 'public_form' || c.source === 'careers_page') appliedByJob[c.jobPostId] = (appliedByJob[c.jobPostId] || 0) + n;
       else addedByJob[c.jobPostId] = (addedByJob[c.jobPostId] || 0) + n;
     });
     // Resolve assigned-HR names for display.

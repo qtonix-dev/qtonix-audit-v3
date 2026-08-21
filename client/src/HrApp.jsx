@@ -1094,7 +1094,15 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
     if (monthOnly && !isThisMonth(c)) return false;
     if (jobFilter && c.jobPostId !== Number(jobFilter)) return false;
     if (stageFilter && (stageFilter === 'rejected' ? !c.rejected : c.stage !== stageFilter)) return false;
-    if (sourceFilter && c.source !== sourceFilter) return false;
+    if (sourceFilter) {
+      // Public applications may be stored as 'public_form' or the legacy
+      // 'careers_page' — treat them the same. 'manual' means anything not public.
+      const publicSources = new Set(['public_form', 'careers_page']);
+      const isPublic = publicSources.has(c.source);
+      if (sourceFilter === 'public_form' && !isPublic) return false;
+      if (sourceFilter === 'manual' && isPublic) return false;
+      if (sourceFilter !== 'public_form' && sourceFilter !== 'manual' && c.source !== sourceFilter) return false;
+    }
     if (tagFilter && !(c.tags || []).includes(tagFilter)) return false;
     if (deptFilter && (job(c.jobPostId).department || '') !== deptFilter) return false;
     if (hrFilter && String(c.recruiterId || '') !== String(hrFilter)) return false;

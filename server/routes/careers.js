@@ -108,7 +108,7 @@ router.post('/:token/apply', async (req, res, next) => {
       resumeUrl: String(b.resumeUrl || '').slice(0, 400),
       resumeText,
       currentLocation: String(b.currentLocation || '').slice(0, 160),
-      answers, source: 'careers_page',
+      answers, source: 'public_form',
       timeline: tl,
     });
     res.json({ ok: true, id: row.id });
@@ -250,9 +250,8 @@ router.post('/task/:token/submit', async (req, res, next) => {
 async function sendApplicationConfirmation(cand, job) {
   if (!cand.email) return;
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
-  const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
-  const mailbox = recruitmentMailboxEmail(s);
-  if (!token || !mailbox) return;
+  const { email: mailbox, token } = recruitmentMailbox(s);
+  if (!token || !mailbox) { console.error('[careers] confirmation skipped: no linked recruitment mailbox/token'); return; }
   const gmail = require('../services/gmail');
   const hrEmail = require('../services/hrEmailTemplate');
   const bodyHtml = hrEmail.applicationThankYou({
@@ -269,6 +268,29 @@ function recruitmentMailboxEmail(s) {
   const list = (s && Array.isArray(s.hrMailboxes)) ? s.hrMailboxes : [];
   const def = list.find((m) => m.id === 'default') || list[0];
   return (def && def.email) || '';
+}
+
+// Resolve BOTH the mailbox address and its refresh token, handling the two ways
+// a mailbox can be connected: the legacy default (token under 'hrMailboxToken')
+// and named mailboxes (token under 'hrMailboxToken:<id>'). Returns { email, token }
+// or nulls when nothing is connected. Mirrors hrMail.js's mailbox resolution so
+// careers auto-emails send from whichever mailbox is actually linked.
+function recruitmentMailbox(s) {
+  if (!s || !s.getKey) return { email: '', token: null };
+  // 1) Legacy default token + address.
+  const defToken = s.getKey('hrMailboxToken');
+  if (defToken) {
+    const email = (s.hrMailbox && s.hrMailbox.email) || recruitmentMailboxEmail(s);
+    if (email) return { email, token: defToken };
+  }
+  // 2) Named mailboxes — first one with a token wins (prefer 'default' id).
+  const list = Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [];
+  const ordered = [...list].sort((a, b) => (a.id === 'default' ? -1 : 0) - (b.id === 'default' ? -1 : 0));
+  for (const m of ordered) {
+    const t = s.getKey(`hrMailboxToken:${m.id}`) || (m.id === 'default' ? defToken : null);
+    if (t && m.email) return { email: m.email, token: t };
+  }
+  return { email: recruitmentMailboxEmail(s), token: defToken || null };
 }
 
 async function notifyNewApplication(cand, job) {
@@ -288,9 +310,8 @@ async function notifyNewApplication(cand, job) {
   // details so the team is alerted even when not logged in.
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
-    const mailbox = recruitmentMailboxEmail(s);
-    if (!token || !mailbox) return;
+    const { email: mailbox, token } = recruitmentMailbox(s);
+    if (!token || !mailbox) { console.error('[careers] internal notice skipped: no linked recruitment mailbox/token'); return; }
     const gmail = require('../services/gmail');
     const hrEmail = require('../services/hrEmailTemplate');
     const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
