@@ -5449,7 +5449,17 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   // Converted-with-an-open-deal show as cards; converted with no open deal go
   // into a compact table below (server flags each row with `openDeal`).
   const hasOpen = (l) => (typeof l.openDeal === 'boolean') ? l.openDeal : (l.deals || []).some((d) => d && d.stage !== 'closed_won' && d.stage !== 'closed_lost');
-  const openDealLeads = filtered.filter(hasOpen);
+  // Soonest upcoming payment/invoice date for a client (their nextDue, or the
+  // soonest recurring upcoming date). Used to order the cards so the client with
+  // the fewest days left (e.g. an invoice due today) always shows first.
+  const soonestDue = (l) => {
+    const s = summarize(l);
+    const cands = [s.nextDue];
+    (s.recurringUpcoming || []).forEach((r) => { if (r.inst && r.inst.dueDate) cands.push(r.inst.dueDate); });
+    const valid = cands.filter(Boolean).sort();
+    return valid[0] || '9999-12-31';
+  };
+  const openDealLeads = filtered.filter(hasOpen).slice().sort((a, b) => soonestDue(a).localeCompare(soonestDue(b)));
   const noOpenDealLeads = filtered.filter((l) => !hasOpen(l));
 
   // Is this client's conversion inside the selected window? Used so period
@@ -6162,6 +6172,7 @@ function DealsPipeline({ user, onOpenLead }) {
   const [config, setConfig] = useState({ dealStages: [] });
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState(null);
+  const [period, setPeriod] = useState('this_month'); // this_month | last_month | all
 
   const load = async () => {
     setLoading(true);
@@ -6177,6 +6188,24 @@ function DealsPipeline({ user, onOpenLead }) {
   const stages = config.dealStages || [];
   const fmtMoney = (d) => `${d.currency || ''} ${Number(d.amount || 0).toLocaleString()}`;
 
+  // Filter deals by when they were created, for the period selector.
+  const inPeriod = (d) => {
+    if (period === 'all') return true;
+    const raw = d.createdAt || d.at;
+    if (!raw) return period === 'all'; // undated deals only show under "all time"
+    const dt = new Date(raw);
+    if (Number.isNaN(dt.getTime())) return true;
+    const now = new Date();
+    if (period === 'this_month') return dt.getFullYear() === now.getFullYear() && dt.getMonth() === now.getMonth();
+    if (period === 'last_month') {
+      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return dt.getFullYear() === lm.getFullYear() && dt.getMonth() === lm.getMonth();
+    }
+    return true;
+  };
+  const allDeals = deals;
+  const shownDeals = deals.filter(inPeriod);
+
   const moveDeal = async (deal, toStage) => {
     if (deal.stage === toStage) return;
     // optimistic update
@@ -6186,7 +6215,7 @@ function DealsPipeline({ user, onOpenLead }) {
     } catch (e) { alert(e.message); load(); }
   };
 
-  const stageTotal = (sid) => deals.filter((d) => d.stage === sid).reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  const stageTotal = (sid) => shownDeals.filter((d) => d.stage === sid).reduce((sum, d) => sum + Number(d.amount || 0), 0);
   const paidInfo = (d) => {
     const insts = d.installments || [];
     if (insts.length <= 1) return null;
@@ -6199,15 +6228,25 @@ function DealsPipeline({ user, onOpenLead }) {
   // Soft pastel header tint per column, derived from the stage colour.
   const softBg = (hex) => `${hex}14`;
 
+  const PERIODS = [['this_month', 'This month'], ['last_month', 'Last month'], ['all', 'All time']];
+
   return (
     <div>
-      <div className="mb-5">
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Deals pipeline</h1>
-        <div className="text-sm text-slate-400">{deals.length} deals · drag a card to move it between stages</div>
+      <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">Deals pipeline</h1>
+          <div className="text-sm text-slate-400">{shownDeals.length} deal{shownDeals.length === 1 ? '' : 's'} · drag a card to move it between stages</div>
+        </div>
+        <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+          {PERIODS.map(([id, label]) => (
+            <button key={id} onClick={() => setPeriod(id)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${period === id ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
+          ))}
+        </div>
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
-          const col = deals.filter((d) => d.stage === s.id);
+          const col = shownDeals.filter((d) => d.stage === s.id);
           return (
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}

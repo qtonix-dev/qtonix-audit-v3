@@ -1718,6 +1718,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       leaderboard, companyLeaderboard, transferBoard, trend, funnel, shiftBoard, topShift,
       topPerformer, topPerformerTied,
       awaiting: awaitingList.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 50),
+      // Deals with a payment due date of exactly today — for the admin
+      // "due today" box. Derived from the awaiting (unpaid) installments.
+      dueToday: awaitingList.filter((a) => a.dueDate === new Date().toISOString().slice(0, 10))
+        .sort((a, b) => String(a.ownerName).localeCompare(String(b.ownerName))),
       leadDaily,
       leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold })),
     });
@@ -3100,8 +3104,18 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
       // date (noon) so the sale counts in the correct month; otherwise use now.
       if (b.paid) {
         if (b.paidDate) {
-          const d = new Date(`${b.paidDate}T12:00:00`);
-          inst.paidAt = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+          // If the received date is today, use the real current time so the
+          // "recent wins" banner shows accurate hour precision (and multiple
+          // sales on the same day don't collapse to an identical timestamp).
+          // For a back-dated (historical) received date, anchor to noon of that
+          // day so the sale lands in the correct month.
+          const todayStr = new Date().toISOString().slice(0, 10);
+          if (b.paidDate === todayStr) {
+            inst.paidAt = new Date().toISOString();
+          } else {
+            const d = new Date(`${b.paidDate}T12:00:00`);
+            inst.paidAt = Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+          }
         } else {
           inst.paidAt = new Date().toISOString();
         }

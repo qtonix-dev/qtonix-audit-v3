@@ -736,7 +736,28 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           cta={(isAdmin || isManager) && awaiting.length ? 'Follow up' : undefined} />
       </div>
 
-      {/* ROW 3 — Today's leads + untouched, 50/50, sized for 5 rows */}
+      {/* ADMIN — deals with a payment due today, grouped by agent. */}
+      {(isAdmin || isManager) && (data.dueToday || []).length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-lg">📅</span>
+            <span className="text-sm font-extrabold text-[#050A1F]">Deals due today</span>
+            <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-amber-100 text-amber-700">{data.dueToday.length}</span>
+          </div>
+          <div className="space-y-1.5 max-h-64 overflow-y-auto">
+            {data.dueToday.map((d) => (
+              <button key={`${d.leadId}_${d.dealId}_${d.instId}`} onClick={() => onOpenLead && onOpenLead(d.leadId)}
+                className="w-full flex items-center justify-between gap-3 rounded-lg bg-white border border-amber-100 px-3 py-2 text-left hover:border-amber-300 transition">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-700 truncate">{d.client}{d.dealName ? ` · ${d.dealName}` : ''}</div>
+                  <div className="text-[11px] text-slate-400">Agent: {d.ownerName || '—'}{d.seq ? ` · Installment ${d.seq}` : ''}</div>
+                </div>
+                <div className="text-sm font-extrabold text-amber-700 shrink-0">{d.currency || ''} {Number(d.amount || 0).toLocaleString()}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-4">
         {(() => {
           const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
