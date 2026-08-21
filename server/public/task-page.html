@@ -101,7 +101,9 @@
       + '<div><div class="k">Last date to submit</div><div class="v">' + esc(fmtDate(d.deadline)) + '</div></div>'
       + (d.taskTitle ? '<div><div class="k">Task</div><div class="v">' + esc(d.taskTitle) + '</div></div>' : '')
       + '</div></div><div class="divider"></div>';
-    if (d.taskDetails) { html += '<div class="pad"><div class="stitle">Task details</div><div class="taskbox">' + esc(d.taskDetails) + '</div></div><div class="divider"></div>'; }
+    if (d.infoRequested && d.infoRequestMessage) {
+      html += '<div class="pad"><div class="stitle" style="color:#7C3AED">Additional information requested</div><div class="taskbox" style="background:#faf5ff;border-color:#e9d5ff">' + esc(d.infoRequestMessage) + '</div></div><div class="divider"></div>';
+    } else if (d.taskDetails) { html += '<div class="pad"><div class="stitle">Task details</div><div class="taskbox">' + esc(d.taskDetails) + '</div></div><div class="divider"></div>'; }
     html += '<div class="pad"><div class="stitle">Upload your files</div>';
     html += '<div class="drop" id="drop"><div class="ic">\uD83D\uDCCE</div><div class="big">Drag files here or click to browse</div><div class="small">Multiple files allowed (PDF, docs, images, zip). Max 25 MB each.</div></div>';
     html += '<input type="file" id="fileInput" multiple style="display:none" />';

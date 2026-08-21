@@ -5,7 +5,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { HrJobPost, HrCandidate, Settings, HrUser } = require('../models');
+const { Op, HrJobPost, HrCandidate, Settings, HrUser } = require('../models');
 
 // Only expose fields that are safe to show a candidate — never internal ids,
 // creator, salary when hidden, etc.
@@ -174,13 +174,15 @@ router.get('/task/:token', async (req, res, next) => {
     const found = await findTaskByToken(req.params.token);
     if (!found) return res.status(404).json({ error: 'This task link is not valid.' });
     const { cand, task } = found;
-    if (task.submittedAt) {
+    // A submitted task that hasn't had more info requested is closed.
+    if (task.submittedAt && task.status !== 'info_requested') {
       return res.json({ submitted: true, candidateName: cand.name });
     }
     if (new Date(task.deadline).getTime() < Date.now()) {
       return res.status(410).json({ error: 'This task upload link has expired. Please contact the recruitment team to have it reactivated.' });
     }
     const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    const infoRequested = task.status === 'info_requested';
     res.json({
       candidateName: cand.name,
       role: job ? job.title : '',
@@ -188,6 +190,8 @@ router.get('/task/:token', async (req, res, next) => {
       taskDetails: task.details || '',
       deadline: task.deadline,
       submitted: false,
+      infoRequested,
+      infoRequestMessage: infoRequested && task.infoRequest ? (task.infoRequest.message || '') : '',
     });
   } catch (e) { next(e); }
 });
@@ -216,27 +220,60 @@ router.post('/task/:token/submit', async (req, res, next) => {
     }
     if (!uploaded.length) return res.status(502).json({ error: 'Upload did not complete. Please try again in a moment.' });
 
-    // Persist: mark the task submitted with its files, and mirror the files into
-    // the candidate's attachments so they appear in the Files tab.
-    const tasks = (Array.isArray(cand.tasks) ? cand.tasks : []).map((t) => t.token === task.token
-      ? { ...t, files: uploaded, submittedAt: new Date().toISOString(), status: 'submitted' } : t);
+    // Is this a response to an "additional information" request? If so, append
+    // the new files to the existing set rather than replacing them.
+    const isAdditional = task.status === 'info_requested';
+    const now = new Date().toISOString();
+    const tasks = (Array.isArray(cand.tasks) ? cand.tasks : []).map((t) => {
+      if (t.token !== task.token) return t;
+      const priorFiles = isAdditional && Array.isArray(t.files) ? t.files : [];
+      const merged = [...priorFiles, ...uploaded];
+      return { ...t, files: merged, submittedAt: now, status: 'submitted', infoRequest: isAdditional ? { ...(t.infoRequest || {}), respondedAt: now } : (t.infoRequest || null) };
+    });
     cand.tasks = tasks; cand.changed('tasks', true);
     const atts = Array.isArray(cand.attachments) ? cand.attachments.slice() : [];
     for (const u of uploaded) atts.push({ id: `att${Date.now()}${Math.random().toString(36).slice(2, 6)}`, name: u.name, url: u.url, at: u.at, source: 'task', taskId: task.id });
     cand.attachments = atts; cand.changed('attachments', true);
     const tl = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
-    tl.unshift({ id: `t${Date.now()}`, type: 'task', text: `${cand.name} submitted ${uploaded.length} file${uploaded.length === 1 ? '' : 's'} for the assessment task.`, by: cand.name, at: new Date().toISOString() });
+    tl.unshift({ id: `t${Date.now()}`, type: 'task', text: isAdditional
+      ? `${cand.name} submitted ${uploaded.length} additional file${uploaded.length === 1 ? '' : 's'} as requested.`
+      : `${cand.name} submitted ${uploaded.length} file${uploaded.length === 1 ? '' : 's'} for the assessment task.`, by: cand.name, at: now });
     cand.timeline = tl; cand.changed('timeline', true);
     await cand.save();
 
-    // Notify the assigned reviewers + recruitment inbox (best-effort).
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const { email: mailbox, token } = recruitmentMailbox(s);
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+
+    // 1) Thank-you email to the candidate (CC assigned HR).
+    if (cand.email && token && mailbox) {
+      try {
+        const sig = { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox };
+        const bodyHtml = hrEmail.taskReceived({ candidateName: cand.name, role: job ? job.title : '', isAdditional, signature: sig });
+        // CC: recruiter + job assigned HR.
+        const ccSet = new Set();
+        if (cand.recruiterId) { const u = await HrUser.findByPk(cand.recruiterId); if (u && u.email) ccSet.add(u.email.toLowerCase()); }
+        const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+        if (ids.length) { const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } }); staff.forEach((u) => { if (u.email) ccSet.add(u.email.toLowerCase()); }); }
+        ccSet.delete(String(cand.email).toLowerCase()); ccSet.delete(String(mailbox).toLowerCase());
+        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, cc: Array.from(ccSet), subject: isAdditional ? `We received your additional information${job ? ` — ${job.title}` : ''}` : `We received your task submission${job ? ` — ${job.title}` : ''}`, bodyHtml });
+      } catch (e) { console.error('[task] thank-you email failed:', e.message); }
+    }
+
+    // 2) Notify HR (assigned) + the interview-panel reviewers to review + give feedback.
     try {
       const hrRoute = require('./hr');
       if (hrRoute.notify) {
-        for (const aid of (task.assignedIds || [])) {
-          const numId = String(aid).startsWith('admin:') ? null : aid;
-          if (numId) await hrRoute.notify(numId, { type: 'task', text: `${cand.name} submitted their assessment task.`, candidateId: cand.id });
-        }
+        const notifyIds = new Set();
+        for (const aid of (task.assignedIds || [])) { if (!String(aid).startsWith('admin:')) notifyIds.add(Number(aid)); }
+        if (cand.recruiterId) notifyIds.add(Number(cand.recruiterId));
+        const jids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+        jids.forEach((id) => notifyIds.add(Number(id)));
+        const msg = isAdditional
+          ? `${cand.name} submitted the additional information you requested — please review and submit your feedback.`
+          : `${cand.name} submitted their assessment task — please review and submit your feedback.`;
+        for (const id of notifyIds) { if (id) await hrRoute.notify(id, { type: 'task', text: msg, candidateId: cand.id }); }
       }
     } catch { /* best-effort */ }
 
@@ -258,7 +295,13 @@ async function sendApplicationConfirmation(cand, job) {
     candidateName: cand.name, role: job.title,
     signature: { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox || 'career@qtonix.com' },
   });
-  try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, subject: `We received your application — ${job.title}`, bodyHtml }); } catch (e) { console.error('[careers] confirmation email failed:', e.message); }
+  // CC the job's assigned HR so they see the acknowledgement sent to the candidate.
+  let cc = [];
+  try {
+    const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+    if (ids.length) { const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } }); cc = staff.map((u) => u.email).filter(Boolean).filter((e) => e.toLowerCase() !== String(cand.email).toLowerCase() && e.toLowerCase() !== String(mailbox).toLowerCase()); }
+  } catch {}
+  try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, cc, subject: `We received your application — ${job.title}`, bodyHtml }); } catch (e) { console.error('[careers] confirmation email failed:', e.message); }
 }
 
 // Resolve the recruitment mailbox address: the legacy single hrMailbox if

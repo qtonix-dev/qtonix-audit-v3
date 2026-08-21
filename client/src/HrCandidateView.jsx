@@ -925,6 +925,13 @@ function TimelineTab({ c }) {
 function TaskSubmissions({ c, reload }) {
   const tasks = Array.isArray(c.tasks) ? c.tasks : [];
   const [busyId, setBusyId] = useState(null);
+  const [reviewFor, setReviewFor] = useState(null); // task id being reviewed
+  const [infoFor, setInfoFor] = useState(null);      // task id requesting info
+  const [note, setNote] = useState('');
+  const [verdict, setVerdict] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   if (!tasks.length) return null;
   const now = Date.now();
   const reactivate = async (t) => {
@@ -933,18 +940,35 @@ function TaskSubmissions({ c, reload }) {
     catch (e) { alert(e.message); } finally { setBusyId(null); }
   };
   const copyLink = (t) => { const url = `${window.location.origin}/task/${t.token}`; navigator.clipboard?.writeText(url); };
+  const submitFeedback = async (t) => {
+    if (!note.trim() && !verdict) { setErr('Please add your feedback.'); return; }
+    setBusy(true); setErr('');
+    try { await hrApi(`/candidates/${c.id}/task/${t.id}/feedback`, { method: 'POST', body: JSON.stringify({ note, verdict }) }); setReviewFor(null); setNote(''); setVerdict(''); reload(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const requestInfo = async (t) => {
+    if (!infoMsg.trim()) { setErr('Please describe what you need.'); return; }
+    setBusy(true); setErr('');
+    try { await hrApi(`/candidates/${c.id}/task/${t.id}/request-info`, { method: 'POST', body: JSON.stringify({ message: infoMsg }) }); setInfoFor(null); setInfoMsg(''); reload(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
   return (
     <div className="mb-5">
       {tasks.map((t) => {
-        const expired = !t.submittedAt && new Date(t.deadline).getTime() < now;
+        const infoRequested = t.status === 'info_requested';
+        const expired = !t.submittedAt && !infoRequested && new Date(t.deadline).getTime() < now;
         const submitted = !!t.submittedAt;
+        const reviewed = t.status === 'reviewed';
+        const fb = Array.isArray(t.feedback) ? t.feedback : [];
         return (
           <div key={t.id} className="rounded-xl border border-slate-200 mb-3 overflow-hidden">
             <div className="flex items-center justify-between gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-extrabold text-[#050A1F] truncate">{t.title || 'Assessment task'}</span>
-                  {submitted ? <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Task completed</span>
+                  {reviewed ? <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[10px] font-bold">Reviewed</span>
+                    : infoRequested ? <span className="rounded-full bg-purple-100 text-purple-700 px-2 py-0.5 text-[10px] font-bold">Info requested</span>
+                    : submitted ? <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Task completed</span>
                     : expired ? <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Link expired</span>
                     : <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">Awaiting submission</span>}
                 </div>
@@ -953,13 +977,18 @@ function TaskSubmissions({ c, reload }) {
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {!submitted && <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-500">Copy link</button>}
+                {(!submitted || infoRequested) && <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-500">Copy link</button>}
                 {expired && <button onClick={() => reactivate(t)} disabled={busyId === t.id} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busyId === t.id ? 'Reactivating…' : '↻ Reactivate (48h)'}</button>}
               </div>
             </div>
             {t.details && <div className="px-4 py-2.5 text-[13px] text-slate-600 whitespace-pre-wrap border-b border-slate-50">{t.details}</div>}
+            {infoRequested && t.infoRequest && (
+              <div className="px-4 py-2.5 bg-purple-50/50 border-b border-purple-100 text-[12px] text-purple-800">
+                <span className="font-bold">Additional info requested</span> by {t.infoRequest.by}: {t.infoRequest.message}
+              </div>
+            )}
             {submitted && (t.files || []).length > 0 && (
-              <div className="px-4 py-3">
+              <div className="px-4 py-3 border-b border-slate-50">
                 <div className="text-[11px] font-bold uppercase tracking-wide text-green-700 mb-2">✅ Task completed — {t.files.length} file{t.files.length === 1 ? '' : 's'}</div>
                 <div className="space-y-1.5">
                   {t.files.map((f, i) => (
@@ -969,6 +998,54 @@ function TaskSubmissions({ c, reload }) {
                     </a>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Task review section — feedback + request info (reviewers/HR) */}
+            {submitted && (
+              <div className="px-4 py-3">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Task review</div>
+                {fb.length > 0 && (
+                  <div className="space-y-2 mb-3">
+                    {fb.map((f) => (
+                      <div key={f.id} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-700">{f.by}{f.verdict ? ` · ${f.verdict}` : ''}</span>
+                          <span className="text-[10px] text-slate-400">{fmt(f.at)}</span>
+                        </div>
+                        {f.note && <div className="text-[13px] text-slate-600 mt-1 whitespace-pre-wrap">{f.note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {err && (reviewFor === t.id || infoFor === t.id) && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-2">{err}</div>}
+                {reviewFor === t.id ? (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      {['strong', 'good', 'weak'].map((v) => (
+                        <button key={v} onClick={() => setVerdict(v)} className={`rounded-lg px-3 py-1.5 text-xs font-bold border ${verdict === v ? 'bg-[#050A1F] text-white border-[#050A1F]' : 'border-slate-300 text-slate-600'}`}>{v[0].toUpperCase() + v.slice(1)}</button>
+                      ))}
+                    </div>
+                    <textarea className={inp} rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Your feedback on the submitted task…" />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => { setReviewFor(null); setErr(''); }} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                      <button onClick={() => submitFeedback(t)} disabled={busy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Submit feedback'}</button>
+                    </div>
+                  </div>
+                ) : infoFor === t.id ? (
+                  <div className="space-y-2">
+                    <textarea className={inp} rows={3} value={infoMsg} onChange={(e) => setInfoMsg(e.target.value)} placeholder="What additional information do you need from the candidate?" />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => { setInfoFor(null); setErr(''); }} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                      <button onClick={() => requestInfo(t)} disabled={busy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Request & email candidate'}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => { setReviewFor(t.id); setInfoFor(null); setErr(''); }} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>✓ Submit feedback</button>
+                    <button onClick={() => { setInfoFor(t.id); setReviewFor(null); setErr(''); }} className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-bold text-slate-600">Request additional info</button>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -10,6 +10,31 @@ const imagekit = require('../services/imagekit');
 
 const router = express.Router();
 
+// Resolve the "assigned HR" email list for a candidate, used to CC HR on every
+// candidate-facing email so they can see what's sent. Combines the candidate's
+// recruiter (if any) with the job's assigned HR staff. De-duplicated; excludes
+// the recruitment mailbox itself and the candidate's own address.
+async function assignedHrCc(candidate, { excludeEmail } = {}) {
+  const emails = new Set();
+  try {
+    if (candidate.recruiterId) {
+      const u = await HrUser.findByPk(candidate.recruiterId);
+      if (u && u.email) emails.add(u.email.toLowerCase());
+    }
+    if (candidate.jobPostId) {
+      const job = await HrJobPost.findByPk(candidate.jobPostId);
+      const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+      if (ids.length) {
+        const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } });
+        staff.forEach((u) => { if (u.email) emails.add(u.email.toLowerCase()); });
+      }
+    }
+  } catch (e) { console.error('[cc] resolve assigned HR failed:', e.message); }
+  if (excludeEmail) emails.delete(String(excludeEmail).toLowerCase());
+  if (candidate.email) emails.delete(String(candidate.email).toLowerCase());
+  return Array.from(emails);
+}
+
 const USER_TYPES = ['hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'trainee', 'intern', 'employee'];
 
 // Resolve the recruitment mailbox address: the legacy single hrMailbox if set,
@@ -42,7 +67,8 @@ async function sendShortlistEmail(row, hrActor) {
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     const sig = await rejectSignature(hrActor, mailbox);
     const bodyHtml = hrEmail.shortlistedEmail({ candidateName: row.name, role: job ? job.title : '', signature: sig });
-    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml });
+    const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml });
     row.shortlistEmailSent = true;
     return true;
   } catch (e) { console.error('[shortlist] email failed:', e.message); return false; }
@@ -1666,7 +1692,8 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
           const sig = await rejectSignature(req.hrActor, mailbox);
           // Wrap the HR-reviewed draft body in the branded rejection template.
           const bodyHtml = hrEmail.rejectionEmail({ role: job ? job.title : '', bodyHtml: String(req.body.body).slice(0, 8000), signature: sig });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] });
+          const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] });
           emailed = true;
           pushTimeline(row, { type: 'rejection', text: `Rejection email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
           await row.save();
@@ -1928,7 +1955,8 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
             taskDetailsHtml: task.details.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
             deadlineText: `${deadlineText} IST`, uploadUrl, signature: sig,
           });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml });
           emailed = true;
         }
       } catch (e) { console.error('[task] assign email failed:', e.message); }
@@ -1974,10 +2002,106 @@ router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (r
             taskDetailsHtml: String(t.details || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml });
           emailed = true;
         }
       } catch (e) { console.error('[task] reactivate email failed:', e.message); }
+    }
+    res.json({ ...row.toJSON(), emailed });
+  } catch (e) { next(e); }
+});
+
+// A reviewer (assigned interview-panel employee / HR / admin) submits feedback
+// on a candidate's task submission. Feedback is stored on the task and mirrored
+// into the candidate's feedback list. This marks the task review complete.
+router.post('/candidates/:id/task/:taskId/feedback', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const verdict = String(b.verdict || '').trim(); // e.g. 'strong' | 'good' | 'weak' | ''
+    const note = String(b.note || '').trim();
+    if (!note && !verdict) return res.status(400).json({ error: 'Please add your feedback.' });
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    // Permission: admins/HR schedulers always; otherwise must be an assigned reviewer.
+    const meId = String(req.hrActor.id);
+    const isReviewer = (tasks[idx].assignedIds || []).some((a) => String(a) === meId || String(a) === `admin:${meId}`);
+    if (!req.isHrAdmin && !canViewInternal(req) && !isReviewer) return res.status(403).json({ error: 'You don’t have permission to review this task.' });
+    const entry = { id: `tf${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, verdict, note, at: new Date().toISOString() };
+    const fbList = Array.isArray(tasks[idx].feedback) ? tasks[idx].feedback.slice() : [];
+    fbList.unshift(entry);
+    tasks[idx] = { ...tasks[idx], feedback: fbList, status: 'reviewed', reviewedAt: entry.at };
+    row.tasks = tasks; row.changed('tasks', true);
+    // Mirror into the candidate's general feedback list so it shows in Feedback tab.
+    const cfb = Array.isArray(row.feedback) ? row.feedback.slice() : [];
+    cfb.unshift({ id: `f${Date.now()}`, by: req.hrActor.name, byId: req.hrActor.id, verdict: verdict || 'note', note: `[Task review] ${note}`, at: entry.at, taskId: tasks[idx].id });
+    row.feedback = cfb; row.changed('feedback', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} submitted task feedback${verdict ? ` (${verdict})` : ''}.`, by: req.hrActor.name });
+    await row.save();
+    // Notify HR that the review is done.
+    try {
+      const notifyIds = new Set();
+      if (row.recruiterId) notifyIds.add(Number(row.recruiterId));
+      const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+      ((job && job.assignedHrIds) || []).forEach((id) => notifyIds.add(Number(id)));
+      notifyIds.delete(Number(req.hrActor.id));
+      for (const id of notifyIds) { if (id) await notify(id, { type: 'task', text: `${req.hrActor.name} reviewed ${row.name}'s task and submitted feedback.`, candidateId: row.id }); }
+    } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// A reviewer requests additional information from the candidate. Reopens the
+// task upload link (fresh 48h), emails the candidate (CC assigned HR) with the
+// message, and asks them to upload more files via the same link.
+router.post('/candidates/:id/task/:taskId/request-info', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const message = String((req.body || {}).message || '').trim();
+    if (!message) return res.status(400).json({ error: 'Please describe what additional information you need.' });
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    const meId = String(req.hrActor.id);
+    const isReviewer = (tasks[idx].assignedIds || []).some((a) => String(a) === meId || String(a) === `admin:${meId}`);
+    if (!req.isHrAdmin && !canViewInternal(req) && !isReviewer) return res.status(403).json({ error: 'You don’t have permission to review this task.' });
+    const now = Date.now();
+    // Reopen: clear submittedAt, set status info_requested, new 48h deadline.
+    tasks[idx] = { ...tasks[idx], status: 'info_requested', submittedAt: null, deadline: new Date(now + TASK_WINDOW_MS).toISOString(),
+      infoRequest: { message: message.slice(0, 2000), by: req.hrActor.name, at: new Date(now).toISOString(), respondedAt: null } };
+    row.tasks = tasks; row.changed('tasks', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} requested additional information from ${row.name} for the task.`, by: req.hrActor.name });
+    await row.save();
+
+    // Email the candidate (CC assigned HR).
+    let emailed = false;
+    if (row.email) {
+      try {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+        const mailbox = mailboxEmail(s);
+        if (token && mailbox) {
+          const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+          const sig = await rejectSignature(req.hrActor, mailbox);
+          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const t = tasks[idx];
+          const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+          const bodyHtml = hrEmail.taskAdditionalInfoRequest({
+            candidateName: row.name, role: job ? job.title : '',
+            messageHtml: message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
+          });
+          const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Additional information requested${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          emailed = true;
+        }
+      } catch (e) { console.error('[task] request-info email failed:', e.message); }
     }
     res.json({ ...row.toJSON(), emailed });
   } catch (e) { next(e); }

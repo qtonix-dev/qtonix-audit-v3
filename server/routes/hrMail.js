@@ -11,6 +11,24 @@ const router = require('express').Router();
 const { Op, Settings, HrCandidate, HrJobPost, HrUser, HrDirectorProfile, HrEmail, User } = require('../models');
 const hrEmail = require('../services/hrEmailTemplate');
 
+// Resolve the assigned-HR CC list for a candidate (recruiter + job's assigned
+// HR), so HR is copied on candidate-facing emails. Excludes the mailbox + the
+// candidate's own address.
+async function assignedHrCc(candidate, excludeEmail) {
+  const emails = new Set();
+  try {
+    if (candidate.recruiterId) { const u = await HrUser.findByPk(candidate.recruiterId); if (u && u.email) emails.add(u.email.toLowerCase()); }
+    if (candidate.jobPostId) {
+      const job = await HrJobPost.findByPk(candidate.jobPostId);
+      const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+      if (ids.length) { const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } }); staff.forEach((u) => { if (u.email) emails.add(u.email.toLowerCase()); }); }
+    }
+  } catch (e) { console.error('[cc] resolve failed:', e.message); }
+  if (excludeEmail) emails.delete(String(excludeEmail).toLowerCase());
+  if (candidate.email) emails.delete(String(candidate.email).toLowerCase());
+  return Array.from(emails);
+}
+
 // Build the signature block for recruitment emails from the acting HR person.
 // Falls back to the recruitment team identity when we can't resolve a name.
 async function actorSignature(hrActor, mailboxEmail) {
@@ -361,13 +379,14 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     const when = start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
     const emailed = [];
     const failed = [];
-    const sendTo = async (to, bodyHtml, subject) => {
-      try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject, attachments: buildIcs(to) }); emailed.push(to); }
+    const sendTo = async (to, bodyHtml, subject, cc) => {
+      try { await gmail.sendMessage(s, token, email, { from: email, to, cc: cc || undefined, bodyHtml, subject, attachments: buildIcs(to) }); emailed.push(to); }
       catch (e) { console.error('[interview] email to', to, 'failed:', e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message)); failed.push(to); }
     };
 
     const sig = await actorSignature(req.hrActor, email);
     const roleTitle = job ? job.title : '';
+    const candCc = await assignedHrCc(cand, email);
 
     // Candidate invite.
     if (b.sendEmail !== false && cand.email) {
@@ -376,7 +395,7 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
         whenText: when, durationMins: Number(b.durationMins) || 30, mode: b.mode || 'online',
         meetLink: event.meetLink, notes: b.notes || '', signature: sig,
       });
-      await sendTo(cand.email, bodyHtml, `Interview invitation${roleTitle ? ` — ${roleTitle}` : ''}`);
+      await sendTo(cand.email, bodyHtml, `Interview invitation${roleTitle ? ` — ${roleTitle}` : ''}`, candCc);
     }
 
     // Panel invites — each panelist gets the same event with the Meet link.
@@ -462,12 +481,13 @@ router.post('/candidates/:id/interview/:ivId/reschedule', requireHrAccess, requi
         const ics = gmail.buildIcsInvite({ uid: iv.iCalUID || `${iv.id}@qtonix`, summary: title, description: iv.notes || '', start: start.toISOString(), end: end.toISOString(), organizerEmail: email || (s.hrMailbox && s.hrMailbox.email) || '', organizerName: 'Qtonix Recruitment', attendees: [cand.email, ...panelists.map((p) => p.email)].filter(Boolean), meetLink: iv.meetLink, location: iv.meetLink || 'Online', timeZone: b.timeZone || 'Asia/Kolkata', sequence: 1 });
         return [{ filename: 'invite.ics', mimeType: 'text/calendar; method=REQUEST; charset=UTF-8', contentBase64: Buffer.from(ics, 'utf8').toString('base64') }];
       };
+      const rcandCc = await assignedHrCc(cand, email);
       const sendReschedule = async (to, recipientName, isPanel) => {
         const bodyHtml = hrEmail.interviewReschedule({
           recipientName, isPanel, candidateName: cand.name, role: roleTitle, roundLabel: iv.roundLabel || '',
           whenText: when, durationMins, mode: iv.mode || 'online', meetLink: iv.meetLink, notes: iv.notes || '', signature: sig,
         });
-        try { await gmail.sendMessage(s, token, email, { from: email, to, bodyHtml, subject: `Interview rescheduled${roleTitle ? ` — ${roleTitle}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
+        try { await gmail.sendMessage(s, token, email, { from: email, to, cc: (!isPanel ? rcandCc : undefined), bodyHtml, subject: `Interview rescheduled${roleTitle ? ` — ${roleTitle}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
         catch (e) { console.error('[interview] reschedule email to', to, 'failed:', e.message); failed.push(to); }
       };
       if (cand.email) await sendReschedule(cand.email, cand.name, false);

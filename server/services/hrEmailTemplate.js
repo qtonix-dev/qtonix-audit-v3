@@ -287,7 +287,42 @@ function shortlistedEmail({ candidateName, role, signature }) {
   });
 }
 
+// Acknowledgement after a candidate submits their assessment task (or the
+// requested additional information). Warm, no CTA.
+function taskReceived({ candidateName, role, isAdditional, signature }) {
+  return shell({
+    kicker: isAdditional ? 'Information Received' : 'Task Received',
+    headline: isAdditional ? 'Thanks — we\u2019ve got your files' : 'Thank you for your submission',
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: isAdditional
+      ? `Thank you for sending the additional information we requested${role ? ` for the <strong>${esc(role)}</strong> role` : ''}. We've received your files and our team will review them.`
+      : `Thank you for completing and submitting your assessment task${role ? ` for the <strong>${esc(role)}</strong> role` : ''}. We've received your files and our team will review your work.`,
+    outroHtml: `We'll get back to you if we need anything further. Thanks again for your effort and time.`,
+    signature,
+  });
+}
+
+// Interviewer requests additional information from the candidate. CTA links back
+// to the (reopened) task upload page so they can submit more files.
+function taskAdditionalInfoRequest({ candidateName, role, messageHtml, deadlineText, uploadUrl, signature }) {
+  return shell({
+    kicker: 'Additional Information Requested',
+    headline: 'We\u2019d like a bit more from you',
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `Thanks for your submission${role ? ` for the <strong>${esc(role)}</strong> role` : ''}. After reviewing it, our team would like some additional information.${messageHtml ? `<br><br><div style="background:#F4F7FE;border:1px solid #E2E9F8;border-radius:12px;padding:16px 18px;">${messageHtml}</div>` : ''}`,
+    details: [{ label: 'Submit by', value: esc(deadlineText) }, { label: 'How to submit', value: 'Upload your files on the secure link below' }],
+    ctaLabel: uploadUrl ? 'Upload additional files' : null,
+    ctaUrl: uploadUrl || null,
+    ctaNote: 'This link is active for 48 hours. You can upload multiple files.',
+    outroHtml: 'If you have any questions, just reply to this email. Thank you!',
+    signature,
+  });
+}
+
 module.exports = {
+  taskReceived, taskAdditionalInfoRequest,
   shortlistedEmail,
   taskAssignment,
   rejectionEmail,
