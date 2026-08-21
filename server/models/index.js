@@ -855,6 +855,26 @@ const ScheduledEmail = sequelize.define(
 );
 ScheduledEmail.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// De-duplication log for the Sales-CRM automated emails (reminders, target
+// congratulations, encouragement nudges). Each send records a unique dedupeKey
+// like 'target_hit:42:2026-08' or 'reminder:act123' so the background job never
+// sends the same email twice.
+const CrmEmailLog = sequelize.define(
+  'CrmEmailLog',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    dedupeKey: { type: DataTypes.STRING(160), allowNull: false, unique: true },
+    type: { type: DataTypes.STRING(40), defaultValue: '' }, // reminder | target_hit | team_target_hit | push
+    userId: { type: DataTypes.INTEGER, allowNull: true },
+    toEmail: { type: DataTypes.STRING(255), defaultValue: '' },
+    sentAt: { type: DataTypes.DATE, allowNull: true },
+    status: { type: DataTypes.STRING(20), defaultValue: 'sent' }, // sent | failed
+    error: { type: DataTypes.TEXT, allowNull: true },
+  },
+  { tableName: 'crm_email_logs', indexes: [{ name: 'idx_crm_email_key', fields: ['dedupeKey'], unique: true }, { name: 'idx_crm_email_type', fields: ['type'] }] }
+);
+CrmEmailLog.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 // Additional linked mailboxes (primarily for admins who manage several inboxes
 // like accounts@, louis@, etc). Each has a friendly label and its own signature
 // override. The user's own primary mailbox still lives on the User row; these
@@ -1657,7 +1677,7 @@ CrmSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, t
 
 module.exports = {
   sequelize, Sequelize, Op,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

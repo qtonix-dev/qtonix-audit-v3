@@ -209,6 +209,47 @@ router.get('/mailboxes', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- CRM automated-mail routing (admin only) -------------------------------
+// Which connected mailbox each category of automated CRM email is sent from.
+// Categories: 'reminders' (task/call), 'congrats' (target/team congratulations).
+// Defaults: reminders → sales@qtonix.com, congrats → adam@qtonix.com.
+const CRM_MAIL_DEFAULTS = { reminders: 'sales@qtonix.com', congrats: 'adam@qtonix.com' };
+
+async function connectedAdminEmails(u) {
+  // Every mailbox the admin can send from (primary + connected extras).
+  const list = [];
+  if (u.gmailConnectedEmail && u.gmailRefreshToken) list.push({ email: u.gmailConnectedEmail, label: 'Me (primary)' });
+  const extras = await Mailbox.findAll({ where: { userId: u.id, active: true }, order: [['label', 'ASC']] });
+  extras.forEach((m) => { if (m.email && m.refreshToken) list.push({ email: m.email, label: m.label || m.email }); });
+  return list;
+}
+
+router.get('/crm-mail-routing', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const u = await User.findByPk(req.user.id);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const routing = { ...CRM_MAIL_DEFAULTS, ...((s && s.crmConfig && s.crmConfig.mailRouting) || {}) };
+    res.json({ routing, defaults: CRM_MAIL_DEFAULTS, available: await connectedAdminEmails(u) });
+  } catch (e) { next(e); }
+});
+
+router.patch('/crm-mail-routing', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = { ...(s.crmConfig || {}) };
+    const cur = { ...CRM_MAIL_DEFAULTS, ...(cfg.mailRouting || {}) };
+    const b = req.body || {};
+    if (typeof b.reminders === 'string') cur.reminders = b.reminders.trim().toLowerCase();
+    if (typeof b.congrats === 'string') cur.congrats = b.congrats.trim().toLowerCase();
+    cfg.mailRouting = cur;
+    s.crmConfig = cfg; s.changed('crmConfig', true);
+    await s.save();
+    res.json({ ok: true, routing: cur });
+  } catch (e) { next(e); }
+});
+
 /** DELETE /api/gmail/mailboxes/:id — unlink an extra mailbox (admin). */
 router.delete('/mailboxes/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {

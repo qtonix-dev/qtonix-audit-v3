@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v256';
+const APP_VERSION = 'v258';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -566,6 +566,10 @@ connectWithRetry()
       // Unopened-email nudge (flags tracked emails not opened within 24h).
       try { require('./jobs/unopenedEmail').start(require('./models')); }
       catch (e) { console.error('[unopened-email] not started:', e.message); }
+      // Sales-CRM automated emails (activity reminders, target congratulations,
+      // encouragement nudges) — sent from the admin mailbox.
+      try { require('./jobs/crmReminders').start(require('./models')); }
+      catch (e) { console.error('[crm-mail] not started:', e.message); }
     });
   })
   .catch((e) => {

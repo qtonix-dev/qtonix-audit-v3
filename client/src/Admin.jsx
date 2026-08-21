@@ -2223,8 +2223,56 @@ function AdminMailboxes({ say }) {
         ))}
       </div>
       <div className="flex gap-2">
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Accounts)" className={inputCls} />
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Sales)" className={inputCls} />
         <Btn onClick={link}>+ Link mailbox</Btn>
+      </div>
+
+      <CrmMailRouting say={say} mailboxes={data.mailboxes || []} />
+    </div>
+  );
+}
+
+// Admin-only: choose which mailbox each type of automated Sales-CRM email is
+// sent from (task/call reminders vs target congratulations).
+function CrmMailRouting({ say, mailboxes }) {
+  const [data, setData] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const load = () => api('/gmail/crm-mail-routing').then(setData).catch(() => {});
+  useEffect(() => { load(); }, [mailboxes.length]);
+  if (!data) return null;
+  // Connected emails available to send from.
+  const options = (data.available || []).map((m) => m.email);
+  const setRoute = async (key, email) => {
+    setSaving(true);
+    try { const r = await api('/gmail/crm-mail-routing', { method: 'PATCH', body: JSON.stringify({ [key]: email }) }); setData((d) => ({ ...d, routing: r.routing })); say && say('Saved.'); }
+    catch (e) { say && say(e.message); } finally { setSaving(false); }
+  };
+  const Row = ({ label, hint, k }) => {
+    const cur = data.routing[k] || '';
+    const connected = options.includes(cur);
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="text-xs font-bold text-[#050A1F]">{label}</div>
+          <div className="text-[11px] text-slate-400">{hint}</div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <select value={connected ? cur : ''} onChange={(e) => setRoute(k, e.target.value)} disabled={saving} className={inputCls + ' text-xs py-1.5'} style={{ minWidth: 200 }}>
+            <option value="">{cur ? `${cur} (not connected)` : 'Select a mailbox…'}</option>
+            {options.map((e) => <option key={e} value={e}>{e}</option>)}
+          </select>
+          {!connected && cur && <span className="text-[10px] font-bold text-amber-600" title="This mailbox isn't connected yet — link it above.">⚠ not linked</span>}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="mt-6 border-t border-slate-100 pt-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">Automated email senders</div>
+      <div className="text-xs text-slate-500 mb-3">Choose which connected mailbox each type of automated Sales-CRM email is sent from. Link the mailbox above first (e.g. Sales → sales@qtonix.com), then select it here.</div>
+      <div className="space-y-2">
+        <Row label="Task & Call reminders" hint="Sent to the agent 15 min before a scheduled task/call · manager CC'd" k="reminders" />
+        <Row label="Target congratulations" hint="Agent & team target wins + encouragement nudges · signed by the Founder/CEO · adam@qtonix.com always CC'd" k="congrats" />
       </div>
     </div>
   );
