@@ -27,6 +27,7 @@ const TAB_ICONS = {
   mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M22 6l-10 7L2 6',
   timeline: 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z',
   attachments: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+  task: 'M9 11l3 3 8-8 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
 };
 function TabIcon({ name, active }) {
   const d = TAB_ICONS[name]; if (!d) return null;
@@ -56,6 +57,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const [showReject, setShowReject] = useState(false);
   const [rescoring, setRescoring] = useState(false);
   const [showAssignTask, setShowAssignTask] = useState(false);
+  const [showAi, setShowAi] = useState(false);
   const back = onBack || onClose || (() => {});
 
   const load = () => hrApi(`/candidates/${candidateId}`).then(setC).catch((e) => setErr(e.message));
@@ -132,7 +134,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
     return !!hasProgress;
   })();
   const effectiveTab = (tab === 'offer' && !offerStageActive) ? 'resume' : tab;
-  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['ai', 'AI Recruiter'], ['comments', 'Comments'], ['feedback', 'Feedback'], ['activity', 'Activity'], ...(c.canViewInternal !== false && offerStageActive ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
+  const hasTasks = Array.isArray(c.tasks) && c.tasks.length > 0;
+  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['comments', 'Comments'], ['feedback', 'Feedback'], ...(hasTasks ? [['task', 'Task']] : []), ['activity', 'Activity'], ...(c.canViewInternal !== false && offerStageActive ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
 
   return (
     <div>
@@ -175,6 +178,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setShowAi(true)} className="rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-bold text-violet-600">🤖 AI Recruiter</button>
               <button onClick={() => setShowEdit(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✎ Edit</button>
               {isAdmin && <button onClick={delCandidate} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500">🗑 Delete</button>}
             </div>
@@ -183,7 +187,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
           {/* Actions */}
           <div className="flex flex-wrap gap-2 mt-4">
             <button onClick={() => setShowFeedback(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">💬 Add Feedback</button>
-            <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">✅ Add Task</button>
+            <button onClick={() => setActivityModal('task')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📝 Add Notes</button>
             <button onClick={() => setActivityModal('call')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📞 Add Call</button>
             <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule interview</button>
             <button onClick={() => setShowAssignTask(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📋 Assign task</button>
@@ -209,7 +213,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         {/* Tabs */}
         <div className="flex gap-0.5 px-3 border-b border-slate-100 overflow-x-auto">
           {TABS.map(([id, label]) => {
-            const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : 0;
+            const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : id === 'task' ? (c.tasks || []).length : 0;
             return (
               <button key={id} onClick={() => setTab(id)}
                 className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${effectiveTab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
@@ -224,9 +228,9 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         <div className="p-6 min-h-[340px]">
           {effectiveTab === 'resume' && <ResumeTab c={c} />}
           {effectiveTab === 'application' && <ApplicationTab c={c} a={a} job={job} onSaved={load} />}
-          {effectiveTab === 'ai' && <AiTab c={c} reload={load} setErr={setErr} />}
           {effectiveTab === 'comments' && <CommentsTab c={c} reload={load} />}
           {effectiveTab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
+          {effectiveTab === 'task' && <TaskSubmissions c={c} reload={load} />}
           {effectiveTab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} onCompleteInterview={completeInterview} />}
           {effectiveTab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
           {effectiveTab === 'mail' && <MailTab c={c} />}
@@ -239,9 +243,14 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify({ ...payload, interviewId: feedbackIv ? feedbackIv.id : undefined, roundLabel: feedbackIv ? feedbackIv.roundLabel : undefined, round: feedbackIv ? feedbackIv.round : undefined }) })); setShowFeedback(false); setFeedbackIv(null); setTab('feedback'); }} />}
       {showInterview && <InterviewModal candidateId={c.id} candidateStage={c.stage} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
-      {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('activity'); }} />}
+      {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('comments'); }} />}
       {showReject && <RejectModal candidateId={c.id} candidateEmail={c.email} onClose={() => setShowReject(false)} onReject={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify(payload) })); setShowReject(false); }} />}
       {showAssignTask && <AssignTaskModal candidate={c} onClose={() => setShowAssignTask(false)} onDone={() => { setShowAssignTask(false); load(); }} />}
+      {showAi && (
+        <Modal title="AI Recruiter" onClose={() => setShowAi(false)} wide>
+          <AiTab c={c} reload={load} setErr={setErr} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -442,7 +451,18 @@ function CommentsTab({ c, reload }) {
   const [mentionIdx, setMentionIdx] = useState(0);
   const taRef = useRef(null);
   const canInternal = c.canViewInternal !== false; // HR/admin only
-  const list = c.comments || [];
+  const comments = c.comments || [];
+  // Merge in activities (notes/tasks/calls) so everything added or scheduled
+  // shows in this single listing, newest first.
+  const activities = (c.activities || []).map((a) => ({
+    id: `act:${a.id}`, kind: 'activity', actKind: a.kind, by: a.by || 'Team',
+    text: a.kind === 'call'
+      ? `📞 Call${a.agenda ? ` — ${a.agenda}` : ''}${a.date ? ` (${a.date}${a.time ? ` ${a.time}` : ''})` : ''}${a.note ? `\n${a.note}` : ''}`
+      : `📝 Note${a.title ? ` — ${a.title}` : ''}${a.date ? ` (${a.date})` : ''}${a.description ? `\n${a.description}` : ''}${a.assignedToName ? `\nAssigned to ${a.assignedToName}` : ''}${a.priority ? ` · ${a.priority} priority` : ''}`,
+    at: a.at || a.date, done: a.done, activity: true,
+  }));
+  const list = [...comments.map((cm) => ({ ...cm, kind: 'comment' })), ...activities]
+    .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
   useEffect(() => { hrApi('/employees').then((r) => setEmps((r || []).filter((e) => e.active && !e.isDirector))).catch(() => {}); }, []);
   // Detect an in-progress @mention at the caret and surface matching employees.
   const onText = (e) => {
@@ -530,13 +550,14 @@ function CommentsTab({ c, reload }) {
             <div key={cm.id} className="flex gap-3">
               <span className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5" style={{ background: colorFor(cm.by) }}>{initials(cm.by)}</span>
               <div className="flex-1 min-w-0">
-                <div className={`rounded-2xl rounded-tl-sm border p-3 ${cm.internal ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-white'}`}>
+                <div className={`rounded-2xl rounded-tl-sm border p-3 ${cm.activity ? 'border-violet-100 bg-violet-50/40' : cm.internal ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-white'}`}>
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <div className="text-sm font-bold text-slate-700 flex items-center gap-2 min-w-0">
                       <span className="truncate">{cm.by}</span>
+                      {cm.activity && <span className="rounded-full bg-violet-100 text-violet-700 px-2 py-0.5 text-[10px] font-bold shrink-0">{cm.actKind === 'call' ? 'Call' : 'Note'}</span>}
                       {cm.internal && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold shrink-0">🔒 Internal</span>}
                     </div>
-                    {editId !== cm.id && <button onClick={() => { setEditId(cm.id); setEditText(cm.text); }} className="text-[11px] font-bold text-slate-400 hover:text-orange-600 shrink-0">Edit</button>}
+                    {!cm.activity && editId !== cm.id && <button onClick={() => { setEditId(cm.id); setEditText(cm.text); }} className="text-[11px] font-bold text-slate-400 hover:text-orange-600 shrink-0">Edit</button>}
                   </div>
                   {editId === cm.id ? (
                     <div>
@@ -546,7 +567,7 @@ function CommentsTab({ c, reload }) {
                         <button onClick={() => saveEdit(cm.id)} className="text-xs font-bold text-orange-600">Save</button>
                       </div>
                     </div>
-                  ) : <div className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{renderText(cm.text)}</div>}
+                  ) : <div className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{cm.activity ? cm.text : renderText(cm.text)}</div>}
                 </div>
                 <div className="text-[11px] text-slate-400 mt-1 ml-1">{fmt(cm.at)}{cm.edited ? ' · edited' : ''}</div>
               </div>
@@ -1097,8 +1118,6 @@ function AttachmentsTab({ c, reload }) {
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
 
-      <TaskSubmissions c={c} reload={reload} />
-
       {picking && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={() => setPicking(false)}>
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -1264,7 +1283,7 @@ function ActivityModal({ kind, candidateId, onClose, onSaved }) {
     } catch (e) { alert(e.message); setBusy(false); }
   };
   return (
-    <Modal title={isCall ? '📞 Add Call' : '✅ Add Task'} onClose={onClose}>
+    <Modal title={isCall ? '📞 Add Call' : '📝 Add Notes'} onClose={onClose}>
       <div className="flex gap-2 mb-4">
         {['scheduled', 'done'].map((m) => (
           <button key={m} onClick={() => setMode(m)} className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-bold border capitalize ${mode === m ? 'bg-[#050A1F] text-white border-transparent' : 'text-slate-500 border-slate-200'}`}>{m}</button>
@@ -1282,7 +1301,7 @@ function ActivityModal({ kind, candidateId, onClose, onSaved }) {
         </div>
       ) : (
         <div className="space-y-3">
-          <div><Lbl>Task name</Lbl><input className={inp} value={f.title} onChange={(e) => set('title', e.target.value)} /></div>
+          <div><Lbl>Note title</Lbl><input className={inp} value={f.title} onChange={(e) => set('title', e.target.value)} /></div>
           <div><Lbl>Date</Lbl><input type="date" className={inp} value={f.date} onChange={(e) => set('date', e.target.value)} /></div>
           <div><Lbl>Description</Lbl><textarea rows={2} className={inp} value={f.description} onChange={(e) => set('description', e.target.value)} /></div>
           <div className="grid grid-cols-2 gap-3">

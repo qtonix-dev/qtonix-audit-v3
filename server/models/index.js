@@ -1475,7 +1475,8 @@ HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 // In-app notifications for HR users (mentions, new applications, interview reminders).
 const HrNotification = sequelize.define('HrNotification', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  userId: { type: DataTypes.INTEGER, allowNull: false }, // recipient HrUser
+  userId: { type: DataTypes.INTEGER, allowNull: false }, // recipient id (HrUser.id, or CRM User.id when actorKind='admin')
+  actorKind: { type: DataTypes.STRING(10), defaultValue: 'hr' }, // 'hr' | 'admin' — namespaces the id spaces
   type: { type: DataTypes.STRING(40), defaultValue: 'info' }, // mention | application | interview | offer | info
   text: { type: DataTypes.STRING(500), allowNull: false },
   candidateId: { type: DataTypes.INTEGER, allowNull: true },

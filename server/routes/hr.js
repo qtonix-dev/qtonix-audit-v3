@@ -1549,16 +1549,17 @@ async function hrLog(req, action, target) {
 async function notify(userId, { type, text, candidateId }) {
   try {
     if (!userId) return;
-    // Directors (CRM admins) are referenced as 'admin:<id>' in panels; they don't
-    // receive in-app HR notifications, so skip non-numeric ids.
-    if (!/^\d+$/.test(String(userId))) return;
+    // Determine recipient scope. 'admin:<id>' → a CRM admin; a bare number → HR.
+    let actorKind = 'hr';
+    let id = userId;
+    const sid = String(userId);
+    if (sid.startsWith('admin:')) { actorKind = 'admin'; id = sid.slice(6); }
+    if (!/^\d+$/.test(String(id))) return;
     const body = String(text || '').slice(0, 500);
-    // Dedupe: don't recreate an identical notification for the same user that
-    // already exists unread (background jobs re-run and would otherwise pile up
-    // the same alert every cycle).
-    const dup = await HrNotification.findOne({ where: { userId, text: body, read: false } });
+    // Dedupe: don't recreate an identical unread notification for the same user.
+    const dup = await HrNotification.findOne({ where: { userId: id, actorKind, text: body, read: false } });
     if (dup) return;
-    await HrNotification.create({ userId, type: type || 'info', text: body, candidateId: candidateId || null });
+    await HrNotification.create({ userId: id, actorKind, type: type || 'info', text: body, candidateId: candidateId || null });
   } catch (e) { console.error('[notify] failed:', e.message); }
 }
 // Resolve @mentions in a comment body to HrUsers and notify them.
@@ -1921,7 +1922,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
       assignedNames: assignees.map((a) => a.name),
       token: crypto.randomBytes(12).toString('hex'),
       createdBy: req.hrActor.name,
-      createdById: req.hrActor.id,
+      createdById: req.hrActor.kind === 'admin' ? `admin:${req.hrActor.id}` : req.hrActor.id,
       createdAt: new Date(now).toISOString(),
       deadline: new Date(now + TASK_WINDOW_MS).toISOString(),
       status: 'pending',
@@ -2863,19 +2864,29 @@ router.get('/my-schedule-requests', requireHrAccess, async (req, res, next) => {
 });
 
 // ---- Notifications (in-app bell) ----
+// Resolve the current actor's notification scope: HR staff use their HrUser.id;
+// admins use their CRM User.id under the 'admin' namespace.
+function notifScope(req) {
+  if (req.hrActor && req.hrActor.kind === 'admin') return { userId: req.hrActor.id, actorKind: 'admin' };
+  if (req.hrUser) return { userId: req.hrUser.id, actorKind: 'hr' };
+  return null;
+}
+
 router.get('/notifications', requireHrAccess, async (req, res, next) => {
   try {
-    if (req.hrActor.kind !== 'hr') return res.json({ notifications: [], unread: 0 });
-    const rows = await HrNotification.findAll({ where: { userId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 });
-    const unread = await HrNotification.count({ where: { userId: req.hrUser.id, read: false } });
+    const scope = notifScope(req);
+    if (!scope) return res.json({ notifications: [], unread: 0 });
+    const rows = await HrNotification.findAll({ where: scope, order: [['createdAt', 'DESC']], limit: 50 });
+    const unread = await HrNotification.count({ where: { ...scope, read: false } });
     res.json({ notifications: rows.map((r) => r.toJSON()), unread });
   } catch (e) { next(e); }
 });
 router.post('/notifications/read', requireHrAccess, async (req, res, next) => {
   try {
-    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
+    const scope = notifScope(req);
+    if (!scope) return res.json({ ok: true });
     const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
-    const where = { userId: req.hrUser.id };
+    const where = { ...scope };
     if (ids) where.id = ids;
     await HrNotification.update({ read: true }, { where });
     res.json({ ok: true });
@@ -2884,16 +2895,18 @@ router.post('/notifications/read', requireHrAccess, async (req, res, next) => {
 // Delete a single notification (persists — won't reappear on refresh).
 router.delete('/notifications/:id', requireHrAccess, async (req, res, next) => {
   try {
-    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
-    await HrNotification.destroy({ where: { id: req.params.id, userId: req.hrUser.id } });
+    const scope = notifScope(req);
+    if (!scope) return res.json({ ok: true });
+    await HrNotification.destroy({ where: { ...scope, id: req.params.id } });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
 // Clear all of my notifications.
 router.post('/notifications/clear', requireHrAccess, async (req, res, next) => {
   try {
-    if (req.hrActor.kind !== 'hr') return res.json({ ok: true });
-    await HrNotification.destroy({ where: { userId: req.hrUser.id } });
+    const scope = notifScope(req);
+    if (!scope) return res.json({ ok: true });
+    await HrNotification.destroy({ where: scope });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

@@ -265,15 +265,18 @@ router.post('/task/:token/submit', async (req, res, next) => {
     try {
       const hrRoute = require('./hr');
       if (hrRoute.notify) {
-        const notifyIds = new Set();
-        for (const aid of (task.assignedIds || [])) { if (!String(aid).startsWith('admin:')) notifyIds.add(Number(aid)); }
+        const notifyIds = new Set(); const adminIds = new Set();
+        for (const aid of (task.assignedIds || [])) { const s2 = String(aid); if (s2.startsWith('admin:')) adminIds.add(s2); else notifyIds.add(Number(aid)); }
         if (cand.recruiterId) notifyIds.add(Number(cand.recruiterId));
         const jids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
         jids.forEach((id) => notifyIds.add(Number(id)));
+        // The task creator should also hear about it (could be an admin).
+        if (task.createdById != null) { const cs = String(task.createdById); if (cs.startsWith('admin:')) adminIds.add(cs); else if (/^\d+$/.test(cs)) notifyIds.add(Number(cs)); }
         const msg = isAdditional
           ? `${cand.name} submitted the additional information you requested — please review and submit your feedback.`
           : `${cand.name} submitted their assessment task — please review and submit your feedback.`;
         for (const id of notifyIds) { if (id) await hrRoute.notify(id, { type: 'task', text: msg, candidateId: cand.id }); }
+        for (const aid of adminIds) { await hrRoute.notify(aid, { type: 'task', text: msg, candidateId: cand.id }); }
       }
     } catch { /* best-effort */ }
 
