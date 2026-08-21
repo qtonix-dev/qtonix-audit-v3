@@ -118,6 +118,15 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   };
   const moveNext = () => { if (nextStage) moveToStage(nextStage.id); };
   const reject = () => setShowReject(true);
+  const toggleCold = async () => {
+    if (!c.cold) {
+      const reason = window.prompt('Mark this candidate as cold (parked, no action needed). Add an optional note:', '') ;
+      if (reason === null) return; // cancelled
+      try { await act(() => hrApi(`/candidates/${c.id}/cold`, { method: 'POST', body: JSON.stringify({ cold: true, reason }) })); } catch {}
+    } else {
+      try { await act(() => hrApi(`/candidates/${c.id}/cold`, { method: 'POST', body: JSON.stringify({ cold: false }) })); } catch {}
+    }
+  };
 
   // The Offer tab belongs to the offer process — show it only when the candidate
   // is in an Offer/Hired stage, or an offer already has real activity. This keeps
@@ -158,6 +167,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={rescoring ? 'animate-spin' : ''}><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
                   </button>
                   {c.rejected && <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-[10px] font-bold">Rejected</span>}
+                  {c.cold && !c.rejected && <span className="rounded-full bg-cyan-100 text-cyan-700 px-2 py-0.5 text-[10px] font-bold">❄️ Cold</span>}
                   {curStage && !c.rejected && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: curStage.color + '18', color: curStage.color }}>{curStage.label}</span>}
                 </div>
                 <div className="mt-1 text-sm text-slate-500 space-y-0.5">
@@ -192,6 +202,9 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             <button onClick={() => setShowInterview(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📅 Schedule interview</button>
             <button onClick={() => setShowAssignTask(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">📋 Assign task</button>
             <button onClick={reject} disabled={c.rejected} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">⛔ Reject</button>
+            {c.cold
+              ? <button onClick={toggleCold} className="rounded-lg border border-cyan-300 px-3 py-1.5 text-xs font-bold text-cyan-700 bg-cyan-50">☀️ Reactivate</button>
+              : <button onClick={toggleCold} disabled={c.rejected} className="rounded-lg border border-cyan-200 px-3 py-1.5 text-xs font-bold text-cyan-600 disabled:opacity-50">❄️ Mark cold</button>}
             {nextStage && !c.rejected && <button onClick={moveNext} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Move to {nextStage.label} →</button>}
           </div>
           {err && <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">{err}</div>}
@@ -199,6 +212,12 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
             <div className="mt-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2.5 flex items-start gap-2">
               <span className="shrink-0 mt-0.5">⛔</span>
               <span className="flex-1"><b>Rejected{c.rejectedAt ? ` on ${new Date(c.rejectedAt).toLocaleDateString()}` : ''}.</b> {c.rejectionReason ? <span>Reason: {c.rejectionReason}</span> : <span className="text-red-400">No reason recorded.</span>}</span>
+            </div>
+          )}
+          {c.cold && !c.rejected && (
+            <div className="mt-3 rounded-lg bg-cyan-50 border border-cyan-200 text-cyan-800 text-sm px-3 py-2.5 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5">❄️</span>
+              <span className="flex-1"><b>Cold{c.coldAt ? ` since ${new Date(c.coldAt).toLocaleDateString()}` : ''}.</b> Parked — no action needed until reactivated.{c.coldReason ? <span> Note: {c.coldReason}</span> : ''}</span>
             </div>
           )}
           {offerNotice && (

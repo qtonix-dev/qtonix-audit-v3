@@ -1452,6 +1452,11 @@ const HrCandidate = sequelize.define('HrCandidate', {
   // Set true once the "resume shortlisted" auto-email has been sent, so moving
   // between later stages (or back and forward) never re-sends it.
   shortlistEmailSent: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // "Cold" candidate — parked (didn't respond / position paused). No action
+  // needed; excluded from active pipeline attention until reactivated.
+  cold: { type: DataTypes.BOOLEAN, defaultValue: false },
+  coldAt: { type: DataTypes.DATE, allowNull: true },
+  coldReason: { type: DataTypes.STRING(300), defaultValue: '' },
   // interviews: [...]
   interviews: { type: DataTypes.JSON, defaultValue: [] },
   // activities: [{ id, kind:'task'|'call', mode:'scheduled'|'done', title/agenda,

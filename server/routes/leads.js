@@ -289,10 +289,13 @@ router.get('/', requireAuth, async (req, res, next) => {
       }
     }
     // "untouched": no activity for 3+ days (stale) — used by the dashboard box.
+    // Leads that are Not interested / Cold / Lost / Released need no follow-up,
+    // so they're never counted as untouched.
     if (untouched) {
       const days = untouched === '7' ? 7 : 3;
       const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       where.lastActivityAt = { [Op.lt]: cutoff };
+      where.status = { ...(where.status || {}), [Op.notIn]: ['ni', 'cold', 'lost', 'release'] };
     }
     if (q) {
       const like = { [Op.like]: `%${q}%` };
@@ -1082,13 +1085,16 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       if (!isConverted && !isProspect) {
         totalLeads++;
         const last = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
+        // Leads that are Not interested / Cold / Lost / Released need no
+        // follow-up, so they're never flagged untouched.
+        const noFollowUp = ['ni', 'cold', 'lost', 'release'].includes(l.status);
         // A lead with a scheduled future call/task is being handled as agreed —
         // e.g. the customer asked for a call in 15 days — so it must NOT show as
         // untouched even though nothing's happened in the last 3 days. Only flag
         // it when there's no pending future activity to wait on. Back-dated
         // leads DO count — their untouched clock runs from the entry date
         // (createdAt/lastActivityAt), not the historical generated date.
-        if (last && last < in3d && !hasPendingFutureActivity(l)) {
+        if (!noFollowUp && last && last < in3d && !hasPendingFutureActivity(l)) {
           untouched++;
           if (untouchedList.length < 8) untouchedList.push(leadBrief(l));
         }

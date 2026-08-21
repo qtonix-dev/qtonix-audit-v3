@@ -1373,6 +1373,11 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     // rejected-type stage (covers older data rejected before the flag existed).
     const REJECTED_STAGES = new Set(['rejected', 'reject', 'declined', 'disqualified']);
     const isRejected = (r) => r.rejected || REJECTED_STAGES.has(String(r.stage || '').toLowerCase());
+    // Cold candidates are parked; ?cold=only shows just them, ?cold=hide removes
+    // them from the list. Default keeps them (badged) so they stay findable.
+    const coldMode = String(req.query.cold || '').toLowerCase();
+    if (coldMode === 'only') rows = rows.filter((r) => r.cold && !isRejected(r));
+    else if (coldMode === 'hide') rows = rows.filter((r) => !r.cold);
     if (rejectedMode === 'only') rows = rows.filter(isRejected);
     else if (hiredMode === 'only') rows = rows.filter((r) => !isRejected(r) && isHired(r));
     else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !isRejected(r));
@@ -1668,6 +1673,24 @@ router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) =>
 });
 
 // Reject a candidate.
+// Mark a candidate "cold" (parked — didn't respond / position paused) or
+// reactivate them. Cold candidates need no action and are excluded from active
+// pipeline attention until reopened.
+router.post('/candidates/:id/cold', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const makeCold = req.body.cold !== false; // default true
+    row.cold = makeCold;
+    row.coldAt = makeCold ? new Date() : null;
+    row.coldReason = makeCold ? String(req.body.reason || '').slice(0, 300) : '';
+    pushTimeline(row, { type: 'stage', text: makeCold ? `${req.hrActor.name} marked ${row.name} as cold${req.body.reason ? ` — ${req.body.reason}` : ''}.` : `${req.hrActor.name} reactivated ${row.name} from cold.`, by: req.hrActor.name });
+    await row.save();
+    hrLog(req, 'candidate.cold', `${row.name} → ${makeCold ? 'cold' : 'active'}`);
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);

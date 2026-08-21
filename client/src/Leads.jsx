@@ -6173,6 +6173,8 @@ function DealsPipeline({ user, onOpenLead }) {
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState(null);
   const [period, setPeriod] = useState('this_month'); // this_month | last_month | all
+  const [stageSearch, setStageSearch] = useState({}); // { [stageId]: query } for busy stages
+  const [moveFor, setMoveFor] = useState(null); // deal to move via popup
 
   const load = async () => {
     setLoading(true);
@@ -6246,7 +6248,9 @@ function DealsPipeline({ user, onOpenLead }) {
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {stages.map((s) => {
-          const col = shownDeals.filter((d) => d.stage === s.id);
+          const colAll = shownDeals.filter((d) => d.stage === s.id);
+          const sq = (stageSearch[s.id] || '').trim().toLowerCase();
+          const col = sq ? colAll.filter((d) => `${d.name || ''} ${d.leadName || ''} ${d.service || ''} ${d.ownerName || ''}`.toLowerCase().includes(sq)) : colAll;
           return (
             <div key={s.id}
               onDragOver={(e) => e.preventDefault()}
@@ -6258,12 +6262,22 @@ function DealsPipeline({ user, onOpenLead }) {
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
                   <span className="text-sm font-extrabold text-[#050A1F]">{s.label}</span>
-                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{colAll.length}</span>
                 </div>
-                <span className="text-[11px] font-bold text-slate-500">{col.length ? col[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</span>
+                <span className="text-[11px] font-bold text-slate-500">{colAll.length ? colAll[0].currency || '' : ''} {stageTotal(s.id).toLocaleString()}</span>
               </div>
 
+              {/* Search within a busy stage (more than 4 deals). */}
+              {colAll.length > 4 && (
+                <div className="px-1 pb-2">
+                  <input value={stageSearch[s.id] || ''} onChange={(e) => setStageSearch((m) => ({ ...m, [s.id]: e.target.value }))}
+                    placeholder={`Search ${s.label.toLowerCase()}…`}
+                    className="w-full rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                </div>
+              )}
+
               <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+                {col.length === 0 && sq && <div className="text-[11px] text-slate-400 px-2 py-3 text-center">No matches in this stage.</div>}
                 {col.map((d) => {
                   const pinfo = paidInfo(d);
                   const pct = pinfo ? pinfo.pct : (d.stage === 'closed_won' ? 100 : 0);
@@ -6276,7 +6290,11 @@ function DealsPipeline({ user, onOpenLead }) {
                     <div key={d.id} draggable
                       onDragStart={() => setDragId(d.id)}
                       onClick={() => onOpenLead(d.leadId, 'deals')}
-                      className="bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all">
+                      className="group bg-white rounded-2xl border border-slate-100 p-4 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all relative">
+                      {/* Single-click move button (handy across many stages) */}
+                      <button onClick={(e) => { e.stopPropagation(); setMoveFor(d); }} title="Move to stage" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
+                      </button>
                       {/* Priority chip */}
                       <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-md mb-2" style={{ background: prio.bg, color: prio.fg }}>{prio.label}</span>
 
@@ -6313,11 +6331,38 @@ function DealsPipeline({ user, onOpenLead }) {
                     </div>
                   );
                 })}
-                {col.length === 0 && <div className="text-[11px] text-slate-300 text-center py-10 border-2 border-dashed border-slate-200 rounded-2xl">Drop deals here</div>}
+                {col.length === 0 && !sq && <div className="text-[11px] text-slate-300 text-center py-10 border-2 border-dashed border-slate-200 rounded-2xl">Drop deals here</div>}
               </div>
             </div>
           );
         })}
+      </div>
+      {moveFor && <DealMoveStageModal deal={moveFor} stages={stages} onClose={() => setMoveFor(null)} onMoved={(stage) => { moveDeal(moveFor, stage); setMoveFor(null); }} />}
+    </div>
+  );
+}
+
+// Single-click stage move for a deal — a popup listing all stages (handy when
+// there are many stages and dragging a card 3 columns across is fiddly). Mirrors
+// the HRMS pipeline's MoveStageModal.
+function DealMoveStageModal({ deal, stages, onClose, onMoved }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <div className="text-base font-extrabold text-[#050A1F]">Move deal</div>
+          <div className="text-xs text-slate-400">{deal.name}{deal.leadName ? ` · ${deal.leadName}` : ''} — pick a stage</div>
+        </div>
+        <div className="p-3 max-h-80 overflow-auto">
+          {stages.map((s) => (
+            <button key={s.id} onClick={() => onMoved(s.id)} disabled={s.id === deal.stage}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left mb-1 ${s.id === deal.stage ? 'bg-slate-50 cursor-default' : 'hover:bg-slate-50'}`}>
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: s.color }} />
+              <span className="text-sm font-semibold text-slate-700 flex-1">{s.label}</span>
+              {s.id === deal.stage && <span className="text-[10px] font-bold text-slate-400">Current</span>}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

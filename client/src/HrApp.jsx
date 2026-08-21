@@ -1996,7 +1996,7 @@ function RecruitPipeline({ jobs, scope, onDetailOpen }) {
                         {/* Top row: name + AI score badge on the right */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 pr-1">
-                            <div className="font-extrabold text-sm text-[#050A1F] leading-snug truncate">{c.name}</div>
+                            <div className="font-extrabold text-sm text-[#050A1F] leading-snug truncate">{c.name}{c.cold && <span className="ml-1.5 align-middle rounded-full bg-cyan-100 text-cyan-700 px-1.5 py-0.5 text-[9px] font-bold">❄️ Cold</span>}</div>
                             {c.email && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{c.email}</div>}
                           </div>
                           {score != null && (
