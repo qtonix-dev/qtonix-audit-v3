@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
@@ -3092,6 +3092,92 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
 });
 
 // ---- Send test emails (admin) — verify all recruitment email designs render
+// ---- HR email catalog (Admin → Emails tab) ---------------------------------
+// Mirrors the Sales-CRM email catalog: one table of every recruitment email,
+// who it goes to, which mailbox it sends from, a preview, and recent activity.
+// HR emails all send from the linked recruitment mailbox (career@qtonix.com).
+const HR_EMAIL_CATALOG = [
+  { id: 'application_thankyou', name: 'Application thank-you', description: 'Sent to a candidate right after they apply, confirming we received it.', sentTo: 'The applicant', subjectMatch: ['received your application', 'thank you for applying'] },
+  { id: 'application_internal', name: 'New application (internal)', description: 'Internal notice to the recruitment team when a new application arrives.', sentTo: 'Recruitment team', subjectMatch: ['new application'] },
+  { id: 'shortlisted', name: 'Shortlisted', description: 'Sent when a candidate is moved past the Contacted stage — they’ve been shortlisted for interview.', sentTo: 'The candidate', subjectMatch: ["you've been shortlisted", 'been shortlisted', 'shortlisted'] },
+  { id: 'interview_candidate', name: 'Interview invite (candidate)', description: 'Interview invitation sent to the candidate with the schedule + meeting link.', sentTo: 'The candidate', subjectMatch: ['interview invitation', 'interview invite'] },
+  { id: 'interview_panel', name: 'Interview invite (panel)', description: 'Interview details sent to the internal panellists / interviewers.', sentTo: 'Interview panellists', subjectMatch: ['interview panel'] },
+  { id: 'interview_reschedule', name: 'Interview reschedule', description: 'Sent when an interview is rescheduled, to the candidate (and panel).', sentTo: 'Candidate & panel', subjectMatch: ['interview rescheduled'] },
+  { id: 'assessment_task', name: 'Assessment task', description: 'Sends an assessment/assignment task to a candidate with a deadline + upload link.', sentTo: 'The candidate', subjectMatch: ['assessment task'] },
+  { id: 'task_received', name: 'Task received', description: 'Confirms to the candidate that their submitted task was received.', sentTo: 'The candidate', subjectMatch: ['task received', 'we received your submission', 'submission received'] },
+  { id: 'task_additional_info', name: 'Task — more info requested', description: 'Asks a candidate for additional information / a revised task submission.', sentTo: 'The candidate', subjectMatch: ['additional information', 'more information'] },
+  { id: 'rejection', name: 'Rejection', description: 'Sent to a candidate when their application is not moving forward.', sentTo: 'The candidate', subjectMatch: ['update on your application', 'regarding your application'] },
+  { id: 'offer', name: 'Offer', description: 'Sends the offer email (with attachments) to a selected candidate.', sentTo: 'The candidate', subjectMatch: ['regarding your offer', 'your offer', 'offer of employment'] },
+];
+
+function hrPreviewHtml(id, sig, mailbox) {
+  const hrEmail = require('../services/hrEmailTemplate');
+  const role = 'Senior Frontend Engineer';
+  const when = 'Tuesday, 26 August 2026, 5:30 PM IST';
+  const base = (process.env.APP_URL || '').replace(/\/$/, '');
+  const rejectBody = '<p style="margin:0 0 14px;line-height:1.6;">Dear Ava,</p><p style="margin:0 0 14px;line-height:1.6;">Thank you for taking the time to apply and for sharing your background with us.</p><p style="margin:0 0 14px;line-height:1.6;">After careful consideration, we have decided to move forward with other candidates. We wish you the very best.</p>';
+  const recruitSig = { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox };
+  switch (id) {
+    case 'application_thankyou': return hrEmail.applicationThankYou({ candidateName: 'Ava Thompson', role, signature: recruitSig });
+    case 'application_internal': return hrEmail.applicationInternalNotice({ candidateName: 'Ava Thompson', role, candidateEmail: 'ava@example.com', candidatePhone: '+91 98765 43210', jobLocation: 'Bhubaneswar', source: 'Careers page', viewUrl: `${base}/hr/recruitment` });
+    case 'shortlisted': return hrEmail.shortlistedEmail({ candidateName: 'Ava Thompson', role, signature: sig });
+    case 'interview_candidate': return hrEmail.interviewInviteCandidate({ candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: when, durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig });
+    case 'interview_panel': return hrEmail.interviewInvitePanel({ panelistName: 'Rahul Verma', candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: when, durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig });
+    case 'interview_reschedule': return hrEmail.interviewReschedule({ recipientName: 'Ava Thompson', isPanel: false, candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: 'Thursday, 28 August 2026, 3:00 PM IST', durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig });
+    case 'assessment_task': return hrEmail.taskAssignment({ candidateName: 'Ava Thompson', role, taskTitle: 'Build a responsive dashboard component', taskDetailsHtml: 'Build a small React dashboard with a chart and a filterable table. Include a short README.', deadlineText: 'Sunday, 24 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
+    case 'task_received': return hrEmail.taskReceived({ candidateName: 'Ava Thompson', role, isAdditional: false, signature: sig });
+    case 'task_additional_info': return hrEmail.taskAdditionalInfoRequest({ candidateName: 'Ava Thompson', role, messageHtml: 'Could you please share the source repository link and a short note on your approach?', deadlineText: 'Friday, 29 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
+    case 'rejection': return hrEmail.rejectionEmail({ role, bodyHtml: rejectBody, signature: sig });
+    case 'offer': return hrEmail.shell({ kicker: 'Offer', heroIcon: '\uD83C\uDF89', headline: 'We\u2019d love for you to join us', subhead: role, greetingName: 'Ava', introHtml: 'We\u2019re delighted to offer you the role of <strong>' + role + '</strong> at Qtonix. Your offer letter is attached with the details of compensation, start date, and next steps.', outroHtml: 'Please review the attached letter and reply with any questions. We\u2019re excited to have you on board!', signature: sig });
+    default: return null;
+  }
+}
+
+router.get('/email-catalog', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const mailbox = mailboxEmail(s);
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    // Recent outbound HR emails power the "last activity" column (matched by subject).
+    let outbound = [];
+    try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 800 }); } catch { outbound = []; }
+    const matchRows = (subjectMatch) => outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return subjectMatch.some((m) => sub.includes(m)); });
+    const emails = HR_EMAIL_CATALOG.map((e) => {
+      const acts = matchRows(e.subjectMatch);
+      return { id: e.id, name: e.name, description: e.description, sentTo: e.sentTo, sentFrom: mailbox || '(recruitment mailbox not linked)', editableSender: false, lastSentAt: acts.length ? acts[0].sentAt : null, totalSent: acts.length };
+    });
+    res.json({ emails, mailbox, connected: !!(mailbox && token) });
+  } catch (e) { next(e); }
+});
+
+router.get('/email-catalog/:id/activity', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const meta = HR_EMAIL_CATALOG.find((e) => e.id === req.params.id);
+    if (!meta) return res.status(404).json({ error: 'Unknown email.' });
+    let outbound = [];
+    try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 800 }); } catch { outbound = []; }
+    const rows = outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return meta.subjectMatch.some((m) => sub.includes(m)); }).slice(0, 200);
+    // Attach candidate names where available.
+    const candIds = [...new Set(rows.map((r) => r.candidateId).filter(Boolean))];
+    const cands = candIds.length ? await HrCandidate.findAll({ where: { id: candIds } }) : [];
+    const nameOf = Object.fromEntries(cands.map((c) => [c.id, c.name]));
+    res.json({ activity: rows.map((r) => ({ toEmail: (r.toEmail || '').split(',')[0].trim(), toName: nameOf[r.candidateId] || '', sentAt: r.sentAt, status: 'sent', subject: r.subject || '' })) });
+  } catch (e) { next(e); }
+});
+
+router.get('/email-catalog/:id/preview', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const meta = HR_EMAIL_CATALOG.find((e) => e.id === req.params.id);
+    if (!meta) return res.status(404).send('Unknown email.');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const mailbox = mailboxEmail(s) || 'career@qtonix.com';
+    const sig = { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition · Qtonix', email: mailbox };
+    const html = hrPreviewHtml(req.params.id, sig, mailbox);
+    if (!html) return res.status(404).send('No preview available.');
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (e) { next(e); }
+});
+
 // correctly in a real inbox. Sends one of each designed template with sample
 // data to the given address.
 router.post('/settings/test-emails', requireHrAccess, requireHrAdmin, async (req, res, next) => {

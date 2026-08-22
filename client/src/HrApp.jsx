@@ -32,6 +32,18 @@ export const hrApi = async (path, opts = {}) => {
   return data;
 };
 
+// Like hrApi, but returns raw response text (used for HTML email previews).
+export const hrApiRaw = async (path, opts = {}) => {
+  const token = localStorage.getItem(HR_TOKEN_KEY);
+  const res = await fetch(`${API_BASE}/api/hr${path}`, {
+    ...opts,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error('Could not load preview.');
+  return text;
+};
+
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
 
 // Normalise a phone number to a consistent format. A bare 10-digit Indian mobile
@@ -2848,6 +2860,156 @@ function PhoneNormalizeCard() {
   );
 }
 
+// HR Admin → Emails: one table of every recruitment email (name, description,
+// who it's sent to, which mailbox it sends from, last activity), with Preview and
+// Activity popups. Mirrors the Sales-CRM Emails tab. All HR emails send from the
+// linked recruitment mailbox, so the "Sent from" column is read-only.
+function HrEmailsTab() {
+  const [data, setData] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [activity, setActivity] = useState(null);
+  useEffect(() => { hrApi('/email-catalog').then(setData).catch(() => setData({ emails: [], mailbox: '', connected: false })); }, []);
+  const fmtDate = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return '—'; } };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="font-bold text-sm mb-1 text-[#050A1F]">Recruitment emails</h3>
+        <p className="text-xs text-slate-500 mb-4">Every automated email the recruitment system sends. Preview a sample or view recent send activity. All emails send from the linked recruitment mailbox.</p>
+
+        {data && !data.connected && (
+          <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2">The recruitment mailbox isn’t linked yet. Link it under <b>Settings → Recruitment mailbox</b> so these emails can send.</div>
+        )}
+
+        {!data ? <div className="text-slate-400 text-sm py-10 text-center">Loading…</div> : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent to</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent from</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Last activity</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.emails.map((e) => (
+                  <tr key={e.id} className="border-b border-slate-100 last:border-0 align-top">
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-[#050A1F]">{e.name}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 max-w-xs leading-snug">{e.description}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600 max-w-[180px]">{e.sentTo}</td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs"><span className="font-mono text-slate-600">{e.sentFrom}</span><div className="text-[10px] text-slate-400">Recruitment mailbox</div></div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
+                      {e.lastSentAt ? fmtDate(e.lastSentAt) : <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 justify-end">
+                        <button onClick={() => setPreview({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Preview</button>
+                        <button onClick={() => setActivity({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Activity</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {preview && <HrEmailPreviewModal id={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
+      {activity && <HrEmailActivityModal id={activity.id} name={activity.name} fmtDate={fmtDate} onClose={() => setActivity(null)} />}
+    </div>
+  );
+}
+
+// Popup: renders the sample HR email HTML in an iframe.
+function HrEmailPreviewModal({ id, name, onClose }) {
+  const [html, setHtml] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    hrApiRaw(`/email-catalog/${id}/preview`).then((t) => { if (alive) setHtml(t); }).catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, [id]);
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col" style={{ height: '92vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-sm font-extrabold text-[#050A1F]">Preview — {name}</div><div className="text-[11px] text-slate-400">Sample email with placeholder data</div></div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto bg-slate-100 p-4">
+          {err ? <div className="text-red-500 text-sm p-6 text-center">{err}</div>
+            : <iframe title="preview" srcDoc={html} className="w-full h-full bg-white rounded-lg border border-slate-200" />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Popup: recent send activity as a paginated table.
+function HrEmailActivityModal({ id, name, fmtDate, onClose }) {
+  const [data, setData] = useState(null);
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+  useEffect(() => { hrApi(`/email-catalog/${id}/activity`).then(setData).catch(() => setData({ activity: [], note: 'Could not load activity.' })); }, [id]);
+  const rows = (data && data.activity) || [];
+  const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
+  const pageRows = rows.slice((page - 1) * perPage, page * perPage);
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col" style={{ height: '86vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div><div className="text-[11px] text-slate-400">{rows.length > 0 ? `${rows.length} recent send${rows.length === 1 ? '' : 's'}` : 'Recent sends'}</div></div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-5">
+          {!data ? <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>
+            : rows.length === 0 ? <div className="text-slate-400 text-sm py-16 text-center">{data.note || 'No sends recorded yet.'}</div>
+              : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recipient</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date &amp; time</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((a, i) => (
+                        <tr key={i} className="border-b border-slate-100 last:border-0">
+                          <td className="px-4 py-3 font-semibold text-[#050A1F] whitespace-nowrap">{a.toName || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{a.toEmail}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtDate(a.sentAt)}</td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap"><span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[11px] font-bold">✓ Sent</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+        </div>
+        {rows.length > perPage && (
+          <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between shrink-0">
+            <div className="text-xs text-slate-400">Page {page} of {totalPages}</div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Previous</button>
+              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Next</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -3101,7 +3263,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -3231,6 +3393,7 @@ function HrAdmin({ user }) {
       {tab === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
+      {tab === 'emails' && <HrEmailsTab />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
