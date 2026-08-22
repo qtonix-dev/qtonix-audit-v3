@@ -187,9 +187,27 @@ router.post('/:id/respond', requireAuth, async (req, res, next) => {
 
     let message = `Thank you, ${(me.name || '').split(' ')[0]}. Your feedback truly helps us improve.`;
     try { const key = await anthropicKey(); if (key) { const { successMessage } = require('../services/hrSurveyAI'); message = await successMessage(key, { employeeName: me.name, avgScore, sentimentLabel: hasLow ? 'low' : 'ok', hasLowScores: hasLow }); } } catch {}
+    // Send a thank-you email from the HR mailbox (best-effort, never blocks).
+    notifySurveyCompleted(survey, me).catch((e) => console.error('[survey] completion email failed:', e.message));
     res.json({ ok: true, id: row.id, message });
   } catch (e) { next(e); }
 });
+
+// Thank-you email to an agent after they submit a survey. From the HR mailbox.
+async function notifySurveyCompleted(survey, user) {
+  if (!user || !user.email) return;
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  if (!s) return;
+  const { email: mailbox, token } = resolveHrMailbox(s);
+  if (!mailbox || !token) return;
+  const gmail = require('../services/gmail');
+  const tpl = require('../services/crmEmailTemplate');
+  const bodyHtml = tpl.surveyDone({
+    recipientName: user.name, surveyName: survey.name,
+    signature: { name: 'Qtonix People Team', title: 'Human Resources · Qtonix', email: mailbox },
+  });
+  await gmail.sendMessage(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: user.email, subject: `Thanks for completing ${survey.name}`, bodyHtml });
+}
 
 const TEST_PERIOD = 'test';
 
@@ -236,9 +254,54 @@ router.post('/:id/activate', requireAuth, requireAdmin, async (req, res, next) =
     // Remove test responses + test analysis so live starts clean.
     await CrmSurveyResponse.destroy({ where: { surveyId: survey.id, period: TEST_PERIOD } });
     if (survey.analysis && survey.analysis[TEST_PERIOD]) { const a = { ...survey.analysis }; delete a[TEST_PERIOD]; survey.analysis = a; survey.changed('analysis', true); await survey.save(); }
+    // Notify all agents + managers to complete it (from the HR mailbox).
+    notifySurveyLaunched(survey).catch((e) => console.error('[survey] launch notify failed:', e.message));
     res.json(survey.toJSON());
   } catch (e) { next(e); }
 });
+
+// Resolve the HR mailbox { email, token } from Settings. Prefers the durable
+// hrMailboxes list; falls back to the legacy single-mailbox fields.
+function resolveHrMailbox(s) {
+  const getKey = (k) => (s.getKey ? s.getKey(k) : null);
+  const list = Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [];
+  // Default mailbox first (token under 'hrMailboxToken'); then any named ones.
+  const defToken = getKey('hrMailboxToken');
+  const defMeta = list.find((m) => m.id === 'default');
+  const defEmail = (defMeta && defMeta.email) || (s.hrMailbox && s.hrMailbox.email) || '';
+  if (defEmail && defToken) return { email: defEmail, token: defToken };
+  for (const m of list) {
+    if (m.id === 'default') continue;
+    const t = getKey(`hrMailboxToken:${m.id}`);
+    if (m.email && t) return { email: m.email, token: t };
+  }
+  return { email: '', token: '' };
+}
+
+// Email every active agent + manager that a new survey is live. Sent from the
+// linked HR mailbox (career@qtonix.com). Best-effort; never blocks activation.
+async function notifySurveyLaunched(survey) {
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  if (!s) return;
+  const { email: mailbox, token } = resolveHrMailbox(s);
+  if (!mailbox || !token) { console.error('[survey] no HR mailbox linked — skipping launch emails'); return; }
+  const gmail = require('../services/gmail');
+  const tpl = require('../services/crmEmailTemplate');
+  const recipients = await User.findAll({ where: { active: true, role: { [Op.in]: ['agent', 'manager'] } } });
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const surveyUrl = `${appUrl}/surveys`;
+  const sig = { name: 'Qtonix People Team', title: 'Human Resources · Qtonix', email: mailbox };
+  for (const u of recipients) {
+    if (!u.email) continue;
+    try {
+      const bodyHtml = tpl.surveyLaunch({
+        recipientName: u.name, surveyName: survey.name, description: survey.description,
+        deadlineText: '', surveyUrl, signature: sig,
+      });
+      await gmail.sendMessage(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: u.email, subject: `Please complete: ${survey.name}`, bodyHtml });
+    } catch (e) { console.error('[survey] email to', u.email, 'failed:', e.message); }
+  }
+}
 
 // Take the survey in TEST mode (admin preview). Writes into the reserved `test`
 // period. Multiple test submissions are allowed (no once-per-period guard) so

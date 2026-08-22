@@ -250,6 +250,44 @@ router.patch('/crm-mail-routing', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- HR (recruitment) mailbox — link/manage from CRM Admin -----------------
+// The HR mailbox (career@qtonix.com) is used for recruitment + survey-launch
+// emails. It can be linked from the HR portal; these endpoints let an admin also
+// link and see it directly from CRM Admin settings.
+router.get('/hr-mailbox', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const getKey = (k) => (s.getKey ? s.getKey(k) : null);
+    const list = [];
+    const meta = Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [];
+    const defToken = getKey('hrMailboxToken');
+    const defMeta = meta.find((m) => m.id === 'default');
+    const defEmail = (defMeta && defMeta.email) || (s.hrMailbox && s.hrMailbox.email) || '';
+    if (defEmail && defToken) list.push({ id: 'default', email: defEmail, connectedAt: (defMeta && defMeta.connectedAt) || (s.hrMailbox && s.hrMailbox.connectedAt) || null });
+    meta.forEach((m) => {
+      if (m.id === 'default') return;
+      if (getKey(`hrMailboxToken:${m.id}`)) list.push({ id: m.id, email: m.email, connectedAt: m.connectedAt || null });
+    });
+    res.json({ configured: require('../services/gmail').isConfigured(s), mailboxes: list });
+  } catch (e) { next(e); }
+});
+
+router.get('/hr-mailbox/connect', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const g = require('../services/gmail');
+    if (!g.isConfigured(s)) return res.status(400).json({ error: 'Google isn’t set up yet. Add the app credentials in API keys.' });
+    if (!g.hasValidBaseUrl || !g.hasValidBaseUrl()) { /* best-effort */ }
+    const hasDefault = !!(s.getKey && s.getKey('hrMailboxToken'));
+    const mbId = hasDefault ? `mb${Date.now().toString(36)}` : 'default';
+    const jwt = require('jsonwebtoken');
+    const state = jwt.sign({ hrMailbox: true, hrMailboxId: mbId, label: (req.query.label || 'Recruitment').slice(0, 40) }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });
+    res.json({ url: g.authUrl(s, state) });
+  } catch (e) { next(e); }
+});
+
 /** DELETE /api/gmail/mailboxes/:id — unlink an extra mailbox (admin). */
 router.delete('/mailboxes/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {

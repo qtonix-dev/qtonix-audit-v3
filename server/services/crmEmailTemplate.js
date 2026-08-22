@@ -215,4 +215,111 @@ function encouragement({ agentName, achievedUsd, targetUsd, daysLeft, phase, sig
   });
 }
 
-module.exports = { shell, activityReminder, targetHit, teamTargetHit, encouragement };
+// 5) New survey launched — sent to agents & managers from the HR mailbox.
+function surveyLaunch({ recipientName, surveyName, description, deadlineText, surveyUrl, signature }) {
+  return shell({
+    kicker: 'Action Needed',
+    heroIcon: '\uD83D\uDCCB',
+    headline: 'A new survey needs your input',
+    subhead: surveyName || '',
+    greetingName: recipientName,
+    introHtml: `A new survey${surveyName ? ` <strong>${esc(surveyName)}</strong>` : ''} has just been launched. Your honest feedback helps us make Qtonix a better place to work \u2014 it only takes a couple of minutes.${description ? `<br><br>${esc(description)}` : ''}<br><br><span style="display:inline-block;background:#EEF3FF;border:1px solid #D6E2FF;border-radius:10px;padding:10px 14px;font-size:13px;color:#0435AC;">\uD83D\uDD12 <strong>All responses are completely anonymous.</strong> Please answer honestly.</span>`,
+    details: [
+      surveyName ? { label: 'Survey', value: esc(surveyName) } : null,
+      { label: 'Time needed', value: '~2 minutes' },
+      deadlineText ? { label: 'Please complete by', value: esc(deadlineText) } : null,
+    ],
+    ctaLabel: surveyUrl ? 'Complete the survey' : null,
+    ctaUrl: surveyUrl || null,
+    ctaNote: 'Your responses are anonymous and help shape team decisions.',
+    outroHtml: 'Thanks for taking the time \u2014 we read every response.',
+    signature,
+  });
+}
+
+// 6) Monthly team performance summary — 1st of the month, to all agents +
+// managers. The narrative `bodyHtml` is AI-drafted; this wraps it with the
+// tone-appropriate hero and appends the Top-3 + incentive tables.
+function monthlySummary({ recipientName, monthLabel, teamPct, tone, bodyHtml, topPerformers, incentiveEarners, signature }) {
+  // Tone → hero styling + headline. Tiers: achieved (green), close (blue),
+  // focus (orange), low (red).
+  const heroes = {
+    achieved: { from: '#0B7A43', to: GREEN,     icon: '\uD83C\uDFC6', head: `${monthLabel} \u2014 target smashed!` },
+    close:    { from: '#0435AC', to: '#2563EB', icon: '\uD83D\uDCAA', head: `${monthLabel} \u2014 good effort, let\u2019s push` },
+    focus:    { from: '#B45309', to: ORANGE1,   icon: '\uD83C\uDFAF', head: `${monthLabel} \u2014 let\u2019s tighten our focus` },
+    low:      { from: '#991B1B', to: '#DC2626', icon: '\uD83D\uDCCA', head: `${monthLabel} \u2014 an honest reset` },
+  };
+  const h = heroes[tone] || heroes.close;
+
+  // Avatar cell: agent's photo, falling back to coloured initials.
+  const avatarCell = (name, url) => {
+    if (url) return `<img src="${esc(url)}" width="44" height="44" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;" alt="" />`;
+    const init = String(name || '').split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+    const palette = ['#2563EB', '#7C3AED', '#0F9D58', '#FF6A00', '#E11D48', '#0891B2'];
+    const c = palette[String(name || '').length % palette.length];
+    return `<div style="width:44px;height:44px;border-radius:50%;background:${c};color:#fff;font-size:15px;font-weight:700;line-height:44px;text-align:center;">${esc(init)}</div>`;
+  };
+
+  // Top-3 performers card: image left, name + "x% of target · $xx" right.
+  let topCard = '';
+  if (Array.isArray(topPerformers) && topPerformers.length) {
+    const rows = topPerformers.slice(0, 3).map((p, i, arr) => {
+      const bb = i < arr.length - 1 ? 'border-bottom:1px solid #E2E9F8;' : '';
+      const meta = [p.pct != null ? `${p.pct}% of target` : null, p.amount ? esc(p.amount) : null].filter(Boolean).join(' \u00b7 ');
+      return `<tr>
+        <td style="padding:14px 12px 14px 16px;width:56px;${bb}">${avatarCell(p.name, p.avatar)}</td>
+        <td style="padding:14px 16px 14px 4px;${bb}">
+          <div style="font-size:15px;font-weight:700;color:${NAVY};">${esc(p.name)}</div>
+          ${meta ? `<div style="font-size:13px;color:${MUTED};margin-top:2px;">${meta}</div>` : ''}
+        </td></tr>`;
+    }).join('');
+    topCard = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;">
+      <tr><td style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${MUTED};padding-bottom:8px;">\uD83C\uDFC5 Top 3 performers</td></tr>
+      <tr><td><table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FE;border:1px solid #E2E9F8;border-radius:12px;">${rows}</table></td></tr></table>`;
+  }
+
+  // Incentive earners table: name · achieved amount · achieved %.
+  let incCard = '';
+  if (Array.isArray(incentiveEarners) && incentiveEarners.length) {
+    const rows = incentiveEarners.map((e, i, arr) => {
+      const bb = i < arr.length - 1 ? 'border-bottom:1px solid #EEF1F8;' : '';
+      return `<tr>
+        <td style="padding:11px 16px;font-size:14px;color:${NAVY};${bb}">${esc(e.name)}${e.role === 'manager' ? ' <span style="color:#8A93A6;font-size:12px;">(mgr)</span>' : ''}</td>
+        <td style="padding:11px 16px;font-size:14px;color:${NAVY};text-align:right;white-space:nowrap;${bb}">${e.amount ? esc(e.amount) : ''}</td>
+        <td style="padding:11px 16px;font-size:13px;font-weight:700;color:${GREEN};text-align:right;white-space:nowrap;${bb}">${e.pct != null ? `${e.pct}%` : ''}</td>
+      </tr>`;
+    }).join('');
+    incCard = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;">
+      <tr><td style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${MUTED};padding-bottom:8px;">\uD83D\uDCB0 Incentive earners this month</td></tr>
+      <tr><td><table width="100%" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border:1px solid #E2E9F8;border-radius:12px;">
+        <tr style="background:#FAFBFE;"><td style="padding:9px 16px;font-size:11px;font-weight:700;color:${MUTED};text-transform:uppercase;">Name</td><td style="padding:9px 16px;font-size:11px;font-weight:700;color:${MUTED};text-transform:uppercase;text-align:right;">Achieved</td><td style="padding:9px 16px;font-size:11px;font-weight:700;color:${MUTED};text-transform:uppercase;text-align:right;">%</td></tr>
+        ${rows}
+      </table></td></tr></table>`;
+  }
+
+  return shell({
+    kicker: 'Monthly Team Summary',
+    heroFrom: h.from, heroTo: h.to, heroIcon: h.icon,
+    headline: h.head,
+    subhead: teamPct != null ? `Sales team \u00b7 ${teamPct}% of target` : '',
+    greetingName: recipientName || 'Team',
+    rawBody: `${bodyHtml}${topCard}${incCard}`,
+    signature,
+  });
+}
+
+// 8) Survey completion — thank-you after an agent submits their response.
+function surveyDone({ recipientName, surveyName, signature }) {
+  return shell({
+    kicker: 'Response Received',
+    heroFrom: '#0B7A43', heroTo: GREEN, heroIcon: '\u2705',
+    headline: 'Thanks \u2014 your response is in!',
+    subhead: surveyName || '',
+    greetingName: recipientName,
+    introHtml: `Thank you for completing${surveyName ? ` the <strong>${esc(surveyName)}</strong>` : ' the'} survey. Your feedback has been recorded anonymously and genuinely helps us make Qtonix a better place to work.`,
+    outroHtml: 'We review every response and act on what we hear. Thanks again for taking the time. \uD83D\uDE4F',
+    signature,
+  });
+}
+
+module.exports = { shell, activityReminder, targetHit, teamTargetHit, encouragement, surveyLaunch, surveyDone, monthlySummary };

@@ -191,11 +191,12 @@ async function searchMessages(settings, refreshToken, connectedEmail, query, max
 /** Send an email as the connected user. Optionally in-reply-to a thread. */
 // Build a MIME message. Supports To/Cc/Bcc (comma-joined strings or arrays),
 // an HTML body, and attachments [{ filename, mimeType, contentBase64 }].
-function buildRaw({ from, to, cc, bcc, subject, bodyHtml, inReplyTo, attachments }) {
+function buildRaw({ from, to, cc, bcc, subject, bodyHtml, inReplyTo, replyTo, attachments }) {
   const asList = (v) => Array.isArray(v) ? v.filter(Boolean).join(', ') : (v || '');
   const headers = [`From: ${from}`, `To: ${asList(to)}`];
   if (asList(cc)) headers.push(`Cc: ${asList(cc)}`);
   if (asList(bcc)) headers.push(`Bcc: ${asList(bcc)}`);
+  if (replyTo) headers.push(`Reply-To: ${replyTo}`);
   // RFC 2047 encoded-word for non-ASCII subjects (otherwise they mojibake too).
   const encodeSubject = (sub) => {
     const str = sub || '';

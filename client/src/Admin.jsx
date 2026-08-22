@@ -2228,6 +2228,41 @@ function AdminMailboxes({ say }) {
       </div>
 
       <CrmMailRouting say={say} mailboxes={data.mailboxes || []} />
+      <AdminHrMailbox say={say} />
+    </div>
+  );
+}
+
+// Admin-only: link the recruitment / HR mailbox (career@qtonix.com) directly
+// from CRM Admin. Used for recruitment + survey-launch notification emails.
+function AdminHrMailbox({ say }) {
+  const [data, setData] = useState(null);
+  const load = () => api('/gmail/hr-mailbox').then(setData).catch(() => {});
+  useEffect(() => {
+    load();
+    const onMsg = (e) => { if (e.data && e.data.gmail) setTimeout(load, 800); };
+    window.addEventListener('message', onMsg); return () => window.removeEventListener('message', onMsg);
+  }, []);
+  const connect = async () => {
+    try { const { url } = await api('/gmail/hr-mailbox/connect?label=Recruitment'); const w = window.open(url, 'hrmail_oauth', 'width=520,height=640'); const poll = setInterval(() => { if (w && w.closed) { clearInterval(poll); setTimeout(load, 500); } }, 1200); }
+    catch (e) { say && say(e.message); }
+  };
+  if (!data) return null;
+  const boxes = data.mailboxes || [];
+  return (
+    <div className="mt-6 border-t border-slate-100 pt-5">
+      <div className="text-sm font-bold text-[#050A1F] mb-1">HR / recruitment mailbox</div>
+      <div className="text-xs text-slate-500 mb-3">The shared HR inbox (e.g. career@qtonix.com) used for recruitment emails and <strong>survey-launch notifications</strong> to the team.</div>
+      {!data.configured && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2 mb-3">Google credentials aren’t set up yet. Add them in API keys first.</div>}
+      <div className="space-y-2 mb-3">
+        {boxes.length === 0 && <div className="text-xs text-slate-400">No HR mailbox linked yet.</div>}
+        {boxes.map((m) => (
+          <div key={m.id} className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-3 py-2">
+            <div className="text-xs"><span className="font-bold text-green-700">✓ {m.email}</span>{m.connectedAt ? <span className="text-slate-400"> · linked {new Date(m.connectedAt).toLocaleDateString()}</span> : ''}</div>
+          </div>
+        ))}
+      </div>
+      <Btn onClick={connect} disabled={!data.configured}>+ Link HR mailbox</Btn>
     </div>
   );
 }

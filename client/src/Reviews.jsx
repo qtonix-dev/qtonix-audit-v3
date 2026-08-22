@@ -542,13 +542,34 @@ function ManagerReviewModal({ manager, period, onClose, onSaved }) {
 function IncentivesTable({ period }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  // Current month (YYYY-MM) for the month-to-date view.
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const isCurrentDefault = period === thisMonth;
+  const [view, setView] = useState('last'); // 'last' = passed period · 'mtd' = current month
+  const shownPeriod = view === 'mtd' ? thisMonth : period;
+  const showMtd = view === 'mtd';
   useEffect(() => {
     setData(null); setErr('');
-    api(`/reviews/incentives?period=${period}`).then(setData).catch((e) => setErr(e.message));
-  }, [period]);
+    api(`/reviews/incentives?period=${shownPeriod}`).then(setData).catch((e) => setErr(e.message));
+  }, [shownPeriod]);
 
   if (err) return <div className="text-red-500 text-sm py-6">{err}</div>;
-  if (!data) return <div className="text-slate-400 text-sm py-12 text-center">Calculating incentives…</div>;
+
+  const monthLabel = (p) => { try { const [y, m] = p.split('-'); return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' }); } catch { return p; } };
+
+  const toggle = (
+    <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+      <button onClick={() => setView('last')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === 'last' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{isCurrentDefault ? monthLabel(period) : `Last month (${monthLabel(period)})`}</button>
+      <button onClick={() => setView('mtd')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${view === 'mtd' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>This month · MTD</button>
+    </div>
+  );
+
+  if (!data) return (
+    <div>
+      <div className="mb-3">{toggle}</div>
+      <div className="text-slate-400 text-sm py-12 text-center">Calculating incentives…</div>
+    </div>
+  );
 
   const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
   const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
@@ -581,6 +602,12 @@ function IncentivesTable({ period }) {
 
   return (
     <div>
+      <div className="mb-3">{toggle}</div>
+      {showMtd && (
+        <div className="mb-3 rounded-lg bg-blue-50 border border-blue-100 text-blue-700 text-xs px-3 py-2">
+          <b>Month to date ({monthLabel(thisMonth)}).</b> This updates automatically as sales are registered in the CRM. Figures are provisional until the month closes.
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <div className="text-lg font-extrabold text-[#050A1F]">💰 Incentives</div>

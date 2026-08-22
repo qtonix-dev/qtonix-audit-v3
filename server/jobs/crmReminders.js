@@ -45,6 +45,7 @@ function istNowParts() {
 }
 
 function money(n) { return `$${Number(n || 0).toLocaleString()}`; }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 const CRM_MAIL_DEFAULTS = { reminders: 'sales@qtonix.com', congrats: 'adam@qtonix.com' };
 
@@ -90,7 +91,7 @@ async function resolveSenders(models, s) {
 
 // Send once, guarded by a dedupe key. Returns true if it sent (or was already
 // sent), false on hard failure.
-async function sendOnce(models, s, sender, { dedupeKey, type, userId, to, cc, subject, bodyHtml }) {
+async function sendOnce(models, s, sender, { dedupeKey, type, userId, to, cc, subject, bodyHtml, fromName, replyTo }) {
   const { CrmEmailLog } = models;
   if (!to) return false;
   // Already sent?
@@ -105,9 +106,10 @@ async function sendOnce(models, s, sender, { dedupeKey, type, userId, to, cc, su
     return true; // unique violation → another tick already handling it
   }
   try {
-    const fromName = sender.name || 'Qtonix';
+    const displayName = fromName || sender.name || 'Qtonix';
     await gmail.sendMessage(s, sender.token, sender.email, {
-      from: `${JSON.stringify(fromName)} <${sender.email}>`,
+      from: `${JSON.stringify(displayName)} <${sender.email}>`,
+      replyTo: replyTo || undefined,
       to, cc: cc && cc.length ? cc : undefined, subject, bodyHtml,
     });
     logRow.status = 'sent'; logRow.sentAt = new Date(); await logRow.save();
@@ -163,11 +165,19 @@ async function runActivityReminders(models, s, sender) {
   }
 }
 
-// ---- compute per-agent target/achievement for the current month ------------
-async function computeAgentStats(models) {
+// ---- compute per-agent target/achievement for a month (default: current) ----
+// opts.period = 'YYYY-MM' to compute a specific month (used by the monthly
+// summary); when omitted, uses the current IST month.
+async function computeAgentStats(models, opts = {}) {
   const { User, Lead, Settings, MonthlyTarget, Op } = models;
-  const { y, m, periodKey } = istNowParts();
+  let y, m, periodKey;
+  if (opts.period && /^\d{4}-\d{2}$/.test(opts.period)) {
+    periodKey = opts.period; y = Number(opts.period.slice(0, 4)); m = Number(opts.period.slice(5, 7)) - 1;
+  } else {
+    ({ y, m, periodKey } = istNowParts());
+  }
   const startOfMonth = new Date(Date.UTC(y, m, 1) - (5 * 60 + 30) * 60000); // IST month start in UTC
+  const endOfMonth = new Date(Date.UTC(y, m + 1, 1) - (5 * 60 + 30) * 60000); // exclusive
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
   const fx = (s && s.crmConfig && s.crmConfig.fxRates) || { USD: 1 };
   const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
@@ -178,7 +188,7 @@ async function computeAgentStats(models) {
     const t = a.targets || {};
     byId[a.id] = {
       id: a.id, name: a.name, email: a.email, role: a.role, managerId: a.managerId,
-      team: a.team || '', shift: a.shift || '',
+      team: a.team || '', shift: a.shift || '', avatar: a.avatar || null,
       targetUsd: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
       teamTargetUsd: (t.team && t.team.enabled) ? Number(t.team.monthly || 0) : 0,
       achievedUsd: 0,
@@ -196,7 +206,7 @@ async function computeAgentStats(models) {
           if (it.recurring && Number(it.seq || 0) > 1) continue;
           if (it.paid && it.paidDate) {
             const pd = new Date(it.paidDate);
-            if (pd >= startOfMonth) rec.achievedUsd += toUsd(it.amount, d.currency);
+            if (pd >= startOfMonth && pd < endOfMonth) rec.achievedUsd += toUsd(it.amount, d.currency);
           }
         }
       }
@@ -261,21 +271,181 @@ async function runEncouragement(models, s, sender, nowParts) {
 
   const daysLeft = daysInMonth - dom + 1; // include today
   const { byId } = await computeAgentStats(models);
+  const ADMIN_CC = 'adam@qtonix.com';
   for (const rec of Object.values(byId)) {
     if (!rec.email || rec.role !== 'agent') continue;
     if (rec.targetUsd <= 0) continue; // no target set → nothing to nudge toward
     const pct = (rec.achievedUsd / rec.targetUsd) * 100;
     if (pct >= 90) continue; // already very close / hit → skip (don't nudge)
+    // Send from the agent's manager (signed by them), CC adam@qtonix.com. If the
+    // agent has no manager, send from adam@ signed by the Founder/CEO.
+    const mgr = (rec.managerId && byId[rec.managerId]) ? byId[rec.managerId] : null;
+    let fromName, replyTo, sig;
+    if (mgr && mgr.email) {
+      fromName = mgr.name;
+      replyTo = mgr.email;
+      sig = { name: mgr.name, title: 'Sales Manager \u00b7 Qtonix', email: mgr.email };
+    } else {
+      fromName = 'Sandeep Kumar Swain';
+      replyTo = undefined;
+      sig = congratsSig(sender);
+    }
+    const cc = new Set([ADMIN_CC]);
+    if (mgr && mgr.email) cc.add(mgr.email.toLowerCase());
+    cc.delete(rec.email.toLowerCase());
     const bodyHtml = tpl.encouragement({
       agentName: rec.name, achievedUsd: Math.round(rec.achievedUsd), targetUsd: Math.round(rec.targetUsd),
-      daysLeft, phase, signature: congratsSig(sender),
+      daysLeft, phase, signature: sig,
     });
     await sendOnce(models, s, sender, {
       dedupeKey: `push_${phase}:${rec.id}:${periodKey}`, type: 'push', userId: rec.id, to: rec.email,
+      cc: Array.from(cc), fromName, replyTo,
       subject: phase === 'late'
         ? `⏳ ${daysLeft} days left — let's finish the month strong, ${String(rec.name).split(' ')[0]}!`
         : `Keep pushing, ${String(rec.name).split(' ')[0]} — you're ${Math.round(pct)}% to target`,
       bodyHtml,
+    });
+  }
+}
+
+// ---- 7) Monthly team summary (1st of the month, for last month) ------------
+function prevPeriodKey(nowParts) {
+  const { y, m } = nowParts || istNowParts();
+  const d = new Date(Date.UTC(y, m - 1, 1)); // previous month
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function monthLabelOf(periodKey) {
+  const [y, m] = periodKey.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+// Compute incentives for a period, mirroring the reviews/incentives rules.
+function computeIncentives(byId, incRules) {
+  const eligibilityPct = Number(incRules.eligibilityPct != null ? incRules.eligibilityPct : 90);
+  const agentBasePct = Number(incRules.agentBasePct != null ? incRules.agentBasePct : 1.5);
+  const agentOverPct = Number(incRules.agentOverPct != null ? incRules.agentOverPct : 5);
+  const managerOverPct = Number(incRules.managerOverPct != null ? incRules.managerOverPct : 5);
+  const usdToInr = Number(incRules.usdToInr != null ? incRules.usdToInr : 83);
+  const agentInc = (ach, tgt) => {
+    if (!tgt || tgt <= 0) return 0;
+    if (ach < (eligibilityPct / 100) * tgt) return 0;
+    const base = (agentBasePct / 100) * Math.min(ach, tgt);
+    const over = ach > tgt ? (agentOverPct / 100) * (ach - tgt) : 0;
+    return base + over;
+  };
+  const earners = [];
+  for (const rec of Object.values(byId)) {
+    let usd = 0;
+    if (rec.role === 'manager') {
+      const hasTeam = Object.values(byId).some((x) => x.managerId === rec.id);
+      if (hasTeam) {
+        const teamAch = rec.teamAchievedUsd || 0; const teamTgt = rec.teamTargetUsd || 0;
+        usd = teamAch > teamTgt ? (managerOverPct / 100) * (teamAch - teamTgt) : 0;
+      } else usd = agentInc(rec.achievedUsd, rec.targetUsd);
+    } else usd = agentInc(rec.achievedUsd, rec.targetUsd);
+    if (usd > 0) earners.push({ name: rec.name, role: rec.role, inr: Math.round(usd * usdToInr) });
+  }
+  earners.sort((a, b) => b.inr - a.inr);
+  return earners;
+}
+
+// Draft the summary narrative via OpenAI (falls back to a templated body).
+async function draftSummaryBody(models, s, ctx) {
+  const key = s && s.getKey ? s.getKey('openai') : null;
+  const fallback = () => {
+    const { teamPct, tone, monthLabel, topName } = ctx;
+    const top = esc(topName || 'our top performer');
+    if (tone === 'achieved') return `<p style="margin:0 0 14px;">Team, what a month. ${esc(monthLabel)} closed with the <strong>Sales team hitting ${teamPct}% of target</strong> — a result we can all be genuinely proud of.</p><p style="margin:0 0 14px;">Behind that number are dozens of tough conversations you didn't give up on, follow-ups you chased, and deals you refused to let slip. That's not luck; that's discipline, hustle, and heart from every one of you.</p><p style="margin:0 0 14px;">A special mention to <strong>${top}</strong>, who led the board this month — an outstanding performance. Our top three and everyone who earned an incentive are listed below.</p><p style="margin:0;">Let's carry this momentum straight into next month. 🚀</p>`;
+    if (tone === 'close') return `<p style="margin:0 0 14px;">Team, ${esc(monthLabel)} was a strong month — we closed at <strong>${teamPct}% of target</strong>. We didn't quite cross the line, but let's be clear: this was a genuinely good effort, and we were close.</p><p style="margin:0 0 14px;">Every deal you worked and every relationship you built moved us forward — and the gap left is small enough that a focused push next month closes it completely.</p><p style="margin:0 0 14px;"><strong>${top}</strong> led the way and showed exactly what's possible. Let's rally around that standard.</p><p style="margin:0;">A little more, together, and we're there. Let's go! 💪</p>`;
+    if (tone === 'focus') return `<p style="margin:0 0 14px;">Team, ${esc(monthLabel)} came in at <strong>${teamPct}% of target</strong>. I want to be honest — that's below where we planned to be — but also fair: there was real effort this month, and the foundation is there to build on.</p><p style="margin:0 0 14px;">What we need now is sharper focus: prioritising our warmest leads, staying on top of follow-ups, and backing each other when a deal gets hard. Small, consistent improvements from all of us add up fast.</p><p style="margin:0 0 14px;"><strong>${top}</strong> proved what a strong month looks like. Let's learn from that and lift the whole team.</p><p style="margin:0;">Let's make next month a real step change. I'm confident in you. 💪</p>`;
+    return `<p style="margin:0 0 14px;">Team, I'm going to be straight with you, because you deserve honesty: ${esc(monthLabel)} closed at <strong>${teamPct}% of target</strong> — well below where we need to be.</p><p style="margin:0 0 14px;">I want you to understand why this matters beyond the number. Hitting our targets is what funds the company's growth — the tools you use, the salaries we pay, the opportunities we can create, and the future every one of us is building here. When we fall this far short, all of that gets harder. This isn't about blame; it's about being clear-eyed so we can fix it together.</p><p style="margin:0 0 14px;">And I do believe we can. <strong>${top}</strong> proved this month that strong results are still possible right now. Let's regroup, get disciplined about our pipeline, and support one another the way this team knows how to.</p><p style="margin:0;">This is a reset, not a verdict. Let's come back strong next month — I'm with you every step. 💪</p>`;
+  };
+  if (!key) return fallback();
+  try {
+    const { callOpenAI } = require('../services/summaryRewrite');
+    const system = `You are the Founder/CEO of Qtonix, a digital marketing agency, writing a short monthly performance email to your sales team. Write warm, sincere, motivating prose in exactly 4 HTML paragraphs (<p> tags with inline margins: the first three "margin:0 0 14px;", the last "margin:0;").
+Structure the opening as TWO short paragraphs rather than one long block, so it's easy to read and doesn't get skimmed:
+- Paragraph 1 (2-3 sentences): open with the headline result — the team's % of target — and set the emotional tone.
+- Paragraph 2 (2-3 sentences): expand on what that means and why it matters, making the message land.
+- Paragraph 3: praise the highest performer by name and point to the top-3 / incentive earners below.
+- Paragraph 4 (short): a rallying closing line.
+Rules by performance tone:
+- "achieved" (>=100%): celebrate the team genuinely and specifically.
+- "close" (70-99%): affirm it was a good effort, acknowledge the near-miss, stay upbeat — a focused push gets there.
+- "focus" (50-69%): honest that it's below plan but fair about the effort; rally the team to tighten focus. Encouraging, not negative.
+- "low" (<50%): be honest that results are well below where they need to be, and explain that hitting targets is what funds the company's growth, tools, salaries, and everyone's future here — but KEEP IT ENCOURAGING and supportive, never harsh or threatening. Frame it as an honest reset and a comeback, "a reset, not a verdict".
+Mention the team % of target, praise the highest performer by name, and note that top-3 and incentive earners are listed below (do NOT list them yourself — tables follow). Do not invent numbers beyond what's provided. Output ONLY the 4 HTML paragraphs, no preamble, no markdown fences.`;
+    const user = JSON.stringify({ month: ctx.monthLabel, teamPct: ctx.teamPct, tone: ctx.tone, highestPerformer: ctx.topName, topThree: ctx.topThree, incentiveEarnerCount: ctx.earnerCount });
+    const out = await callOpenAI(key, { system, user, maxTokens: 900 });
+    const cleaned = String(out || '').replace(/```html/gi, '').replace(/```/g, '').trim();
+    if (cleaned && /<p/i.test(cleaned)) return cleaned;
+    return fallback();
+  } catch (e) { console.error('[crm-mail] summary AI draft failed:', e.message); return fallback(); }
+}
+
+async function runMonthlySummary(models, s, sender, nowParts) {
+  const parts = nowParts || istNowParts();
+  if (parts.dom !== 1) return; // only on the 1st of the month
+  const period = prevPeriodKey(parts);
+  const monthLabel = monthLabelOf(period);
+  const { byId } = await computeAgentStats(models, { period });
+  const people = Object.values(byId);
+  if (!people.length) return;
+
+  // Team totals (agents + managers' own targets count once via agents; use the
+  // sum of individual sales vs sum of individual targets as the team figure).
+  const agents = people.filter((p) => p.role === 'agent');
+  const teamAchieved = agents.reduce((sum, a) => sum + a.achievedUsd, 0);
+  const teamTarget = agents.reduce((sum, a) => sum + a.targetUsd, 0);
+  const teamPct = teamTarget > 0 ? Math.round((teamAchieved / teamTarget) * 100) : 0;
+  // Tone tiers: >=100 achieved (green) · 70-99 close (blue) · 50-69 focus
+  // (orange) · <50 low (red, honest but encouraging).
+  let tone = 'close';
+  if (teamPct >= 100) tone = 'achieved';
+  else if (teamPct >= 70) tone = 'close';
+  else if (teamPct >= 50) tone = 'focus';
+  else tone = 'low';
+
+  // Rankings by % of target (agents only for "highest % of sale").
+  const ranked = agents.filter((a) => a.targetUsd > 0)
+    .map((a) => ({ ...a, pct: Math.round((a.achievedUsd / a.targetUsd) * 100) }))
+    .sort((x, y) => y.pct - x.pct);
+  const topThree = ranked.slice(0, 3).map((a) => ({ name: a.name, avatar: a.avatar || null, pct: a.pct, amount: `$${Math.round(a.achievedUsd).toLocaleString()}` }));
+  const topName = topThree.length ? topThree[0].name : null;
+
+  // Incentive earners for the month — show each earner's achieved amount + % of
+  // target next to their name (not the incentive figure itself).
+  const incRules = (s && s.crmConfig && s.crmConfig.incentives) || {};
+  const earnerNames = new Set(computeIncentives(byId, incRules).map((e) => e.name));
+  const earners = Object.values(byId)
+    .filter((r) => earnerNames.has(r.name))
+    .map((r) => {
+      const isMgrTeam = r.role === 'manager' && Object.values(byId).some((x) => x.managerId === r.id);
+      const ach = isMgrTeam ? (r.teamAchievedUsd || 0) : r.achievedUsd;
+      const tgt = isMgrTeam ? (r.teamTargetUsd || 0) : r.targetUsd;
+      const pct = tgt > 0 ? Math.round((ach / tgt) * 100) : null;
+      return { name: r.name, role: r.role, amount: `$${Math.round(ach).toLocaleString()}`, pct, _ach: ach };
+    })
+    .sort((a, b) => b._ach - a._ach);
+
+  const bodyHtml = await draftSummaryBody(models, s, {
+    monthLabel, teamPct, tone, topName, topThree, earnerCount: earners.length,
+  });
+
+  const sig = congratsSig(sender);
+  // Send to every active agent + manager, individually (no CC).
+  for (const rec of people) {
+    if (!rec.email) continue;
+    const html = tpl.monthlySummary({
+      recipientName: rec.name, monthLabel, teamPct, tone, bodyHtml,
+      topPerformers: topThree, incentiveEarners: earners, signature: sig,
+    });
+    await sendOnce(models, s, sender, {
+      dedupeKey: `summary:${rec.id}:${period}`, type: 'summary', userId: rec.id, to: rec.email,
+      subject: tone === 'achieved'
+        ? `🏆 ${monthLabel} team summary — we hit ${teamPct}% of target!`
+        : `${monthLabel} team summary — where we landed & what's next`,
+      bodyHtml: html,
     });
   }
 }
@@ -295,6 +465,7 @@ async function tick(models) {
     await runActivityReminders(models, s, senders.reminders);
     await runTargetCongrats(models, s, senders.congrats);
     await runEncouragement(models, s, senders.congrats);
+    await runMonthlySummary(models, s, senders.congrats);
   } catch (e) {
     console.error('[crm-mail] tick failed:', e.message);
   } finally {
@@ -310,4 +481,4 @@ function start(models) {
   console.log(`[crm-mail] started (every ${Math.round(INTERVAL_MS / 60000)} min)`);
 }
 
-module.exports = { start, tick, computeAgentStats, istToUtc, istNowParts, runActivityReminders, runTargetCongrats, runEncouragement, resolveSenders, connectedMailboxes };
+module.exports = { start, tick, computeAgentStats, istToUtc, istNowParts, runActivityReminders, runTargetCongrats, runEncouragement, runMonthlySummary, resolveSenders, connectedMailboxes, prevPeriodKey };
