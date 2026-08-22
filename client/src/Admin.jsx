@@ -53,6 +53,18 @@ const api = async (path, opts = {}) => {
   return data;
 };
 
+// Like `api`, but returns the raw response text (used for HTML email previews).
+const apiRaw = async (path, opts = {}) => {
+  const token = localStorage.getItem('qtx_token');
+  const res = await fetch(API_BASE + '/api' + path, {
+    ...opts,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error('Could not load preview.');
+  return text;
+};
+
 // ---- UI atoms (mirror the sandbox) ----
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent';
 
@@ -922,10 +934,7 @@ function ApiKeys({ settings, setSettings, say }) {
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
         <SubBtn id="api" label="API" />
         <SubBtn id="callhippo" label="CallHippo" />
-        <SubBtn id="gmail" label="Gmail" />
       </div>
-
-      {sub === 'gmail' && <EmailPanel say={say} />}
 
       {sub === 'callhippo' && (
         <div className="max-w-2xl">
@@ -946,9 +955,9 @@ function ApiKeys({ settings, setSettings, say }) {
                 ? <span className="rounded bg-green-50 text-green-600 px-1.5 py-0.5 text-[8px] font-bold">CONFIGURED</span>
                 : r.required && <span className="rounded bg-red-50 text-red-600 px-1.5 py-0.5 text-[8px] font-bold">REQUIRED</span>}
             </div>
-            <div className="flex gap-2">
+            <div className="flex items-stretch gap-2">
               <input type="password" className={inputCls} value={settings.apiKeys[id] || ''} placeholder="Paste key…" onChange={(e) => { setSettings({ ...settings, apiKeys: { ...settings.apiKeys, [id]: e.target.value } }); setTests((x) => ({ ...x, [id]: null })); }} />
-              <Btn size="sm" variant="ghost" onClick={() => test(id)} disabled={t && t.testing}>{t && t.testing ? 'Testing…' : 'Test'}</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => test(id)} disabled={t && t.testing} className="shrink-0">{t && t.testing ? 'Testing…' : 'Test'}</Btn>
             </div>
             <p className="text-[11px] text-slate-400 mt-1">{r.hint}</p>
             {id === 'seranking' && credits && (
@@ -1098,9 +1107,9 @@ function CallHippoPanel({ settings, setSettings, say }) {
 
       <div className="mt-4">
         <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Webhook URL (paste into CallHippo)</div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-stretch gap-2">
           <input readOnly className={`${inputCls} font-mono text-xs bg-slate-50`} value={cfg ? cfg.webhookUrl : 'Loading…'} onFocus={(e) => e.target.select()} />
-          <Btn onClick={copy} disabled={!cfg}>{copied ? 'Copied' : 'Copy'}</Btn>
+          <Btn onClick={copy} disabled={!cfg} className="shrink-0">{copied ? 'Copied' : 'Copy'}</Btn>
         </div>
         {cfg && <div className="text-[11px] text-slate-400 mt-1.5">Token status: {cfg.hasToken ? '✓ saved' : 'not saved yet'} · SMS is intentionally not logged.</div>}
       </div>
@@ -2167,9 +2176,9 @@ function EmailPanel({ say }) {
           <li>Create an <b>OAuth 2.0 Client ID</b> (type: Web application).</li>
           <li>Add this <b>Authorized redirect URI</b>:</li>
         </ol>
-        <div className="mt-2 flex items-center gap-2">
-          <code className="flex-1 bg-white border border-slate-200 rounded px-2 py-1 text-[11px] break-all">{cfg.redirectUri || '—'}</code>
-          <button onClick={() => { navigator.clipboard?.writeText(cfg.redirectUri); say && say('Redirect URI copied.'); }} className="text-[11px] font-bold text-blue-500 whitespace-nowrap">Copy</button>
+        <div className="mt-2 flex items-stretch gap-2">
+          <code className="flex-1 bg-white border border-slate-200 rounded px-2 py-1.5 text-[11px] break-all flex items-center">{cfg.redirectUri || '—'}</code>
+          <button onClick={() => { navigator.clipboard?.writeText(cfg.redirectUri); say && say('Redirect URI copied.'); }} className="shrink-0 rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-blue-500 hover:bg-blue-50 whitespace-nowrap">Copy</button>
         </div>
         {cfg.redirectUri && !cfg.baseUrlOk && (
           <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-700">
@@ -2187,6 +2196,153 @@ function EmailPanel({ say }) {
       <div className="flex justify-end mt-4"><Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save credentials'}</Btn></div>
 
       <AdminMailboxes say={say} />
+    </div>
+  );
+}
+
+// Admin → Emails: one place for every automated Sales-CRM email. A table listing
+// each email (name, description, who it's sent to, which mailbox it's sent from
+// — editable), with Preview and Activity popups. Below the table sits the Gmail
+// connection + mailbox setup that these emails send through.
+function EmailsTab({ settings, setSettings, say }) {
+  const [data, setData] = useState(null);
+  const [saving, setSaving] = useState('');
+  const [preview, setPreview] = useState(null);   // { id, name }
+  const [activity, setActivity] = useState(null); // { id, name }
+  const load = () => api('/gmail/crm-email-catalog').then(setData).catch(() => setData({ emails: [], available: [] }));
+  useEffect(() => { load(); }, []);
+
+  const setSender = async (row, email) => {
+    setSaving(row.id);
+    try {
+      // reminders category → 'reminders' key; congrats category → 'congrats' key.
+      const key = row.category === 'reminders' ? 'reminders' : 'congrats';
+      const r = await api('/gmail/crm-mail-routing', { method: 'PATCH', body: JSON.stringify({ [key]: email }) });
+      setData((d) => ({ ...d, emails: d.emails.map((e) => (e.category === row.category ? { ...e, sentFrom: r.routing[key] } : e)) }));
+      say && say('Sender updated.');
+    } catch (e) { say && say(e.message, 'bad'); } finally { setSaving(''); }
+  };
+
+  const fmtDate = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return '—'; } };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="font-bold text-sm mb-1" style={{ color: C.navy }}>Automated emails</h3>
+        <p className="text-xs text-slate-500 mb-4">Every automated email the Sales CRM sends. Choose which connected mailbox each one is sent from, preview a sample, or view recent send activity.</p>
+
+        {!data ? <div className="text-slate-400 text-sm py-10 text-center">Loading…</div> : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent to</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent from</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.emails.map((e) => (
+                  <tr key={e.id} className="border-b border-slate-100 last:border-0 align-top">
+                    <td className="px-4 py-3">
+                      <div className="font-bold text-[#050A1F]">{e.name}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 max-w-xs leading-snug">{e.description}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600 max-w-[180px]">{e.sentTo}</td>
+                    <td className="px-4 py-3">
+                      {e.editableSender ? (
+                        <select value={(data.available || []).some((a) => a.email === e.sentFrom) ? e.sentFrom : ''}
+                          onChange={(ev) => setSender(e, ev.target.value)} disabled={saving === e.id}
+                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-300" style={{ minWidth: 190 }}>
+                          <option value="">{e.sentFrom ? `${e.sentFrom} (not linked)` : 'Select…'}</option>
+                          {(data.available || []).map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
+                        </select>
+                      ) : (
+                        <div className="text-xs"><span className="font-mono text-slate-600">{e.sentFrom}</span><div className="text-[10px] text-slate-400">HR mailbox</div></div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 justify-end">
+                        <button onClick={() => setPreview({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Preview</button>
+                        <button onClick={() => setActivity({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Activity</button>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1 text-right">{e.totalSent > 0 ? `${e.totalSent} sent · last ${fmtDate(e.lastSentAt)}` : 'No sends yet'}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Gmail connection + mailboxes + routing + HR mailbox, moved here. */}
+      <EmailPanel say={say} />
+
+      {preview && <EmailPreviewModal id={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
+      {activity && <EmailActivityModal id={activity.id} name={activity.name} fmtDate={fmtDate} onClose={() => setActivity(null)} />}
+    </div>
+  );
+}
+
+// Popup: renders the sample email HTML in an iframe (isolated styles).
+function EmailPreviewModal({ id, name, onClose }) {
+  const [html, setHtml] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    apiRaw(`/gmail/crm-email-catalog/${id}/preview`).then((t) => { if (alive) setHtml(t); }).catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, [id]);
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-sm font-extrabold text-[#050A1F]">Preview — {name}</div><div className="text-[11px] text-slate-400">Sample email with placeholder data</div></div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto bg-slate-100 p-3">
+          {err ? <div className="text-red-500 text-sm p-6 text-center">{err}</div>
+            : <iframe title="preview" srcDoc={html} className="w-full bg-white rounded-lg border border-slate-200" style={{ height: '60vh' }} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Popup: recent send activity (date/time, recipient, status) for an email.
+function EmailActivityModal({ id, name, fmtDate, onClose }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { api(`/gmail/crm-email-catalog/${id}/activity`).then(setData).catch(() => setData({ activity: [], note: 'Could not load activity.' })); }, [id]);
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col" style={{ maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {!data ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
+            : (data.activity || []).length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">{data.note || 'No sends recorded yet.'}</div>
+              : (
+                <div className="space-y-1.5">
+                  {data.activity.map((a, i) => (
+                    <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[#050A1F] truncate">{a.toName || a.toEmail}</div>
+                        <div className="text-[11px] text-slate-400 truncate">{a.toName ? a.toEmail : ''}</div>
+                      </div>
+                      <div className="text-right shrink-0 ml-3">
+                        <div className="text-[11px] text-slate-500">{fmtDate(a.sentAt)}</div>
+                        <span className={`text-[10px] font-bold ${a.status === 'sent' ? 'text-green-600' : 'text-red-500'}`}>{a.status === 'sent' ? '✓ sent' : '✗ ' + (a.error || 'failed')}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2521,9 +2677,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['keys', 'API keys'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['keys', 'API keys'], ['emails', 'Emails'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey' && tab !== 'emails';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -2550,6 +2706,7 @@ export default function Admin() {
 
         {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} reload={load} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
+        {tab === 'emails' && <EmailsTab settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}

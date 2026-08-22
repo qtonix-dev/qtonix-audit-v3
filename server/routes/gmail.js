@@ -250,6 +250,107 @@ router.patch('/crm-mail-routing', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- Automated-email catalog (Admin → Emails tab) --------------------------
+// A single table of every automated Sales-CRM email: what it is, who it goes to,
+// which mailbox it sends from (editable), a sample preview, and recent activity.
+const EMAIL_CATALOG = [
+  { id: 'reminder', name: 'Task & Call reminder', category: 'reminders', description: 'Sent to an agent ~15 minutes before a scheduled task or call on their lead.', sentTo: 'Lead owner (agent) · manager CC’d', logTypes: ['reminder'] },
+  { id: 'target_hit', name: 'Agent target congratulations', category: 'congrats', description: 'Sent when an agent reaches 100% of their monthly sales target.', sentTo: 'Agent · manager & admin CC’d', logTypes: ['target_hit'] },
+  { id: 'team_target_hit', name: 'Team target congratulations', category: 'congrats', description: 'Sent when a manager’s team reaches its monthly target.', sentTo: 'Manager · admin CC’d', logTypes: ['team_target_hit'] },
+  { id: 'push', name: 'Encouragement nudge', category: 'congrats', description: 'Sent on the 15th & 25th to agents below 90% of target. From their manager.', sentTo: 'Agent (below target) · manager from / admin CC’d', logTypes: ['push'] },
+  { id: 'summary', name: 'Monthly team summary', category: 'congrats', description: 'Sent on the 1st to everyone: last month’s team performance, top 3, incentive earners.', sentTo: 'All agents & managers', logTypes: ['summary'] },
+  { id: 'survey_launch', name: 'Survey launch', category: 'hr', description: 'Sent when a new survey is activated, asking the team to complete it.', sentTo: 'All agents & managers', logTypes: [] },
+  { id: 'survey_done', name: 'Survey completion thank-you', category: 'hr', description: 'Sent to an agent right after they submit a survey response.', sentTo: 'The responding agent', logTypes: [] },
+];
+
+function catalogSenderFor(category, routing, hrEmail) {
+  if (category === 'reminders') return routing.reminders;
+  if (category === 'congrats') return routing.congrats;
+  if (category === 'hr') return hrEmail || 'career@qtonix.com';
+  return '';
+}
+
+router.get('/crm-email-catalog', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const u = await User.findByPk(req.user.id);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const routing = { ...CRM_MAIL_DEFAULTS, ...((s && s.crmConfig && s.crmConfig.mailRouting) || {}) };
+    // HR mailbox email (for survey emails).
+    const getKey = (k) => (s.getKey ? s.getKey(k) : null);
+    const hrList = Array.isArray(s.hrMailboxes) ? s.hrMailboxes : [];
+    const hrDef = hrList.find((m) => m.id === 'default') || hrList[0];
+    const hrEmail = (hrDef && hrDef.email) || '';
+    // Recent activity counts per log type.
+    const { CrmEmailLog } = require('../models');
+    const logs = await CrmEmailLog.findAll({ order: [['sentAt', 'DESC']], limit: 500 });
+    const byType = {};
+    for (const l of logs) { (byType[l.type] = byType[l.type] || []).push(l); }
+    const rows = EMAIL_CATALOG.map((e) => {
+      const acts = e.logTypes.flatMap((t) => byType[t] || []);
+      acts.sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0));
+      return {
+        ...e,
+        sentFrom: catalogSenderFor(e.category, routing, hrEmail),
+        editableSender: e.category !== 'hr', // HR emails are tied to the HR mailbox
+        lastSentAt: acts.length ? acts[0].sentAt : null,
+        totalSent: acts.filter((a) => a.status === 'sent').length,
+      };
+    });
+    res.json({ emails: rows, available: await connectedAdminEmails(u), hrEmail, routing });
+  } catch (e) { next(e); }
+});
+
+// Recent send activity for one catalogued email.
+router.get('/crm-email-catalog/:id/activity', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const meta = EMAIL_CATALOG.find((e) => e.id === req.params.id);
+    if (!meta) return res.status(404).json({ error: 'Unknown email.' });
+    if (!meta.logTypes.length) return res.json({ activity: [], note: 'Sends for this email aren’t individually logged yet.' });
+    const { CrmEmailLog, User: U } = require('../models');
+    const rows = await CrmEmailLog.findAll({ where: { type: meta.logTypes }, order: [['sentAt', 'DESC']], limit: 50 });
+    const ids = [...new Set(rows.map((r) => r.userId).filter(Boolean))];
+    const users = ids.length ? await U.findAll({ where: { id: ids } }) : [];
+    const nameOf = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    res.json({ activity: rows.map((r) => ({ toEmail: r.toEmail, toName: nameOf[r.userId] || '', sentAt: r.sentAt, status: r.status, error: r.error || '' })) });
+  } catch (e) { next(e); }
+});
+
+// A sample HTML preview of any catalogued email (dummy data).
+router.get('/crm-email-catalog/:id/preview', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).send('Admin only.');
+    const tpl = require('../services/crmEmailTemplate');
+    const id = req.params.id;
+    const reminderSig = { name: 'Qtonix Sales Team', title: 'Qtonix', email: 'sales@qtonix.com' };
+    const founderSig = { name: 'Sandeep Kumar Swain', title: 'Founder / CEO · Qtonix', email: 'adam@qtonix.com' };
+    const mgrSig = { name: 'Meena Nair', title: 'Sales Manager · Qtonix', email: 'meena@qtonix.com' };
+    const hrSig = { name: 'Qtonix People Team', title: 'Human Resources · Qtonix', email: 'career@qtonix.com' };
+    const top3 = [
+      { name: 'Kamaljit Singh', pct: 148, amount: '$14,800', avatar: null },
+      { name: 'Saravjit Kaur', pct: 121, amount: '$12,100', avatar: null },
+      { name: 'Pushkar Rao', pct: 108, amount: '$10,800', avatar: null },
+    ];
+    const earners = [
+      { name: 'Kamaljit Singh', pct: 148, amount: '$14,800', role: 'agent' },
+      { name: 'Saravjit Kaur', pct: 121, amount: '$12,100', role: 'agent' },
+      { name: 'Meena Nair', pct: 104, amount: '$52,000', role: 'manager' },
+    ];
+    const body = `<p style="margin:0 0 14px;">Team, what a month — we closed at <strong>112% of target</strong>.</p><p style="margin:0 0 14px;">Behind that number is real hustle from every one of you. A special mention to <strong>Kamaljit Singh</strong>, who led the board.</p><p style="margin:0;">Let’s carry this momentum into next month. 🚀</p>`;
+    let html = '';
+    if (id === 'reminder') html = tpl.activityReminder({ agentName: 'Kamaljit Singh', kind: 'call', title: 'Product demo call', leadName: 'Nova Corp', whenText: 'Today, 3:30 PM IST', minutesLeft: 15, details: 'Walk through the SEO package and pricing.', signature: reminderSig });
+    else if (id === 'target_hit') html = tpl.targetHit({ agentName: 'Kamaljit Singh', achievedUsd: 1240, targetUsd: 1000, signature: founderSig });
+    else if (id === 'team_target_hit') html = tpl.teamTargetHit({ managerName: 'Meena Nair', achievedUsd: 6300, targetUsd: 5000, signature: founderSig });
+    else if (id === 'push') html = tpl.encouragement({ agentName: 'Bob Kumar', achievedUsd: 300, targetUsd: 1000, daysLeft: 16, phase: 'mid', signature: mgrSig });
+    else if (id === 'summary') html = tpl.monthlySummary({ recipientName: 'Team', monthLabel: 'July 2026', teamPct: 112, tone: 'achieved', bodyHtml: body, topPerformers: top3, incentiveEarners: earners, signature: founderSig });
+    else if (id === 'survey_launch') html = tpl.surveyLaunch({ recipientName: 'Kamaljit', surveyName: 'Employee Pulse', description: 'A quick monthly check-in.', deadlineText: 'Fri, 29 Aug 2026', surveyUrl: '#', signature: hrSig });
+    else if (id === 'survey_done') html = tpl.surveyDone({ recipientName: 'Kamaljit', surveyName: 'Employee Pulse', signature: hrSig });
+    else return res.status(404).send('Unknown email.');
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (e) { next(e); }
+});
+
 // ---- HR (recruitment) mailbox — link/manage from CRM Admin -----------------
 // The HR mailbox (career@qtonix.com) is used for recruitment + survey-launch
 // emails. It can be linked from the HR portal; these endpoints let an admin also

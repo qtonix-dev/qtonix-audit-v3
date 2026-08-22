@@ -970,9 +970,9 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
         {user.avatar
           ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full object-cover" />
           : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
-        <span className="text-right leading-tight">
-          <span className="block text-xs font-semibold text-white">{user.name}</span>
-          <span className="block text-[10px] text-slate-400">{user.designation}</span>
+        <span className="text-right leading-tight hidden sm:block max-w-[160px]">
+          <span className="block text-xs font-semibold text-white truncate">{user.name}</span>
+          <span className="block text-[10px] text-slate-400 truncate" title={user.designation}>{user.designation}</span>
         </span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M6 9l6 6 6-6" /></svg>
       </button>
@@ -1894,8 +1894,8 @@ export default function App() {
       )}
       <header className="bg-[#050A1F] border-b border-white/10">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center gap-8 min-w-0 flex-1">
+            <div className="flex items-center gap-3 shrink-0">
               <div className="text-lg font-extrabold text-white tracking-tight">
                 Qtonix<span className="text-[#FF6A00]">.</span>
               </div>
@@ -1964,7 +1964,7 @@ export default function App() {
               )}
             </nav>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 ml-6 shrink-0">
             <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onTemplates={() => setShowTemplates(true)} onSignOut={signOut} />
             {/* Hamburger — mobile only. */}
             <button onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Menu"
