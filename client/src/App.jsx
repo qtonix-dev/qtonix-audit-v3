@@ -970,7 +970,7 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
         {user.avatar
           ? <img src={user.avatar} alt={user.name} className="w-9 h-9 rounded-full object-cover" />
           : <span className="w-9 h-9 rounded-full bg-[#FF6A00]/20 text-[#FF6A00] flex items-center justify-center text-sm font-bold">{initial}</span>}
-        <span className="text-right leading-tight hidden sm:block max-w-[160px]">
+        <span className="text-right leading-tight hidden lg:block max-w-[130px]">
           <span className="block text-xs font-semibold text-white truncate">{user.name}</span>
           <span className="block text-[10px] text-slate-400 truncate" title={user.designation}>{user.designation}</span>
         </span>
@@ -1894,14 +1894,14 @@ export default function App() {
       )}
       <header className="bg-[#050A1F] border-b border-white/10">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-8 min-w-0 flex-1">
+          <div className="flex items-center gap-6 min-w-0">
             <div className="flex items-center gap-3 shrink-0">
               <div className="text-lg font-extrabold text-white tracking-tight">
                 Qtonix<span className="text-[#FF6A00]">.</span>
               </div>
               <AppSwitcher current="crm" />
             </div>
-            <nav className="hidden md:flex gap-0.5">
+            <nav className="hidden md:flex gap-0.5 flex-nowrap shrink-0">
               {nav.map((n) => {
                 // Dropdown parent (e.g. Email → All Email / Email Drafts).
                 if (n.children) {
@@ -1911,9 +1911,9 @@ export default function App() {
                       onMouseEnter={() => setEmailMenuOpen(true)} onMouseLeave={() => setEmailMenuOpen(false)}>
                       <button
                         onClick={() => setEmailMenuOpen((v) => !v)}
-                        className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${childActive ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
+                        className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold whitespace-nowrap transition-colors ${childActive ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                         <NavIcon name={n.icon} className="w-4 h-4" />
-                        <span>{n.label}</span>
+                        <span className="whitespace-nowrap">{n.label}</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M6 9l6 6 6-6" /></svg>
                         {childActive && <span className="absolute left-3 right-3 -bottom-[7px] h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />}
                       </button>
@@ -1945,11 +1945,11 @@ export default function App() {
                       setView(n.id);
                       setActiveReport(null);
                     }}
-                    className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                    className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold whitespace-nowrap transition-colors ${
                       active ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'
                     }`}>
                     <NavIcon name={n.icon} className="w-4 h-4" />
-                    <span>{n.label}</span>
+                    <span className="whitespace-nowrap">{n.label}</span>
                     {/* Active underline, matching the reference nav. */}
                     {active && (
                       <span className="absolute left-3 right-3 -bottom-[7px] h-[2px] rounded-full" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
