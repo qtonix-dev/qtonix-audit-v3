@@ -816,8 +816,8 @@ function MotivatorTvSettings({ say }) {
   return (
     <div className="max-w-3xl space-y-4">
       <div className="bg-white rounded-xl border border-slate-200 p-5">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="text-sm font-bold" style={{ color: C.navy }}>Motivator TV board</div>
             <p className="text-[11px] text-slate-400 mt-0.5">
               A full-screen sales board for an office TV. It rotates through targets, leaderboards and
@@ -934,7 +934,10 @@ function ApiKeys({ settings, setSettings, say }) {
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
         <SubBtn id="api" label="API" />
         <SubBtn id="callhippo" label="CallHippo" />
+        <SubBtn id="gmail" label="Gmail" />
       </div>
+
+      {sub === 'gmail' && <EmailPanel say={say} />}
 
       {sub === 'callhippo' && (
         <div className="max-w-2xl">
@@ -1101,7 +1104,7 @@ function CallHippoPanel({ settings, setSettings, say }) {
           placeholder="Paste auth token (optional)" />
       </Field>
       <div className="flex items-center gap-2 mt-2">
-        <Btn onClick={testToken} disabled={!tokenVal || (test && test.testing)}>{test && test.testing ? 'Testing…' : 'Test token'}</Btn>
+        <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={testToken} disabled={!tokenVal || (test && test.testing)}>{test && test.testing ? 'Testing…' : 'Test token'}</Btn>
         {test && !test.testing && <span className={`text-[11px] font-medium ${test.ok ? 'text-green-600' : 'text-red-600'}`}>{test.ok ? '✓ ' : '✗ '}{test.msg}</span>}
       </div>
 
@@ -1118,7 +1121,7 @@ function CallHippoPanel({ settings, setSettings, say }) {
       <div className="mt-4 pt-4 border-t border-slate-100">
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Outbound numbers</div>
-          <Btn onClick={verifyNumbers} disabled={numbers && numbers.loading}>{numbers && numbers.loading ? 'Checking…' : 'Verify numbers'}</Btn>
+          <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={verifyNumbers} disabled={numbers && numbers.loading}>{numbers && numbers.loading ? 'Checking…' : 'Verify numbers'}</Btn>
         </div>
         {numbers && !numbers.loading && (
           <div className="mt-2 text-xs">
@@ -1154,12 +1157,12 @@ function CallHippoPanel({ settings, setSettings, say }) {
       {/* Import CRM leads into CallHippo as contacts, so inbound calls show the
           lead's name in the agent's dialer. */}
       <div className="mt-4 pt-4 border-t border-slate-100">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Contacts</div>
             <div className="text-[11px] text-slate-400">Push leads (with a phone number) to CallHippo so inbound calls show the lead name.</div>
           </div>
-          <Btn onClick={importContacts} disabled={imp && imp.loading}>{imp && imp.loading ? 'Importing…' : 'Import leads'}</Btn>
+          <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={importContacts} disabled={imp && imp.loading}>{imp && imp.loading ? 'Importing…' : 'Import leads'}</Btn>
         </div>
         {imp && !imp.loading && (
           <div className={`mt-2 text-xs ${imp.error ? 'text-red-500' : 'text-green-600'}`}>
@@ -1170,12 +1173,12 @@ function CallHippoPanel({ settings, setSettings, say }) {
 
       {/* Sync CallHippo users → auto-map to QHub users (email → agentId + ext). */}
       <div className="mt-4 pt-4 border-t border-slate-100">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Agent mapping</div>
             <div className="text-[11px] text-slate-400">Match CallHippo users to QHub users by email, storing their CallHippo ID + extension so calls credit correctly.</div>
           </div>
-          <Btn onClick={syncUsers} disabled={sync && sync.loading}>{sync && sync.loading ? 'Syncing…' : 'Sync CallHippo users'}</Btn>
+          <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={syncUsers} disabled={sync && sync.loading}>{sync && sync.loading ? 'Syncing…' : 'Sync CallHippo users'}</Btn>
         </div>
         {sync && !sync.loading && (
           <div className={`mt-2 text-xs ${sync.error ? 'text-red-500' : 'text-green-600'}`}>
@@ -1189,12 +1192,12 @@ function CallHippoPanel({ settings, setSettings, say }) {
 
       {/* Poll the activity feed on demand (also runs every 2 min automatically). */}
       <div className="mt-4 pt-4 border-t border-slate-100">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Call sync</div>
             <div className="text-[11px] text-slate-400">Completed calls are pulled from CallHippo's activity feed every 2 minutes (backup for the webhook). Poll now to test.</div>
           </div>
-          <Btn onClick={pollNow} disabled={poll && poll.loading}>{poll && poll.loading ? 'Polling…' : 'Poll now'}</Btn>
+          <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={pollNow} disabled={poll && poll.loading}>{poll && poll.loading ? 'Polling…' : 'Poll now'}</Btn>
         </div>
         {poll && !poll.loading && (
           <div className={`mt-2 text-xs ${poll.error ? 'text-red-500' : 'text-green-600'}`}>
@@ -2239,6 +2242,7 @@ function EmailsTab({ settings, setSettings, say }) {
                   <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
                   <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent to</th>
                   <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent from</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Last activity</th>
                   <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Actions</th>
                 </tr>
               </thead>
@@ -2262,12 +2266,14 @@ function EmailsTab({ settings, setSettings, say }) {
                         <div className="text-xs"><span className="font-mono text-slate-600">{e.sentFrom}</span><div className="text-[10px] text-slate-400">HR mailbox</div></div>
                       )}
                     </td>
+                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
+                      {e.lastSentAt ? fmtDate(e.lastSentAt) : <span className="text-slate-400">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 justify-end">
                         <button onClick={() => setPreview({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Preview</button>
                         <button onClick={() => setActivity({ id: e.id, name: e.name })} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Activity</button>
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-1 text-right">{e.totalSent > 0 ? `${e.totalSent} sent · last ${fmtDate(e.lastSentAt)}` : 'No sends yet'}</div>
                     </td>
                   </tr>
                 ))}
@@ -2276,9 +2282,6 @@ function EmailsTab({ settings, setSettings, say }) {
           </div>
         )}
       </div>
-
-      {/* Gmail connection + mailboxes + routing + HR mailbox, moved here. */}
-      <EmailPanel say={say} />
 
       {preview && <EmailPreviewModal id={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
       {activity && <EmailActivityModal id={activity.id} name={activity.name} fmtDate={fmtDate} onClose={() => setActivity(null)} />}
@@ -2297,51 +2300,77 @@ function EmailPreviewModal({ id, name, onClose }) {
   }, [id]);
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col" style={{ height: '92vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div><div className="text-sm font-extrabold text-[#050A1F]">Preview — {name}</div><div className="text-[11px] text-slate-400">Sample email with placeholder data</div></div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
         </div>
-        <div className="flex-1 overflow-auto bg-slate-100 p-3">
+        <div className="flex-1 overflow-auto bg-slate-100 p-4">
           {err ? <div className="text-red-500 text-sm p-6 text-center">{err}</div>
-            : <iframe title="preview" srcDoc={html} className="w-full bg-white rounded-lg border border-slate-200" style={{ height: '60vh' }} />}
+            : <iframe title="preview" srcDoc={html} className="w-full h-full bg-white rounded-lg border border-slate-200" />}
         </div>
       </div>
     </div>
   );
 }
 
-// Popup: recent send activity (date/time, recipient, status) for an email.
+// Popup: recent send activity as a paginated table (CRM table styling).
 function EmailActivityModal({ id, name, fmtDate, onClose }) {
   const [data, setData] = useState(null);
+  const [page, setPage] = useState(1);
+  const perPage = 10;
   useEffect(() => { api(`/gmail/crm-email-catalog/${id}/activity`).then(setData).catch(() => setData({ activity: [], note: 'Could not load activity.' })); }, [id]);
+  const rows = (data && data.activity) || [];
+  const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
+  const pageRows = rows.slice((page - 1) * perPage, page * perPage);
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col" style={{ maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col" style={{ height: '86vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div>
+          <div><div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div><div className="text-[11px] text-slate-400">{rows.length > 0 ? `${rows.length} recent send${rows.length === 1 ? '' : 's'}` : 'Recent sends'}</div></div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
         </div>
-        <div className="flex-1 overflow-auto p-4">
-          {!data ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
-            : (data.activity || []).length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">{data.note || 'No sends recorded yet.'}</div>
+        <div className="flex-1 overflow-auto p-5">
+          {!data ? <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>
+            : rows.length === 0 ? <div className="text-slate-400 text-sm py-16 text-center">{data.note || 'No sends recorded yet.'}</div>
               : (
-                <div className="space-y-1.5">
-                  {data.activity.map((a, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-[#050A1F] truncate">{a.toName || a.toEmail}</div>
-                        <div className="text-[11px] text-slate-400 truncate">{a.toName ? a.toEmail : ''}</div>
-                      </div>
-                      <div className="text-right shrink-0 ml-3">
-                        <div className="text-[11px] text-slate-500">{fmtDate(a.sentAt)}</div>
-                        <span className={`text-[10px] font-bold ${a.status === 'sent' ? 'text-green-600' : 'text-red-500'}`}>{a.status === 'sent' ? '✓ sent' : '✗ ' + (a.error || 'failed')}</span>
-                      </div>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recipient</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date &amp; time</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((a, i) => (
+                        <tr key={i} className="border-b border-slate-100 last:border-0">
+                          <td className="px-4 py-3 font-semibold text-[#050A1F] whitespace-nowrap">{a.toName || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{a.toEmail}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtDate(a.sentAt)}</td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            {a.status === 'sent'
+                              ? <span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[11px] font-bold">✓ Sent</span>
+                              : <span className="rounded-full bg-red-50 text-red-600 px-2 py-0.5 text-[11px] font-bold" title={a.error || ''}>✗ Failed</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
         </div>
+        {rows.length > perPage && (
+          <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between shrink-0">
+            <div className="text-xs text-slate-400">Page {page} of {totalPages}</div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Previous</button>
+              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">Next</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2378,9 +2407,9 @@ function AdminMailboxes({ say }) {
           </div>
         ))}
       </div>
-      <div className="flex gap-2">
+      <div className="flex items-stretch gap-2">
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Sales)" className={inputCls} />
-        <Btn onClick={link}>+ Link mailbox</Btn>
+        <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={link}>+ Link mailbox</Btn>
       </div>
 
       <CrmMailRouting say={say} mailboxes={data.mailboxes || []} />
@@ -2418,7 +2447,7 @@ function AdminHrMailbox({ say }) {
           </div>
         ))}
       </div>
-      <Btn onClick={connect} disabled={!data.configured}>+ Link HR mailbox</Btn>
+      <Btn size="sm" className="shrink-0 whitespace-nowrap" onClick={connect} disabled={!data.configured}>+ Link HR mailbox</Btn>
     </div>
   );
 }

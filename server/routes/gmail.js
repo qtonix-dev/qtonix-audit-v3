@@ -257,7 +257,7 @@ const EMAIL_CATALOG = [
   { id: 'reminder', name: 'Task & Call reminder', category: 'reminders', description: 'Sent to an agent ~15 minutes before a scheduled task or call on their lead.', sentTo: 'Lead owner (agent) · manager CC’d', logTypes: ['reminder'] },
   { id: 'target_hit', name: 'Agent target congratulations', category: 'congrats', description: 'Sent when an agent reaches 100% of their monthly sales target.', sentTo: 'Agent · manager & admin CC’d', logTypes: ['target_hit'] },
   { id: 'team_target_hit', name: 'Team target congratulations', category: 'congrats', description: 'Sent when a manager’s team reaches its monthly target.', sentTo: 'Manager · admin CC’d', logTypes: ['team_target_hit'] },
-  { id: 'push', name: 'Encouragement nudge', category: 'congrats', description: 'Sent on the 15th & 25th to agents below 90% of target. From their manager.', sentTo: 'Agent (below target) · manager from / admin CC’d', logTypes: ['push'] },
+  { id: 'push', name: 'Encouragement nudge', category: 'congrats', description: 'Sent on the 15th & 25th to agents below 90% of target. From their manager’s own mailbox if connected, otherwise via the congrats mailbox.', sentTo: 'Agent (below target) · manager from / admin CC’d', logTypes: ['push'] },
   { id: 'summary', name: 'Monthly team summary', category: 'congrats', description: 'Sent on the 1st to everyone: last month’s team performance, top 3, incentive earners.', sentTo: 'All agents & managers', logTypes: ['summary'] },
   { id: 'survey_launch', name: 'Survey launch', category: 'hr', description: 'Sent when a new survey is activated, asking the team to complete it.', sentTo: 'All agents & managers', logTypes: [] },
   { id: 'survey_done', name: 'Survey completion thank-you', category: 'hr', description: 'Sent to an agent right after they submit a survey response.', sentTo: 'The responding agent', logTypes: [] },
@@ -309,7 +309,7 @@ router.get('/crm-email-catalog/:id/activity', requireAuth, async (req, res, next
     if (!meta) return res.status(404).json({ error: 'Unknown email.' });
     if (!meta.logTypes.length) return res.json({ activity: [], note: 'Sends for this email aren’t individually logged yet.' });
     const { CrmEmailLog, User: U } = require('../models');
-    const rows = await CrmEmailLog.findAll({ where: { type: meta.logTypes }, order: [['sentAt', 'DESC']], limit: 50 });
+    const rows = await CrmEmailLog.findAll({ where: { type: meta.logTypes }, order: [['sentAt', 'DESC']], limit: 200 });
     const ids = [...new Set(rows.map((r) => r.userId).filter(Boolean))];
     const users = ids.length ? await U.findAll({ where: { id: ids } }) : [];
     const nameOf = Object.fromEntries(users.map((u) => [u.id, u.name]));

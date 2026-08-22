@@ -189,6 +189,9 @@ async function computeAgentStats(models, opts = {}) {
     byId[a.id] = {
       id: a.id, name: a.name, email: a.email, role: a.role, managerId: a.managerId,
       team: a.team || '', shift: a.shift || '', avatar: a.avatar || null,
+      // Own connected Gmail (managers may connect their mailbox to send from it).
+      gmailEmail: a.gmailConnectedEmail || '',
+      gmailToken: a.gmailRefreshToken ? a.getGmailRefreshToken() : '',
       targetUsd: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
       teamTargetUsd: (t.team && t.team.enabled) ? Number(t.team.monthly || 0) : 0,
       achievedUsd: 0,
@@ -277,27 +280,37 @@ async function runEncouragement(models, s, sender, nowParts) {
     if (rec.targetUsd <= 0) continue; // no target set → nothing to nudge toward
     const pct = (rec.achievedUsd / rec.targetUsd) * 100;
     if (pct >= 90) continue; // already very close / hit → skip (don't nudge)
-    // Send from the agent's manager (signed by them), CC adam@qtonix.com. If the
-    // agent has no manager, send from adam@ signed by the Founder/CEO.
+    // Prefer sending from the manager's OWN connected mailbox (e.g. they linked
+    // yaseen@qtonix.com). If they haven't connected one, fall back to the shared
+    // congrats mailbox with the manager's name as the display + Reply-To. Agents
+    // with no manager get the email from adam@ signed by the Founder/CEO.
     const mgr = (rec.managerId && byId[rec.managerId]) ? byId[rec.managerId] : null;
+    let useSender = sender;   // actual sending mailbox (token + email)
     let fromName, replyTo, sig;
-    if (mgr && mgr.email) {
+    const cc = new Set([ADMIN_CC]);
+    if (mgr && mgr.gmailEmail && mgr.gmailToken) {
+      // Manager's own mailbox → send as them for real.
+      useSender = { email: mgr.gmailEmail, token: mgr.gmailToken, name: mgr.name };
+      fromName = mgr.name;
+      replyTo = undefined; // real From, no reply-to needed
+      sig = { name: mgr.name, title: 'Sales Manager \u00b7 Qtonix', email: mgr.gmailEmail };
+    } else if (mgr && mgr.email) {
+      // Manager has no connected mailbox → send via shared sender, show as them.
       fromName = mgr.name;
       replyTo = mgr.email;
       sig = { name: mgr.name, title: 'Sales Manager \u00b7 Qtonix', email: mgr.email };
+      cc.add(mgr.email.toLowerCase());
     } else {
       fromName = 'Sandeep Kumar Swain';
       replyTo = undefined;
       sig = congratsSig(sender);
     }
-    const cc = new Set([ADMIN_CC]);
-    if (mgr && mgr.email) cc.add(mgr.email.toLowerCase());
     cc.delete(rec.email.toLowerCase());
     const bodyHtml = tpl.encouragement({
       agentName: rec.name, achievedUsd: Math.round(rec.achievedUsd), targetUsd: Math.round(rec.targetUsd),
       daysLeft, phase, signature: sig,
     });
-    await sendOnce(models, s, sender, {
+    await sendOnce(models, s, useSender, {
       dedupeKey: `push_${phase}:${rec.id}:${periodKey}`, type: 'push', userId: rec.id, to: rec.email,
       cc: Array.from(cc), fromName, replyTo,
       subject: phase === 'late'
