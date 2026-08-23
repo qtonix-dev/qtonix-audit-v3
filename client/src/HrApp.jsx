@@ -236,6 +236,9 @@ function AnnouncementModal({ onClose, onSaved }) {
 // ===== Task boards (Asana-style) — admin-gated for now ====================
 const PRIO = { urgent: { label: 'Urgent', cls: 'bg-red-100 text-red-700' }, high: { label: 'High', cls: 'bg-orange-100 text-orange-700' }, medium: { label: 'Medium', cls: 'bg-blue-100 text-blue-700' }, low: { label: 'Low', cls: 'bg-slate-100 text-slate-600' } };
 const STAGE = { not_started: { label: 'Not started', cls: 'bg-slate-100 text-slate-600' }, in_progress: { label: 'In progress', cls: 'bg-amber-100 text-amber-700' }, completed: { label: 'Completed', cls: 'bg-green-100 text-green-700' } };
+// Solid-fill cell colors (monday.com style) for the Priority + Status columns.
+const PRIO_FILL = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
+const STAGE_FILL = { not_started: '#94A3B8', in_progress: '#F59E0B', completed: '#22C55E' };
 
 function TAvatar({ person, size = 24 }) {
   if (!person) return <div className="rounded-full bg-slate-200" style={{ width: size, height: size }} />;
@@ -379,8 +382,8 @@ function HrTasksView({ user, isAdmin }) {
             <button onClick={() => patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`w-4 h-4 rounded-full border-2 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
           </div>
           {/* task name (click → drawer) */}
-          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-6' : ''}`}>
-            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
+            {isSub && <span className="text-slate-300 mr-1.5 text-xs" title="subtask">↳</span>}            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
             {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
             {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
           </div>
@@ -394,15 +397,15 @@ function HrTasksView({ user, isAdmin }) {
             {tracking ? <span className={`text-xs ${overdue ? 'text-red-500 font-bold' : 'text-slate-500'}`}>{fmtDate(t.dueDate) || '—'}</span>
               : <input type="date" value={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patchTask(t._id, { dueDate: e.target.value || null })} className={`text-xs bg-transparent focus:outline-none w-full ${overdue ? 'text-red-500 font-bold' : 'text-slate-500'}`} />}
           </div>
-          {/* priority (inline select) */}
-          <div className="px-2 h-9 flex items-center border-r border-slate-100">
-            {tracking ? <Pill map={PRIO} value={t.priority} />
-              : <select value={t.priority} onChange={(e) => patchTask(t._id, { priority: e.target.value })} className={`text-[11px] font-bold rounded-full px-2 py-0.5 border-0 focus:outline-none cursor-pointer ${PRIO[t.priority] ? PRIO[t.priority].cls : ''}`}>{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select>}
+          {/* priority — solid-fill cell (monday.com style) */}
+          <div className="h-9 flex items-center border-r border-slate-100" style={{ background: PRIO_FILL[t.priority] || '#94A3B8' }}>
+            {tracking ? <span className="w-full text-center text-[11px] font-bold text-white">{PRIO[t.priority] ? PRIO[t.priority].label : t.priority}</span>
+              : <select value={t.priority} onChange={(e) => patchTask(t._id, { priority: e.target.value })} className="w-full h-full text-center text-[11px] font-bold text-white bg-transparent border-0 focus:outline-none cursor-pointer appearance-none px-2">{Object.keys(PRIO).map((k) => <option key={k} value={k} className="text-slate-700 bg-white">{PRIO[k].label}</option>)}</select>}
           </div>
-          {/* status (inline select) */}
-          <div className="px-2 h-9 flex items-center border-r border-slate-100">
-            {tracking ? <Pill map={STAGE} value={t.stage} />
-              : <select value={t.stage} onChange={(e) => patchTask(t._id, { stage: e.target.value })} className={`text-[11px] font-bold rounded-full px-2 py-0.5 border-0 focus:outline-none cursor-pointer ${STAGE[t.stage] ? STAGE[t.stage].cls : ''}`}>{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select>}
+          {/* status — solid-fill cell (monday.com style) */}
+          <div className="h-9 flex items-center border-r border-slate-100" style={{ background: STAGE_FILL[t.stage] || '#94A3B8' }}>
+            {tracking ? <span className="w-full text-center text-[11px] font-bold text-white">{STAGE[t.stage] ? STAGE[t.stage].label : t.stage}</span>
+              : <select value={t.stage} onChange={(e) => patchTask(t._id, { stage: e.target.value })} className="w-full h-full text-center text-[11px] font-bold text-white bg-transparent border-0 focus:outline-none cursor-pointer appearance-none px-2">{Object.keys(STAGE).map((k) => <option key={k} value={k} className="text-slate-700 bg-white">{STAGE[k].label}</option>)}</select>}
           </div>
           {/* delete */}
           <div className="flex items-center justify-center h-9">
