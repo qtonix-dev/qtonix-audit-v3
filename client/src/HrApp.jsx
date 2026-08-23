@@ -382,9 +382,9 @@ function HrTasksView({ user, isAdmin }) {
             <button onClick={() => patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`w-4 h-4 rounded-full border-2 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
           </div>
           {/* task name (click → drawer) */}
-          <div className={`px-3 h-9 flex items-center justify-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
+          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
             {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
-            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-center hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
             {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
             {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
           </div>
@@ -421,14 +421,14 @@ function HrTasksView({ user, isAdmin }) {
 
   // Column header row.
   const HeaderRow = () => (
-    <div className={`${COL} bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-400`} style={{ gridTemplateColumns: GRID_COLS }}>
+    <div className={`${COL} bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wide text-[#050A1F]`} style={{ gridTemplateColumns: GRID_COLS }}>
       <div className="h-8 border-r border-slate-100" />
       <div className="h-8 border-r border-slate-100" />
-      <div className="px-3 h-8 flex items-center border-r border-slate-100">Task name</div>
-      <div className="px-2 h-8 flex items-center border-r border-slate-100">Assignee</div>
-      <div className="px-2 h-8 flex items-center border-r border-slate-100">Deadline</div>
-      <div className="px-2 h-8 flex items-center border-r border-slate-100">Priority</div>
-      <div className="px-2 h-8 flex items-center border-r border-slate-100">Status</div>
+      <div className="px-3 h-8 flex items-center justify-center border-r border-slate-100">Task name</div>
+      <div className="px-2 h-8 flex items-center justify-center border-r border-slate-100">Assignee</div>
+      <div className="px-2 h-8 flex items-center justify-center border-r border-slate-100">Deadline</div>
+      <div className="px-2 h-8 flex items-center justify-center border-r border-slate-100">Priority</div>
+      <div className="px-2 h-8 flex items-center justify-center border-r border-slate-100">Status</div>
       <div className="h-8" />
     </div>
   );
