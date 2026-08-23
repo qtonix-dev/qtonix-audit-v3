@@ -420,10 +420,17 @@ function HrTasksView({ user, isAdmin }) {
             );
           })}
 
-          {(board.tracking || []).length > 0 && (
-            <div className="rounded-xl border border-purple-200 bg-purple-50/40 mt-6">
-              <div className="px-4 py-2.5 flex items-center gap-2"><span className="text-sm font-extrabold text-purple-700">Assigned by me</span><span className="text-xs text-purple-400">· {board.tracking.length} · live status</span></div>
-              <div className="bg-white rounded-b-xl">{prep(board.tracking).map((t) => <TaskRow key={t._id} t={t} tracking />)}</div>
+          {(
+            <div className="rounded-xl border-2 border-purple-200 bg-purple-50/50 mt-6">
+              <div className="px-4 py-3 flex items-center gap-2 border-b border-purple-100">
+                <span className="w-6 h-6 rounded-lg bg-purple-500 text-white flex items-center justify-center text-xs font-bold">↗</span>
+                <span className="text-sm font-extrabold text-purple-700">{viewingOwn ? 'Assigned by me' : `Assigned by ${board.viewer.name}`}</span>
+                <span className="text-xs font-bold text-white bg-purple-500 rounded-full px-2 py-0.5">{(board.tracking || []).length}</span>
+                <span className="text-[11px] text-purple-400 ml-auto">live status · for standups</span>
+              </div>
+              {(board.tracking || []).length === 0
+                ? <div className="px-4 py-4 text-xs text-slate-400">Tasks {viewingOwn ? 'you assign' : 'assigned'} to others appear here to track progress without opening their board.</div>
+                : <div className="bg-white rounded-b-xl">{prep(board.tracking).map((t) => <TaskRow key={t._id} t={t} tracking />)}</div>}
             </div>
           )}
         </div>
@@ -511,7 +518,7 @@ async function uploadTaskFile(taskId, file, onDone, onErr) {
   reader.readAsDataURL(file);
 }
 
-function TaskDetailDrawer({ taskId, onClose, onChange }) {
+function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle }) {
   const [data, setData] = useState(null);
   const [note, setNote] = useState('');
   const [newSub, setNewSub] = useState('');
@@ -533,12 +540,16 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
   return (
     <div className="fixed inset-0 z-[120] flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
-      <div className="relative bg-white w-full max-w-lg h-full shadow-2xl overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 bg-white border-b border-slate-100 px-5 py-3 flex items-center justify-between">
-          <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
+      <div className="relative bg-white w-full max-w-2xl h-full shadow-2xl overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-100 px-5 py-3 flex items-center justify-between z-10">
+          <div className="flex items-center gap-2">
+            {isSubtask && <button onClick={onClose} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100" title="Back to task">← Back to task</button>}
+            <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
+          </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
         </div>
         <div className="p-5">
+          {isSubtask && <div className="text-[11px] text-slate-400 mb-2">Subtask{parentTitle ? <> of <span className="font-semibold text-slate-500">{parentTitle}</span></> : ''}</div>}
           <input defaultValue={t.title} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none" />
           <div className="space-y-3 mb-5">
             <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
@@ -607,7 +618,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
           )}
         </div>
       </div>
-      {subOpen && <TaskDetailDrawer taskId={subOpen} onClose={() => setSubOpen(null)} onChange={() => { load(); onChange && onChange(); }} />}
+      {subOpen && <TaskDetailDrawer taskId={subOpen} isSubtask parentTitle={t.title} onClose={() => setSubOpen(null)} onChange={() => { load(); onChange && onChange(); }} />}
     </div>
   );
 }
