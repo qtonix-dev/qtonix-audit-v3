@@ -20,7 +20,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-  Op, sequelize, HrUser, Task, TaskComment, TaskAttachment, TaskActivity, HrNotification,
+  Op, sequelize, HrUser, User, Task, TaskComment, TaskAttachment, TaskActivity, HrNotification,
 } = require('../models');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const { canAssign } = require('../services/taskPermissions');
@@ -36,14 +36,29 @@ async function actingContext(req) {
   let actorUser = null;
   if (req.hrUser) actorUser = req.hrUser;
   else if (req.hrActor && req.hrActor.kind === 'hr') actorUser = await HrUser.findByPk(req.hrActor.id);
+  // The board identity. HR staff use their HrUser id (positive). A CRM admin has
+  // no HrUser row, so they get a negative board id (-userId) that can never
+  // collide with an HrUser id — this lets the admin own a real board + be an
+  // assignee/assigner in the same integer columns.
+  const rawId = req.hrActor && req.hrActor.id;
+  const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
   return {
     isAdmin,
     isHr: isAdmin || (req.hrActor && req.hrActor.kind === 'hr'),
     actorUser,
     actorId: req.hrActor && req.hrActor.id,
+    boardId,
     actorName: (req.hrActor && req.hrActor.name) || 'Admin',
     actorKind: (req.hrActor && req.hrActor.kind) || 'admin',
   };
+}
+
+// Resolve a display person for any board id (positive = HrUser, negative = admin).
+async function personForBoardId(boardId, pById) {
+  if (boardId == null) return null;
+  if (boardId > 0) { const u = pById ? pById[boardId] : await HrUser.findByPk(boardId); return u ? { id: u.id, name: u.name, avatar: u.avatar || null, designation: u.designation || '' } : null; }
+  const admin = await User.findByPk(Math.abs(boardId));
+  return admin ? { id: boardId, name: admin.name, avatar: null, designation: 'Admin', isAdmin: true } : { id: boardId, name: 'Admin', avatar: null, designation: 'Admin', isAdmin: true };
 }
 
 async function logActivity(taskId, ctx, kind, detail) {
@@ -64,21 +79,45 @@ async function roster() {
   return HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'type', 'department', 'branch', 'reportsToId', 'isHrManager', 'avatar', 'designation', 'active'], order: [['name', 'ASC']] });
 }
 
-function decorateWith(pById) {
+function decorateWith(pById, adminById) {
+  const resolve = (id, fallbackName) => {
+    if (id == null) return null;
+    if (id > 0) { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (fallbackName ? { id, name: fallbackName, avatar: null } : null); }
+    const ad = adminById && adminById[id]; return { id, name: (ad && ad.name) || fallbackName || 'Admin', avatar: null, isAdmin: true };
+  };
   return (t) => {
-    const a = pById[t.assigneeId];
-    const b = pById[t.assignedById];
     const o = t.toJSON();
-    o.assignee = a ? { id: a.id, name: a.name, avatar: a.avatar || null } : null;
-    o.assigner = b ? { id: b.id, name: b.name, avatar: b.avatar || null } : (t.assignedByName ? { id: t.assignedById, name: t.assignedByName, avatar: null } : null);
+    o.assignee = resolve(t.assigneeId);
+    o.assigner = resolve(t.assignedById, t.assignedByName);
     return o;
   };
 }
 
-// The two-way board: tasks where I'm the assignee OR the assigner.
+// Build a small map of admin display names for any negative ids referenced.
+async function adminMapFor(tasks, extraIds = []) {
+  const negIds = new Set();
+  for (const t of tasks) { if (t.assigneeId < 0) negIds.add(t.assigneeId); if (t.assignedById < 0) negIds.add(t.assignedById); }
+  for (const id of extraIds) if (id != null && id < 0) negIds.add(id);
+  const map = {};
+  for (const nid of negIds) {
+    const admin = await User.findByPk(Math.abs(nid));
+    map[nid] = { id: nid, name: admin ? admin.name : 'Admin' };
+  }
+  return map;
+}
+
+// The two-way board: tasks where I'm the assignee OR the assigner. `viewerId`
+// is a board id (positive HrUser, or negative admin).
 async function buildBoard(viewerId, ctx) {
-  const viewer = await HrUser.findByPk(viewerId);
-  if (!viewer) return { error: 'Person not found.' };
+  let viewer;
+  if (viewerId > 0) {
+    const u = await HrUser.findByPk(viewerId);
+    if (!u) return { error: 'Person not found.' };
+    viewer = { id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null };
+  } else {
+    const admin = await User.findByPk(Math.abs(viewerId));
+    viewer = { id: viewerId, name: admin ? admin.name : 'Admin', designation: 'Admin', department: '', branch: '', avatar: null, isAdmin: true };
+  }
 
   const tasks = await Task.findAll({
     where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }] },
@@ -91,7 +130,8 @@ async function buildBoard(viewerId, ctx) {
 
   const people = await roster();
   const pById = Object.fromEntries(people.map((u) => [u.id, u]));
-  const decorate = decorateWith(pById);
+  const adminById = await adminMapFor(tasks, [viewerId]);
+  const decorate = decorateWith(pById, adminById);
 
   const mine = [];
   const tracking = [];
@@ -103,18 +143,14 @@ async function buildBoard(viewerId, ctx) {
   }
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
-  return {
-    viewer: { id: viewer.id, name: viewer.name, designation: viewer.designation || '', department: viewer.department || '', branch: viewer.branch || '', avatar: viewer.avatar || null },
-    buckets, tracking, canManage: true,
-  };
+  return { viewer, buckets, tracking, canManage: true };
 }
 
 router.get('/my-board', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
-    if (ctx.actorUser) return res.json(await buildBoard(ctx.actorUser.id, ctx));
-    const people = await roster();
-    res.json({ adminNoBoard: true, people: people.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type })) });
+    // Everyone — including admin (negative boardId) — lands on their own board.
+    return res.json(await buildBoard(ctx.boardId, ctx));
   } catch (e) { next(e); }
 });
 
@@ -134,7 +170,14 @@ router.get('/assignable', guard, async (req, res, next) => {
     const allowed = people.filter((u) => canAssign(ctx.actorUser, u, ctx));
     const q = String(req.query.q || '').trim().toLowerCase();
     const filtered = q ? allowed.filter((u) => u.name.toLowerCase().includes(q) || (u.designation || '').toLowerCase().includes(q)) : allowed;
-    res.json(filtered.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type })));
+    const list = filtered.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type }));
+    // Admins have no HrUser row — add a "Me" entry (their negative board id) so
+    // they can assign tasks to their own board.
+    if (ctx.isAdmin && ctx.boardId < 0) {
+      const me = { id: ctx.boardId, name: ctx.actorName + ' (me)', designation: 'Admin', department: '', branch: '', avatar: null, type: 'admin' };
+      if (!q || me.name.toLowerCase().includes(q)) list.unshift(me);
+    }
+    res.json(list);
   } catch (e) { next(e); }
 });
 
@@ -154,13 +197,24 @@ router.post('/tasks', guard, async (req, res, next) => {
     const title = String(b.title || '').trim();
     if (!title) return res.status(400).json({ error: 'Task title is required.' });
 
-    let assigneeId = b.assigneeId ? Number(b.assigneeId) : (ctx.actorUser ? ctx.actorUser.id : null);
+    // Default assignee = the actor's own board (admin uses negative boardId).
+    let assigneeId = b.assigneeId ? Number(b.assigneeId) : ctx.boardId;
     if (!assigneeId) return res.status(400).json({ error: 'An assignee is required.' });
 
+    // Validate the assignee. A negative id means an admin board (only the acting
+    // admin may target their own board). A positive id is an HrUser, checked
+    // against the hierarchy permission.
     const people = await roster();
-    const target = people.find((u) => u.id === assigneeId);
-    if (!target) return res.status(404).json({ error: 'Assignee not found.' });
-    if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+    let targetName = '';
+    if (assigneeId < 0) {
+      if (!ctx.isAdmin || assigneeId !== ctx.boardId) return res.status(403).json({ error: 'You can’t assign a task to that board.' });
+      targetName = ctx.actorName;
+    } else {
+      const target = people.find((u) => u.id === assigneeId);
+      if (!target) return res.status(404).json({ error: 'Assignee not found.' });
+      if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+      targetName = target.name;
+    }
 
     let parentTaskId = b.parentTaskId ? Number(b.parentTaskId) : null;
     let boardOwnerId = assigneeId;
@@ -172,7 +226,7 @@ router.post('/tasks', guard, async (req, res, next) => {
       boardOwnerId = parent.boardOwnerId;
       bucket = parent.bucket;
     }
-    const isAssignedByOther = assigneeId !== ctx.actorId;
+    const isAssignedByOther = assigneeId !== ctx.boardId;
     // Honor an explicitly provided bucket (e.g. adding a task directly under a
     // section). Only when no bucket is given does an assigned-to-someone-else
     // task default into 'recently_assigned'.
@@ -188,10 +242,10 @@ router.post('/tasks', guard, async (req, res, next) => {
       dueDate: b.dueDate || null,
       order: (Number.isFinite(max) ? max : 0) + 1,
       createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
-      assignedById: ctx.actorId || null, assignedByName: ctx.actorName,
+      assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
     });
     await logActivity(row.id, ctx, 'created', parentTaskId ? 'created subtask' : 'created task');
-    if (isAssignedByOther) await notifyAssignee(assigneeId, ctx, row);
+    if (isAssignedByOther && assigneeId > 0) await notifyAssignee(assigneeId, ctx, row);
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -222,15 +276,22 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
 
     if (b.assigneeId !== undefined && Number(b.assigneeId) !== row.assigneeId) {
       const newId = Number(b.assigneeId);
-      const people = await roster();
-      const target = people.find((u) => u.id === newId);
-      if (!target) return res.status(404).json({ error: 'Assignee not found.' });
-      if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+      let newName = '';
+      if (newId < 0) {
+        if (!ctx.isAdmin || newId !== ctx.boardId) return res.status(403).json({ error: 'You can’t assign a task to that board.' });
+        newName = ctx.actorName;
+      } else {
+        const people = await roster();
+        const target = people.find((u) => u.id === newId);
+        if (!target) return res.status(404).json({ error: 'Assignee not found.' });
+        if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+        newName = target.name;
+      }
       row.assigneeId = newId;
       if (!row.parentTaskId) { row.boardOwnerId = newId; row.bucket = 'recently_assigned'; }
-      row.assignedById = ctx.actorId || null; row.assignedByName = ctx.actorName;
-      await logActivity(row.id, ctx, 'assigned', 'assigned to ' + target.name);
-      await notifyAssignee(newId, ctx, row);
+      row.assignedById = ctx.boardId || null; row.assignedByName = ctx.actorName;
+      await logActivity(row.id, ctx, 'assigned', 'assigned to ' + newName);
+      if (newId > 0) await notifyAssignee(newId, ctx, row);
     }
     await row.save();
     res.json(row.toJSON());
@@ -262,7 +323,8 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
       roster(),
     ]);
     const pById = Object.fromEntries(people.map((u) => [u.id, u]));
-    const dec = decorateWith(pById);
+    const adminById = await adminMapFor([row, ...subtasks]);
+    const dec = decorateWith(pById, adminById);
     res.json({ task: dec(row), subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()) });
   } catch (e) { next(e); }
 });
@@ -273,7 +335,8 @@ router.get('/tasks/:id', guard, async (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Task not found.' });
     const people = await roster();
     const pById = Object.fromEntries(people.map((u) => [u.id, u]));
-    res.json(decorateWith(pById)(row));
+    const adminById = await adminMapFor([row]);
+    res.json(decorateWith(pById, adminById)(row));
   } catch (e) { next(e); }
 });
 

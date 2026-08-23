@@ -287,7 +287,8 @@ const BUCKETS = [
 
 function HrTasksView({ user, isAdmin }) {
   const [board, setBoard] = useState(null);
-  const [pickPeople, setPickPeople] = useState(null);
+  const [people, setPeople] = useState([]);         // for the top switcher (admin/HR)
+  const [myBoardId, setMyBoardId] = useState(null); // the viewer's own board id
   const [viewerId, setViewerId] = useState(null);
   const [view, setView] = useState('list'); // list | board
   const [err, setErr] = useState('');
@@ -300,17 +301,17 @@ function HrTasksView({ user, isAdmin }) {
   const [filter, setFilter] = useState('all');      // all | mine | overdue | high
   const [sort, setSort] = useState('manual');       // manual | due | priority
 
-  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setViewerId(id); setPickPeople(null); }).catch((e) => setErr(e.message));
+  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setViewerId(id); }).catch((e) => setErr(e.message));
   useEffect(() => {
-    hrApi('/tasks/my-board').then((d) => {
-      if (d.adminNoBoard) setPickPeople(d.people);
-      else { setBoard(d); setViewerId(d.viewer.id); }
-    }).catch((e) => setErr(e.message));
+    // Everyone lands on their OWN board first.
+    hrApi('/tasks/my-board').then((d) => { setBoard(d); setViewerId(d.viewer.id); setMyBoardId(d.viewer.id); }).catch((e) => setErr(e.message));
+    // Load the people list for the top switcher (admin/HR can view others).
+    hrApi('/tasks/boards').then(setPeople).catch(() => {});
   }, []);
-  const refresh = () => { if (viewerId) loadBoard(viewerId); };
+  const refresh = () => { if (viewerId != null) loadBoard(viewerId); };
 
   const addTask = async (bucket) => {
-    if (!newTitle.trim() || !viewerId) return;
+    if (!newTitle.trim() || viewerId == null) return;
     try { await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), assigneeId: viewerId, bucket }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
   };
   const patchTask = async (id, patch) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
@@ -318,25 +319,9 @@ function HrTasksView({ user, isAdmin }) {
 
   if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
 
-  if (pickPeople) {
-    return (
-      <div className="max-w-2xl">
-        <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Task boards</h1>
-        <p className="text-xs text-slate-400 mb-4">Pick whose board to open. Assign tasks to anyone from their board; you’ll track what you assign right here.</p>
-        <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-          {pickPeople.map((p) => (
-            <button key={p.id} onClick={() => loadBoard(p.id)} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left">
-              <TAvatar person={p} size={32} />
-              <div className="flex-1"><div className="text-sm font-semibold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.designation || p.department}</div></div>
-              <span className="text-slate-300">›</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   if (!board) return <div className="text-slate-400 text-sm py-10 text-center">Loading board…</div>;
+
+  const viewingOwn = viewerId === myBoardId;
 
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const isOverdue = (t) => t.dueDate && String(t.dueDate).slice(0, 10) < today && t.stage !== 'completed';
@@ -383,8 +368,13 @@ function HrTasksView({ user, isAdmin }) {
         <div className="flex items-center gap-3">
           <TAvatar person={board.viewer} size={36} />
           <div>
-            <h1 className="text-xl font-extrabold text-[#050A1F]">{board.viewer.name}’s tasks</h1>
-            {isAdmin && <button onClick={() => hrApi('/tasks/my-board').then((d) => d.adminNoBoard && setPickPeople(d.people))} className="text-[11px] text-orange-500 font-semibold">Switch board</button>}
+            <h1 className="text-xl font-extrabold text-[#050A1F]">{viewingOwn ? 'My tasks' : `${board.viewer.name}’s tasks`}</h1>
+            {(isAdmin || people.length > 1) && (
+              <select value={viewerId} onChange={(e) => loadBoard(Number(e.target.value))} className="mt-0.5 text-[11px] text-slate-500 bg-transparent border border-slate-200 rounded-md px-1.5 py-0.5 focus:outline-none">
+                {myBoardId != null && <option value={myBoardId}>My board</option>}
+                {people.filter((p) => p.id !== myBoardId).map((p) => <option key={p.id} value={p.id}>{p.name}{p.taskCount ? ` (${p.taskCount})` : ''}</option>)}
+              </select>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
