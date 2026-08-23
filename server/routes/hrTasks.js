@@ -151,7 +151,12 @@ async function buildBoard(viewerId, ctx) {
     if (t.assigneeId === viewerId) {
       o.relation = 'mine';
       if (t.stage === 'completed') completed.push(o); else mine.push(o);
-    } else if (t.assignedById === viewerId) { o.relation = 'tracking'; tracking.push(o); }
+    } else if (t.assignedById === viewerId) {
+      o.relation = 'tracking';
+      // Completed delegated tasks move into the Completed section too, so
+      // "Completed" holds everything finished — whether you did it or assigned it.
+      if (t.stage === 'completed') completed.push(o); else tracking.push(o);
+    }
   }
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
@@ -318,11 +323,15 @@ router.delete('/tasks/:id', guard, async (req, res, next) => {
     // Only the task's creator or an admin may delete it.
     const isCreator = row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId);
     if (!ctx.isAdmin && !isCreator) return res.status(403).json({ error: 'Only the task creator or an admin can delete this task.' });
-    await Task.destroy({ where: { parentTaskId: row.id } });
-    await TaskComment.destroy({ where: { taskId: row.id } });
-    await TaskAttachment.destroy({ where: { taskId: row.id } });
-    await TaskActivity.destroy({ where: { taskId: row.id } });
-    await row.destroy();
+
+    // Gather this task + all its subtasks, then remove their comments,
+    // attachments, and activity, then the tasks themselves.
+    const subs = await Task.findAll({ where: { parentTaskId: row.id }, attributes: ['id'] });
+    const allIds = [row.id, ...subs.map((s) => s.id)];
+    await TaskComment.destroy({ where: { taskId: { [Op.in]: allIds } } });
+    await TaskAttachment.destroy({ where: { taskId: { [Op.in]: allIds } } });
+    await TaskActivity.destroy({ where: { taskId: { [Op.in]: allIds } } });
+    await Task.destroy({ where: { id: { [Op.in]: allIds } } });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
