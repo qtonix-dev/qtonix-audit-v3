@@ -1763,7 +1763,10 @@ TaskSection.prototype.toJSON = function () { const o = Object.assign({}, this.ge
 const Task = sequelize.define('Task', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   boardOwnerId: { type: DataTypes.INTEGER, allowNull: false },
-  sectionId: { type: DataTypes.INTEGER, allowNull: true },
+  sectionId: { type: DataTypes.INTEGER, allowNull: true },       // legacy custom sections (unused in fixed-bucket model)
+  // Fixed scheduling bucket on the assignee's board. Newly assigned tasks land
+  // in 'recently_assigned'; the assignee drags them to schedule by priority.
+  bucket: { type: DataTypes.STRING(20), defaultValue: 'recently_assigned' }, // recently_assigned|today|tomorrow|next_week|later
   parentTaskId: { type: DataTypes.INTEGER, allowNull: true },
   title: { type: DataTypes.STRING(300), allowNull: false },
   description: { type: DataTypes.TEXT, defaultValue: '' },
@@ -1781,7 +1784,7 @@ const Task = sequelize.define('Task', {
 }, { tableName: 'tasks', indexes: [
   { name: 'idx_tasks_board', fields: ['boardOwnerId'] },
   { name: 'idx_tasks_assignee', fields: ['assigneeId'] },
-  { name: 'idx_tasks_section', fields: ['sectionId'] },
+  { name: 'idx_tasks_assigner', fields: ['assignedById'] },
   { name: 'idx_tasks_parent', fields: ['parentTaskId'] },
 ] });
 Task.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };

@@ -274,50 +274,61 @@ function AssigneePicker({ value, onChange, allowClear }) {
 
 function Pill({ map, value }) { const m = map[value] || { label: value, cls: 'bg-slate-100 text-slate-600' }; return <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${m.cls}`}>{m.label}</span>; }
 
+// Asana "My Tasks"-style two-way board: five fixed buckets + a tracking list.
+// Drag tasks between buckets (native HTML5 DnD). Bucket = scheduling; Stage =
+// progress (independent). Admin picks whose board to view.
+const BUCKETS = [
+  { key: 'recently_assigned', label: 'Recently Assigned' },
+  { key: 'today', label: 'Do Today' },
+  { key: 'tomorrow', label: 'Do Tomorrow' },
+  { key: 'next_week', label: 'Do Next Week' },
+  { key: 'later', label: 'Do Later' },
+];
+
 function HrTasksView({ user, isAdmin }) {
   const [board, setBoard] = useState(null);
-  const [pickPeople, setPickPeople] = useState(null); // admin: choose whose board
-  const [ownerId, setOwnerId] = useState(null);
+  const [pickPeople, setPickPeople] = useState(null);
+  const [viewerId, setViewerId] = useState(null);
   const [view, setView] = useState('list'); // list | board
   const [err, setErr] = useState('');
   const [openTask, setOpenTask] = useState(null);
-  const [addingIn, setAddingIn] = useState(null); // sectionId being added to
+  const [addingIn, setAddingIn] = useState(null);   // bucket key being added to
   const [newTitle, setNewTitle] = useState('');
-  const [newSection, setNewSection] = useState('');
+  const [dragId, setDragId] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const [collapsed, setCollapsed] = useState({});
+  const [filter, setFilter] = useState('all');      // all | mine | overdue | high
+  const [sort, setSort] = useState('manual');       // manual | due | priority
 
-  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setPickPeople(null); }).catch((e) => setErr(e.message));
+  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setViewerId(id); setPickPeople(null); }).catch((e) => setErr(e.message));
   useEffect(() => {
     hrApi('/tasks/my-board').then((d) => {
-      if (d.adminNoBoard) { setPickPeople(d.people); }
-      else { setBoard(d); setOwnerId(d.owner.id); }
+      if (d.adminNoBoard) setPickPeople(d.people);
+      else { setBoard(d); setViewerId(d.viewer.id); }
     }).catch((e) => setErr(e.message));
   }, []);
+  const refresh = () => { if (viewerId) loadBoard(viewerId); };
 
-  const refresh = () => { if (ownerId) loadBoard(ownerId); };
-
-  const addSection = async () => {
-    if (!newSection.trim() || !ownerId) return;
-    try { await hrApi('/tasks/sections', { method: 'POST', body: JSON.stringify({ boardOwnerId: ownerId, name: newSection.trim() }) }); setNewSection(''); refresh(); } catch (e) { setErr(e.message); }
+  const addTask = async (bucket) => {
+    if (!newTitle.trim() || !viewerId) return;
+    try { await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), assigneeId: viewerId, bucket }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
   };
-  const addTask = async (sectionId) => {
-    if (!newTitle.trim()) return;
-    try { await hrApi('/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), sectionId, assigneeId: ownerId }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
-  };
-  const patchTask = async (id, patch) => { try { await hrApi(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
+  const patchTask = async (id, patch) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
+  const moveToBucket = async (id, bucket) => { setDragId(null); setDragOver(null); await patchTask(id, { bucket }); };
 
   if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
 
-  // Admin board picker
   if (pickPeople) {
     return (
       <div className="max-w-2xl">
         <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Task boards</h1>
-        <p className="text-xs text-slate-400 mb-4">Pick whose board to open. You can assign tasks to anyone from their board.</p>
+        <p className="text-xs text-slate-400 mb-4">Pick whose board to open. Assign tasks to anyone from their board; you’ll track what you assign right here.</p>
         <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
           {pickPeople.map((p) => (
-            <button key={p.id} onClick={() => { setOwnerId(p.id); loadBoard(p.id); }} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left">
+            <button key={p.id} onClick={() => loadBoard(p.id)} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left">
               <TAvatar person={p} size={32} />
-              <div><div className="text-sm font-semibold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.designation}</div></div>
+              <div className="flex-1"><div className="text-sm font-semibold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.designation || p.department}</div></div>
+              <span className="text-slate-300">›</span>
             </button>
           ))}
         </div>
@@ -327,77 +338,120 @@ function HrTasksView({ user, isAdmin }) {
 
   if (!board) return <div className="text-slate-400 text-sm py-10 text-center">Loading board…</div>;
 
-  const tasksInSection = (sid) => board.tasks.filter((t) => (t.sectionId || null) === sid);
-  const noSection = board.tasks.filter((t) => !t.sectionId);
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const isOverdue = (t) => t.dueDate && String(t.dueDate).slice(0, 10) < today && t.stage !== 'completed';
+  const applyFilter = (list) => list.filter((t) => filter === 'all' ? true : filter === 'mine' ? t.relation === 'mine' : filter === 'overdue' ? isOverdue(t) : filter === 'high' ? (t.priority === 'high' || t.priority === 'urgent') : true);
+  const applySort = (list) => {
+    if (sort === 'manual') return list;
+    const copy = [...list];
+    if (sort === 'due') copy.sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+    if (sort === 'priority') { const rank = { urgent: 0, high: 1, medium: 2, low: 3 }; copy.sort((a, b) => (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9)); }
+    return copy;
+  };
+  const prep = (list) => applySort(applyFilter(list));
 
-  const TaskRow = ({ t }) => (
-    <div className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 cursor-pointer" onClick={() => setOpenTask(t)}>
-      <button onClick={(e) => { e.stopPropagation(); patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' }); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
+  const TaskRow = ({ t, tracking }) => (
+    <div
+      draggable={!tracking}
+      onDragStart={() => setDragId(t._id)}
+      onDragEnd={() => { setDragId(null); setDragOver(null); }}
+      onClick={() => setOpenTask(t)}
+      className={`group flex items-center gap-3 px-4 py-2 border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50 ${dragId === t._id ? 'opacity-40' : ''}`}
+    >
+      {!tracking && <span className="text-slate-300 group-hover:text-slate-400 cursor-grab select-none shrink-0" title="Drag to a section">⠿</span>}
+      <button onClick={(e) => { e.stopPropagation(); patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' }); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
       <div className="flex-1 min-w-0">
         <div className={`text-sm font-semibold truncate ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
-        {t.subtaskCount > 0 && <div className="text-[10px] text-slate-400">▸ {t.subtaskCount} subtask{t.subtaskCount > 1 ? 's' : ''}</div>}
+        <div className="flex items-center gap-2">
+          {t.subtaskCount > 0 && <span className="text-[10px] text-slate-400">▸ {t.subtaskDone}/{t.subtaskCount}</span>}
+          {tracking && t.assignee && <span className="text-[10px] text-purple-500 font-semibold">tracking · {t.assignee.name}</span>}
+          {!tracking && t.assigner && t.assigner.name && t.relation === 'mine' && t.assignedById && <span className="text-[10px] text-blue-500">by {t.assigner.name}</span>}
+        </div>
       </div>
-      {t.assignedById && t.assignedByName && <span className="text-[10px] text-blue-500 shrink-0 hidden md:inline">by {t.assignedByName}</span>}
       <div className="shrink-0"><TAvatar person={t.assignee} size={22} /></div>
-      <div className="shrink-0 w-20 text-[11px] text-slate-500 text-right">{t.dueDate ? new Date(t.dueDate + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</div>
+      <div className={`shrink-0 w-16 text-[11px] text-right ${isOverdue(t) ? 'text-red-500 font-bold' : 'text-slate-500'}`}>{t.dueDate ? new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</div>
       <div className="shrink-0 hidden sm:block"><Pill map={PRIO} value={t.priority} /></div>
       <div className="shrink-0"><Pill map={STAGE} value={t.stage} /></div>
     </div>
   );
 
+  const bucketByKey = Object.fromEntries((board.buckets || []).map((b) => [b.key, b]));
+
   return (
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-3">
-          <TAvatar person={board.owner} size={36} />
+          <TAvatar person={board.viewer} size={36} />
           <div>
-            <h1 className="text-xl font-extrabold text-[#050A1F]">{board.owner.name}’s tasks</h1>
+            <h1 className="text-xl font-extrabold text-[#050A1F]">{board.viewer.name}’s tasks</h1>
             {isAdmin && <button onClick={() => hrApi('/tasks/my-board').then((d) => d.adminNoBoard && setPickPeople(d.people))} className="text-[11px] text-orange-500 font-semibold">Switch board</button>}
           </div>
         </div>
-        <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
-          {['list', 'board'].map((v) => <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 text-xs font-bold rounded-md capitalize ${view === v ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{v}</button>)}
+        <div className="flex items-center gap-2">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600"><option value="all">Filter: All</option><option value="mine">Mine to do</option><option value="overdue">Overdue</option><option value="high">High/Urgent</option></select>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600"><option value="manual">Sort: Manual</option><option value="due">Due date</option><option value="priority">Priority</option></select>
+          <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
+            {['list', 'board'].map((v) => <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 text-xs font-bold rounded-md capitalize ${view === v ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{v}</button>)}
+          </div>
         </div>
       </div>
 
       {view === 'list' ? (
-        <div className="space-y-5">
-          {board.sections.map((sec) => (
-            <div key={sec._id}>
-              <div className="text-sm font-extrabold text-[#050A1F] mb-1">{sec.name} <span className="text-slate-400 font-normal">· {tasksInSection(sec._id).length}</span></div>
-              <div className="rounded-xl border border-slate-200 bg-white">
-                {tasksInSection(sec._id).map((t) => <TaskRow key={t._id} t={t} />)}
-                {addingIn === sec._id
-                  ? <div className="flex items-center gap-2 px-4 py-2"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(sec._id)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(sec._id)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>
-                  : <button onClick={() => { setAddingIn(sec._id); setNewTitle(''); }} className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-50">+ Add task</button>}
+        <div className="space-y-4">
+          {BUCKETS.map(({ key, label }) => {
+            const bk = bucketByKey[key] || { tasks: [] };
+            const rows = prep(bk.tasks);
+            const isOpen = !collapsed[key];
+            return (
+              <div key={key}
+                onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver(key); } }}
+                onDragLeave={() => setDragOver((d) => d === key ? null : d)}
+                onDrop={(e) => { e.preventDefault(); if (dragId) moveToBucket(dragId, key); }}
+                className={`rounded-xl border bg-white transition ${dragOver === key ? 'border-orange-400 ring-2 ring-orange-200' : 'border-slate-200'}`}
+              >
+                <button onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
+                  <span className={`text-slate-400 text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`}>▸</span>
+                  <span className="text-sm font-extrabold text-[#050A1F]">{label}</span>
+                  <span className="text-xs text-slate-400 font-normal">· {bk.tasks.length}</span>
+                  {key === 'recently_assigned' && bk.tasks.length > 0 && <span className="text-[10px] text-orange-500 font-bold ml-1">NEW</span>}
+                </button>
+                {isOpen && (
+                  <div>
+                    {rows.map((t) => <TaskRow key={t._id} t={t} />)}
+                    {addingIn === key
+                      ? <div className="flex items-center gap-2 px-4 py-2 border-t border-slate-100"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(key)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(key)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>
+                      : <button onClick={() => { setAddingIn(key); setNewTitle(''); }} className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-t border-slate-100">+ Add task</button>}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
-          {noSection.length > 0 && (
-            <div><div className="text-sm font-extrabold text-slate-400 mb-1">No section</div><div className="rounded-xl border border-slate-200 bg-white">{noSection.map((t) => <TaskRow key={t._id} t={t} />)}</div></div>
-          )}
-          {board.canManage && (
-            <div className="flex items-center gap-2">
-              <input value={newSection} onChange={(e) => setNewSection(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSection()} placeholder="+ Add section" className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-              <button onClick={addSection} className="text-xs font-bold text-white rounded-lg px-4 py-2" style={{ background: ORANGE }}>Add section</button>
+            );
+          })}
+
+          {(board.tracking || []).length > 0 && (
+            <div className="rounded-xl border border-purple-200 bg-purple-50/40 mt-6">
+              <div className="px-4 py-2.5 flex items-center gap-2"><span className="text-sm font-extrabold text-purple-700">Assigned by me</span><span className="text-xs text-purple-400">· {board.tracking.length} · live status</span></div>
+              <div className="bg-white rounded-b-xl">{prep(board.tracking).map((t) => <TaskRow key={t._id} t={t} tracking />)}</div>
             </div>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-3">
-          {['not_started', 'in_progress', 'completed'].map((st) => (
-            <div key={st} className="bg-slate-50 rounded-xl p-2">
-              <div className="text-xs font-bold text-slate-500 px-2 py-1 mb-1"><Pill map={STAGE} value={st} /></div>
-              <div className="space-y-2">
-                {board.tasks.filter((t) => t.stage === st).map((t) => (
-                  <div key={t._id} onClick={() => setOpenTask(t)} className="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-sm">
-                    <div className="text-sm font-semibold text-[#050A1F] mb-2">{t.title}</div>
-                    <div className="flex items-center justify-between"><Pill map={PRIO} value={t.priority} /><TAvatar person={t.assignee} size={22} /></div>
-                  </div>
-                ))}
+          {['not_started', 'in_progress', 'completed'].map((st) => {
+            const all = [...(board.buckets || []).flatMap((b) => b.tasks), ...(board.tracking || [])];
+            return (
+              <div key={st} onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver('stage:' + st); } }} onDrop={(e) => { e.preventDefault(); if (dragId) { patchTask(dragId, { stage: st }); setDragId(null); setDragOver(null); } }} className={`rounded-xl p-2 transition ${dragOver === 'stage:' + st ? 'bg-orange-50 ring-2 ring-orange-200' : 'bg-slate-50'}`}>
+                <div className="px-2 py-1 mb-1"><Pill map={STAGE} value={st} /></div>
+                <div className="space-y-2">
+                  {prep(all.filter((t) => t.stage === st)).map((t) => (
+                    <div key={t._id} draggable onDragStart={() => setDragId(t._id)} onDragEnd={() => { setDragId(null); setDragOver(null); }} onClick={() => setOpenTask(t)} className="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-sm">
+                      <div className="text-sm font-semibold text-[#050A1F] mb-2">{t.title}</div>
+                      <div className="flex items-center justify-between"><Pill map={PRIO} value={t.priority} /><TAvatar person={t.assignee} size={22} /></div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -411,12 +465,12 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
   const [data, setData] = useState(null);
   const [note, setNote] = useState('');
   const [newSub, setNewSub] = useState('');
-  const load = () => hrApi(`/tasks/${taskId}/detail`).then(setData).catch(() => {});
+  const load = () => hrApi(`/tasks/tasks/${taskId}/detail`).then(setData).catch(() => {});
   useEffect(() => { load(); }, [taskId]);
-  const patch = async (p) => { await hrApi(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
-  const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); load(); };
-  const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId }) }); setNewSub(''); load(); onChange && onChange(); };
-  const toggleSub = async (s) => { await hrApi(`/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
+  const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
+  const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); load(); };
+  const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
+  const toggleSub = async (s) => { await hrApi(`/tasks/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
 
   if (!data) return null;
   const t = data.task;
@@ -435,6 +489,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
             <TField label="Due date"><input type="date" defaultValue={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patch({ dueDate: e.target.value || null })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs" /></TField>
             <TField label="Priority"><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select></TField>
             <TField label="Stage"><select value={t.stage} onChange={(e) => patch({ stage: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select></TField>
+            {!t.parentTaskId && <TField label="Section"><select value={t.bucket || 'recently_assigned'} onChange={(e) => patch({ bucket: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs"><option value="recently_assigned">Recently Assigned</option><option value="today">Do Today</option><option value="tomorrow">Do Tomorrow</option><option value="next_week">Do Next Week</option><option value="later">Do Later</option></select></TField>}
           </div>
 
           <div className="mb-5">
