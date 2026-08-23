@@ -225,6 +225,491 @@ function AnnouncementModal({ onClose, onSaved }) {
   );
 }
 
+// ===== HR Manager — Daily Console =========================================
+// A mostly-automated daily workspace: an auto-collected snapshot (attendance,
+// recruitment, new joiners, probation, notice), an auto-appearing checklist,
+// self/assigned tasks, manual notes, and a one-click end-of-day report emailed
+// to admin. Auto data is READ-ONLY — she reviews numbers, not types them.
+// ===== Task boards (Asana-style) — admin-gated for now ====================
+const PRIO = { urgent: { label: 'Urgent', cls: 'bg-red-100 text-red-700' }, high: { label: 'High', cls: 'bg-orange-100 text-orange-700' }, medium: { label: 'Medium', cls: 'bg-blue-100 text-blue-700' }, low: { label: 'Low', cls: 'bg-slate-100 text-slate-600' } };
+const STAGE = { not_started: { label: 'Not started', cls: 'bg-slate-100 text-slate-600' }, in_progress: { label: 'In progress', cls: 'bg-amber-100 text-amber-700' }, completed: { label: 'Completed', cls: 'bg-green-100 text-green-700' } };
+
+function TAvatar({ person, size = 24 }) {
+  if (!person) return <div className="rounded-full bg-slate-200" style={{ width: size, height: size }} />;
+  const initials = (person.name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return person.avatar
+    ? <img src={person.avatar} alt={person.name} className="rounded-full object-cover" style={{ width: size, height: size }} />
+    : <div className="rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold" style={{ width: size, height: size, fontSize: size * 0.4 }}>{initials}</div>;
+}
+
+// Searchable assignee picker (scoped by backend to who the actor may assign to).
+function AssigneePicker({ value, onChange, allowClear }) {
+  const [open, setOpen] = useState(false);
+  const [people, setPeople] = useState([]);
+  const [q, setQ] = useState('');
+  useEffect(() => { if (open) hrApi(`/tasks/assignable?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])); }, [open, q]);
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50">
+        {value ? <><TAvatar person={value} size={20} /><span className="font-semibold text-[#050A1F]">{value.name}</span></> : <span className="text-slate-400">Assign…</span>}
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2">
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
+          <div className="max-h-56 overflow-auto">
+            {allowClear && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
+            {people.map((p) => (
+              <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
+                <TAvatar person={p} size={24} />
+                <div className="min-w-0"><div className="text-xs font-semibold text-[#050A1F] truncate">{p.name}</div><div className="text-[10px] text-slate-400 truncate">{p.designation || p.department}</div></div>
+              </button>
+            ))}
+            {people.length === 0 && <div className="text-xs text-slate-400 px-2 py-3 text-center">No people found.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Pill({ map, value }) { const m = map[value] || { label: value, cls: 'bg-slate-100 text-slate-600' }; return <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${m.cls}`}>{m.label}</span>; }
+
+function HrTasksView({ user, isAdmin }) {
+  const [board, setBoard] = useState(null);
+  const [pickPeople, setPickPeople] = useState(null); // admin: choose whose board
+  const [ownerId, setOwnerId] = useState(null);
+  const [view, setView] = useState('list'); // list | board
+  const [err, setErr] = useState('');
+  const [openTask, setOpenTask] = useState(null);
+  const [addingIn, setAddingIn] = useState(null); // sectionId being added to
+  const [newTitle, setNewTitle] = useState('');
+  const [newSection, setNewSection] = useState('');
+
+  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setPickPeople(null); }).catch((e) => setErr(e.message));
+  useEffect(() => {
+    hrApi('/tasks/my-board').then((d) => {
+      if (d.adminNoBoard) { setPickPeople(d.people); }
+      else { setBoard(d); setOwnerId(d.owner.id); }
+    }).catch((e) => setErr(e.message));
+  }, []);
+
+  const refresh = () => { if (ownerId) loadBoard(ownerId); };
+
+  const addSection = async () => {
+    if (!newSection.trim() || !ownerId) return;
+    try { await hrApi('/tasks/sections', { method: 'POST', body: JSON.stringify({ boardOwnerId: ownerId, name: newSection.trim() }) }); setNewSection(''); refresh(); } catch (e) { setErr(e.message); }
+  };
+  const addTask = async (sectionId) => {
+    if (!newTitle.trim()) return;
+    try { await hrApi('/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), sectionId, assigneeId: ownerId }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
+  };
+  const patchTask = async (id, patch) => { try { await hrApi(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
+
+  if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
+
+  // Admin board picker
+  if (pickPeople) {
+    return (
+      <div className="max-w-2xl">
+        <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Task boards</h1>
+        <p className="text-xs text-slate-400 mb-4">Pick whose board to open. You can assign tasks to anyone from their board.</p>
+        <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+          {pickPeople.map((p) => (
+            <button key={p.id} onClick={() => { setOwnerId(p.id); loadBoard(p.id); }} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left">
+              <TAvatar person={p} size={32} />
+              <div><div className="text-sm font-semibold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.designation}</div></div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!board) return <div className="text-slate-400 text-sm py-10 text-center">Loading board…</div>;
+
+  const tasksInSection = (sid) => board.tasks.filter((t) => (t.sectionId || null) === sid);
+  const noSection = board.tasks.filter((t) => !t.sectionId);
+
+  const TaskRow = ({ t }) => (
+    <div className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 cursor-pointer" onClick={() => setOpenTask(t)}>
+      <button onClick={(e) => { e.stopPropagation(); patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' }); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-semibold truncate ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
+        {t.subtaskCount > 0 && <div className="text-[10px] text-slate-400">▸ {t.subtaskCount} subtask{t.subtaskCount > 1 ? 's' : ''}</div>}
+      </div>
+      {t.assignedById && t.assignedByName && <span className="text-[10px] text-blue-500 shrink-0 hidden md:inline">by {t.assignedByName}</span>}
+      <div className="shrink-0"><TAvatar person={t.assignee} size={22} /></div>
+      <div className="shrink-0 w-20 text-[11px] text-slate-500 text-right">{t.dueDate ? new Date(t.dueDate + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</div>
+      <div className="shrink-0 hidden sm:block"><Pill map={PRIO} value={t.priority} /></div>
+      <div className="shrink-0"><Pill map={STAGE} value={t.stage} /></div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-5xl">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <TAvatar person={board.owner} size={36} />
+          <div>
+            <h1 className="text-xl font-extrabold text-[#050A1F]">{board.owner.name}’s tasks</h1>
+            {isAdmin && <button onClick={() => hrApi('/tasks/my-board').then((d) => d.adminNoBoard && setPickPeople(d.people))} className="text-[11px] text-orange-500 font-semibold">Switch board</button>}
+          </div>
+        </div>
+        <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
+          {['list', 'board'].map((v) => <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 text-xs font-bold rounded-md capitalize ${view === v ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{v}</button>)}
+        </div>
+      </div>
+
+      {view === 'list' ? (
+        <div className="space-y-5">
+          {board.sections.map((sec) => (
+            <div key={sec._id}>
+              <div className="text-sm font-extrabold text-[#050A1F] mb-1">{sec.name} <span className="text-slate-400 font-normal">· {tasksInSection(sec._id).length}</span></div>
+              <div className="rounded-xl border border-slate-200 bg-white">
+                {tasksInSection(sec._id).map((t) => <TaskRow key={t._id} t={t} />)}
+                {addingIn === sec._id
+                  ? <div className="flex items-center gap-2 px-4 py-2"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(sec._id)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(sec._id)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>
+                  : <button onClick={() => { setAddingIn(sec._id); setNewTitle(''); }} className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-50">+ Add task</button>}
+              </div>
+            </div>
+          ))}
+          {noSection.length > 0 && (
+            <div><div className="text-sm font-extrabold text-slate-400 mb-1">No section</div><div className="rounded-xl border border-slate-200 bg-white">{noSection.map((t) => <TaskRow key={t._id} t={t} />)}</div></div>
+          )}
+          {board.canManage && (
+            <div className="flex items-center gap-2">
+              <input value={newSection} onChange={(e) => setNewSection(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSection()} placeholder="+ Add section" className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              <button onClick={addSection} className="text-xs font-bold text-white rounded-lg px-4 py-2" style={{ background: ORANGE }}>Add section</button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          {['not_started', 'in_progress', 'completed'].map((st) => (
+            <div key={st} className="bg-slate-50 rounded-xl p-2">
+              <div className="text-xs font-bold text-slate-500 px-2 py-1 mb-1"><Pill map={STAGE} value={st} /></div>
+              <div className="space-y-2">
+                {board.tasks.filter((t) => t.stage === st).map((t) => (
+                  <div key={t._id} onClick={() => setOpenTask(t)} className="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-sm">
+                    <div className="text-sm font-semibold text-[#050A1F] mb-2">{t.title}</div>
+                    <div className="flex items-center justify-between"><Pill map={PRIO} value={t.priority} /><TAvatar person={t.assignee} size={22} /></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {openTask && <TaskDetailDrawer taskId={openTask._id} onClose={() => setOpenTask(null)} onChange={refresh} />}
+    </div>
+  );
+}
+
+// Right-side detail drawer: fields, subtasks, attachments, notes, activity.
+function TaskDetailDrawer({ taskId, onClose, onChange }) {
+  const [data, setData] = useState(null);
+  const [note, setNote] = useState('');
+  const [newSub, setNewSub] = useState('');
+  const load = () => hrApi(`/tasks/${taskId}/detail`).then(setData).catch(() => {});
+  useEffect(() => { load(); }, [taskId]);
+  const patch = async (p) => { await hrApi(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
+  const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); load(); };
+  const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId }) }); setNewSub(''); load(); onChange && onChange(); };
+  const toggleSub = async (s) => { await hrApi(`/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
+
+  if (!data) return null;
+  const t = data.task;
+  return (
+    <div className="fixed inset-0 z-[120] flex justify-end" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative bg-white w-full max-w-lg h-full shadow-2xl overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-100 px-5 py-3 flex items-center justify-between">
+          <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
+        </div>
+        <div className="p-5">
+          <input defaultValue={t.title} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none" />
+          <div className="space-y-3 mb-5">
+            <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
+            <TField label="Due date"><input type="date" defaultValue={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patch({ dueDate: e.target.value || null })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs" /></TField>
+            <TField label="Priority"><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select></TField>
+            <TField label="Stage"><select value={t.stage} onChange={(e) => patch({ stage: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select></TField>
+          </div>
+
+          <div className="mb-5">
+            <div className="text-xs font-bold text-slate-500 mb-1">Description</div>
+            <textarea defaultValue={t.description} onBlur={(e) => e.target.value !== t.description && patch({ description: e.target.value })} rows={3} placeholder="Add details…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+          </div>
+
+          {!t.parentTaskId && (
+            <div className="mb-5">
+              <div className="text-xs font-bold text-slate-500 mb-1">Subtasks</div>
+              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {data.subtasks.map((s) => (
+                  <div key={s._id} className="flex items-center gap-2 px-3 py-2">
+                    <button onClick={() => toggleSub(s)} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
+                    <span className={`text-sm flex-1 ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
+                    <TAvatar person={s.assignee} size={20} />
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none" /></div>
+              </div>
+            </div>
+          )}
+
+          {data.attachments.length > 0 && (
+            <div className="mb-5"><div className="text-xs font-bold text-slate-500 mb-1">Attachments</div>{data.attachments.map((a) => <a key={a._id} href={a.url} target="_blank" rel="noreferrer" className="block text-xs text-blue-500 hover:underline truncate">📎 {a.name || a.url}</a>)}</div>
+          )}
+
+          <div className="mb-3">
+            <div className="text-xs font-bold text-slate-500 mb-1">Notes</div>
+            <div className="space-y-2 mb-2">
+              {data.comments.map((c) => (
+                <div key={c._id} className="rounded-lg bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-bold text-[#050A1F]">{c.authorName} <span className="text-slate-400 font-normal">{new Date(c.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span></div>
+                  <div className="text-sm text-slate-700 whitespace-pre-wrap">{c.body}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-stretch gap-2"><input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={addNote} className="shrink-0 rounded-lg px-3 text-xs font-bold text-white" style={{ background: ORANGE }}>Post</button></div>
+          </div>
+
+          {data.activity.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-100"><div className="text-[11px] font-bold text-slate-400 uppercase mb-1">Activity</div>{data.activity.map((a) => <div key={a._id} className="text-[11px] text-slate-400">{a.actorName} {a.detail} · {new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</div>)}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+function TField({ label, children }) { return <div className="flex items-center gap-3"><div className="text-xs font-bold text-slate-500 w-20 shrink-0">{label}</div>{children}</div>; }
+
+function HrDailyConsole({ user, isAdmin }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [notes, setNotes] = useState({});
+  const [newTask, setNewTask] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [flash, setFlash] = useState('');
+
+  const load = () => hrApi('/daily/console').then((d) => { setData(d); setNotes((n) => (d.report && d.report.notes) ? d.report.notes : n); }).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  const toggleTask = async (t) => {
+    const status = t.status === 'done' ? 'open' : 'done';
+    setData((d) => ({ ...d, tasks: d.tasks.map((x) => x._id === t._id ? { ...x, status } : x) }));
+    try { await hrApi(`/daily/tasks/${t._id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); } catch { load(); }
+  };
+  const addTask = async () => {
+    const title = newTask.trim(); if (!title) return;
+    setNewTask('');
+    try { await hrApi('/daily/tasks', { method: 'POST', body: JSON.stringify({ title }) }); load(); } catch (e) { setErr(e.message); }
+  };
+  const delTask = async (t) => {
+    try { await hrApi(`/daily/tasks/${t._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); }
+  };
+  const submit = async () => {
+    setSubmitting(true); setFlash('');
+    try {
+      const r = await hrApi('/daily/report/submit', { method: 'POST', body: JSON.stringify({ notes }) });
+      setFlash(r.emailed ? 'Report submitted and emailed to admin ✓' : 'Report submitted ✓ (email skipped — recruitment mailbox not linked)');
+      load();
+    } catch (e) { setErr(e.message); } finally { setSubmitting(false); }
+  };
+
+  if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
+  if (data && data.empty) return <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">{data.note}</div>;
+  if (!data) return <div className="text-slate-400 text-sm py-10 text-center">Loading your daily console…</div>;
+
+  const s = data.snapshot || {};
+  const w = s.workforce || {}; const r = s.recruitment || {}; const con = s.contribution || {};
+  const checklistTasks = (data.tasks || []).filter((t) => t.source === 'checklist');
+  const adhocTasks = (data.tasks || []).filter((t) => t.source !== 'checklist');
+  const doneChecklist = checklistTasks.filter((t) => t.status === 'done').length;
+
+  const Stat = ({ label, value, tone }) => (
+    <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-3">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`text-2xl font-extrabold mt-0.5 ${tone || 'text-[#050A1F]'}`}>{value}</div>
+    </div>
+  );
+  const Section = ({ title, right, children }) => (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-extrabold text-[#050A1F]">{title}</div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+  const NoteBox = ({ k, label, placeholder }) => (
+    <div>
+      <div className="text-xs font-bold text-slate-500 mb-1">{label}</div>
+      <textarea value={notes[k] || ''} onChange={(e) => setNotes({ ...notes, [k]: e.target.value })} placeholder={placeholder} rows={2}
+        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y" />
+    </div>
+  );
+  const miniTable = (rows, cols, empty) => rows && rows.length ? (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <table className="w-full text-sm">
+        <thead><tr className="bg-slate-50 border-b border-slate-200 text-left">{cols.map((c) => <th key={c.h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">{c.h}</th>)}</tr></thead>
+        <tbody>{rows.map((it, i) => <tr key={i} className="border-b border-slate-100 last:border-0">{cols.map((c) => <td key={c.h} className="px-3 py-2 text-slate-700">{c.get(it)}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  ) : <div className="text-xs text-slate-400 py-2">{empty}</div>;
+
+  const fmtD = (ymd) => { if (!ymd) return '—'; try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ymd; } };
+
+  return (
+    <div className="max-w-5xl">
+      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+        <h1 className="text-2xl font-extrabold text-[#050A1F]">Daily Console</h1>
+        <div className="text-sm text-slate-500">{data.owner.name} · {data.owner.branch} · {data.dateLabel}</div>
+      </div>
+      <p className="text-xs text-slate-400 mb-5">Everything below the checklist is collected automatically from the HRMS. Review it, tick your checklist, add notes, then submit your end-of-day report.</p>
+
+      {flash && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700 font-semibold">{flash}</div>}
+      {data.submitted && !flash && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 text-sm text-blue-700">Today’s report was already submitted. Re-submitting will update it.</div>}
+
+      {/* AUTO — Workforce */}
+      <Section title="Workforce (auto)">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          <Stat label="Total" value={w.total || 0} />
+          <Stat label="Present" value={w.present || 0} tone="text-green-600" />
+          <Stat label="Absent" value={w.absent || 0} tone="text-red-500" />
+          <Stat label="On leave" value={w.onLeave || 0} />
+          <Stat label="Late" value={w.late || 0} tone="text-amber-500" />
+          <Stat label="Half day" value={w.halfDay || 0} />
+          <Stat label="Not marked" value={w.notMarked || 0} tone="text-slate-400" />
+        </div>
+      </Section>
+
+      {/* AUTO — Leave requests */}
+      <Section title="Pending leave requests (auto)">
+        {miniTable(s.leaveRequests, [
+          { h: 'Employee', get: (x) => x.employee }, { h: 'Type', get: (x) => x.type },
+          { h: 'Date', get: (x) => fmtD(x.date) }, { h: 'Reason', get: (x) => x.reason || '—' },
+        ], 'No pending leave requests.')}
+      </Section>
+
+      {/* AUTO — Recruitment */}
+      <Section title="Recruitment (auto)">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2">
+          <Stat label="Open roles" value={r.openJobs || 0} />
+          <Stat label="Shortlisted" value={r.shortlisted || 0} />
+          <Stat label="Offers out" value={r.offersReleased || 0} />
+          <Stat label="Accepted" value={r.offersAccepted || 0} tone="text-green-600" />
+          <Stat label="Interviews today" value={r.interviewsScheduledToday || 0} />
+          <Stat label="…done" value={r.interviewsDoneToday || 0} />
+        </div>
+        {(r.upcomingJoinings || []).length > 0 && (
+          <div className="text-xs text-slate-500">Upcoming joinings: {r.upcomingJoinings.map((j) => `${j.name} (${fmtD(j.joiningDate)})`).join(' · ')}</div>
+        )}
+      </Section>
+
+      {/* AUTO — HR Manager contribution */}
+      <Section title="Your recruitment contribution today (auto)">
+        <div className="grid grid-cols-3 gap-2 max-w-md">
+          <Stat label="Interviews taken" value={con.interviewsTaken || 0} />
+          <Stat label="Candidates added" value={con.candidatesAdded || 0} />
+          <Stat label="Offers closed" value={con.offersClosed || 0} />
+        </div>
+      </Section>
+
+      {/* AUTO — People to watch */}
+      <div className="grid md:grid-cols-3 gap-4 mb-6">
+        <div>
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">New joiners (auto)</div>
+          {miniTable(s.newJoiners, [
+            { h: 'Name', get: (x) => x.name }, { h: 'Joined', get: (x) => fmtD(x.joiningDate) },
+            { h: 'Onboard', get: (x) => x.onboarding },
+          ], 'None this month.')}
+        </div>
+        <div>
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">Probation ending (auto)</div>
+          {miniTable(s.probation, [
+            { h: 'Name', get: (x) => x.name }, { h: 'Ends', get: (x) => fmtD(x.endDate) },
+            { h: 'Left', get: (x) => x.daysLeft < 0 ? <span className="text-red-500 font-bold">{-x.daysLeft}d over</span> : `${x.daysLeft}d` },
+          ], 'None ending soon.')}
+        </div>
+        <div>
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">Notice period (auto)</div>
+          {miniTable(s.notice, [
+            { h: 'Name', get: (x) => x.name }, { h: 'Last day', get: (x) => fmtD(x.lastWorkingDay) },
+            { h: 'Left', get: (x) => x.daysLeft == null ? '—' : `${x.daysLeft}d` },
+          ], 'None on notice.')}
+        </div>
+      </div>
+
+      {/* Daily checklist */}
+      <Section title={`Daily checklist (${doneChecklist}/${checklistTasks.length})`}>
+        {checklistTasks.length === 0
+          ? <div className="text-xs text-slate-400">No checklist configured. An admin can set it up in Admin → Daily checklist.</div>
+          : (
+            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+              {checklistTasks.map((t) => (
+                <label key={t._id} className="flex items-start gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
+                  <input type="checkbox" checked={t.status === 'done'} onChange={() => toggleTask(t)} className="mt-0.5 w-4 h-4 accent-green-500" />
+                  <div className="min-w-0">
+                    <div className={`text-sm font-semibold ${t.status === 'done' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
+                    {t.details && <div className="text-[11px] text-slate-400">{t.details}</div>}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+      </Section>
+
+      {/* Tasks */}
+      <Section title="Tasks">
+        <div className="flex items-stretch gap-2 mb-2">
+          <input value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask()} placeholder="Add a task for today…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+          <button onClick={addTask} className="shrink-0 rounded-lg px-4 text-sm font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>+ Add</button>
+        </div>
+        {adhocTasks.length === 0
+          ? <div className="text-xs text-slate-400">No tasks yet. Add one above — or an admin can assign you one.</div>
+          : (
+            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+              {adhocTasks.map((t) => (
+                <div key={t._id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-slate-50">
+                  <input type="checkbox" checked={t.status === 'done'} onChange={() => toggleTask(t)} className="mt-0.5 w-4 h-4 accent-green-500" />
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-semibold ${t.status === 'done' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
+                    {t.source === 'assigned' && <div className="text-[11px] text-blue-500 font-semibold">Assigned by {t.assignedByName || 'admin'}</div>}
+                    {t.details && <div className="text-[11px] text-slate-400">{t.details}</div>}
+                  </div>
+                  {t.priority === 'high' && <span className="text-[10px] font-bold text-red-500 shrink-0">HIGH</span>}
+                  {t.source !== 'assigned' && <button onClick={() => delTask(t)} className="shrink-0 text-slate-300 hover:text-red-500 text-sm" title="Delete">✕</button>}
+                </div>
+              ))}
+            </div>
+          )}
+      </Section>
+
+      {/* Manual notes */}
+      <Section title="Notes (manual — judgment items)">
+        <div className="grid md:grid-cols-2 gap-3">
+          <NoteBox k="grievances" label="Employee issues / grievances" placeholder="Concerns raised, actions taken…" />
+          <NoteBox k="managerCoordination" label="Manager coordination" placeholder="Hiring needs, performance, conflicts…" />
+          <NoteBox k="probationNotes" label="Probation feedback" placeholder="Confirmation / extension recommendations…" />
+          <NoteBox k="noticeNotes" label="Notice-period / handover" placeholder="Handover status, replacement…" />
+          <NoteBox k="directorDecisions" label="Decisions required from Director" placeholder="What needs a management call…" />
+          <NoteBox k="tomorrowPriorities" label="Tomorrow’s top priorities" placeholder="Top 3 for tomorrow…" />
+        </div>
+      </Section>
+
+      {/* Submit */}
+      <div className="sticky bottom-0 bg-slate-50 pt-3 pb-1 -mx-4 px-4 border-t border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs text-slate-500">Submitting compiles the auto data + checklist + tasks + notes into a report and emails it to admin.</div>
+        <button onClick={submit} disabled={submitting} className="shrink-0 rounded-lg px-5 py-2.5 text-sm font-bold text-white whitespace-nowrap disabled:opacity-50" style={{ background: ORANGE }}>
+          {submitting ? 'Submitting…' : data.submitted ? 'Re-submit report' : 'Submit end-of-day report'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
@@ -2860,6 +3345,156 @@ function PhoneNormalizeCard() {
   );
 }
 
+// HR Admin → Daily checklist: configure the HR Manager's recurring daily checks.
+function HrChecklistAdmin() {
+  const [items, setItems] = useState(null);
+  const [label, setLabel] = useState('');
+  const [desc, setDesc] = useState('');
+  const [err, setErr] = useState('');
+  const load = () => hrApi('/daily/checklist').then(setItems).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    if (!label.trim()) return;
+    try { await hrApi('/daily/checklist', { method: 'POST', body: JSON.stringify({ label: label.trim(), description: desc.trim() }) }); setLabel(''); setDesc(''); load(); }
+    catch (e) { setErr(e.message); }
+  };
+  const toggle = async (it) => { try { await hrApi(`/daily/checklist/${it._id}`, { method: 'PATCH', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { setErr(e.message); } };
+  const del = async (it) => { if (!confirm('Delete this checklist item?')) return; try { await hrApi(`/daily/checklist/${it._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
+  const seed = async () => { try { const r = await hrApi('/daily/checklist/seed-defaults', { method: 'POST' }); load(); if (!r.seeded) setErr('Checklist already has items — nothing seeded.'); } catch (e) { setErr(e.message); } };
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <h3 className="font-bold text-sm text-[#050A1F]">HR Manager daily checklist</h3>
+          <p className="text-xs text-slate-500">These items auto-appear on the HR Manager’s Daily Console every working day.</p>
+        </div>
+        {items && items.length === 0 && <button onClick={seed} className="rounded-lg px-3 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>Seed default Top 10</button>}
+      </div>
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 mb-4">
+        <div className="grid gap-2">
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Checklist item (e.g. Floor visit)" className={inputCls} />
+          <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description (optional)" className={inputCls} />
+          <div><button onClick={add} className="rounded-lg px-4 py-2 text-sm font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>+ Add item</button></div>
+        </div>
+      </div>
+
+      {!items ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
+        : items.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No checklist items yet.</div>
+          : (
+            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+              {items.map((it) => (
+                <div key={it._id} className="flex items-start gap-3 px-4 py-3">
+                  <button onClick={() => toggle(it)} title={it.active ? 'Active' : 'Inactive'} className={`mt-0.5 w-9 h-5 rounded-full shrink-0 transition ${it.active ? 'bg-green-500' : 'bg-slate-300'}`}>
+                    <span className={`block w-4 h-4 bg-white rounded-full transition ${it.active ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-semibold ${it.active ? 'text-[#050A1F]' : 'text-slate-400'}`}>{it.label}</div>
+                    {it.description && <div className="text-[11px] text-slate-400">{it.description}</div>}
+                  </div>
+                  <button onClick={() => del(it)} className="shrink-0 text-slate-300 hover:text-red-500 text-sm" title="Delete">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+    </div>
+  );
+}
+
+// HR Admin → Daily reports: submitted end-of-day reports from HR Managers.
+function HrDailyReportsAdmin() {
+  const [reports, setReports] = useState(null);
+  const [open, setOpen] = useState(null);
+  useEffect(() => { hrApi('/daily/reports').then(setReports).catch(() => setReports([])); }, []);
+  const fmt = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return '—'; } };
+  const fmtDate = (ymd) => { try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ymd; } };
+
+  return (
+    <div className="max-w-4xl">
+      <h3 className="font-bold text-sm text-[#050A1F] mb-1">Daily HR reports</h3>
+      <p className="text-xs text-slate-500 mb-4">End-of-day reports submitted by HR Managers. Also delivered to your inbox.</p>
+      {!reports ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
+        : reports.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No reports submitted yet.</div>
+          : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 border-b border-slate-200 text-left">
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">HR Manager</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Checklist</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Submitted</th>
+                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">View</th>
+                </tr></thead>
+                <tbody>
+                  {reports.map((rp) => {
+                    const done = (rp.checklist || []).filter((c) => c.done).length;
+                    return (
+                      <tr key={rp._id} className="border-b border-slate-100 last:border-0">
+                        <td className="px-4 py-3 font-semibold text-[#050A1F] whitespace-nowrap">{fmtDate(rp.date)}</td>
+                        <td className="px-4 py-3 text-slate-700">{rp.ownerName}</td>
+                        <td className="px-4 py-3 text-slate-600">{done}/{(rp.checklist || []).length}</td>
+                        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(rp.submittedAt)}{rp.emailedAt ? ' · emailed' : ''}</td>
+                        <td className="px-4 py-3 text-right"><button onClick={() => setOpen(rp)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+      {open && <HrReportViewModal report={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+function HrReportViewModal({ report, onClose }) {
+  const s = report.snapshot || {}; const w = s.workforce || {}; const r = s.recruitment || {}; const con = s.contribution || {};
+  const notes = report.notes || {};
+  const fmtDate = (ymd) => { if (!ymd) return '—'; try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ymd; } };
+  const Row = ({ label, value }) => <div className="flex justify-between py-1 text-sm"><span className="text-slate-500">{label}</span><span className="font-bold text-[#050A1F]">{value}</span></div>;
+  const noteBlocks = [['grievances', 'Grievances'], ['managerCoordination', 'Manager coordination'], ['probationNotes', 'Probation'], ['noticeNotes', 'Notice / handover'], ['directorDecisions', 'Decisions for Director'], ['tomorrowPriorities', 'Tomorrow’s priorities'], ['other', 'Other']].filter(([k]) => notes[k]);
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '90vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-sm font-extrabold text-[#050A1F]">{report.ownerName} — {fmtDate(report.date)}</div><div className="text-[11px] text-slate-400">HR daily report</div></div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-xl border border-slate-200 p-3">
+              <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Workforce</div>
+              <Row label="Total" value={w.total || 0} /><Row label="Present" value={w.present || 0} /><Row label="Absent" value={w.absent || 0} /><Row label="On leave" value={w.onLeave || 0} /><Row label="Late" value={w.late || 0} />
+            </div>
+            <div className="rounded-xl border border-slate-200 p-3">
+              <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Recruitment</div>
+              <Row label="Open roles" value={r.openJobs || 0} /><Row label="Shortlisted" value={r.shortlisted || 0} /><Row label="Offers out" value={r.offersReleased || 0} /><Row label="Accepted" value={r.offersAccepted || 0} /><Row label="Interviews (done)" value={`${r.interviewsScheduledToday || 0} (${r.interviewsDoneToday || 0})`} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">HR Manager contribution</div>
+            <div className="flex gap-6 text-sm"><span>Interviews taken: <b>{con.interviewsTaken || 0}</b></span><span>Added: <b>{con.candidatesAdded || 0}</b></span><span>Offers closed: <b>{con.offersClosed || 0}</b></span></div>
+          </div>
+          {(s.probation || []).length > 0 && <div className="text-sm"><b>Probation ending:</b> {s.probation.map((p) => `${p.name} (${p.daysLeft < 0 ? -p.daysLeft + 'd over' : p.daysLeft + 'd'})`).join(' · ')}</div>}
+          {(s.notice || []).length > 0 && <div className="text-sm"><b>Notice period:</b> {s.notice.map((n) => `${n.name}${n.daysLeft != null ? ` (${n.daysLeft}d)` : ''}`).join(' · ')}</div>}
+          <div>
+            <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Checklist ({(report.checklist || []).filter((c) => c.done).length}/{(report.checklist || []).length})</div>
+            {(report.checklist || []).map((c, i) => <div key={i} className="text-sm text-slate-700">{c.done ? '✅' : '⬜'} {c.label}</div>)}
+          </div>
+          {(report.tasks || []).length > 0 && (
+            <div><div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Tasks</div>{report.tasks.map((t, i) => <div key={i} className="text-sm text-slate-700">{t.status === 'done' ? '✅' : '⬜'} {t.title}{t.source === 'assigned' ? ` (assigned by ${t.assignedByName})` : ''}</div>)}</div>
+          )}
+          {noteBlocks.length > 0 && (
+            <div className="space-y-2">{noteBlocks.map(([k, label]) => <div key={k}><div className="text-[11px] font-bold uppercase text-slate-400">{label}</div><div className="text-sm text-slate-700 whitespace-pre-wrap">{notes[k]}</div></div>)}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // HR Admin → Emails: one table of every recruitment email (name, description,
 // who it's sent to, which mailbox it sends from, last activity), with Preview and
 // Activity popups. Mirrors the Sales-CRM Emails tab. All HR emails send from the
@@ -3243,6 +3878,8 @@ function HrAdmin({ user }) {
         name: edit.name, phone: edit.phone, designation: edit.designation, type: edit.type,
         employeeId: edit.employeeId, branch: edit.branch, department: edit.department, joiningDate: edit.joiningDate,
         shiftId: edit.shiftId || null, branchIncharge: edit.branchIncharge, targets: edit.targets, ...splitReports(edit.reportsTo),
+        probationEndDate: edit.probationEndDate || null, probationStatus: edit.probationStatus || '',
+        exitStatus: edit.exitStatus || '', lastWorkingDay: edit.lastWorkingDay || null,
       };
       if (edit.newPassword) body.password = edit.newPassword;
       await hrApi(`/users/${edit._id}`, { method: 'PUT', body: JSON.stringify(body) });
@@ -3263,7 +3900,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['daily', 'Daily checklist'], ['reports', 'Daily reports'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -3308,6 +3945,14 @@ function HrAdmin({ user }) {
                   <SharedField label="Monthly hiring target"><input type="number" min="0" className={inputCls} value={edit.targets?.monthlyOnboarding ?? 0} onChange={(e) => setEdit({ ...edit, targets: { ...edit.targets, monthlyOnboarding: e.target.value } })} /></SharedField>
                 </div></div>
               )}
+              <div className="mt-4 rounded-xl bg-slate-50 p-4"><div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Probation &amp; exit <span className="text-slate-400 normal-case font-normal">(powers the HR Manager’s daily probation / notice tracking)</span></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <SharedField label="Probation end date"><input type="date" className={inputCls} value={edit.probationEndDate ? String(edit.probationEndDate).slice(0, 10) : ''} onChange={(e) => setEdit({ ...edit, probationEndDate: e.target.value })} /></SharedField>
+                  <SharedField label="Probation status"><select className={inputCls} value={edit.probationStatus || ''} onChange={(e) => setEdit({ ...edit, probationStatus: e.target.value })}><option value="">— not set —</option><option value="on_probation">On probation</option><option value="confirmed">Confirmed</option><option value="extended">Extended</option></select></SharedField>
+                  <SharedField label="Exit status"><select className={inputCls} value={edit.exitStatus || ''} onChange={(e) => setEdit({ ...edit, exitStatus: e.target.value })}><option value="">— active —</option><option value="notice">On notice</option><option value="exited">Exited</option></select></SharedField>
+                  <SharedField label="Last working day"><input type="date" className={inputCls} value={edit.lastWorkingDay ? String(edit.lastWorkingDay).slice(0, 10) : ''} onChange={(e) => setEdit({ ...edit, lastWorkingDay: e.target.value })} /></SharedField>
+                </div>
+              </div>
               <div className="flex justify-end gap-2 mt-4"><button onClick={() => setEdit(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={saveEdit} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: '#050A1F' }}>Save changes</button></div>
             </div>
           )}
@@ -3394,6 +4039,8 @@ function HrAdmin({ user }) {
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'emails' && <HrEmailsTab />}
+      {tab === 'daily' && <HrChecklistAdmin />}
+      {tab === 'reports' && <HrDailyReportsAdmin />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
@@ -3842,8 +4489,12 @@ export default function HrApp() {
   // the unread-mail box; pure interview panelists / plain employees do not.
   const SCHEDULER_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
   const isScheduler = isAdmin || (user.type && SCHEDULER_TYPES.includes(user.type));
+  // The HR Manager daily console is for HR Managers (flag or manager type) + admins.
+  const isHrManager = isAdmin || !!user.isHrManager || user.type === 'manager';
   const nav = [
     ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
+    ...(isHrManager ? [{ id: 'daily', label: 'Daily' }] : []),
+    ...(isAdmin ? [{ id: 'tasks', label: 'Task' }] : []),
     { id: 'recruitment', label: 'Recruitment' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
@@ -3897,6 +4548,8 @@ export default function HrApp() {
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />}
+        {effectiveView === 'daily' && <HrDailyConsole user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (

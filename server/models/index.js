@@ -1337,6 +1337,15 @@ const HrUser = sequelize.define('HrUser', {
   // add/edit employees, create job posts, add candidates, assign unassigned
   // candidates to other HR, and post announcements. Admin remains global.
   isHrManager: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Probation tracking: end date + confirmation status. Drives the HR Manager's
+  // "probation ending soon" daily check. status: on_probation | confirmed | extended.
+  probationEndDate: { type: DataTypes.DATEONLY, allowNull: true },
+  probationStatus: { type: DataTypes.STRING(20), defaultValue: '' }, // '' | on_probation | confirmed | extended
+  // Notice period tracking: set when an employee resigns / is exiting. Drives the
+  // "notice-period employees" daily check. lastWorkingDay is their final day.
+  noticeStartDate: { type: DataTypes.DATEONLY, allowNull: true },
+  lastWorkingDay: { type: DataTypes.DATEONLY, allowNull: true },
+  exitStatus: { type: DataTypes.STRING(20), defaultValue: '' }, // '' | notice | exited
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1637,6 +1646,69 @@ const HrDirectorProfile = sequelize.define('HrDirectorProfile', {
 }, { tableName: 'hr_director_profiles', indexes: [{ name: 'idx_hr_dir_user', fields: ['userId'] }] });
 HrDirectorProfile.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== HR Manager Daily Console ============================================
+// Ad-hoc / assigned daily tasks for an HR user (typically the HR Manager).
+// Tasks can be self-added or assigned by an admin. `date` is the working day the
+// task belongs to (YYYY-MM-DD, IST). status: open | done. Assigned tasks carry
+// the assigner's id/name so the console can show "assigned by admin".
+const HrDailyTask = sequelize.define('HrDailyTask', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  ownerId: { type: DataTypes.INTEGER, allowNull: false },       // HrUser id the task belongs to
+  date: { type: DataTypes.STRING(10), allowNull: false },        // YYYY-MM-DD (IST working day)
+  title: { type: DataTypes.STRING(300), allowNull: false },
+  details: { type: DataTypes.TEXT, defaultValue: '' },
+  priority: { type: DataTypes.STRING(10), defaultValue: 'normal' }, // low | normal | high
+  status: { type: DataTypes.STRING(10), defaultValue: 'open' },   // open | done
+  source: { type: DataTypes.STRING(12), defaultValue: 'self' },   // self | assigned | checklist
+  assignedById: { type: DataTypes.INTEGER, allowNull: true },     // admin/HR id who assigned it
+  assignedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  assignerType: { type: DataTypes.STRING(10), defaultValue: '' }, // 'crm' (admin) | 'hr'
+  checklistItemId: { type: DataTypes.INTEGER, allowNull: true },  // link when source=checklist
+  doneAt: { type: DataTypes.DATE, allowNull: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'hr_daily_tasks', indexes: [
+  { name: 'idx_hr_dtask_owner_date', fields: ['ownerId', 'date'] },
+] });
+HrDailyTask.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Admin-configurable recurring daily checklist items (the HR Manager's "Top 10").
+// These auto-appear as checklist tasks each working day. `active` lets admins
+// retire an item without deleting history. `weekdays` (optional) restricts which
+// days it appears; empty = every working day.
+const HrChecklistItem = sequelize.define('HrChecklistItem', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  label: { type: DataTypes.STRING(300), allowNull: false },
+  description: { type: DataTypes.STRING(500), defaultValue: '' },
+  order: { type: DataTypes.INTEGER, defaultValue: 0 },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  // Which HR user this checklist is for. null = the default HR Manager checklist
+  // (applies to any HR Manager). A specific ownerId can override per person.
+  ownerId: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'hr_checklist_items', indexes: [{ name: 'idx_hr_checkitem_owner', fields: ['ownerId'] }] });
+HrChecklistItem.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// A submitted end-of-day HR report. Holds the auto-collected snapshot + the
+// checklist/task completion + the HR Manager's manual notes, frozen at submit
+// time. status: draft (not yet submitted) | submitted. Emailed to admin on submit.
+const HrDailyReport = sequelize.define('HrDailyReport', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  ownerId: { type: DataTypes.INTEGER, allowNull: false },
+  ownerName: { type: DataTypes.STRING(120), defaultValue: '' },
+  date: { type: DataTypes.STRING(10), allowNull: false },        // YYYY-MM-DD
+  status: { type: DataTypes.STRING(10), defaultValue: 'submitted' }, // draft | submitted
+  // Frozen snapshot at submit time: { workforce, recruitment, contribution,
+  // newJoiners, probation, notice, leaveRequests, ... }
+  snapshot: { type: DataTypes.JSON, defaultValue: {} },
+  checklist: { type: DataTypes.JSON, defaultValue: [] },  // [{ label, done }]
+  tasks: { type: DataTypes.JSON, defaultValue: [] },      // [{ title, status, source, priority }]
+  notes: { type: DataTypes.JSON, defaultValue: {} },      // { grievances, probationNotes, directorDecisions, tomorrowPriorities, ... }
+  submittedAt: { type: DataTypes.DATE, allowNull: true },
+  emailedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'hr_daily_reports', indexes: [
+  { name: 'idx_hr_dreport_owner_date', unique: true, fields: ['ownerId', 'date'] },
+] });
+HrDailyReport.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
 // team. Same shape as the HR survey so the shared AI service works unchanged. =====
 const CrmSurvey = sequelize.define('CrmSurvey', {
@@ -1675,9 +1747,79 @@ const CrmSurveyResponse = sequelize.define('CrmSurveyResponse', {
 ] });
 CrmSurveyResponse.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== Task boards (Asana-style per-employee task management) ==============
+// The board IS the person (boardOwnerId) — no projects. Sections hold tasks;
+// a task with parentTaskId set is a subtask (1 level). See taskPermissions.js
+// for who may assign to whom.
+const TaskSection = sequelize.define('TaskSection', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  boardOwnerId: { type: DataTypes.INTEGER, allowNull: false },
+  name: { type: DataTypes.STRING(160), allowNull: false },
+  order: { type: DataTypes.INTEGER, defaultValue: 0 },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'task_sections', indexes: [{ name: 'idx_task_sections_owner', fields: ['boardOwnerId'] }] });
+TaskSection.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const Task = sequelize.define('Task', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  boardOwnerId: { type: DataTypes.INTEGER, allowNull: false },
+  sectionId: { type: DataTypes.INTEGER, allowNull: true },
+  parentTaskId: { type: DataTypes.INTEGER, allowNull: true },
+  title: { type: DataTypes.STRING(300), allowNull: false },
+  description: { type: DataTypes.TEXT, defaultValue: '' },
+  assigneeId: { type: DataTypes.INTEGER, allowNull: true },
+  priority: { type: DataTypes.STRING(10), defaultValue: 'medium' },   // urgent|high|medium|low
+  stage: { type: DataTypes.STRING(14), defaultValue: 'not_started' }, // not_started|in_progress|completed
+  dueDate: { type: DataTypes.DATEONLY, allowNull: true },
+  order: { type: DataTypes.INTEGER, defaultValue: 0 },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  createdByKind: { type: DataTypes.STRING(10), defaultValue: 'hr' },  // hr|admin
+  assignedById: { type: DataTypes.INTEGER, allowNull: true },
+  assignedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  completedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'tasks', indexes: [
+  { name: 'idx_tasks_board', fields: ['boardOwnerId'] },
+  { name: 'idx_tasks_assignee', fields: ['assigneeId'] },
+  { name: 'idx_tasks_section', fields: ['sectionId'] },
+  { name: 'idx_tasks_parent', fields: ['parentTaskId'] },
+] });
+Task.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const TaskComment = sequelize.define('TaskComment', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  taskId: { type: DataTypes.INTEGER, allowNull: false },
+  authorId: { type: DataTypes.INTEGER, allowNull: true },
+  authorName: { type: DataTypes.STRING(120), defaultValue: '' },
+  body: { type: DataTypes.TEXT, defaultValue: '' },
+}, { tableName: 'task_comments', indexes: [{ name: 'idx_task_comments_task', fields: ['taskId'] }] });
+TaskComment.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const TaskAttachment = sequelize.define('TaskAttachment', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  taskId: { type: DataTypes.INTEGER, allowNull: false },
+  url: { type: DataTypes.STRING(600), allowNull: false },
+  name: { type: DataTypes.STRING(300), defaultValue: '' },
+  mime: { type: DataTypes.STRING(120), defaultValue: '' },
+  size: { type: DataTypes.INTEGER, defaultValue: 0 },
+  uploadedById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'task_attachments', indexes: [{ name: 'idx_task_attach_task', fields: ['taskId'] }] });
+TaskAttachment.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const TaskActivity = sequelize.define('TaskActivity', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  taskId: { type: DataTypes.INTEGER, allowNull: false },
+  actorId: { type: DataTypes.INTEGER, allowNull: true },
+  actorName: { type: DataTypes.STRING(120), defaultValue: '' },
+  kind: { type: DataTypes.STRING(24), defaultValue: '' },
+  detail: { type: DataTypes.STRING(300), defaultValue: '' },
+}, { tableName: 'task_activities', indexes: [{ name: 'idx_task_activity_task', fields: ['taskId'] }] });
+TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

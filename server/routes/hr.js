@@ -1022,6 +1022,11 @@ router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, nex
     if (b.branch !== undefined) row.branch = b.branch;
     if (b.department !== undefined) row.department = b.department;
     if (b.joiningDate !== undefined) row.joiningDate = b.joiningDate || null;
+    // Probation + exit tracking (drives the HR Manager daily console).
+    if (b.probationEndDate !== undefined) row.probationEndDate = b.probationEndDate || null;
+    if (b.probationStatus !== undefined) row.probationStatus = ['on_probation', 'confirmed', 'extended'].includes(b.probationStatus) ? b.probationStatus : '';
+    if (b.exitStatus !== undefined) row.exitStatus = ['notice', 'exited'].includes(b.exitStatus) ? b.exitStatus : '';
+    if (b.lastWorkingDay !== undefined) row.lastWorkingDay = b.lastWorkingDay || null;
     if (b.shiftId !== undefined) row.shiftId = b.shiftId ? Number(b.shiftId) : null;
     if (b.branchIncharge !== undefined) row.branchIncharge = !!b.branchIncharge;
     if (b.reportsToId !== undefined) row.reportsToId = b.reportsToId ? Number(b.reportsToId) : null;
