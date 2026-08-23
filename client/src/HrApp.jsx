@@ -246,15 +246,15 @@ function TAvatar({ person, size = 24 }) {
 }
 
 // Searchable assignee picker (scoped by backend to who the actor may assign to).
-function AssigneePicker({ value, onChange, allowClear }) {
+function AssigneePicker({ value, onChange, allowClear, compact }) {
   const [open, setOpen] = useState(false);
   const [people, setPeople] = useState([]);
   const [q, setQ] = useState('');
   useEffect(() => { if (open) hrApi(`/tasks/assignable?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])); }, [open, q]);
   return (
     <div className="relative">
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50">
-        {value ? <><TAvatar person={value} size={20} /><span className="font-semibold text-[#050A1F]">{value.name}</span></> : <span className="text-slate-400">Assign…</span>}
+      <button onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50'}>
+        {value ? <><TAvatar person={value} size={20} /><span className="font-semibold text-[#050A1F] truncate">{value.name}</span></> : <span className="text-slate-400">Assign…</span>}
       </button>
       {open && (
         <div className="absolute z-30 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2">
@@ -301,6 +301,8 @@ function HrTasksView({ user, isAdmin }) {
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const [collapsed, setCollapsed] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState({}); // inline subtask expand
+  const [showCompleted, setShowCompleted] = useState(false);
   const [filter, setFilter] = useState('all');      // all | mine | overdue | high
   const [sort, setSort] = useState('manual');       // manual | due | priority
 
@@ -318,6 +320,7 @@ function HrTasksView({ user, isAdmin }) {
     try { await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), assigneeId: viewerId, bucket }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
   };
   const patchTask = async (id, patch) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
+  const delTask = async (id) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'DELETE' }); refresh(); } catch (e) { setErr(e.message); } };
   const moveToBucket = async (id, bucket) => { setDragId(null); setDragOver(null); await patchTask(id, { bucket }); };
 
   if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
@@ -338,35 +341,98 @@ function HrTasksView({ user, isAdmin }) {
   };
   const prep = (list) => applySort(applyFilter(list));
 
-  const TaskRow = ({ t, tracking }) => (
-    <div
-      draggable={!tracking}
-      onDragStart={() => setDragId(t._id)}
-      onDragEnd={() => { setDragId(null); setDragOver(null); }}
-      onClick={() => setOpenTask(t)}
-      className={`group flex items-center gap-3 px-4 py-2 border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50 ${dragId === t._id ? 'opacity-40' : ''}`}
-    >
-      {!tracking && <span className="text-slate-300 group-hover:text-slate-400 cursor-grab select-none shrink-0" title="Drag to a section">⠿</span>}
-      <button onClick={(e) => { e.stopPropagation(); patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' }); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
-      <div className="flex-1 min-w-0">
-        <div className={`text-sm font-semibold truncate ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
-        <div className="flex items-center gap-2">
-          {t.subtaskCount > 0 && <span className="text-[10px] text-slate-400">▸ {t.subtaskDone}/{t.subtaskCount}</span>}
-          {tracking && t.assignee && <span className="text-[10px] text-purple-500 font-semibold">tracking · {t.assignee.name}</span>}
-          {!tracking && t.assigner && t.assigner.name && t.relation === 'mine' && t.assignedById && <span className="text-[10px] text-blue-500">by {t.assigner.name}</span>}
+  // Section accent colors (Asana-style light tints).
+  const SECTION_COLORS = {
+    recently_assigned: { bar: '#F97316', head: '#FFF7ED', text: '#C2410C' },
+    today: { bar: '#EF4444', head: '#FEF2F2', text: '#B91C1C' },
+    tomorrow: { bar: '#F59E0B', head: '#FFFBEB', text: '#B45309' },
+    next_week: { bar: '#3B82F6', head: '#EFF6FF', text: '#1D4ED8' },
+    later: { bar: '#64748B', head: '#F8FAFC', text: '#475569' },
+  };
+  const COL = 'grid items-center gap-0';
+  // Column template: expander | check | task name | assignee | deadline | priority | status | (del)
+  const GRID_COLS = '28px 28px minmax(0,1fr) 150px 120px 130px 140px 40px';
+
+  const fmtDate = (d) => d ? new Date(String(d).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+
+  // One editable cell row in the Excel-style grid.
+  const GridRow = ({ t, tracking, isSub }) => {
+    const overdue = isOverdue(t);
+    const hasSubs = !isSub && t.subtaskCount > 0;
+    const expanded = !!expandedTasks[t._id];
+    return (
+      <>
+        <div
+          draggable={!tracking && !isSub}
+          onDragStart={() => !tracking && !isSub && setDragId(t._id)}
+          onDragEnd={() => { setDragId(null); setDragOver(null); }}
+          className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${dragId === t._id ? 'opacity-40' : ''} ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
+          style={{ gridTemplateColumns: GRID_COLS }}
+        >
+          {/* expander */}
+          <div className="flex items-center justify-center h-9 border-r border-slate-100">
+            {hasSubs ? <button onClick={() => setExpandedTasks((e) => ({ ...e, [t._id]: !e[t._id] }))} className={`text-slate-400 text-[10px] transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</button>
+              : (!tracking && !isSub) ? <span className="text-slate-200 cursor-grab text-xs" title="Drag">⠿</span> : null}
+          </div>
+          {/* checkbox */}
+          <div className="flex items-center justify-center h-9 border-r border-slate-100">
+            <button onClick={() => patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`w-4 h-4 rounded-full border-2 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
+          </div>
+          {/* task name (click → drawer) */}
+          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-6' : ''}`}>
+            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+            {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
+            {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
+          </div>
+          {/* assignee (inline picker) */}
+          <div className="px-2 h-9 flex items-center border-r border-slate-100">
+            {tracking ? <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && t.assignee.name}</span></span>
+              : <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />}
+          </div>
+          {/* deadline (inline date) */}
+          <div className="px-2 h-9 flex items-center border-r border-slate-100">
+            {tracking ? <span className={`text-xs ${overdue ? 'text-red-500 font-bold' : 'text-slate-500'}`}>{fmtDate(t.dueDate) || '—'}</span>
+              : <input type="date" value={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patchTask(t._id, { dueDate: e.target.value || null })} className={`text-xs bg-transparent focus:outline-none w-full ${overdue ? 'text-red-500 font-bold' : 'text-slate-500'}`} />}
+          </div>
+          {/* priority (inline select) */}
+          <div className="px-2 h-9 flex items-center border-r border-slate-100">
+            {tracking ? <Pill map={PRIO} value={t.priority} />
+              : <select value={t.priority} onChange={(e) => patchTask(t._id, { priority: e.target.value })} className={`text-[11px] font-bold rounded-full px-2 py-0.5 border-0 focus:outline-none cursor-pointer ${PRIO[t.priority] ? PRIO[t.priority].cls : ''}`}>{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select>}
+          </div>
+          {/* status (inline select) */}
+          <div className="px-2 h-9 flex items-center border-r border-slate-100">
+            {tracking ? <Pill map={STAGE} value={t.stage} />
+              : <select value={t.stage} onChange={(e) => patchTask(t._id, { stage: e.target.value })} className={`text-[11px] font-bold rounded-full px-2 py-0.5 border-0 focus:outline-none cursor-pointer ${STAGE[t.stage] ? STAGE[t.stage].cls : ''}`}>{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select>}
+          </div>
+          {/* delete */}
+          <div className="flex items-center justify-center h-9">
+            {!tracking && <button onClick={() => { if (confirm('Delete this task' + (hasSubs ? ' and its subtasks' : '') + '?')) delTask(t._id); }} className="text-slate-300 hover:text-red-500 text-xs" title="Delete">🗑</button>}
+          </div>
         </div>
-      </div>
-      <div className="shrink-0"><TAvatar person={t.assignee} size={22} /></div>
-      <div className={`shrink-0 w-16 text-[11px] text-right ${isOverdue(t) ? 'text-red-500 font-bold' : 'text-slate-500'}`}>{t.dueDate ? new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</div>
-      <div className="shrink-0 hidden sm:block"><Pill map={PRIO} value={t.priority} /></div>
-      <div className="shrink-0"><Pill map={STAGE} value={t.stage} /></div>
+        {/* inline subtasks */}
+        {expanded && (t.subtasks || []).map((s) => <GridRow key={s._id} t={s} isSub />)}
+      </>
+    );
+  };
+
+  // Column header row.
+  const HeaderRow = () => (
+    <div className={`${COL} bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-400`} style={{ gridTemplateColumns: GRID_COLS }}>
+      <div className="h-8 border-r border-slate-100" />
+      <div className="h-8 border-r border-slate-100" />
+      <div className="px-3 h-8 flex items-center border-r border-slate-100">Task name</div>
+      <div className="px-2 h-8 flex items-center border-r border-slate-100">Assignee</div>
+      <div className="px-2 h-8 flex items-center border-r border-slate-100">Deadline</div>
+      <div className="px-2 h-8 flex items-center border-r border-slate-100">Priority</div>
+      <div className="px-2 h-8 flex items-center border-r border-slate-100">Status</div>
+      <div className="h-8" />
     </div>
   );
 
   const bucketByKey = Object.fromEntries((board.buckets || []).map((b) => [b.key, b]));
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-6xl">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <TAvatar person={board.viewer} size={36} />
@@ -395,49 +461,67 @@ function HrTasksView({ user, isAdmin }) {
             const bk = bucketByKey[key] || { tasks: [] };
             const rows = prep(bk.tasks);
             const isOpen = !collapsed[key];
+            const c = SECTION_COLORS[key];
             return (
               <div key={key}
                 onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver(key); } }}
                 onDragLeave={() => setDragOver((d) => d === key ? null : d)}
                 onDrop={(e) => { e.preventDefault(); if (dragId) moveToBucket(dragId, key); }}
-                className={`rounded-xl border bg-white transition ${dragOver === key ? 'border-orange-400 ring-2 ring-orange-200' : 'border-slate-200'}`}
+                className={`rounded-xl border overflow-hidden transition ${dragOver === key ? 'border-orange-400 ring-2 ring-orange-200' : 'border-slate-200'}`}
+                style={{ borderLeft: `4px solid ${c.bar}` }}
               >
-                <button onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
-                  <span className={`text-slate-400 text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`}>▸</span>
-                  <span className="text-sm font-extrabold text-[#050A1F]">{label}</span>
-                  <span className="text-xs text-slate-400 font-normal">· {bk.tasks.length}</span>
-                  {key === 'recently_assigned' && bk.tasks.length > 0 && <span className="text-[10px] text-orange-500 font-bold ml-1">NEW</span>}
+                <button onClick={() => setCollapsed((cc) => ({ ...cc, [key]: !cc[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left" style={{ background: c.head }}>
+                  <span className={`text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`} style={{ color: c.text }}>▶</span>
+                  <span className="text-sm font-extrabold" style={{ color: c.text }}>{label}</span>
+                  <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ background: c.bar, color: '#fff' }}>{bk.tasks.length}</span>
+                  {key === 'recently_assigned' && bk.tasks.length > 0 && <span className="text-[10px] font-bold ml-1" style={{ color: c.text }}>NEW</span>}
                 </button>
                 {isOpen && (
                   <div>
-                    {rows.map((t) => <TaskRow key={t._id} t={t} />)}
+                    {rows.length > 0 && <HeaderRow />}
+                    {rows.map((t) => <GridRow key={t._id} t={t} />)}
                     {addingIn === key
-                      ? <div className="flex items-center gap-2 px-4 py-2 border-t border-slate-100"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(key)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(key)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>
-                      : <button onClick={() => { setAddingIn(key); setNewTitle(''); }} className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-t border-slate-100">+ Add task</button>}
+                      ? <div className="flex items-center gap-2 px-4 py-2 border-t border-slate-200 bg-white"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(key)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(key)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>
+                      : <button onClick={() => { setAddingIn(key); setNewTitle(''); }} className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-t border-slate-200 bg-white">+ Add task</button>}
                   </div>
                 )}
               </div>
             );
           })}
 
-          {(
-            <div className="rounded-xl border-2 border-purple-200 bg-purple-50/50 mt-6">
-              <div className="px-4 py-3 flex items-center gap-2 border-b border-purple-100">
-                <span className="w-6 h-6 rounded-lg bg-purple-500 text-white flex items-center justify-center text-xs font-bold">↗</span>
-                <span className="text-sm font-extrabold text-purple-700">{viewingOwn ? 'Assigned by me' : `Assigned by ${board.viewer.name}`}</span>
-                <span className="text-xs font-bold text-white bg-purple-500 rounded-full px-2 py-0.5">{(board.tracking || []).length}</span>
-                <span className="text-[11px] text-purple-400 ml-auto">live status · for standups</span>
-              </div>
-              {(board.tracking || []).length === 0
-                ? <div className="px-4 py-4 text-xs text-slate-400">Tasks {viewingOwn ? 'you assign' : 'assigned'} to others appear here to track progress without opening their board.</div>
-                : <div className="bg-white rounded-b-xl">{prep(board.tracking).map((t) => <TaskRow key={t._id} t={t} tracking />)}</div>}
+          {/* Assigned by me */}
+          <div className="rounded-xl border-2 border-purple-200 bg-purple-50/50 overflow-hidden mt-6">
+            <div className="px-4 py-3 flex items-center gap-2 border-b border-purple-100">
+              <span className="w-6 h-6 rounded-lg bg-purple-500 text-white flex items-center justify-center text-xs font-bold">↗</span>
+              <span className="text-sm font-extrabold text-purple-700">{viewingOwn ? 'Assigned by me' : `Assigned by ${board.viewer.name}`}</span>
+              <span className="text-xs font-bold text-white bg-purple-500 rounded-full px-2 py-0.5">{(board.tracking || []).length}</span>
+              <span className="text-[11px] text-purple-400 ml-auto">live status · for standups</span>
             </div>
-          )}
+            {(board.tracking || []).length === 0
+              ? <div className="px-4 py-4 text-xs text-slate-400 bg-white">Tasks {viewingOwn ? 'you assign' : 'assigned'} to others appear here to track progress without opening their board.</div>
+              : <div className="bg-white"><HeaderRow />{prep(board.tracking).map((t) => <GridRow key={t._id} t={t} tracking />)}</div>}
+          </div>
+
+          {/* Completed (minimized by default) */}
+          <div className="rounded-xl border border-green-200 bg-green-50/40 overflow-hidden">
+            <button onClick={() => setShowCompleted((s) => !s)} className="w-full px-4 py-3 flex items-center gap-2 text-left">
+              <span className={`text-green-600 text-xs transition-transform ${showCompleted ? 'rotate-90' : ''}`}>▶</span>
+              <span className="w-6 h-6 rounded-lg bg-green-500 text-white flex items-center justify-center text-xs font-bold">✓</span>
+              <span className="text-sm font-extrabold text-green-700">Completed</span>
+              <span className="text-xs font-bold text-white bg-green-500 rounded-full px-2 py-0.5">{(board.completed || []).length}</span>
+              <span className="text-[11px] text-green-500 ml-auto">{showCompleted ? 'click to minimize' : 'click to expand'}</span>
+            </button>
+            {showCompleted && (
+              (board.completed || []).length === 0
+                ? <div className="px-4 py-4 text-xs text-slate-400 bg-white">No completed tasks yet.</div>
+                : <div className="bg-white"><HeaderRow />{prep(board.completed).map((t) => <GridRow key={t._id} t={t} />)}</div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-3">
           {['not_started', 'in_progress', 'completed'].map((st) => {
-            const all = [...(board.buckets || []).flatMap((b) => b.tasks), ...(board.tracking || [])];
+            const all = [...(board.buckets || []).flatMap((b) => b.tasks), ...(board.completed || [])];
             return (
               <div key={st} onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver('stage:' + st); } }} onDrop={(e) => { e.preventDefault(); if (dragId) { patchTask(dragId, { stage: st }); setDragId(null); setDragOver(null); } }} className={`rounded-xl p-2 transition ${dragOver === 'stage:' + st ? 'bg-orange-50 ring-2 ring-orange-200' : 'bg-slate-50'}`}>
                 <div className="px-2 py-1 mb-1"><Pill map={STAGE} value={st} /></div>
@@ -540,13 +624,16 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   return (
     <div className="fixed inset-0 z-[120] flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
-      <div className="relative bg-white w-full max-w-2xl h-full shadow-2xl overflow-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="relative bg-white w-full h-full shadow-2xl overflow-auto" style={{ maxWidth: '806px' }} onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-100 px-5 py-3 flex items-center justify-between z-10">
           <div className="flex items-center gap-2">
             {isSubtask && <button onClick={onClose} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100" title="Back to task">← Back to task</button>}
             <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
+          <div className="flex items-center gap-1">
+            <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } }} className="w-8 h-8 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500" title="Delete task">🗑</button>
+            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
+          </div>
         </div>
         <div className="p-5">
           {isSubtask && <div className="text-[11px] text-slate-400 mb-2">Subtask{parentTitle ? <> of <span className="font-semibold text-slate-500">{parentTitle}</span></> : ''}</div>}

@@ -133,17 +133,27 @@ async function buildBoard(viewerId, ctx) {
   const adminById = await adminMapFor(tasks, [viewerId]);
   const decorate = decorateWith(pById, adminById);
 
+  // Pull the subtasks for the visible top-level tasks so the list can expand
+  // them inline (fully editable), without a second round-trip per task.
+  const subsAll = ids.length ? await Task.findAll({ where: { parentTaskId: { [Op.in]: ids } }, order: [['order', 'ASC'], ['id', 'ASC']] }) : [];
+  const subsByParent = {};
+  for (const s of subsAll) { (subsByParent[s.parentTaskId] = subsByParent[s.parentTaskId] || []).push(decorate(s)); }
+
   const mine = [];
   const tracking = [];
+  const completed = [];
   for (const t of tasks) {
     const o = decorate(t);
     const g = subBy[t.id]; o.subtaskCount = g ? g.total : 0; o.subtaskDone = g ? g.done : 0;
-    if (t.assigneeId === viewerId) { o.relation = 'mine'; mine.push(o); }
-    else if (t.assignedById === viewerId) { o.relation = 'tracking'; tracking.push(o); }
+    o.subtasks = subsByParent[t.id] || [];
+    if (t.assigneeId === viewerId) {
+      o.relation = 'mine';
+      if (t.stage === 'completed') completed.push(o); else mine.push(o);
+    } else if (t.assignedById === viewerId) { o.relation = 'tracking'; tracking.push(o); }
   }
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
-  return { viewer, buckets, tracking, canManage: true };
+  return { viewer, buckets, tracking, completed, canManage: true };
 }
 
 router.get('/my-board', guard, async (req, res, next) => {
