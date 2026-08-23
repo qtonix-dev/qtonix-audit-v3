@@ -364,6 +364,45 @@ router.post('/tasks/:id/attachments', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Upload a file to ImageKit then attach it (base64 body). Sensible defaults:
+// common docs/images/pdf/zip, 10 MB cap, executables blocked.
+const ALLOWED_MIME = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
+  'application/pdf', 'text/plain', 'text/csv',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip', 'application/x-zip-compressed',
+]);
+const BLOCKED_EXT = /\.(exe|bat|cmd|sh|msi|com|scr|js|jar|app|dll|deb|apk)$/i;
+const MAX_BYTES = 10 * 1024 * 1024;
+
+router.post('/tasks/:id/upload', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const row = await Task.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Task not found.' });
+    const b = req.body || {};
+    const name = String(b.name || 'attachment').slice(0, 300);
+    const mime = String(b.mime || '').slice(0, 120);
+    const base64 = String(b.base64 || '');
+    if (!base64) return res.status(400).json({ error: 'No file data.' });
+    if (BLOCKED_EXT.test(name)) return res.status(400).json({ error: 'That file type isn’t allowed.' });
+    if (mime && !ALLOWED_MIME.has(mime)) return res.status(400).json({ error: 'That file type isn’t supported.' });
+    // Rough byte size from base64 length.
+    const approxBytes = Math.floor((base64.length - (base64.indexOf(',') + 1)) * 3 / 4);
+    if (approxBytes > MAX_BYTES) return res.status(400).json({ error: 'File is larger than the 10 MB limit.' });
+
+    const imagekit = require('../services/imagekit');
+    let up;
+    try { up = await imagekit.uploadFile({ base64, fileName: name, folder: '/tasks/' + row.id }); }
+    catch (e) { return res.status(400).json({ error: e.message || 'Upload failed.' }); }
+    const a = await TaskAttachment.create({ taskId: row.id, url: up.url, name: up.name || name, mime, size: up.size || approxBytes, uploadedById: ctx.actorId || null });
+    await logActivity(row.id, ctx, 'created', 'attached ' + (up.name || name));
+    res.status(201).json(a.toJSON());
+  } catch (e) { next(e); }
+});
+
 router.delete('/attachments/:id', guard, async (req, res, next) => {
   try {
     const a = await TaskAttachment.findByPk(req.params.id);

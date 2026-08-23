@@ -8,6 +8,9 @@ import { AppSwitcher } from './AppSwitcher.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Link from '@tiptap/extension-link';
 
 const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 
@@ -451,16 +454,79 @@ function HrTasksView({ user, isAdmin }) {
 }
 
 // Right-side detail drawer: fields, subtasks, attachments, notes, activity.
+// Rich-text editor (TipTap) for task/subtask descriptions. Emits sanitized-ish
+// HTML on blur. A compact toolbar covers the Asana basics.
+function RichText({ value, onSave, placeholder }) {
+  const editor = useEditor({
+    extensions: [StarterKit.configure({ heading: { levels: [2, 3] } }), Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } })],
+    content: value || '',
+    editorProps: { attributes: { class: 'prose prose-sm max-w-none focus:outline-none min-h-[70px] px-3 py-2' } },
+  });
+  useEffect(() => { if (editor && value !== editor.getHTML()) editor.commands.setContent(value || '', false); /* eslint-disable-next-line */ }, [editor]);
+  if (!editor) return null;
+  const Btn = ({ on, active, children, title }) => (
+    <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); on(); }} className={`w-7 h-7 rounded text-xs font-bold flex items-center justify-center ${active ? 'bg-slate-200 text-[#050A1F]' : 'text-slate-500 hover:bg-slate-100'}`}>{children}</button>
+  );
+  const setLink = () => { const prev = editor.getAttributes('link').href; const url = window.prompt('Link URL', prev || 'https://'); if (url === null) return; if (url === '') { editor.chain().focus().unsetLink().run(); return; } editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); };
+  return (
+    <div className="rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-orange-300">
+      <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1 flex-wrap">
+        <Btn title="Bold" on={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')}>B</Btn>
+        <Btn title="Italic" on={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')}><span className="italic">I</span></Btn>
+        <Btn title="Strikethrough" on={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')}><span className="line-through">S</span></Btn>
+        <span className="w-px h-4 bg-slate-200 mx-1" />
+        <Btn title="Heading" on={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })}>H</Btn>
+        <Btn title="Bullet list" on={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')}>•</Btn>
+        <Btn title="Numbered list" on={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')}>1.</Btn>
+        <Btn title="Code" on={() => editor.chain().focus().toggleCode().run()} active={editor.isActive('code')}>{'</>'}</Btn>
+        <Btn title="Link" on={setLink} active={editor.isActive('link')}>🔗</Btn>
+      </div>
+      <div onBlur={() => onSave && onSave(editor.getHTML())}>
+        <EditorContent editor={editor} />
+        {editor.isEmpty && placeholder && <div className="px-3 -mt-[60px] text-sm text-slate-400 pointer-events-none">{placeholder}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Read-only render of stored description HTML.
+function RichView({ html }) {
+  if (!html || html === '<p></p>') return <div className="text-sm text-slate-400">No description.</div>;
+  return <div className="prose prose-sm max-w-none text-slate-700" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// Upload a file to a task via the server (validates + pushes to ImageKit).
+async function uploadTaskFile(taskId, file, onDone, onErr) {
+  const MAX = 10 * 1024 * 1024;
+  if (file.size > MAX) { onErr && onErr('File is larger than the 10 MB limit.'); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const base64 = String(reader.result);
+      await hrApi(`/tasks/tasks/${taskId}/upload`, { method: 'POST', body: JSON.stringify({ name: file.name, mime: file.type, base64 }) });
+      onDone && onDone();
+    } catch (e) { onErr && onErr(e.message); }
+  };
+  reader.onerror = () => onErr && onErr('Could not read the file.');
+  reader.readAsDataURL(file);
+}
+
 function TaskDetailDrawer({ taskId, onClose, onChange }) {
   const [data, setData] = useState(null);
   const [note, setNote] = useState('');
   const [newSub, setNewSub] = useState('');
+  const [subOpen, setSubOpen] = useState(null);   // open a subtask in its own drawer
+  const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState('');
+  const fileRef = useRef(null);
   const load = () => hrApi(`/tasks/tasks/${taskId}/detail`).then(setData).catch(() => {});
   useEffect(() => { load(); }, [taskId]);
   const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
   const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); load(); };
   const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
   const toggleSub = async (s) => { await hrApi(`/tasks/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
+  const onPickFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; setUpErr(''); setUploading(true); uploadTaskFile(taskId, f, () => { setUploading(false); load(); }, (m) => { setUploading(false); setUpErr(m); }); e.target.value = ''; };
+  const delAttach = async (id) => { await hrApi(`/tasks/attachments/${id}`, { method: 'DELETE' }); load(); };
 
   if (!data) return null;
   const t = data.task;
@@ -484,27 +550,43 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
 
           <div className="mb-5">
             <div className="text-xs font-bold text-slate-500 mb-1">Description</div>
-            <textarea defaultValue={t.description} onBlur={(e) => e.target.value !== t.description && patch({ description: e.target.value })} rows={3} placeholder="Add details…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <RichText value={t.description} placeholder="What is this task about?" onSave={(html) => html !== t.description && patch({ description: html })} />
+          </div>
+
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-bold text-slate-500">Attachments</div>
+              <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="text-[11px] font-bold text-orange-500 disabled:opacity-50">{uploading ? 'Uploading…' : '+ Attach file'}</button>
+              <input ref={fileRef} type="file" className="hidden" onChange={onPickFile} />
+            </div>
+            {upErr && <div className="text-[11px] text-red-500 mb-1">{upErr}</div>}
+            {data.attachments.length === 0
+              ? <div className="text-xs text-slate-400">No files attached.</div>
+              : <div className="space-y-1">{data.attachments.map((a) => (
+                  <div key={a._id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5">
+                    <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline truncate flex-1">📎 {a.name || a.url}</a>
+                    {a.size ? <span className="text-[10px] text-slate-400">{(a.size / 1024).toFixed(0)} KB</span> : null}
+                    <button onClick={() => delAttach(a._id)} className="text-slate-300 hover:text-red-500 text-xs">✕</button>
+                  </div>
+                ))}</div>}
           </div>
 
           {!t.parentTaskId && (
             <div className="mb-5">
-              <div className="text-xs font-bold text-slate-500 mb-1">Subtasks</div>
+              <div className="text-xs font-bold text-slate-500 mb-1">Subtasks {data.subtasks.length > 0 && <span className="text-slate-400 font-normal">· {data.subtasks.filter((s) => s.stage === 'completed').length}/{data.subtasks.length}</span>}</div>
               <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {data.subtasks.map((s) => (
-                  <div key={s._id} className="flex items-center gap-2 px-3 py-2">
-                    <button onClick={() => toggleSub(s)} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
-                    <span className={`text-sm flex-1 ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
+                  <div key={s._id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => setSubOpen(s._id)}>
+                    <button onClick={(e) => { e.stopPropagation(); toggleSub(s); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
+                    <span className={`text-sm flex-1 truncate ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
+                    {s.dueDate && <span className="text-[10px] text-slate-400">{new Date(String(s.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
                     <TAvatar person={s.assignee} size={20} />
+                    <span className="text-slate-300 text-xs">›</span>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none" /></div>
+                <div className="flex items-center gap-2 px-3 py-2"><input value={newSub} onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="+ Add subtask" className="flex-1 text-sm focus:outline-none bg-transparent" /></div>
               </div>
             </div>
-          )}
-
-          {data.attachments.length > 0 && (
-            <div className="mb-5"><div className="text-xs font-bold text-slate-500 mb-1">Attachments</div>{data.attachments.map((a) => <a key={a._id} href={a.url} target="_blank" rel="noreferrer" className="block text-xs text-blue-500 hover:underline truncate">📎 {a.name || a.url}</a>)}</div>
           )}
 
           <div className="mb-3">
@@ -525,6 +607,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange }) {
           )}
         </div>
       </div>
+      {subOpen && <TaskDetailDrawer taskId={subOpen} onClose={() => setSubOpen(null)} onChange={() => { load(); onChange && onChange(); }} />}
     </div>
   );
 }

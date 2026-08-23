@@ -38,3 +38,22 @@ body { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -a
    green button remains the visible call affordance. */
 a.chClickToSms { display: none !important; }
 .callhippo-number img[src^="chrome-extension://"] { display: none !important; }
+
+/* Task rich-text editor + rendered description */
+.ProseMirror { outline: none; font-size: 14px; color: #334155; }
+.ProseMirror p { margin: 0 0 0.5em; }
+.ProseMirror p:last-child { margin-bottom: 0; }
+.ProseMirror h2 { font-size: 1.1rem; font-weight: 800; color: #050A1F; margin: 0.6em 0 0.3em; }
+.ProseMirror h3 { font-size: 1rem; font-weight: 700; color: #050A1F; margin: 0.5em 0 0.25em; }
+.ProseMirror ul { list-style: disc; padding-left: 1.25rem; margin: 0.25em 0; }
+.ProseMirror ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25em 0; }
+.ProseMirror code { background: #f1f5f9; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.ProseMirror a { color: #2563eb; text-decoration: underline; }
+.ProseMirror-focused { outline: none; }
+.prose h2 { font-size: 1.1rem; font-weight: 800; color: #050A1F; margin: 0.6em 0 0.3em; }
+.prose h3 { font-size: 1rem; font-weight: 700; color: #050A1F; margin: 0.5em 0 0.25em; }
+.prose p { margin: 0 0 0.5em; }
+.prose ul { list-style: disc; padding-left: 1.25rem; margin: 0.25em 0; }
+.prose ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25em 0; }
+.prose code { background: #f1f5f9; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.prose a { color: #2563eb; text-decoration: underline; }
