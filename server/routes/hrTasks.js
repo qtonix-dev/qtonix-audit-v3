@@ -25,7 +25,9 @@ const {
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const { canAssign } = require('../services/taskPermissions');
 
-const ADMIN_ONLY = true;
+// Open to all HR users (and admins). Every person lands on their own board;
+// per-user permission logic (canAssign, creator/admin delete) governs actions.
+const ADMIN_ONLY = false;
 const guard = ADMIN_ONLY ? [requireHrAccess, requireHrAdmin] : [requireHrAccess];
 
 const BUCKETS = ['recently_assigned', 'today', 'tomorrow', 'next_week', 'later'];
@@ -310,8 +312,12 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
 
 router.delete('/tasks/:id', guard, async (req, res, next) => {
   try {
+    const ctx = await actingContext(req);
     const row = await Task.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Task not found.' });
+    // Only the task's creator or an admin may delete it.
+    const isCreator = row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId);
+    if (!ctx.isAdmin && !isCreator) return res.status(403).json({ error: 'Only the task creator or an admin can delete this task.' });
     await Task.destroy({ where: { parentTaskId: row.id } });
     await TaskComment.destroy({ where: { taskId: row.id } });
     await TaskAttachment.destroy({ where: { taskId: row.id } });
@@ -335,7 +341,9 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
     const pById = Object.fromEntries(people.map((u) => [u.id, u]));
     const adminById = await adminMapFor([row, ...subtasks]);
     const dec = decorateWith(pById, adminById);
-    res.json({ task: dec(row), subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()) });
+    const ctx = await actingContext(req);
+    const canDelete = !!ctx.isAdmin || (row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId));
+    res.json({ task: dec(row), subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete });
   } catch (e) { next(e); }
 });
 

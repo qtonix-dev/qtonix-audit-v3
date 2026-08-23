@@ -382,8 +382,9 @@ function HrTasksView({ user, isAdmin }) {
             <button onClick={() => patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`w-4 h-4 rounded-full border-2 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
           </div>
           {/* task name (click → drawer) */}
-          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
-            {isSub && <span className="text-slate-300 mr-1.5 text-xs" title="subtask">↳</span>}            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+          <div className={`px-3 h-9 flex items-center justify-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
+            {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
+            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-center hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
             {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
             {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
           </div>
@@ -407,9 +408,9 @@ function HrTasksView({ user, isAdmin }) {
             {tracking ? <span className="w-full text-center text-[11px] font-bold text-white">{STAGE[t.stage] ? STAGE[t.stage].label : t.stage}</span>
               : <select value={t.stage} onChange={(e) => patchTask(t._id, { stage: e.target.value })} className="w-full h-full text-center text-[11px] font-bold text-white bg-transparent border-0 focus:outline-none cursor-pointer appearance-none px-2">{Object.keys(STAGE).map((k) => <option key={k} value={k} className="text-slate-700 bg-white">{STAGE[k].label}</option>)}</select>}
           </div>
-          {/* delete */}
+          {/* view → open drawer */}
           <div className="flex items-center justify-center h-9">
-            {!tracking && <button onClick={() => { if (confirm('Delete this task' + (hasSubs ? ' and its subtasks' : '') + '?')) delTask(t._id); }} className="text-slate-300 hover:text-red-500 text-xs" title="Delete">🗑</button>}
+            <button onClick={() => setOpenTask(t)} className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-[#050A1F] hover:bg-slate-100" title="View task"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
           </div>
         </div>
         {/* inline subtasks */}
@@ -634,8 +635,8 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } }} className="w-8 h-8 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500" title="Delete task">🗑</button>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
+            {data.canDelete && <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } catch (e) { alert(e.message); } } }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500" title="Delete task"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>}
+            <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-100 text-slate-400" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>
           </div>
         </div>
         <div className="p-5">
@@ -4723,7 +4724,7 @@ export default function HrApp() {
   const nav = [
     ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
     ...(isHrManager ? [{ id: 'daily', label: 'Daily' }] : []),
-    ...(isAdmin ? [{ id: 'tasks', label: 'Task' }] : []),
+    { id: 'tasks', label: 'Task' },
     { id: 'recruitment', label: 'Recruitment' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
