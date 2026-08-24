@@ -798,25 +798,39 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
               {Array.from({ length: firstDow }).map((_, i) => <div key={`e${i}`} />)}
               {(cal.days || []).map((d) => {
                 const dayNum = Number(d.date.slice(-2));
-                const complete = !d.disabled && d.totalActive > 0 && d.marked >= d.totalActive;
+                const todayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+                const isToday = d.date === todayStr;
+                const hasData = !d.disabled && d.total > 0 && d.marked > 0;
+                // Color band by present rate (present ÷ total).
+                let cellStyle = { background: '#fff', borderColor: '#e2e8f0' };
+                if (d.holiday) cellStyle = { background: '#EFF6FF', borderColor: '#93C5FD' };
+                else if (d.weekendOff) cellStyle = { background: '#E2E8F0', borderColor: '#CBD5E1' };
+                else if (hasData && d.presentPct >= 90) cellStyle = { background: '#F0FDF4', borderColor: '#16A34A' };
+                else if (hasData && d.presentPct < 60) cellStyle = { background: '#FEF2F2', borderColor: '#DC2626' };
+                if (isToday) cellStyle.borderColor = '#2563EB';
                 return (
                   <button key={d.date} disabled={d.disabled}
                     onClick={() => !d.disabled && setOpenDate(d.date)}
-                    className={`aspect-square rounded-xl border p-2 flex flex-col items-start justify-between text-left transition ${d.disabled ? 'bg-slate-50 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 hover:border-orange-300 hover:shadow-sm'}`}>
-                    <span className={`text-sm font-bold ${d.disabled ? 'text-slate-300' : 'text-[#050A1F]'}`}>{dayNum}</span>
-                    {d.disabled ? (
-                      <span className="text-[9px] font-bold uppercase text-slate-300">{d.reason === 'holiday' ? (d.holidayName || 'Holiday') : 'Off'}</span>
+                    className={`aspect-square rounded-xl p-2 flex flex-col items-start justify-between text-left transition ${d.disabled ? 'cursor-not-allowed' : 'hover:shadow-md'}`}
+                    style={{ ...cellStyle, borderWidth: isToday ? '2px' : '1px', borderStyle: 'solid' }}>
+                    <span className={`text-sm font-bold ${d.holiday ? 'text-blue-700' : d.weekendOff ? 'text-slate-500' : 'text-[#050A1F]'}`}>{dayNum}</span>
+                    {d.holiday ? (
+                      <span className="text-[12px] font-extrabold text-blue-600 leading-tight">{d.holidayName || 'Holiday'}</span>
+                    ) : d.weekendOff ? (
+                      <span className="text-[10px] font-bold uppercase text-slate-500">Week Off</span>
                     ) : (
-                      <span className={`text-[9px] font-bold ${complete ? 'text-green-600' : d.marked > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{d.marked}/{d.totalActive}{complete ? ' ✓' : ''}</span>
+                      <span className={`text-base font-extrabold ${d.presentPct >= 90 && hasData ? 'text-green-700' : d.presentPct < 60 && hasData ? 'text-red-600' : d.marked > 0 ? 'text-slate-700' : 'text-slate-300'}`}>{d.present ?? 0}/{d.total}</span>
                     )}
                   </button>
                 );
               })}
             </div>
-            <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-200 inline-block" /> Weekend / holiday</span>
-              <span className="flex items-center gap-1"><span className="text-green-600 font-bold">✓</span> All marked</span>
-              <span className="flex items-center gap-1"><span className="text-amber-600 font-bold">n/N</span> Marked / active</span>
+            <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-400 flex-wrap">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block" style={{ background: '#F0FDF4', border: '1px solid #16A34A' }} /> ≥90% present</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block" style={{ background: '#FEF2F2', border: '1px solid #DC2626' }} /> &lt;60% present</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block" style={{ background: '#E2E8F0' }} /> Week off</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block" style={{ background: '#EFF6FF', border: '1px solid #93C5FD' }} /> Holiday</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block border-2 border-blue-600" /> Today</span>
             </div>
           </>
         )}
@@ -855,10 +869,17 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
   useEffect(load, [date, branch]);
 
   const setMark = (id, patch) => setMarks((m) => ({ ...m, [id]: { ...(m[id] || {}), ...patch } }));
-  // Toggle behaviour: clicking the active status again clears it (and its inputs).
+  // Toggle behaviour: clicking the active status again clears it (status + times +
+  // leave type) locally AND marks it for deletion on the server on next save.
+  const [cleared, setCleared] = useState({}); // empId → true (to delete on save)
   const pick = (id, status) => {
     const cur = marks[id] && marks[id].status;
-    if (cur === status) { setMarks((m) => { const n = { ...m }; delete n[id]; return n; }); return; }
+    if (cur === status) {
+      setMarks((m) => { const n = { ...m }; delete n[id]; return n; });
+      setCleared((c) => ({ ...c, [id]: true }));
+      return;
+    }
+    setCleared((c) => { const n = { ...c }; delete n[id]; return n; }); // re-selected → not cleared
     if (status === 'half_day' || status === 'absent_leave') setMark(id, { status, leaveType: marks[id]?.leaveType || 'casual', late: false });
     else setMark(id, { status, late: false });
   };
@@ -875,12 +896,16 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
   const save = async () => {
     setErr(''); setMsg(''); setSaving(true);
     const entries = Object.entries(marks).filter(([, v]) => v && v.status).map(([id, v]) => ({ employeeId: Number(id), status: v.status, loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '' }));
+    // Toggled-off employees → tell the server to delete their record for this day.
+    Object.keys(cleared).forEach((id) => { if (!marks[id]) entries.push({ employeeId: Number(id), clear: true }); });
     try {
       const r = await hrApi(`/attendance/day/${date}`, { method: 'PUT', body: JSON.stringify({ entries }) });
       const lopForced = (r.results || []).filter((x) => x.forcedLop).length;
       const wfhBlocked = (r.results || []).filter((x) => x.error && /wfh yearly/i.test(x.error)).length;
-      const errs = (r.results || []).filter((x) => x.error);
-      setMsg(`Saved ${entries.length - errs.length} entries${lopForced ? ` · ${lopForced} forced to LOP (no balance)` : ''}${wfhBlocked ? ` · ${wfhBlocked} WFH blocked (yearly limit)` : ''}.`);
+      const errs = (r.results || []).filter((x) => x.error && !/cleared/i.test(x.error));
+      const saved = entries.filter((e) => !e.clear).length;
+      setMsg(`Saved ${saved} entries${lopForced ? ` · ${lopForced} forced to LOP (no balance)` : ''}${wfhBlocked ? ` · ${wfhBlocked} WFH blocked (yearly limit)` : ''}.`);
+      setCleared({});
       load();
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
@@ -909,7 +934,9 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
           <SummaryBox label="Present" value={`${summary.present.count}/${summary.present.total}`} sub={`${summary.present.pct}%`} color="#22C55E" active={filter === 'present'} onClick={() => setFilter(filter === 'present' ? null : 'present')} />
-          {summary.byBranch.map((b) => <SummaryBox key={b.branch} label={`Present · ${b.branch}`} value={`${b.count}/${b.total}`} sub={`${b.pct}%`} color="#3B82F6" />)}
+          {summary.byBranch.map((b) => b.weekOff
+            ? <SummaryBox key={b.branch} label={`Present · ${b.branch}`} value="Week Off" sub={b.holiday ? 'holiday' : 'weekly off'} color="#94A3B8" />
+            : <SummaryBox key={b.branch} label={`Present · ${b.branch}`} value={`${b.count}/${b.total}`} sub={`${b.pct}%`} color="#3B82F6" />)}
           <SummaryBox label="Absent" value={`${summary.absent.count}`} sub="leave + LOP" color="#EF4444" active={filter === 'absent_leave'} onClick={() => setFilter(filter === 'absent_leave' ? null : 'absent_leave')} />
           <SummaryBox label="Late entry" value={`${summary.late ? summary.late.count : 0}`} sub="today" color="#F59E0B" active={filter === 'late'} onClick={() => setFilter(filter === 'late' ? null : 'late')} />
         </div>

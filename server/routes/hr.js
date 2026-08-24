@@ -903,30 +903,38 @@ router.get('/attendance/calendar', requireHrAccess, async (req, res, next) => {
       const applies = !hb || activeBranches.some((b) => b.toLowerCase() === hb.toLowerCase());
       if (applies) (holiSet[String(h.date)] = holiSet[String(h.date)] || []).push(h.name);
     });
-    // Attendance completion per day: how many marks exist vs active employees in scope.
+    // Per-day: active employees whose own branch is working that date (excludes
+    // e.g. Kolkata staff on their off-Saturdays), plus present-rate for coloring.
     const activeEmps = await HrUser.findAll({ where: { active: true } });
     const inScope = activeEmps.filter((e) => activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
-    const totalActive = inScope.length;
-    const marks = await HrAttendance.findAll({ where: { date: { [Op.like]: `${month}-%` } } });
-    const markCountByDate = {};
+    const empById = {}; inScope.forEach((e) => { empById[e.id] = e; });
     const inScopeIds = new Set(inScope.map((e) => e.id));
-    marks.forEach((m) => { if (inScopeIds.has(m.employeeId)) markCountByDate[m.date] = (markCountByDate[m.date] || 0) + 1; });
+    const marks = await HrAttendance.findAll({ where: { date: { [Op.like]: `${month}-%` } } });
+    const marksByDate = {};
+    marks.forEach((m) => { if (inScopeIds.has(m.employeeId)) (marksByDate[m.date] = marksByDate[m.date] || []).push(m); });
+    const presentVal = (st) => (st === 'present' || st === 'wfh') ? 1 : (st === 'half_day' ? 0.5 : 0);
 
     const days = [];
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${month}-${String(day).padStart(2, '0')}`;
-      // For a multi-branch view, a day is "off" only if off for EVERY covered branch
-      // (so a working day in any covered branch stays clickable).
       const offForAll = activeBranches.length > 0 && activeBranches.every((b) => branchWeekendOff(dateStr, b));
       const holidayNames = holiSet[dateStr] || [];
       const isHoliday = holidayNames.length > 0;
       const disabled = offForAll || isHoliday;
+      // Employees actually expected to work this specific date (branch not off, no branch holiday).
+      const expected = inScope.filter((e) => !branchWeekendOff(dateStr, e.branch)
+        && !allHolidays.some((h) => String(h.date) === dateStr && (!h.branch || String(h.branch).toLowerCase() === String(e.branch || '').toLowerCase())));
+      const totalDay = expected.length;
+      const dayMarks = (marksByDate[dateStr] || []).filter((m) => empById[m.employeeId] && expected.some((e) => e.id === m.employeeId));
+      let present = 0; dayMarks.forEach((m) => { present += presentVal(m.status); });
+      const marked = dayMarks.length;
+      const presentPct = totalDay > 0 ? Math.round((present / totalDay) * 100) : 0;
       days.push({
         date: dateStr, day, dow: new Date(dateStr + 'T00:00:00').getDay(),
         disabled, weekendOff: offForAll, holiday: isHoliday, holidayNames,
         reason: isHoliday ? 'holiday' : (offForAll ? 'weekend' : null),
         holidayName: holidayNames[0] || null,
-        marked: markCountByDate[dateStr] || 0, total: totalActive, totalActive,
+        marked, present, total: totalDay, totalActive: totalDay, presentPct,
       });
     }
     res.json({ month, branch: branch || null, branches, days });
@@ -1016,6 +1024,13 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       const emp = await HrUser.findByPk(Number(en.employeeId));
       if (!emp) { results.push({ employeeId: en.employeeId, error: 'not found' }); continue; }
       if (!canManageBranch(req, emp.branch)) { results.push({ employeeId: en.employeeId, error: 'out of scope' }); continue; }
+      // Toggled-off → remove this day's attendance + leave for the employee.
+      if (en.clear) {
+        await HrAttendance.destroy({ where: { employeeId: emp.id, date } });
+        await HrLeave.destroy({ where: { employeeId: emp.id, date } });
+        results.push({ employeeId: emp.id, cleared: true });
+        continue;
+      }
       let status = VALID.includes(en.status) ? en.status : 'present';
       let note = null;
       let forcedLop = false;
@@ -1171,10 +1186,17 @@ router.get('/attendance/day/:date/summary', requireHrAccess, async (req, res, ne
       if (m && m.late) lateCount += 1;
     }
     const pct = (p, t) => t > 0 ? Math.round((p / t) * 100) : 0;
+    // Include EVERY scoped branch, even ones that are off this date, so the
+    // per-branch box always shows (as "Week Off" when the branch is off).
+    const branchList = branches.map((b) => {
+      const off = branchWeekendOff(date, b) || branchHoliday(b);
+      const v = byBranch[b] || { present: 0, total: 0 };
+      return { branch: b, count: v.present, present: v.present, total: v.total, pct: pct(v.present, v.total), weekOff: off && v.total === 0, holiday: branchHoliday(b) };
+    });
     res.json({
       date,
       present: { count: totalPresent, value: totalPresent, total, pct: pct(totalPresent, total) },
-      byBranch: Object.entries(byBranch).map(([b, v]) => ({ branch: b, count: v.present, present: v.present, total: v.total, pct: pct(v.present, v.total) })),
+      byBranch: branchList,
       absent: { count: totalAbsent },
       late: { count: lateCount },
     });
