@@ -2971,9 +2971,9 @@ function tzLabel(tz) {
 function EmailDraftTab({ lead, user, onChange }) {
   const isOwner = lead.ownerId === user.id;
   const isLM = ['leadmanager', 'admin'].includes(user.role);
-  // The owner writes drafts; an admin can act on their behalf. (Lead managers
-  // only acknowledge — they never draft.)
-  const canDraft = isOwner || user.role === 'admin';
+  // The owner writes drafts; an admin and the Pre Sales Team Lead (leadmanager)
+  // can act on their behalf — adding the first reply and reminders for the agent.
+  const canDraft = isOwner || user.role === 'admin' || user.role === 'leadmanager';
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState(null); // { kind: 'first'|'reminder', edit?: {...} }
 
@@ -4360,6 +4360,7 @@ function DealsTab({ lead, config, user, onChange }) {
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
   const [payTenure, setPayTenure] = useState('onetime');
+  const [payStart, setPayStart] = useState('');
   const [payRenewal, setPayRenewal] = useState(''); // next renewal date (auto, editable)
   const [renewalEdited, setRenewalEdited] = useState(false);
 
@@ -4378,7 +4379,11 @@ function DealsTab({ lead, config, user, onChange }) {
       let t = inst.tenure || (deal.planType === 'recurring' ? (deal.recurringInterval === 'quarterly' ? 'quarterly' : deal.recurringInterval === 'half-yearly' ? '6month' : deal.recurringInterval === 'yearly' ? '1year' : 'monthly') : defaultTenureFor(svc));
       setPayTenure(t);
       setRenewalEdited(false);
-      setPayRenewal(inst.renewalDate || computeRenewal(pd, t));
+      // Start date defaults to the payment-received date (admin can change it);
+      // the renewal date is computed from the start date.
+      const st = inst.startDate || pd;
+      setPayStart(st);
+      setPayRenewal(inst.renewalDate || computeRenewal(st, t));
       setPayFor({ deal, inst });
       return;
     }
@@ -4402,11 +4407,12 @@ function DealsTab({ lead, config, user, onChange }) {
           paid: true, gateway: payGateway, paidDate: payDate || undefined,
           ...(payRef ? { transactionId: payRef } : {}),
           tenure: payTenure,
+          startDate: payStart || undefined,
           renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
         }),
       });
       onChange(u);
-      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayTenure('onetime'); setPayRenewal('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayStart(''); setPayTenure('onetime'); setPayRenewal('');
     } catch (err) { alert(err.message); }
     setBusyInst(null);
   };
@@ -4610,11 +4616,11 @@ function DealsTab({ lead, config, user, onChange }) {
               <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
             </div>
 
-            {/* Tenure + next renewal date. Defaults by service (renewal services
-                → Monthly). "One time" hides the renewal date. */}
+            {/* Tenure + start date + next renewal. The renewal auto-computes from
+                the START date (which defaults to the payment date but is editable). */}
             <div className="mt-3">
               <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Tenure</label>
-              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payDate, t)); }}
+              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payStart || payDate, t)); }}
                 className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
                 {TENURE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
@@ -4623,10 +4629,19 @@ function DealsTab({ lead, config, user, onChange }) {
 
             {payTenure !== 'onetime' && (
               <div className="mt-3">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Start date</label>
+                <input type="date" value={payStart} onChange={(e) => { const s = e.target.value; setPayStart(s); if (!renewalEdited) setPayRenewal(computeRenewal(s, payTenure)); }}
+                  className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                <div className="text-[10px] text-slate-400 mt-1">Defaults to the payment date. Change it to re-anchor the renewal date.</div>
+              </div>
+            )}
+
+            {payTenure !== 'onetime' && (
+              <div className="mt-3">
                 <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Next renewal date</label>
                 <input type="date" value={payRenewal} onChange={(e) => { setPayRenewal(e.target.value); setRenewalEdited(true); }}
                   className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the payment date + tenure. Edit if the contract renews on a different day.</div>
+                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the start date + tenure. Edit if the contract renews on a different day.</div>
               </div>
             )}
 
@@ -5267,6 +5282,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
   const [payTenure, setPayTenure] = useState('onetime');
+  const [payStart, setPayStart] = useState('');
   const [payRenewal, setPayRenewal] = useState('');
   const [renewalEdited, setRenewalEdited] = useState(false);
   const [stopFor, setStopFor] = useState(null); // { lead, deal } — stop-recurring reason popup
@@ -5288,7 +5304,9 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     const svc = deal.service || deal.name;
     const t = inst.tenure || (deal.planType === 'recurring' ? (deal.recurringInterval === 'quarterly' ? 'quarterly' : deal.recurringInterval === 'half-yearly' ? '6month' : deal.recurringInterval === 'yearly' ? '1year' : 'monthly') : defaultTenureFor(svc));
     setPayTenure(t); setRenewalEdited(false);
-    setPayRenewal(inst.renewalDate || computeRenewal(pd, t));
+    const st = inst.startDate || pd;
+    setPayStart(st);
+    setPayRenewal(inst.renewalDate || computeRenewal(st, t));
     setPayFor({ lead, deal, inst });
   };
 
@@ -5343,7 +5361,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         method: 'PATCH',
         body: JSON.stringify({
           paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}), ...(paidDate ? { paidDate } : {}),
-          tenure: payTenure, renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
+          tenure: payTenure, startDate: payStart || undefined, renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
         }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
@@ -6066,10 +6084,10 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
               <div className="text-[10px] text-slate-400 mt-1">Kept against the payment so finance can reconcile it later.</div>
             </div>
 
-            {/* Tenure + next renewal date. */}
+            {/* Tenure + start date + next renewal. Renewal auto-computes from start. */}
             <div className="mt-3">
               <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Tenure</label>
-              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payDate, t)); }}
+              <select value={payTenure} onChange={(e) => { const t = e.target.value; setPayTenure(t); setRenewalEdited(false); setPayRenewal(t === 'onetime' ? '' : computeRenewal(payStart || payDate, t)); }}
                 className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
                 {TENURE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
@@ -6078,10 +6096,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
             {payTenure !== 'onetime' && (
               <div className="mt-3">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Start date</label>
+                <input type="date" value={payStart} onChange={(e) => { const s = e.target.value; setPayStart(s); if (!renewalEdited) setPayRenewal(computeRenewal(s, payTenure)); }}
+                  className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                <div className="text-[10px] text-slate-400 mt-1">Defaults to the payment date. Change it to re-anchor the renewal date.</div>
+              </div>
+            )}
+
+            {payTenure !== 'onetime' && (
+              <div className="mt-3">
                 <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Next renewal date</label>
                 <input type="date" value={payRenewal} onChange={(e) => { setPayRenewal(e.target.value); setRenewalEdited(true); }}
                   className="w-full mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the payment date + tenure. Edit if the contract renews on a different day.</div>
+                <div className="text-[10px] text-slate-400 mt-1">Auto-set from the start date + tenure. Edit if the contract renews on a different day.</div>
               </div>
             )}
 

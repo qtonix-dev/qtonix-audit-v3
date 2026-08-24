@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v282';
+const APP_VERSION = 'v283';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -566,6 +566,9 @@ connectWithRetry()
       // Scheduled-email dispatcher (sends queued emails at their chosen time).
       try { require('./jobs/scheduledEmail').start(require('./models')); }
       catch (e) { console.error('[sched-email] not started:', e.message); }
+      // Weekly log cleanup (Sunday ~9AM IST, prunes audit+call logs older than 3 months).
+      try { require('./jobs/logCleanup').start(require('./models')); }
+      catch (e) { console.error('[log-cleanup] not started:', e.message); }
       // Unopened-email nudge (flags tracked emails not opened within 24h).
       try { require('./jobs/unopenedEmail').start(require('./models')); }
       catch (e) { console.error('[unopened-email] not started:', e.message); }

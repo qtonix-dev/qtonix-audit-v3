@@ -2248,13 +2248,14 @@ router.patch('/:id/first-reply', requireAuth, async (req, res, next) => {
           .map((a) => ({ name: String(a.name || 'file').slice(0, 200), url: String(a.url), size: Number(a.size) || 0 }));
       }
       if (!isEdit) lead.firstDraftAt = new Date();
-      // Submitting a draft stops the 24-hour clock (the owner has done their
-      // part) but does NOT close the item — the lead manager still has to read
-      // it and send the actual email. draftRead marks that final step.
       lead.firstDraftRead = false;
       lead.firstDraftReadAt = null;
       if (!lead.firstReplyMode) lead.firstReplyMode = 'leadmanager';
-      pushTimeline(lead, 'note', `First-reply draft ${isEdit ? 'edited' : 'submitted'}${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
+      // When the Pre Sales Team Lead (leadmanager) submits for the agent, note it
+      // as done on behalf of the lead's owner.
+      const onBehalf = req.user.role === 'leadmanager' && lead.ownerId && lead.ownerId !== req.user.id;
+      const actor = onBehalf ? `${req.user.name} (on behalf of agent)` : req.user.name;
+      pushTimeline(lead, 'note', `First-reply draft ${isEdit ? 'edited' : 'submitted'}${lead.firstDraftSubject ? ` — "${lead.firstDraftSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, actor, { body: draft });
     }
 
     // The lead manager (or admin) reads the draft and marks it actioned — this
@@ -2320,7 +2321,9 @@ router.patch('/:id/reminder-draft', requireAuth, async (req, res, next) => {
       if (!isEdit) lead.reminderDraftAt = new Date();
       lead.reminderReceived = false;
       lead.reminderReceivedAt = null;
-      pushTimeline(lead, 'note', `Reminder draft ${isEdit ? 'edited' : 'submitted'}${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, req.user.name, { body: draft });
+      const onBehalf = req.user.role === 'leadmanager' && lead.ownerId && lead.ownerId !== req.user.id;
+      const actor = onBehalf ? `${req.user.name} (on behalf of agent)` : req.user.name;
+      pushTimeline(lead, 'note', `Reminder draft ${isEdit ? 'edited' : 'submitted'}${lead.reminderSubject ? ` — "${lead.reminderSubject}"` : ''}: ${stripHtml(draft).slice(0, 400)}`, actor, { body: draft });
       await lead.save();
       return res.json(lead.toJSON());
     }
@@ -3078,8 +3081,21 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     if (b.tenure !== undefined) {
       inst.tenure = VALID_TENURES.includes(String(b.tenure)) ? String(b.tenure) : 'onetime';
     }
+    // Start date drives the renewal window. Defaults to the payment-received
+    // date but the admin can override it; changing it re-computes the renewal
+    // (end) date. Stored separately from paidDate so all three are on record.
+    if (b.startDate !== undefined) {
+      inst.startDate = b.startDate ? String(b.startDate).slice(0, 10) : null;
+      // Editing the start date on a paid, renewing installment re-computes the
+      // renewal (end) date automatically, unless an explicit renewalDate is sent.
+      if (inst.paid && inst.tenure && inst.tenure !== 'onetime' && (b.renewalDate === undefined || !b.renewalDate)) {
+        inst.renewalDate = computeRenewalDate(inst.startDate || inst.paidDate, inst.tenure);
+        inst.endDate = inst.renewalDate;
+      }
+    }
     if (b.renewalDate !== undefined) {
       inst.renewalDate = b.renewalDate ? String(b.renewalDate).slice(0, 10) : null;
+      inst.endDate = inst.renewalDate; // keep end date mirrored with renewal date
     }
     // Managers mark an installment as invoiced; that is their half of the
     // handover, and it tells the admin the money is now expected.
@@ -3130,16 +3146,19 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
       }
       if (!b.paid) inst.gateway = '';
       if (b.paid) {
-        // Resolve the tenure (default by service if none supplied) and, unless
-        // the admin edited the renewal date explicitly, compute it from the
-        // payment received date + tenure. "onetime" clears any renewal date.
+        // Resolve the tenure (default by service if none supplied). The renewal
+        // (end) date is computed from the START date — which defaults to the
+        // payment-received date but the admin may override. "onetime" = no renewal.
         if (inst.tenure === undefined) inst.tenure = defaultTenure(deal.service || deal.name);
+        // Default the start date to the payment-received date if not set.
+        if (!inst.startDate) inst.startDate = inst.paidDate;
         if (inst.tenure === 'onetime') {
-          inst.renewalDate = null;
+          inst.renewalDate = null; inst.endDate = null;
         } else if (b.renewalDate === undefined || !b.renewalDate) {
-          inst.renewalDate = computeRenewalDate(inst.paidDate, inst.tenure);
+          inst.renewalDate = computeRenewalDate(inst.startDate || inst.paidDate, inst.tenure);
+          inst.endDate = inst.renewalDate;
         }
-        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''}${inst.renewalDate ? ' · renews ' + inst.renewalDate : ''})`, req.user.name);
+        pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''}${inst.startDate ? ' · starts ' + inst.startDate : ''}${inst.renewalDate ? ' · renews ' + inst.renewalDate : ''})`, req.user.name);
       }
     }
     if (b.dueDate !== undefined) {
