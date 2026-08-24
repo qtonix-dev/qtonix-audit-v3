@@ -39,9 +39,14 @@ async function requireHrAccess(req, res, next) {
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
-    // An HR user gets manager access either via the explicit isHrManager flag or
-    // by having the "manager" job type — both mean branch-scoped admin-lite.
-    req.isHrManager = !!hr.isHrManager || hr.type === 'manager';
+    // Branch scope for HR-manager privileges. Prefer the explicit hrManagerScope
+    // field; fall back to legacy isHrManager/type==='manager' (scoped to own
+    // branch) so existing managers keep working until re-saved.
+    let scope = (hr.hrManagerScope || '').trim();
+    if (!scope && (hr.isHrManager || hr.type === 'manager')) scope = hr.branch || '';
+    req.hrManagerScope = scope;                     // '' | 'all' | '<branch>'
+    req.isHrManager = !!scope;                      // any scope = manager
+    req.hrManagerAll = scope.toLowerCase() === 'all';
     req.hrBranch = hr.branch || '';
     return next();
   }
@@ -56,6 +61,8 @@ async function requireHrAccess(req, res, next) {
   req.hrActor = { kind: 'admin', id: user.id, name: user.name };
   req.isHrAdmin = true; // only the shared admin can manage HR users/branches
   req.isHrManager = false;
+  req.hrManagerScope = '';
+  req.hrManagerAll = false;
   req.hrBranch = '';
   next();
 }
@@ -75,10 +82,15 @@ function requireHrManager(req, res, next) {
 }
 
 // True when the actor may manage records for the given branch: admins anywhere;
-// an HR Manager only within their own branch. Others never.
+// an "all"-scope HR Manager anywhere; a branch-scoped HR Manager only within
+// their scoped branch. Others never.
 function canManageBranch(req, branch) {
   if (req.isHrAdmin) return true;
-  if (req.isHrManager) return !branch || !req.hrBranch || String(branch) === String(req.hrBranch);
+  if (req.isHrManager) {
+    if (req.hrManagerAll) return true;                 // all-branches manager
+    const scope = req.hrManagerScope || req.hrBranch;  // scoped branch
+    return !branch || !scope || String(branch).toLowerCase() === String(scope).toLowerCase();
+  }
   return false;
 }
 

@@ -1337,6 +1337,10 @@ const HrUser = sequelize.define('HrUser', {
   // add/edit employees, create job posts, add candidates, assign unassigned
   // candidates to other HR, and post announcements. Admin remains global.
   isHrManager: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Branch scope for HR-manager privileges: '' (not a manager) | 'all' |
+  // '<branch name>' (limited to that branch). Supersedes isHrManager; the
+  // boolean is kept for back-compat and mirrors whether scope is set.
+  hrManagerScope: { type: DataTypes.STRING(40), defaultValue: '' },
   // Probation tracking: end date + confirmation status. Drives the HR Manager's
   // "probation ending soon" daily check. status: on_probation | confirmed | extended.
   probationEndDate: { type: DataTypes.DATEONLY, allowNull: true },
@@ -1384,6 +1388,7 @@ const HrShift = sequelize.define('HrShift', {
   endTime: { type: DataTypes.STRING(10), defaultValue: '' },    // "18:00"
   breakStart: { type: DataTypes.STRING(10), defaultValue: '' },
   breakEnd: { type: DataTypes.STRING(10), defaultValue: '' },
+  graceMinutes: { type: DataTypes.INTEGER, defaultValue: 20 },  // login after start+grace = late
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'hr_shifts' });
 HrShift.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };

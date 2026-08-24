@@ -194,7 +194,7 @@ router.get('/me', requireHrAccess, (req, res) => {
   if (req.hrActor.kind === 'admin') {
     return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true, isHrManager: false });
   }
-  res.json({ ...req.hrUser.toJSON(), isAdmin: false, isHrManager: req.isHrManager, completion: profileCompletion(req.hrUser) });
+  res.json({ ...req.hrUser.toJSON(), isAdmin: false, isHrManager: req.isHrManager, hrManagerScope: req.hrManagerScope, hrManagerAll: req.hrManagerAll, completion: profileCompletion(req.hrUser) });
 });
 
 // --- Dashboard --------------------------------------------------------------
@@ -324,6 +324,7 @@ router.post('/shifts', requireHrAccess, requireHrAdmin, async (req, res, next) =
       name: String(b.name).trim(),
       startTime: b.startTime || '', endTime: b.endTime || '',
       breakStart: b.breakStart || '', breakEnd: b.breakEnd || '',
+      graceMinutes: Number.isFinite(Number(b.graceMinutes)) ? Number(b.graceMinutes) : 20,
     });
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
@@ -335,6 +336,7 @@ router.put('/shifts/:id', requireHrAccess, requireHrAdmin, async (req, res, next
     if (!row) return res.status(404).json({ error: 'Shift not found.' });
     const b = req.body || {};
     ['name', 'startTime', 'endTime', 'breakStart', 'breakEnd'].forEach((k) => { if (b[k] !== undefined) row[k] = b[k]; });
+    if (b.graceMinutes !== undefined && Number.isFinite(Number(b.graceMinutes))) row.graceMinutes = Number(b.graceMinutes);
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -472,6 +474,9 @@ router.get('/employees', requireHrAccess, async (req, res, next) => {
       _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,
       avatar: u.avatar, active: u.active, completion: profileCompletion(u),
+      shiftId: u.shiftId, isHrManager: u.isHrManager, hrManagerScope: u.hrManagerScope || '',
+      branchIncharge: u.branchIncharge, targets: u.targets, canPostAnnouncements: u.canPostAnnouncements,
+      phone: u.phone, joiningDate: u.joiningDate,
     }));
     // ?hrDept=1 → only employees in the Human Resources department (used wherever
     // an HR/recruiter must be picked). Directors/CRM admins are excluded.
@@ -843,6 +848,296 @@ router.get('/employees/:id/attendance-summary', requireHrAccess, async (req, res
   } catch (e) { next(e); }
 });
 
+// ===================== BRANCH-WIDE ATTENDANCE (Core HR → Attendance) =====================
+// Weekend-off rules per branch + holidays. A date is "off" (no attendance needed)
+// when it is a Sunday (all branches), a branch-specific Saturday rule, or an
+// admin-configured holiday for that branch.
+function nthWeekdayOfMonth(dateStr) {
+  // Returns which occurrence (1st..5th) of its weekday this date is within its month.
+  const d = new Date(dateStr + 'T00:00:00');
+  return Math.floor((d.getDate() - 1) / 7) + 1;
+}
+function branchWeekendOff(dateStr, branch) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const dow = d.getDay(); // 0=Sun ... 6=Sat
+  if (dow === 0) return true;                       // all Sundays off, every branch
+  const b = String(branch || '').toLowerCase();
+  if (dow === 6) {                                  // Saturday rules
+    if (b === 'kolkata') return true;               // Kolkata: every Saturday off
+    if (b === 'bhubaneswar') {                      // Bhubaneswar: 2nd & 4th Saturday off
+      const nth = nthWeekdayOfMonth(dateStr);
+      return nth === 2 || nth === 4;
+    }
+  }
+  return false;
+}
+// Effective branches this actor may manage (for the branch selector / scope).
+async function scopedBranches(req) {
+  const all = (await HrBranch.findAll({ order: [['name', 'ASC']] })).map((b) => b.name);
+  if (req.isHrAdmin || req.hrManagerAll) return all;
+  if (req.isHrManager) {
+    const scope = req.hrManagerScope || req.hrBranch;
+    return all.filter((n) => String(n).toLowerCase() === String(scope).toLowerCase());
+  }
+  return [];
+}
+
+// GET /attendance/calendar?month=YYYY-MM&branch=  → per-day off flags + completion counts
+router.get('/attendance/calendar', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view attendance.' });
+    const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7);
+    const branches = await scopedBranches(req);
+    // Which branch(es) this calendar covers: a specific in-scope branch, or all scoped.
+    let branch = req.query.branch ? String(req.query.branch) : '';
+    if (branch && !branches.some((b) => b.toLowerCase() === branch.toLowerCase())) return res.status(403).json({ error: 'Branch not in your scope.' });
+    const activeBranches = branch ? [branch] : branches;
+
+    const [year, mon] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    const allHolidays = await HrHoliday.findAll();
+    const holidays = allHolidays.filter((h) => String(h.date).slice(0, 7) === month);
+    const holiSet = {}; // date -> [names] for the covered branches ('' = all branches)
+    holidays.forEach((h) => {
+      const hb = String(h.branch || '');
+      const applies = !hb || activeBranches.some((b) => b.toLowerCase() === hb.toLowerCase());
+      if (applies) (holiSet[String(h.date)] = holiSet[String(h.date)] || []).push(h.name);
+    });
+    // Attendance completion per day: how many marks exist vs active employees in scope.
+    const activeEmps = await HrUser.findAll({ where: { active: true } });
+    const inScope = activeEmps.filter((e) => activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    const totalActive = inScope.length;
+    const marks = await HrAttendance.findAll({ where: { date: { [Op.like]: `${month}-%` } } });
+    const markCountByDate = {};
+    const inScopeIds = new Set(inScope.map((e) => e.id));
+    marks.forEach((m) => { if (inScopeIds.has(m.employeeId)) markCountByDate[m.date] = (markCountByDate[m.date] || 0) + 1; });
+
+    const days = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${month}-${String(day).padStart(2, '0')}`;
+      // For a multi-branch view, a day is "off" only if off for EVERY covered branch
+      // (so a working day in any covered branch stays clickable).
+      const offForAll = activeBranches.length > 0 && activeBranches.every((b) => branchWeekendOff(dateStr, b));
+      const holidayNames = holiSet[dateStr] || [];
+      const isHoliday = holidayNames.length > 0;
+      const disabled = offForAll || isHoliday;
+      days.push({
+        date: dateStr, day, dow: new Date(dateStr + 'T00:00:00').getDay(),
+        disabled, weekendOff: offForAll, holiday: isHoliday, holidayNames,
+        reason: isHoliday ? 'holiday' : (offForAll ? 'weekend' : null),
+        holidayName: holidayNames[0] || null,
+        marked: markCountByDate[dateStr] || 0, total: totalActive, totalActive,
+      });
+    }
+    res.json({ month, branch: branch || null, branches, days });
+  } catch (e) { next(e); }
+});
+
+// GET /attendance/day/:date?branch= → active employees grouped branch→dept with marks
+router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view attendance.' });
+    const date = String(req.params.date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
+    const branches = await scopedBranches(req);
+    let branch = req.query.branch ? String(req.query.branch) : '';
+    if (branch && !branches.some((b) => b.toLowerCase() === branch.toLowerCase())) return res.status(403).json({ error: 'Branch not in your scope.' });
+    const activeBranches = branch ? [branch] : branches;
+
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const grace = Number(policy.lateRule.graceMinutes) || 30;
+
+    const activeEmps = await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] });
+    const inScope = activeEmps.filter((e) => activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    const shifts = {}; (await HrShift.findAll()).forEach((sh) => { shifts[sh.id] = sh; });
+    const marks = {}; (await HrAttendance.findAll({ where: { date } })).forEach((m) => { marks[m.employeeId] = m; });
+
+    // Group branch → department
+    const groups = {};
+    for (const e of inScope) {
+      const bKey = e.branch || '—';
+      const dKey = e.department || '—';
+      groups[bKey] = groups[bKey] || {};
+      groups[bKey][dKey] = groups[bKey][dKey] || [];
+      const sh = e.shiftId ? shifts[e.shiftId] : null;
+      const m = marks[e.id] || null;
+      const leaveType = m && m.note && m.note.startsWith('leave:') ? m.note.slice(6) : null;
+      groups[bKey][dKey].push({
+        id: e.id, name: e.name, employeeId: e.employeeId, designation: e.designation,
+        shiftName: sh ? sh.name : null, shiftStart: sh ? sh.startTime : null, shiftEnd: sh ? sh.endTime : null,
+        status: m ? m.status : null, loginTime: m ? m.loginTime : null, logoutTime: m ? m.logoutTime : null,
+        late: m ? m.late : false, leaveType, note: m ? m.note : null,
+        mark: m ? { status: m.status, loginTime: m.loginTime, logoutTime: m.logoutTime, late: m.late, leaveType, note: m.note } : null,
+      });
+    }
+    res.json({ date, branch: branch || null, branches, graceMinutes: grace, groups });
+  } catch (e) { next(e); }
+});
+
+// PUT /attendance/day/:date  → bulk upsert marks for a day.
+// body: { entries: [{ employeeId, status, loginTime?, logoutTime?, leaveType? }] }
+// status: present | absent_leave | half_day | lop
+router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    const date = String(req.params.date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
+    const entries = Array.isArray(req.body && req.body.entries) ? req.body.entries : [];
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const grace = Number(policy.lateRule.graceMinutes) || 30;
+    const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+    const VALID = ['present', 'absent_leave', 'half_day', 'lop'];
+    const LEAVE_TYPES = ['casual', 'medical', 'privilege', 'wfh'];
+
+    const results = [];
+    for (const en of entries) {
+      const emp = await HrUser.findByPk(Number(en.employeeId));
+      if (!emp) { results.push({ employeeId: en.employeeId, error: 'not found' }); continue; }
+      if (!canManageBranch(req, emp.branch)) { results.push({ employeeId: en.employeeId, error: 'out of scope' }); continue; }
+      let status = VALID.includes(en.status) ? en.status : 'present';
+      let note = null;
+      let forcedLop = false;
+
+      // Leave-backed statuses deduct from the chosen leave type's balance NOW.
+      // If balance is insufficient, force LOP (no negative balances).
+      if (status === 'absent_leave' || status === 'half_day') {
+        const leaveType = LEAVE_TYPES.includes(en.leaveType) ? en.leaveType : null;
+        if (!leaveType) { results.push({ employeeId: en.employeeId, error: 'leave type required' }); continue; }
+        const need = status === 'half_day' ? 0.5 : 1;
+        const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+        // Used = existing approved leaves of this type in the same month (excluding this date).
+        const month = date.slice(0, 7);
+        const existing = await HrLeave.findAll({ where: { employeeId: emp.id, type: leaveType, date: { [Op.like]: `${month}-%` } } });
+        let used = 0;
+        existing.forEach((l) => { if (l.date !== date) used += (l.duration === 'half' ? 0.5 : 1); });
+        const remaining = (Number(alloc[leaveType]) || 0) - used;
+        if (remaining >= need) {
+          // Record/replace the leave for this date.
+          await HrLeave.destroy({ where: { employeeId: emp.id, date } });
+          await HrLeave.create({ employeeId: emp.id, type: leaveType, date, duration: need === 0.5 ? 'half' : 'full', paid: true, status: 'approved', appliedById: req.hrActor ? req.hrActor.id : null });
+          note = 'leave:' + leaveType;
+        } else {
+          // No balance → force LOP for the unpaid portion.
+          await HrLeave.destroy({ where: { employeeId: emp.id, date } });
+          forcedLop = true;
+          if (status === 'absent_leave') { status = 'lop'; note = 'lop:no_balance'; }
+          else { note = 'half_lop:no_balance'; } // half day but the leave half is unpaid (LOP)
+        }
+      } else {
+        // present / lop → clear any leave record for the date.
+        await HrLeave.destroy({ where: { employeeId: emp.id, date } });
+      }
+
+      // Late detection for present/half_day with a login time and a shift start.
+      let late = false;
+      if ((status === 'present' || status === 'half_day')) {
+        const sh = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+        const start = sh && sh.startTime ? sh.startTime : null;
+        const login = toMin(en.loginTime);
+        if (start && login != null) late = login > (toMin(start) + grace);
+      }
+
+      // Map to the HrAttendance.status vocabulary (present|absent|half_day|leave|lop).
+      const attStatus = status === 'absent_leave' ? 'leave' : status; // present|half_day|lop|leave
+      const [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: attStatus } });
+      row.status = attStatus;
+      row.loginTime = en.loginTime || null;
+      row.logoutTime = en.logoutTime || null;
+      row.late = late;
+      row.note = note;
+      row.markedById = req.hrActor ? req.hrActor.id : null;
+      await row.save();
+      results.push({ employeeId: emp.id, status: attStatus, late, forcedLop });
+    }
+    hrLog(req, 'attendance.day', `${date}: ${results.length} employees`);
+    res.json({ date, results });
+  } catch (e) { next(e); }
+});
+
+// GET /attendance/late-penalties?month=YYYY-MM&branch= → per-employee late counters.
+// Rule (thresholds from editable global setting): every N consecutive working-day
+// late entries earns one half-day penalty; PLUS every M late entries in the month
+// not consumed by a streak earns one more. Counters only — payroll reads these.
+router.get('/attendance/late-penalties', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const consecThreshold = Number(policy.lateRule.consecutiveForHalfDay) || 3;
+    const monthlyThreshold = Number(policy.lateRule.monthlyForHalfDay) || 6;
+    const branches = await scopedBranches(req);
+    let branch = req.query.branch ? String(req.query.branch) : '';
+    if (branch && !branches.some((b) => b.toLowerCase() === branch.toLowerCase())) return res.status(403).json({ error: 'Branch not in your scope.' });
+    const activeBranches = branch ? [branch] : branches;
+
+    const emps = (await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] }))
+      .filter((e) => activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    const rows = await HrAttendance.findAll({ where: { date: { [Op.like]: `${month}-%` }, late: true }, order: [['date', 'ASC']] });
+    const lateByEmp = {}; rows.forEach((r) => { (lateByEmp[r.employeeId] = lateByEmp[r.employeeId] || []).push(r.date); });
+
+    const out = emps.map((e) => {
+      const dates = (lateByEmp[e.id] || []).slice().sort();
+      let penalties = 0, consumed = 0, runLen = 0, prev = null;
+      const isWorkday = (dStr) => !branchWeekendOff(dStr, e.branch);
+      for (const d of dates) {
+        if (prev) {
+          let gapHasWorkday = false;
+          const cur = new Date(prev + 'T00:00:00');
+          cur.setDate(cur.getDate() + 1);
+          const end = new Date(d + 'T00:00:00');
+          while (cur < end) {
+            const ds = cur.toISOString().slice(0, 10);
+            if (isWorkday(ds)) { gapHasWorkday = true; break; }
+            cur.setDate(cur.getDate() + 1);
+          }
+          runLen = gapHasWorkday ? 1 : runLen + 1;
+        } else runLen = 1;
+        prev = d;
+        if (runLen >= consecThreshold) { penalties += 1; consumed += consecThreshold; runLen = 0; }
+      }
+      const remaining = dates.length - consumed;
+      const monthlyPenalties = monthlyThreshold > 0 ? Math.floor(remaining / monthlyThreshold) : 0;
+      penalties += monthlyPenalties;
+      return { employeeId: e.id, name: e.name, branch: e.branch, lateCount: dates.length, halfDayPenalties: penalties };
+    });
+    res.json({ month, branch: branch || null, consecThreshold, monthlyThreshold, employees: out });
+  } catch (e) { next(e); }
+});
+
+// GET /attendance/day/:date/summary → the four summary boxes (half-day = 0.5 present)
+router.get('/attendance/day/:date/summary', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const date = String(req.params.date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
+    const branches = await scopedBranches(req);
+    const activeEmps = (await HrUser.findAll({ where: { active: true } })).filter((e) => branches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    const marks = {}; (await HrAttendance.findAll({ where: { date } })).forEach((m) => { marks[m.employeeId] = m; });
+    const presentVal = (m) => { if (!m) return 0; if (m.status === 'present') return 1; if (m.status === 'half_day') return 0.5; return 0; };
+    const byBranch = {};
+    let totalPresent = 0, totalAbsent = 0, total = activeEmps.length;
+    for (const e of activeEmps) {
+      const bk = e.branch || '—';
+      byBranch[bk] = byBranch[bk] || { present: 0, total: 0 };
+      byBranch[bk].total += 1;
+      const pv = presentVal(marks[e.id]);
+      byBranch[bk].present += pv;
+      totalPresent += pv;
+      if (pv === 0 && marks[e.id]) totalAbsent += 1; // marked but not present (leave/lop)
+    }
+    const pct = (p, t) => t > 0 ? Math.round((p / t) * 100) : 0;
+    res.json({
+      date,
+      present: { count: totalPresent, value: totalPresent, total, pct: pct(totalPresent, total) },
+      byBranch: Object.entries(byBranch).map(([b, v]) => ({ branch: b, count: v.present, present: v.present, total: v.total, pct: pct(v.present, v.total) })),
+      absent: { count: totalAbsent },
+    });
+  } catch (e) { next(e); }
+});
+
 // Record a leave. Enforces the probation/notice rule: paid leave isn't allowed
 // then, but the leave can still be taken as UNPAID.
 router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
@@ -940,6 +1235,7 @@ router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) 
     const password = String(b.password || '');
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are all required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    if (!b.shiftId) return res.status(400).json({ error: 'Please assign a shift.' });
     const type = USER_TYPES.includes(b.type) ? b.type : 'employee';
     // An HR Manager can only add employees to their own branch.
     const branch = b.branch || (req.isHrManager ? req.hrBranch : '') || 'Bhubaneswar';
@@ -972,7 +1268,8 @@ router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) 
       shiftId: b.shiftId ? Number(b.shiftId) : null,
       branchIncharge: !!b.branchIncharge,
       // Only an admin may grant the HR-Manager role or the announce permission.
-      isHrManager: req.isHrAdmin ? !!b.isHrManager : false,
+      hrManagerScope: req.isHrAdmin ? String(b.hrManagerScope || '').trim() : '',
+      isHrManager: req.isHrAdmin ? (!!b.isHrManager || !!String(b.hrManagerScope || '').trim()) : false,
       canPostAnnouncements: req.isHrAdmin ? !!b.canPostAnnouncements : false,
       avatar: b.avatar || null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
@@ -1034,7 +1331,13 @@ router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, nex
     if (b.active !== undefined) row.active = !!b.active;
     if (b.avatar !== undefined) row.avatar = b.avatar;
     // HR-Manager role and the announce permission are admin-granted only.
-    if (b.isHrManager !== undefined && req.isHrAdmin) row.isHrManager = !!b.isHrManager;
+    if (b.hrManagerScope !== undefined && req.isHrAdmin) {
+      row.hrManagerScope = String(b.hrManagerScope || '').trim();
+      row.isHrManager = !!row.hrManagerScope; // keep boolean mirror in sync
+    } else if (b.isHrManager !== undefined && req.isHrAdmin) {
+      row.isHrManager = !!b.isHrManager;
+      if (!b.isHrManager) row.hrManagerScope = '';
+    }
     if (b.canPostAnnouncements !== undefined && req.isHrAdmin) row.canPostAnnouncements = !!b.canPostAnnouncements;
     if (b.birthday !== undefined) row.birthday = b.birthday || null;
     if (b.maritalStatus !== undefined) row.maritalStatus = b.maritalStatus || null;

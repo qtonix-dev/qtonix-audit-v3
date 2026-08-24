@@ -715,227 +715,253 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
 }
 function TField({ label, children }) { return <div className="flex items-center gap-3"><div className="text-xs font-bold text-slate-500 w-20 shrink-0">{label}</div>{children}</div>; }
 
-function HrDailyConsole({ user, isAdmin }) {
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState('');
-  const [notes, setNotes] = useState({});
-  const [newTask, setNewTask] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [flash, setFlash] = useState('');
-
-  const load = () => hrApi('/daily/console').then((d) => { setData(d); setNotes((n) => (d.report && d.report.notes) ? d.report.notes : n); }).catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, []);
-
-  const toggleTask = async (t) => {
-    const status = t.status === 'done' ? 'open' : 'done';
-    setData((d) => ({ ...d, tasks: d.tasks.map((x) => x._id === t._id ? { ...x, status } : x) }));
-    try { await hrApi(`/daily/tasks/${t._id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); } catch { load(); }
-  };
-  const addTask = async () => {
-    const title = newTask.trim(); if (!title) return;
-    setNewTask('');
-    try { await hrApi('/daily/tasks', { method: 'POST', body: JSON.stringify({ title }) }); load(); } catch (e) { setErr(e.message); }
-  };
-  const delTask = async (t) => {
-    try { await hrApi(`/daily/tasks/${t._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); }
-  };
-  const submit = async () => {
-    setSubmitting(true); setFlash('');
-    try {
-      const r = await hrApi('/daily/report/submit', { method: 'POST', body: JSON.stringify({ notes }) });
-      setFlash(r.emailed ? 'Report submitted and emailed to admin ✓' : 'Report submitted ✓ (email skipped — recruitment mailbox not linked)');
-      load();
-    } catch (e) { setErr(e.message); } finally { setSubmitting(false); }
-  };
-
-  if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
-  if (data && data.empty) return <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">{data.note}</div>;
-  if (!data) return <div className="text-slate-400 text-sm py-10 text-center">Loading your daily console…</div>;
-
-  const s = data.snapshot || {};
-  const w = s.workforce || {}; const r = s.recruitment || {}; const con = s.contribution || {};
-  const checklistTasks = (data.tasks || []).filter((t) => t.source === 'checklist');
-  const adhocTasks = (data.tasks || []).filter((t) => t.source !== 'checklist');
-  const doneChecklist = checklistTasks.filter((t) => t.status === 'done').length;
-
-  const Stat = ({ label, value, tone }) => (
-    <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-3">
-      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-      <div className={`text-2xl font-extrabold mt-0.5 ${tone || 'text-[#050A1F]'}`}>{value}</div>
-    </div>
-  );
-  const Section = ({ title, right, children }) => (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-sm font-extrabold text-[#050A1F]">{title}</div>
-        {right}
+// Placeholder for Core HR modules not yet built. Real modules (Attendance,
+// Leave, Payroll, Expenses, Stock Management, Onboarding) land in later phases.
+function CoreHrPlaceholder({ title }) {
+  return (
+    <div className="max-w-2xl mx-auto text-center py-20">
+      <div className="w-14 h-14 rounded-2xl bg-orange-50 text-[#FF6A00] flex items-center justify-center mx-auto mb-4">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
       </div>
-      {children}
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-2">{title}</h1>
+      <p className="text-sm text-slate-400">This Core HR module is coming soon.</p>
     </div>
   );
-  const NoteBox = ({ k, label, placeholder }) => (
-    <div>
-      <div className="text-xs font-bold text-slate-500 mb-1">{label}</div>
-      <textarea value={notes[k] || ''} onChange={(e) => setNotes({ ...notes, [k]: e.target.value })} placeholder={placeholder} rows={2}
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y" />
-    </div>
-  );
-  const miniTable = (rows, cols, empty) => rows && rows.length ? (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-      <table className="w-full text-sm">
-        <thead><tr className="bg-slate-50 border-b border-slate-200 text-left">{cols.map((c) => <th key={c.h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">{c.h}</th>)}</tr></thead>
-        <tbody>{rows.map((it, i) => <tr key={i} className="border-b border-slate-100 last:border-0">{cols.map((c) => <td key={c.h} className="px-3 py-2 text-slate-700">{c.get(it)}</td>)}</tr>)}</tbody>
-      </table>
-    </div>
-  ) : <div className="text-xs text-slate-400 py-2">{empty}</div>;
+}
 
-  const fmtD = (ymd) => { if (!ymd) return '—'; try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ymd; } };
+// ===== Attendance module (Core HR → Attendance) =====
+const ATT_STATUS = {
+  present: { label: 'Present', fill: '#22C55E' },
+  absent_leave: { label: 'Absent', fill: '#EF4444' },
+  half_day: { label: 'Half Day', fill: '#F59E0B' },
+  lop: { label: 'LOP', fill: '#64748B' },
+};
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function AttendanceModule({ user, isAdmin }) {
+  const canAll = isAdmin || user.hrManagerAll || (user.hrManagerScope === 'all');
+  const scopedBranch = !canAll ? (user.hrManagerScope && user.hrManagerScope !== 'all' ? user.hrManagerScope : user.branch) : '';
+  const [branch, setBranch] = useState(canAll ? '' : scopedBranch); // '' = all (combined)
+  const now = new Date(Date.now() + 330 * 60000);
+  const [month, setMonth] = useState(now.toISOString().slice(0, 7));
+  const [cal, setCal] = useState(null);
+  const [openDate, setOpenDate] = useState(null);
+  const [err, setErr] = useState('');
+
+  const loadCal = () => {
+    const q = new URLSearchParams({ month }); if (branch) q.set('branch', branch);
+    hrApi(`/attendance/calendar?${q}`).then(setCal).catch((e) => setErr(e.message));
+  };
+  useEffect(() => { setCal(null); loadCal(); /* eslint-disable-next-line */ }, [month, branch]);
+
+  if (openDate) return <AttendanceDay date={openDate} branch={branch} onBack={() => { setOpenDate(null); loadCal(); }} />;
+
+  const [y, m] = month.split('-').map(Number);
+  const firstDow = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  const shiftMonth = (delta) => { const dt = new Date(Date.UTC(y, m - 1 + delta, 1)); setMonth(dt.toISOString().slice(0, 7)); };
+  const dayByDate = {}; (cal?.days || []).forEach((d) => { dayByDate[d.date] = d; });
 
   return (
-    <div className="max-w-5xl">
-      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Daily Console</h1>
-        <div className="text-sm text-slate-500">{data.owner.name} · {data.owner.branch} · {data.dateLabel}</div>
-      </div>
-      <p className="text-xs text-slate-400 mb-5">Everything below the checklist is collected automatically from the HRMS. Review it, tick your checklist, add notes, then submit your end-of-day report.</p>
-
-      {flash && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700 font-semibold">{flash}</div>}
-      {data.submitted && !flash && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5 text-sm text-blue-700">Today’s report was already submitted. Re-submitting will update it.</div>}
-
-      {/* AUTO — Workforce */}
-      <Section title="Workforce (auto)">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-          <Stat label="Total" value={w.total || 0} />
-          <Stat label="Present" value={w.present || 0} tone="text-green-600" />
-          <Stat label="Absent" value={w.absent || 0} tone="text-red-500" />
-          <Stat label="On leave" value={w.onLeave || 0} />
-          <Stat label="Late" value={w.late || 0} tone="text-amber-500" />
-          <Stat label="Half day" value={w.halfDay || 0} />
-          <Stat label="Not marked" value={w.notMarked || 0} tone="text-slate-400" />
-        </div>
-      </Section>
-
-      {/* AUTO — Leave requests */}
-      <Section title="Pending leave requests (auto)">
-        {miniTable(s.leaveRequests, [
-          { h: 'Employee', get: (x) => x.employee }, { h: 'Type', get: (x) => x.type },
-          { h: 'Date', get: (x) => fmtD(x.date) }, { h: 'Reason', get: (x) => x.reason || '—' },
-        ], 'No pending leave requests.')}
-      </Section>
-
-      {/* AUTO — Recruitment */}
-      <Section title="Recruitment (auto)">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2">
-          <Stat label="Open roles" value={r.openJobs || 0} />
-          <Stat label="Shortlisted" value={r.shortlisted || 0} />
-          <Stat label="Offers out" value={r.offersReleased || 0} />
-          <Stat label="Accepted" value={r.offersAccepted || 0} tone="text-green-600" />
-          <Stat label="Interviews today" value={r.interviewsScheduledToday || 0} />
-          <Stat label="…done" value={r.interviewsDoneToday || 0} />
-        </div>
-        {(r.upcomingJoinings || []).length > 0 && (
-          <div className="text-xs text-slate-500">Upcoming joinings: {r.upcomingJoinings.map((j) => `${j.name} (${fmtD(j.joiningDate)})`).join(' · ')}</div>
-        )}
-      </Section>
-
-      {/* AUTO — HR Manager contribution */}
-      <Section title="Your recruitment contribution today (auto)">
-        <div className="grid grid-cols-3 gap-2 max-w-md">
-          <Stat label="Interviews taken" value={con.interviewsTaken || 0} />
-          <Stat label="Candidates added" value={con.candidatesAdded || 0} />
-          <Stat label="Offers closed" value={con.offersClosed || 0} />
-        </div>
-      </Section>
-
-      {/* AUTO — People to watch */}
-      <div className="grid md:grid-cols-3 gap-4 mb-6">
+    <div className="max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">New joiners (auto)</div>
-          {miniTable(s.newJoiners, [
-            { h: 'Name', get: (x) => x.name }, { h: 'Joined', get: (x) => fmtD(x.joiningDate) },
-            { h: 'Onboard', get: (x) => x.onboarding },
-          ], 'None this month.')}
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">Attendance</h1>
+          <p className="text-sm text-slate-400">Pick a working day to mark attendance. Weekends & holidays are disabled.</p>
         </div>
-        <div>
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">Probation ending (auto)</div>
-          {miniTable(s.probation, [
-            { h: 'Name', get: (x) => x.name }, { h: 'Ends', get: (x) => fmtD(x.endDate) },
-            { h: 'Left', get: (x) => x.daysLeft < 0 ? <span className="text-red-500 font-bold">{-x.daysLeft}d over</span> : `${x.daysLeft}d` },
-          ], 'None ending soon.')}
-        </div>
-        <div>
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">Notice period (auto)</div>
-          {miniTable(s.notice, [
-            { h: 'Name', get: (x) => x.name }, { h: 'Last day', get: (x) => fmtD(x.lastWorkingDay) },
-            { h: 'Left', get: (x) => x.daysLeft == null ? '—' : `${x.daysLeft}d` },
-          ], 'None on notice.')}
-        </div>
-      </div>
-
-      {/* Daily checklist */}
-      <Section title={`Daily checklist (${doneChecklist}/${checklistTasks.length})`}>
-        {checklistTasks.length === 0
-          ? <div className="text-xs text-slate-400">No checklist configured. An admin can set it up in Admin → Daily checklist.</div>
-          : (
-            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-              {checklistTasks.map((t) => (
-                <label key={t._id} className="flex items-start gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50">
-                  <input type="checkbox" checked={t.status === 'done'} onChange={() => toggleTask(t)} className="mt-0.5 w-4 h-4 accent-green-500" />
-                  <div className="min-w-0">
-                    <div className={`text-sm font-semibold ${t.status === 'done' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
-                    {t.details && <div className="text-[11px] text-slate-400">{t.details}</div>}
-                  </div>
-                </label>
-              ))}
-            </div>
+        <div className="flex items-center gap-2">
+          {canAll && (
+            <select value={branch} onChange={(e) => setBranch(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600">
+              <option value="">All branches</option>
+              <option value="Bhubaneswar">Bhubaneswar</option>
+              <option value="Kolkata">Kolkata</option>
+            </select>
           )}
-      </Section>
-
-      {/* Tasks */}
-      <Section title="Tasks">
-        <div className="flex items-stretch gap-2 mb-2">
-          <input value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask()} placeholder="Add a task for today…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-          <button onClick={addTask} className="shrink-0 rounded-lg px-4 text-sm font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>+ Add</button>
+          {!canAll && <span className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs font-bold text-blue-700">{scopedBranch} branch</span>}
         </div>
-        {adhocTasks.length === 0
-          ? <div className="text-xs text-slate-400">No tasks yet. Add one above — or an admin can assign you one.</div>
-          : (
-            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-              {adhocTasks.map((t) => (
-                <div key={t._id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-slate-50">
-                  <input type="checkbox" checked={t.status === 'done'} onChange={() => toggleTask(t)} className="mt-0.5 w-4 h-4 accent-green-500" />
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm font-semibold ${t.status === 'done' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</div>
-                    {t.source === 'assigned' && <div className="text-[11px] text-blue-500 font-semibold">Assigned by {t.assignedByName || 'admin'}</div>}
-                    {t.details && <div className="text-[11px] text-slate-400">{t.details}</div>}
+      </div>
+
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">{err}</div>}
+
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => shiftMonth(-1)} className="w-9 h-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
+          <div className="text-lg font-extrabold text-[#050A1F]">{MONTHS[m - 1]} {y}</div>
+          <button onClick={() => shiftMonth(1)} className="w-9 h-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
+        </div>
+        {!cal ? <div className="py-16 text-center text-slate-400 text-sm">Loading…</div> : (
+          <>
+            <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="text-center text-[11px] font-bold text-slate-400 uppercase py-1">{d}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {Array.from({ length: firstDow }).map((_, i) => <div key={`e${i}`} />)}
+              {(cal.days || []).map((d) => {
+                const dayNum = Number(d.date.slice(-2));
+                const complete = !d.disabled && d.totalActive > 0 && d.marked >= d.totalActive;
+                return (
+                  <button key={d.date} disabled={d.disabled}
+                    onClick={() => !d.disabled && setOpenDate(d.date)}
+                    className={`aspect-square rounded-xl border p-2 flex flex-col items-start justify-between text-left transition ${d.disabled ? 'bg-slate-50 border-slate-100 cursor-not-allowed' : 'bg-white border-slate-200 hover:border-orange-300 hover:shadow-sm'}`}>
+                    <span className={`text-sm font-bold ${d.disabled ? 'text-slate-300' : 'text-[#050A1F]'}`}>{dayNum}</span>
+                    {d.disabled ? (
+                      <span className="text-[9px] font-bold uppercase text-slate-300">{d.reason === 'holiday' ? (d.holidayName || 'Holiday') : 'Off'}</span>
+                    ) : (
+                      <span className={`text-[9px] font-bold ${complete ? 'text-green-600' : d.marked > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{d.marked}/{d.totalActive}{complete ? ' ✓' : ''}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-4 mt-4 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-200 inline-block" /> Weekend / holiday</span>
+              <span className="flex items-center gap-1"><span className="text-green-600 font-bold">✓</span> All marked</span>
+              <span className="flex items-center gap-1"><span className="text-amber-600 font-bold">n/N</span> Marked / active</span>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Daily entry page: employees grouped branch → dept, 4 status buttons each.
+function AttendanceDay({ date, branch, onBack }) {
+  const [data, setData] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [marks, setMarks] = useState({}); // empId → {status, loginTime, logoutTime, leaveType}
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const load = () => {
+    const q = new URLSearchParams(); if (branch) q.set('branch', branch);
+    hrApi(`/attendance/day/${date}?${q}`).then((d) => {
+      setData(d);
+      const init = {};
+      Object.values(d.groups || {}).forEach((depts) => Object.values(depts).forEach((emps) => emps.forEach((e) => {
+        if (e.status) {
+          const uiStatus = e.status === 'leave' ? 'absent_leave' : (e.status === 'absent' ? 'lop' : e.status);
+          init[e.id] = { status: uiStatus, loginTime: e.loginTime || '', logoutTime: e.logoutTime || '', leaveType: e.leaveType || '' };
+        }
+      })));
+      setMarks(init);
+    }).catch((e) => setErr(e.message));
+    loadSummary();
+  };
+  const loadSummary = () => { const q = new URLSearchParams(); if (branch) q.set('branch', branch); hrApi(`/attendance/day/${date}/summary?${q}`).then(setSummary).catch(() => {}); };
+  useEffect(load, [date, branch]);
+
+  const setMark = (id, patch) => setMarks((m) => ({ ...m, [id]: { ...(m[id] || {}), ...patch } }));
+  const pick = (id, status) => {
+    if (status === 'present') setMark(id, { status });
+    else if (status === 'half_day' || status === 'absent_leave') setMark(id, { status, leaveType: marks[id]?.leaveType || 'casual' });
+    else setMark(id, { status }); // lop
+  };
+
+  const save = async () => {
+    setErr(''); setMsg(''); setSaving(true);
+    const entries = Object.entries(marks).filter(([, v]) => v && v.status).map(([id, v]) => ({ employeeId: Number(id), status: v.status, loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '' }));
+    try {
+      const r = await hrApi(`/attendance/day/${date}`, { method: 'PUT', body: JSON.stringify({ entries }) });
+      const lopForced = (r.results || []).filter((x) => x.forcedLop).length;
+      const errs = (r.results || []).filter((x) => x.error);
+      setMsg(`Saved ${entries.length - errs.length} entries${lopForced ? ` · ${lopForced} forced to LOP (no leave balance)` : ''}.`);
+      load();
+    } catch (e) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  const prettyDate = new Date(date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <button onClick={onBack} className="text-sm text-slate-500 hover:text-[#050A1F] font-semibold mb-3 flex items-center gap-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg> Back to calendar</button>
+      <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">{prettyDate}</h1>
+      <p className="text-sm text-slate-400 mb-4">Mark attendance for each employee. Present needs login & logout time (can be left blank and filled later).</p>
+
+      {/* Summary boxes */}
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <SummaryBox label="Present" value={`${summary.present.count}/${summary.present.total}`} sub={`${summary.present.pct}%`} color="#22C55E" />
+          {summary.byBranch.map((b) => <SummaryBox key={b.branch} label={`Present · ${b.branch}`} value={`${b.count}/${b.total}`} sub={`${b.pct}%`} color="#3B82F6" />)}
+          <SummaryBox label="Absent" value={`${summary.absent.count}`} sub="leave + LOP" color="#EF4444" />
+        </div>
+      )}
+
+      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">{err}</div>}
+      {msg && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">{msg}</div>}
+
+      {!data ? <div className="py-16 text-center text-slate-400">Loading…</div> : (
+        <div className="space-y-6">
+          {Object.entries(data.groups || {}).map(([br, depts]) => (
+            <div key={br}>
+              <div className="text-sm font-extrabold text-[#050A1F] mb-2 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-[#FF6A00]" /> {br}</div>
+              {Object.entries(depts).map(([dept, emps]) => (
+                <div key={dept} className="mb-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 pl-4">{dept}</div>
+                  <div className="space-y-1.5">
+                    {emps.map((e) => {
+                      const mk = marks[e.id] || {};
+                      return (
+                        <div key={e.id} className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 flex items-center gap-3 flex-wrap">
+                          <div className="min-w-[160px] flex-1">
+                            <div className="text-sm font-bold text-[#050A1F]">{e.name}</div>
+                            <div className="text-[11px] text-slate-400">{e.employeeId || '—'}{e.shiftName ? ` · ${e.shiftName} (${e.shiftStart})` : ''}</div>
+                          </div>
+                          {/* 4 status buttons */}
+                          <div className="flex items-center gap-1">
+                            {Object.entries(ATT_STATUS).map(([key, cfg]) => (
+                              <button key={key} onClick={() => pick(e.id, key)}
+                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition ${mk.status === key ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                                style={mk.status === key ? { background: cfg.fill } : {}}>
+                                {cfg.label}
+                              </button>
+                            ))}
+                          </div>
+                          {/* present → times */}
+                          {mk.status === 'present' && (
+                            <div className="flex items-center gap-1.5">
+                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Login" />
+                              <span className="text-slate-300">–</span>
+                              <input type="time" value={mk.logoutTime || ''} onChange={(ev) => setMark(e.id, { logoutTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Logout" />
+                            </div>
+                          )}
+                          {/* half day → also allow login/logout + leave type */}
+                          {(mk.status === 'half_day' || mk.status === 'absent_leave') && (
+                            <select value={mk.leaveType || 'casual'} onChange={(ev) => setMark(e.id, { leaveType: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold">
+                              <option value="casual">Casual</option>
+                              <option value="medical">Medical</option>
+                              <option value="privilege">Privilege</option>
+                              <option value="wfh">WFH</option>
+                            </select>
+                          )}
+                          {mk.status === 'half_day' && (
+                            <div className="flex items-center gap-1.5">
+                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Login (after 4h)" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                  {t.priority === 'high' && <span className="text-[10px] font-bold text-red-500 shrink-0">HIGH</span>}
-                  {t.source !== 'assigned' && <button onClick={() => delTask(t)} className="shrink-0 text-slate-300 hover:text-red-500 text-sm" title="Delete">✕</button>}
                 </div>
               ))}
             </div>
-          )}
-      </Section>
-
-      {/* Manual notes */}
-      <Section title="Notes (manual — judgment items)">
-        <div className="grid md:grid-cols-2 gap-3">
-          <NoteBox k="grievances" label="Employee issues / grievances" placeholder="Concerns raised, actions taken…" />
-          <NoteBox k="managerCoordination" label="Manager coordination" placeholder="Hiring needs, performance, conflicts…" />
-          <NoteBox k="probationNotes" label="Probation feedback" placeholder="Confirmation / extension recommendations…" />
-          <NoteBox k="noticeNotes" label="Notice-period / handover" placeholder="Handover status, replacement…" />
-          <NoteBox k="directorDecisions" label="Decisions required from Director" placeholder="What needs a management call…" />
-          <NoteBox k="tomorrowPriorities" label="Tomorrow’s top priorities" placeholder="Top 3 for tomorrow…" />
+          ))}
+          <div className="sticky bottom-4 flex justify-end">
+            <button onClick={save} disabled={saving} className="rounded-xl px-6 py-3 text-sm font-bold text-white shadow-lg disabled:opacity-60" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save attendance'}</button>
+          </div>
         </div>
-      </Section>
+      )}
+    </div>
+  );
+}
 
-      {/* Submit */}
-      <div className="sticky bottom-0 bg-slate-50 pt-3 pb-1 -mx-4 px-4 border-t border-slate-200 flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-xs text-slate-500">Submitting compiles the auto data + checklist + tasks + notes into a report and emails it to admin.</div>
-        <button onClick={submit} disabled={submitting} className="shrink-0 rounded-lg px-5 py-2.5 text-sm font-bold text-white whitespace-nowrap disabled:opacity-50" style={{ background: ORANGE }}>
-          {submitting ? 'Submitting…' : data.submitted ? 'Re-submit report' : 'Submit end-of-day report'}
-        </button>
-      </div>
+function SummaryBox({ label, value, sub, color }) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4" style={{ borderTop: `3px solid ${color}` }}>
+      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-2xl font-extrabold text-[#050A1F] mt-1">{value}</div>
+      <div className="text-xs font-bold" style={{ color }}>{sub}</div>
     </div>
   );
 }
@@ -3576,159 +3602,6 @@ function PhoneNormalizeCard() {
 }
 
 // HR Admin → Daily checklist: configure the HR Manager's recurring daily checks.
-function HrChecklistAdmin() {
-  const [items, setItems] = useState(null);
-  const [label, setLabel] = useState('');
-  const [desc, setDesc] = useState('');
-  const [err, setErr] = useState('');
-  const load = () => hrApi('/daily/checklist').then(setItems).catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, []);
-  const add = async () => {
-    if (!label.trim()) return;
-    try { await hrApi('/daily/checklist', { method: 'POST', body: JSON.stringify({ label: label.trim(), description: desc.trim() }) }); setLabel(''); setDesc(''); load(); }
-    catch (e) { setErr(e.message); }
-  };
-  const toggle = async (it) => { try { await hrApi(`/daily/checklist/${it._id}`, { method: 'PATCH', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { setErr(e.message); } };
-  const del = async (it) => { if (!confirm('Delete this checklist item?')) return; try { await hrApi(`/daily/checklist/${it._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
-  const seed = async () => { try { const r = await hrApi('/daily/checklist/seed-defaults', { method: 'POST' }); load(); if (!r.seeded) setErr('Checklist already has items — nothing seeded.'); } catch (e) { setErr(e.message); } };
-
-  return (
-    <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <div>
-          <h3 className="font-bold text-sm text-[#050A1F]">HR Manager daily checklist</h3>
-          <p className="text-xs text-slate-500">These items auto-appear on the HR Manager’s Daily Console every working day.</p>
-        </div>
-        {items && items.length === 0 && <button onClick={seed} className="rounded-lg px-3 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>Seed default Top 10</button>}
-      </div>
-      {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4 mb-4">
-        <div className="grid gap-2">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Checklist item (e.g. Floor visit)" className={inputCls} />
-          <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description (optional)" className={inputCls} />
-          <div><button onClick={add} className="rounded-lg px-4 py-2 text-sm font-bold text-white whitespace-nowrap" style={{ background: ORANGE }}>+ Add item</button></div>
-        </div>
-      </div>
-
-      {!items ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
-        : items.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No checklist items yet.</div>
-          : (
-            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-              {items.map((it) => (
-                <div key={it._id} className="flex items-start gap-3 px-4 py-3">
-                  <button onClick={() => toggle(it)} title={it.active ? 'Active' : 'Inactive'} className={`mt-0.5 w-9 h-5 rounded-full shrink-0 transition ${it.active ? 'bg-green-500' : 'bg-slate-300'}`}>
-                    <span className={`block w-4 h-4 bg-white rounded-full transition ${it.active ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm font-semibold ${it.active ? 'text-[#050A1F]' : 'text-slate-400'}`}>{it.label}</div>
-                    {it.description && <div className="text-[11px] text-slate-400">{it.description}</div>}
-                  </div>
-                  <button onClick={() => del(it)} className="shrink-0 text-slate-300 hover:text-red-500 text-sm" title="Delete">✕</button>
-                </div>
-              ))}
-            </div>
-          )}
-    </div>
-  );
-}
-
-// HR Admin → Daily reports: submitted end-of-day reports from HR Managers.
-function HrDailyReportsAdmin() {
-  const [reports, setReports] = useState(null);
-  const [open, setOpen] = useState(null);
-  useEffect(() => { hrApi('/daily/reports').then(setReports).catch(() => setReports([])); }, []);
-  const fmt = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return '—'; } };
-  const fmtDate = (ymd) => { try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ymd; } };
-
-  return (
-    <div className="max-w-4xl">
-      <h3 className="font-bold text-sm text-[#050A1F] mb-1">Daily HR reports</h3>
-      <p className="text-xs text-slate-500 mb-4">End-of-day reports submitted by HR Managers. Also delivered to your inbox.</p>
-      {!reports ? <div className="text-slate-400 text-sm py-8 text-center">Loading…</div>
-        : reports.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No reports submitted yet.</div>
-          : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-              <table className="w-full text-sm">
-                <thead><tr className="bg-slate-50 border-b border-slate-200 text-left">
-                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date</th>
-                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">HR Manager</th>
-                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Checklist</th>
-                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Submitted</th>
-                  <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">View</th>
-                </tr></thead>
-                <tbody>
-                  {reports.map((rp) => {
-                    const done = (rp.checklist || []).filter((c) => c.done).length;
-                    return (
-                      <tr key={rp._id} className="border-b border-slate-100 last:border-0">
-                        <td className="px-4 py-3 font-semibold text-[#050A1F] whitespace-nowrap">{fmtDate(rp.date)}</td>
-                        <td className="px-4 py-3 text-slate-700">{rp.ownerName}</td>
-                        <td className="px-4 py-3 text-slate-600">{done}/{(rp.checklist || []).length}</td>
-                        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(rp.submittedAt)}{rp.emailedAt ? ' · emailed' : ''}</td>
-                        <td className="px-4 py-3 text-right"><button onClick={() => setOpen(rp)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View</button></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-      {open && <HrReportViewModal report={open} onClose={() => setOpen(null)} />}
-    </div>
-  );
-}
-
-function HrReportViewModal({ report, onClose }) {
-  const s = report.snapshot || {}; const w = s.workforce || {}; const r = s.recruitment || {}; const con = s.contribution || {};
-  const notes = report.notes || {};
-  const fmtDate = (ymd) => { if (!ymd) return '—'; try { return new Date(ymd + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ymd; } };
-  const Row = ({ label, value }) => <div className="flex justify-between py-1 text-sm"><span className="text-slate-500">{label}</span><span className="font-bold text-[#050A1F]">{value}</span></div>;
-  const noteBlocks = [['grievances', 'Grievances'], ['managerCoordination', 'Manager coordination'], ['probationNotes', 'Probation'], ['noticeNotes', 'Notice / handover'], ['directorDecisions', 'Decisions for Director'], ['tomorrowPriorities', 'Tomorrow’s priorities'], ['other', 'Other']].filter(([k]) => notes[k]);
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '90vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div><div className="text-sm font-extrabold text-[#050A1F]">{report.ownerName} — {fmtDate(report.date)}</div><div className="text-[11px] text-slate-400">HR daily report</div></div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
-        </div>
-        <div className="flex-1 overflow-auto p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Workforce</div>
-              <Row label="Total" value={w.total || 0} /><Row label="Present" value={w.present || 0} /><Row label="Absent" value={w.absent || 0} /><Row label="On leave" value={w.onLeave || 0} /><Row label="Late" value={w.late || 0} />
-            </div>
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Recruitment</div>
-              <Row label="Open roles" value={r.openJobs || 0} /><Row label="Shortlisted" value={r.shortlisted || 0} /><Row label="Offers out" value={r.offersReleased || 0} /><Row label="Accepted" value={r.offersAccepted || 0} /><Row label="Interviews (done)" value={`${r.interviewsScheduledToday || 0} (${r.interviewsDoneToday || 0})`} />
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 p-3">
-            <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">HR Manager contribution</div>
-            <div className="flex gap-6 text-sm"><span>Interviews taken: <b>{con.interviewsTaken || 0}</b></span><span>Added: <b>{con.candidatesAdded || 0}</b></span><span>Offers closed: <b>{con.offersClosed || 0}</b></span></div>
-          </div>
-          {(s.probation || []).length > 0 && <div className="text-sm"><b>Probation ending:</b> {s.probation.map((p) => `${p.name} (${p.daysLeft < 0 ? -p.daysLeft + 'd over' : p.daysLeft + 'd'})`).join(' · ')}</div>}
-          {(s.notice || []).length > 0 && <div className="text-sm"><b>Notice period:</b> {s.notice.map((n) => `${n.name}${n.daysLeft != null ? ` (${n.daysLeft}d)` : ''}`).join(' · ')}</div>}
-          <div>
-            <div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Checklist ({(report.checklist || []).filter((c) => c.done).length}/{(report.checklist || []).length})</div>
-            {(report.checklist || []).map((c, i) => <div key={i} className="text-sm text-slate-700">{c.done ? '✅' : '⬜'} {c.label}</div>)}
-          </div>
-          {(report.tasks || []).length > 0 && (
-            <div><div className="text-[11px] font-bold uppercase text-slate-400 mb-1">Tasks</div>{report.tasks.map((t, i) => <div key={i} className="text-sm text-slate-700">{t.status === 'done' ? '✅' : '⬜'} {t.title}{t.source === 'assigned' ? ` (assigned by ${t.assignedByName})` : ''}</div>)}</div>
-          )}
-          {noteBlocks.length > 0 && (
-            <div className="space-y-2">{noteBlocks.map(([k, label]) => <div key={k}><div className="text-[11px] font-bold uppercase text-slate-400">{label}</div><div className="text-sm text-slate-700 whitespace-pre-wrap">{notes[k]}</div></div>)}</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// HR Admin → Emails: one table of every recruitment email (name, description,
-// who it's sent to, which mailbox it sends from, last activity), with Preview and
-// Activity popups. Mirrors the Sales-CRM Emails tab. All HR emails send from the
-// linked recruitment mailbox, so the "Sent from" column is read-only.
 function HrEmailsTab() {
   const [data, setData] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -4103,11 +3976,12 @@ function HrAdmin({ user }) {
   const saveEdit = async () => {
     setErr('');
     if (edit.newPassword && edit.newPassword.length < 8) return setErr('Password must be at least 8 characters.');
+    if (!edit.shiftId) return setErr('Please assign a shift.');
     try {
       const body = {
         name: edit.name, phone: edit.phone, designation: edit.designation, type: edit.type,
         employeeId: edit.employeeId, branch: edit.branch, department: edit.department, joiningDate: edit.joiningDate,
-        shiftId: edit.shiftId || null, branchIncharge: edit.branchIncharge, targets: edit.targets, ...splitReports(edit.reportsTo),
+        shiftId: edit.shiftId || null, branchIncharge: edit.branchIncharge, targets: edit.targets, hrManagerScope: edit.hrManagerScope || '', ...splitReports(edit.reportsTo),
         probationEndDate: edit.probationEndDate || null, probationStatus: edit.probationStatus || '',
         exitStatus: edit.exitStatus || '', lastWorkingDay: edit.lastWorkingDay || null,
       };
@@ -4130,7 +4004,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['daily', 'Daily checklist'], ['reports', 'Daily reports'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['settings', 'Settings'], ['logs', 'Logs']];
 
   return (
     <div className="max-w-5xl">
@@ -4164,9 +4038,10 @@ function HrAdmin({ user }) {
                 <SharedField label="Branch"><select className={inputCls} value={edit.branch || ''} onChange={(e) => setEdit({ ...edit, branch: e.target.value })}>{branches.map((b) => <option key={b._id} value={b.name}>{b.name}</option>)}</select></SharedField>
                 <SharedField label="Department"><select className={inputCls} value={edit.department || ''} onChange={(e) => setEdit({ ...edit, department: e.target.value })}><option value="">— select —</option>{departments.map((d) => <option key={d._id} value={d.name}>{d.name}</option>)}</select></SharedField>
                 <SharedField label="Joining date"><input type="date" className={inputCls} value={edit.joiningDate || ''} onChange={(e) => setEdit({ ...edit, joiningDate: e.target.value })} /></SharedField>
-                <SharedField label="Shift"><select className={inputCls} value={edit.shiftId || ''} onChange={(e) => setEdit({ ...edit, shiftId: e.target.value })}><option value="">— none —</option>{shifts.map((sh) => <option key={sh._id} value={sh._id}>{sh.name}</option>)}</select></SharedField>
+                <SharedField label="Shift *"><select className={inputCls} value={edit.shiftId || ''} onChange={(e) => setEdit({ ...edit, shiftId: e.target.value })}><option value="">— select shift —</option>{shifts.map((sh) => <option key={sh._id} value={sh._id}>{sh.name}</option>)}</select></SharedField>
                 <SharedField label="Reports to"><select className={inputCls} value={edit.reportsTo || ''} onChange={(e) => setEdit({ ...edit, reportsTo: e.target.value })}><option value="">— none —</option>{reportingOptions.filter((o) => o.value !== `hr:${edit._id}`).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></SharedField>
                 <div className="flex items-center gap-2 pt-6"><input type="checkbox" id="inc-edit" checked={!!edit.branchIncharge} onChange={(e) => setEdit({ ...edit, branchIncharge: e.target.checked })} /><label htmlFor="inc-edit" className="text-sm font-semibold text-slate-600">Branch in-charge</label></div>
+                <SharedField label="HR Manager access"><select className={inputCls} value={edit.hrManagerScope || ''} onChange={(e) => setEdit({ ...edit, hrManagerScope: e.target.value, isHrManager: !!e.target.value })}><option value="">Not a manager</option><option value="all">All branches</option><option value="Bhubaneswar">Bhubaneswar only</option><option value="Kolkata">Kolkata only</option></select></SharedField>
                 <SharedField label="New password" hint="Leave blank to keep current"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} /></SharedField>
               </div>
               {/^(hr|human resource|human resources)$/i.test((edit.department || '').trim()) && (
@@ -4269,8 +4144,6 @@ function HrAdmin({ user }) {
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'emails' && <HrEmailsTab />}
-      {tab === 'daily' && <HrChecklistAdmin />}
-      {tab === 'reports' && <HrDailyReportsAdmin />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
@@ -4723,8 +4596,15 @@ export default function HrApp() {
   const isHrManager = isAdmin || !!user.isHrManager || user.type === 'manager';
   const nav = [
     ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
-    ...(isHrManager ? [{ id: 'daily', label: 'Daily' }] : []),
     { id: 'tasks', label: 'Task' },
+    { id: 'corehr', label: 'Core HR', children: [
+      { id: 'corehr_attendance', label: 'Attendance' },
+      { id: 'corehr_leave', label: 'Leave' },
+      { id: 'corehr_payroll', label: 'Payroll' },
+      { id: 'corehr_expenses', label: 'Expenses' },
+      { id: 'corehr_stock', label: 'Stock Management' },
+      { id: 'corehr_onboarding', label: 'Onboarding' },
+    ] },
     { id: 'recruitment', label: 'Recruitment' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
@@ -4746,7 +4626,24 @@ export default function HrApp() {
             </div>
             {/* Desktop nav */}
             <nav className="hidden md:flex gap-0.5">
-              {nav.map((n) => (
+              {nav.map((n) => n.children ? (
+                <div key={n.id} className="relative group">
+                  <button className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors flex items-center gap-1 ${n.children.some((c) => c.id === effectiveView) ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
+                    {n.label}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                  <div className="absolute left-0 top-full pt-1 hidden group-hover:block z-50">
+                    <div className="bg-white rounded-xl shadow-xl border border-slate-200 py-1 min-w-[180px]">
+                      {n.children.map((c) => (
+                        <button key={c.id} onClick={() => { setView(c.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); }}
+                          className={`w-full text-left px-4 py-2 text-xs font-semibold transition-colors ${effectiveView === c.id ? 'text-[#FF6A00] bg-orange-50' : 'text-slate-600 hover:bg-slate-50'}`}>
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
                 <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${effectiveView === n.id ? 'text-[#FF6A00]' : 'text-slate-400 hover:text-white'}`}>
                   {n.label}
@@ -4766,7 +4663,17 @@ export default function HrApp() {
         {/* Mobile nav drawer */}
         {mobileNav && (
           <nav className="md:hidden border-t border-white/10 px-2 py-2 flex flex-col gap-0.5">
-            {nav.map((n) => (
+            {nav.map((n) => n.children ? (
+              <div key={n.id}>
+                <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">{n.label}</div>
+                {n.children.map((c) => (
+                  <button key={c.id} onClick={() => { setView(c.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); setMobileNav(false); }}
+                    className={`w-full text-left rounded-lg pl-6 pr-3 py-2.5 text-sm font-bold transition-colors ${effectiveView === c.id ? 'bg-white/10 text-[#FF6A00]' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
               <button key={n.id} onClick={() => { setView(n.id); setProfileTarget(null); setRecruitIntent(null); setNavKey((k) => k + 1); setMobileNav(false); }}
                 className={`text-left rounded-lg px-3 py-2.5 text-sm font-bold transition-colors ${effectiveView === n.id ? 'bg-white/10 text-[#FF6A00]' : 'text-slate-300 hover:text-white hover:bg-white/5'}`}>
                 {n.label}
@@ -4778,8 +4685,13 @@ export default function HrApp() {
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />}
-        {effectiveView === 'daily' && <HrDailyConsole user={user} isAdmin={isAdmin} />}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}
+        {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
+        {effectiveView === 'corehr_expenses' && <CoreHrPlaceholder title="Expenses" />}
+        {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
+        {effectiveView === 'corehr_onboarding' && <CoreHrPlaceholder title="Onboarding" />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (

@@ -103,7 +103,7 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
     name: '', employeeId: '', email: '', password: '', phone: '+91 ', designation: '',
     type: presetType || 'employee', branch: lockBranch || branches[0]?.name || 'Bhubaneswar', department: '', joiningDate: '',
     reportsTo: '', branchIncharge: false, avatar: '', shiftId: '', targets: { dailyInterviews: 0, monthlyOnboarding: 0 },
-    isHrManager: false, canPostAnnouncements: false,
+    isHrManager: false, hrManagerScope: '', canPostAnnouncements: false,
   };
   const [f, setF] = useState(blank);
   const [err, setErr] = useState('');
@@ -134,6 +134,7 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
     setErr('');
     if (!f.name.trim() || !f.email.trim() || !f.password) return setErr('Name, email and password are all required.');
     if (f.password.length < 8) return setErr('Password must be at least 8 characters.');
+    if (!f.shiftId) return setErr('Please assign a shift.');
     setBusy(true);
     try {
       await hrApi('/users', { method: 'POST', body: JSON.stringify({ ...f, ...splitReports(f.reportsTo) }) });
@@ -181,8 +182,8 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
             <option value="">— none —</option>
             {reportingOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select></Field>
-          <Field label="Shift"><select className={inputCls} value={f.shiftId} onChange={(e) => set({ shiftId: e.target.value })}>
-            <option value="">— none —</option>
+          <Field label="Shift *"><select className={inputCls} value={f.shiftId} onChange={(e) => set({ shiftId: e.target.value })}>
+            <option value="">— select shift —</option>
             {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
           </select></Field>
           <div className="flex items-center gap-2 pt-6">
@@ -203,7 +204,16 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
 
         {isAdmin && (
           <div className="mt-4 space-y-2">
-            <label className="flex items-center gap-2 text-sm text-slate-600 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set({ isHrManager: e.target.checked })} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>
+            <div className="rounded-lg bg-orange-50 border border-orange-100 px-3 py-2.5">
+              <label className="text-sm text-slate-600 block mb-1"><b>HR Manager access</b> — scope of management privileges</label>
+              <select className={inputCls} value={f.hrManagerScope || ''} onChange={(e) => set({ hrManagerScope: e.target.value, isHrManager: !!e.target.value })}>
+                <option value="">Not a manager</option>
+                <option value="all">All branches (full HR management)</option>
+                <option value="Bhubaneswar">Bhubaneswar only</option>
+                <option value="Kolkata">Kolkata only</option>
+              </select>
+              <div className="text-[11px] text-slate-400 mt-1">Managers can manage employees, attendance & leave for their scope. No access to admin settings.</div>
+            </div>
             <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set({ canPostAnnouncements: e.target.checked })} /> Can post announcements to the notice board</label>
           </div>
         )}
