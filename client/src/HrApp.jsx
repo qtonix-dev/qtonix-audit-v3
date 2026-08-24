@@ -734,11 +734,12 @@ const ATT_STATUS = {
   present: { label: 'Present', fill: '#22C55E' },
   absent_leave: { label: 'Absent', fill: '#EF4444' },
   half_day: { label: 'Half Day', fill: '#F59E0B' },
+  wfh: { label: 'WFH', fill: '#8B5CF6' },
   lop: { label: 'LOP', fill: '#64748B' },
 };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-function AttendanceModule({ user, isAdmin }) {
+function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const canAll = isAdmin || user.hrManagerAll || (user.hrManagerScope === 'all');
   const scopedBranch = !canAll ? (user.hrManagerScope && user.hrManagerScope !== 'all' ? user.hrManagerScope : user.branch) : '';
   const [branch, setBranch] = useState(canAll ? '' : scopedBranch); // '' = all (combined)
@@ -754,7 +755,7 @@ function AttendanceModule({ user, isAdmin }) {
   };
   useEffect(() => { setCal(null); loadCal(); /* eslint-disable-next-line */ }, [month, branch]);
 
-  if (openDate) return <AttendanceDay date={openDate} branch={branch} onBack={() => { setOpenDate(null); loadCal(); }} />;
+  if (openDate) return <AttendanceDay date={openDate} branch={branch} onBack={() => { setOpenDate(null); loadCal(); }} onOpenEmployee={onOpenEmployee} />;
 
   const [y, m] = month.split('-').map(Number);
   const firstDow = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
@@ -824,14 +825,16 @@ function AttendanceModule({ user, isAdmin }) {
   );
 }
 
-// Daily entry page: employees grouped branch → dept, 4 status buttons each.
-function AttendanceDay({ date, branch, onBack }) {
+// Daily entry page: employees grouped branch → dept, 5 status buttons each.
+function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
   const [data, setData] = useState(null);
   const [summary, setSummary] = useState(null);
   const [marks, setMarks] = useState({}); // empId → {status, loginTime, logoutTime, leaveType}
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState(null); // null | present | absent_leave | half_day | wfh | lop | late
 
   const load = () => {
     const q = new URLSearchParams(); if (branch) q.set('branch', branch);
@@ -841,7 +844,7 @@ function AttendanceDay({ date, branch, onBack }) {
       Object.values(d.groups || {}).forEach((depts) => Object.values(depts).forEach((emps) => emps.forEach((e) => {
         if (e.status) {
           const uiStatus = e.status === 'leave' ? 'absent_leave' : (e.status === 'absent' ? 'lop' : e.status);
-          init[e.id] = { status: uiStatus, loginTime: e.loginTime || '', logoutTime: e.logoutTime || '', leaveType: e.leaveType || '' };
+          init[e.id] = { status: uiStatus, loginTime: e.loginTime || '', logoutTime: e.logoutTime || '', leaveType: e.leaveType || '', late: !!e.late };
         }
       })));
       setMarks(init);
@@ -852,10 +855,21 @@ function AttendanceDay({ date, branch, onBack }) {
   useEffect(load, [date, branch]);
 
   const setMark = (id, patch) => setMarks((m) => ({ ...m, [id]: { ...(m[id] || {}), ...patch } }));
+  // Toggle behaviour: clicking the active status again clears it (and its inputs).
   const pick = (id, status) => {
-    if (status === 'present') setMark(id, { status });
-    else if (status === 'half_day' || status === 'absent_leave') setMark(id, { status, leaveType: marks[id]?.leaveType || 'casual' });
-    else setMark(id, { status }); // lop
+    const cur = marks[id] && marks[id].status;
+    if (cur === status) { setMarks((m) => { const n = { ...m }; delete n[id]; return n; }); return; }
+    if (status === 'half_day' || status === 'absent_leave') setMark(id, { status, leaveType: marks[id]?.leaveType || 'casual', late: false });
+    else setMark(id, { status, late: false });
+  };
+
+  // Client-side late hint: login later than shift start + grace.
+  const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  const isLate = (e, mk) => {
+    if (!mk || (mk.status !== 'present' && mk.status !== 'half_day')) return false;
+    if (!e.shiftStart || !mk.loginTime) return mk.late || false;
+    const g = (data && data.graceMinutes) || 30;
+    return toMin(mk.loginTime) > toMin(e.shiftStart) + g;
   };
 
   const save = async () => {
@@ -864,10 +878,23 @@ function AttendanceDay({ date, branch, onBack }) {
     try {
       const r = await hrApi(`/attendance/day/${date}`, { method: 'PUT', body: JSON.stringify({ entries }) });
       const lopForced = (r.results || []).filter((x) => x.forcedLop).length;
+      const wfhBlocked = (r.results || []).filter((x) => x.error && /wfh yearly/i.test(x.error)).length;
       const errs = (r.results || []).filter((x) => x.error);
-      setMsg(`Saved ${entries.length - errs.length} entries${lopForced ? ` · ${lopForced} forced to LOP (no leave balance)` : ''}.`);
+      setMsg(`Saved ${entries.length - errs.length} entries${lopForced ? ` · ${lopForced} forced to LOP (no balance)` : ''}${wfhBlocked ? ` · ${wfhBlocked} WFH blocked (yearly limit)` : ''}.`);
       load();
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  // Does an employee match the active search + box filter?
+  const matches = (e) => {
+    if (search && !(`${e.name} ${e.employeeId || ''} ${e.designation || ''}`.toLowerCase().includes(search.toLowerCase()))) return false;
+    if (filter) {
+      const mk = marks[e.id];
+      if (filter === 'late') return isLate(e, mk);
+      if (!mk) return false;
+      return mk.status === filter;
+    }
+    return true;
   };
 
   const prettyDate = new Date(date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -878,14 +905,25 @@ function AttendanceDay({ date, branch, onBack }) {
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">{prettyDate}</h1>
       <p className="text-sm text-slate-400 mb-4">Mark attendance for each employee. Present needs login & logout time (can be left blank and filled later).</p>
 
-      {/* Summary boxes */}
+      {/* Summary boxes — click to filter the list */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          <SummaryBox label="Present" value={`${summary.present.count}/${summary.present.total}`} sub={`${summary.present.pct}%`} color="#22C55E" />
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <SummaryBox label="Present" value={`${summary.present.count}/${summary.present.total}`} sub={`${summary.present.pct}%`} color="#22C55E" active={filter === 'present'} onClick={() => setFilter(filter === 'present' ? null : 'present')} />
           {summary.byBranch.map((b) => <SummaryBox key={b.branch} label={`Present · ${b.branch}`} value={`${b.count}/${b.total}`} sub={`${b.pct}%`} color="#3B82F6" />)}
-          <SummaryBox label="Absent" value={`${summary.absent.count}`} sub="leave + LOP" color="#EF4444" />
+          <SummaryBox label="Absent" value={`${summary.absent.count}`} sub="leave + LOP" color="#EF4444" active={filter === 'absent_leave'} onClick={() => setFilter(filter === 'absent_leave' ? null : 'absent_leave')} />
+          <SummaryBox label="Late entry" value={`${summary.late ? summary.late.count : 0}`} sub="today" color="#F59E0B" active={filter === 'late'} onClick={() => setFilter(filter === 'late' ? null : 'late')} />
         </div>
       )}
+
+      {/* Search + active filter chip */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employee by name or ID…" className="w-full rounded-lg border border-slate-200 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+        </div>
+        {filter && <button onClick={() => setFilter(null)} className="rounded-lg bg-slate-100 hover:bg-slate-200 px-3 py-2 text-xs font-bold text-slate-600 flex items-center gap-1">Filter: {filter === 'absent_leave' ? 'Absent' : filter === 'late' ? 'Late' : ATT_STATUS[filter]?.label || filter} ✕</button>}
+      </div>
+
 
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">{err}</div>}
       {msg && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">{msg}</div>}
@@ -899,15 +937,19 @@ function AttendanceDay({ date, branch, onBack }) {
                 <div key={dept} className="mb-3">
                   <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 pl-4">{dept}</div>
                   <div className="space-y-1.5">
-                    {emps.map((e) => {
+                    {emps.filter(matches).map((e) => {
                       const mk = marks[e.id] || {};
+                      const late = isLate(e, mk);
+                      const showTimes = mk.status === 'present' || mk.status === 'wfh' || mk.status === 'half_day';
                       return (
                         <div key={e.id} className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 flex items-center gap-3 flex-wrap">
                           <div className="min-w-[160px] flex-1">
-                            <div className="text-sm font-bold text-[#050A1F]">{e.name}</div>
+                            <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{e.name}
+                              {late && <span className="text-[9px] font-bold uppercase bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">Late</span>}
+                            </div>
                             <div className="text-[11px] text-slate-400">{e.employeeId || '—'}{e.shiftName ? ` · ${e.shiftName} (${e.shiftStart})` : ''}</div>
                           </div>
-                          {/* 4 status buttons */}
+                          {/* 5 status buttons (toggle off by clicking again) */}
                           <div className="flex items-center gap-1">
                             {Object.entries(ATT_STATUS).map(([key, cfg]) => (
                               <button key={key} onClick={() => pick(e.id, key)}
@@ -917,28 +959,24 @@ function AttendanceDay({ date, branch, onBack }) {
                               </button>
                             ))}
                           </div>
-                          {/* present → times */}
-                          {mk.status === 'present' && (
-                            <div className="flex items-center gap-1.5">
-                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Login" />
-                              <span className="text-slate-300">–</span>
-                              <input type="time" value={mk.logoutTime || ''} onChange={(ev) => setMark(e.id, { logoutTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Logout" />
-                            </div>
-                          )}
-                          {/* half day → also allow login/logout + leave type */}
+                          {/* leave type for absent/half day (WFH is NOT a leave type here) */}
                           {(mk.status === 'half_day' || mk.status === 'absent_leave') && (
                             <select value={mk.leaveType || 'casual'} onChange={(ev) => setMark(e.id, { leaveType: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold">
                               <option value="casual">Casual</option>
                               <option value="medical">Medical</option>
                               <option value="privilege">Privilege</option>
-                              <option value="wfh">WFH</option>
                             </select>
                           )}
-                          {mk.status === 'half_day' && (
+                          {/* login/logout times for present, wfh, half day */}
+                          {showTimes && (
                             <div className="flex items-center gap-1.5">
-                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Login (after 4h)" />
+                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title={mk.status === 'half_day' ? 'Login (after 4h)' : 'Login'} />
+                              {mk.status !== 'half_day' && <><span className="text-slate-300">–</span>
+                              <input type="time" value={mk.logoutTime || ''} onChange={(ev) => setMark(e.id, { logoutTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Logout" /></>}
                             </div>
                           )}
+                          {/* → open employee profile */}
+                          <button onClick={() => onOpenEmployee && onOpenEmployee(e.id)} className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-[#050A1F] hover:bg-slate-100" title="Open employee profile"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
                         </div>
                       );
                     })}
@@ -956,13 +994,13 @@ function AttendanceDay({ date, branch, onBack }) {
   );
 }
 
-function SummaryBox({ label, value, sub, color }) {
+function SummaryBox({ label, value, sub, color, active, onClick }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4" style={{ borderTop: `3px solid ${color}` }}>
+    <button onClick={onClick} disabled={!onClick} className={`text-left bg-white rounded-xl border p-4 transition ${onClick ? 'hover:shadow-md cursor-pointer' : 'cursor-default'} ${active ? 'ring-2' : ''}`} style={{ borderTop: `3px solid ${color}`, ...(active ? { '--tw-ring-color': color, borderColor: color } : {}) }}>
       <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
       <div className="text-2xl font-extrabold text-[#050A1F] mt-1">{value}</div>
       <div className="text-xs font-bold" style={{ color }}>{sub}</div>
-    </div>
+    </button>
   );
 }
 
@@ -4556,7 +4594,8 @@ export default function HrApp() {
   const location = useLocation();
   // Derive the current view from the URL path (/hr/<view>) so refresh and deep
   // links keep the user on the same page. Falls back to dashboard.
-  const VALID_VIEWS = ['dashboard', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin'];
+  const VALID_VIEWS = ['dashboard', 'tasks', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
+    'corehr_attendance', 'corehr_leave', 'corehr_payroll', 'corehr_expenses', 'corehr_stock', 'corehr_onboarding'];
   const pathView = (() => {
     const seg = (location.pathname.replace(/^\/hr\/?/, '').split('/')[0] || '').toLowerCase();
     return VALID_VIEWS.includes(seg) ? seg : 'dashboard';
@@ -4592,23 +4631,25 @@ export default function HrApp() {
   // the unread-mail box; pure interview panelists / plain employees do not.
   const SCHEDULER_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
   const isScheduler = isAdmin || (user.type && SCHEDULER_TYPES.includes(user.type));
-  // The HR Manager daily console is for HR Managers (flag or manager type) + admins.
-  const isHrManager = isAdmin || !!user.isHrManager || user.type === 'manager';
+  // Core HR (and everything under it) is for HR Managers (any scope) + admins.
+  const isHrManager = isAdmin || !!user.isHrManager || !!user.hrManagerScope || user.type === 'manager';
+  // Recruitment is for HR staff + admins.
+  const isHrStaff = isAdmin || ['hr', 'recruiter', 'manager', 'tl'].includes(user.type) || /^(hr|human resource|human resources)$/i.test(String(user.department || '').trim());
   const nav = [
     ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
     { id: 'tasks', label: 'Task' },
-    { id: 'corehr', label: 'Core HR', children: [
+    ...(isHrStaff ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
+    { id: 'interview', label: 'Interview' },
+    ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
+    ...(isHrManager ? [{ id: 'corehr', label: 'Core HR', children: [
       { id: 'corehr_attendance', label: 'Attendance' },
       { id: 'corehr_leave', label: 'Leave' },
       { id: 'corehr_payroll', label: 'Payroll' },
       { id: 'corehr_expenses', label: 'Expenses' },
       { id: 'corehr_stock', label: 'Stock Management' },
       { id: 'corehr_onboarding', label: 'Onboarding' },
-    ] },
-    { id: 'recruitment', label: 'Recruitment' },
-    { id: 'interview', label: 'Interview' },
-    ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
-    { id: 'employees', label: 'Employee' },
+      { id: 'employees', label: 'Employee' },
+    ] }] : []),
     ...(isAdmin ? [{ id: 'survey', label: 'Survey' }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
@@ -4686,7 +4727,7 @@ export default function HrApp() {
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
-        {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
         {effectiveView === 'corehr_expenses' && <CoreHrPlaceholder title="Expenses" />}

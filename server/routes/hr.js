@@ -933,6 +933,16 @@ router.get('/attendance/calendar', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// DELETE /attendance/wipe-all → clears ALL attendance + leave records (admin only).
+router.delete('/attendance/wipe-all', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const att = await HrAttendance.destroy({ where: {} });
+    const lv = await HrLeave.destroy({ where: {} });
+    hrLog(req, 'attendance.wipe', `attendance=${att} leaves=${lv}`);
+    res.json({ ok: true, attendanceDeleted: att, leavesDeleted: lv });
+  } catch (e) { next(e); }
+});
+
 // GET /attendance/day/:date?branch= → active employees grouped branch→dept with marks
 router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
   try {
@@ -949,7 +959,16 @@ router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
     const grace = Number(policy.lateRule.graceMinutes) || 30;
 
     const activeEmps = await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] });
-    const inScope = activeEmps.filter((e) => activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    // Exclude employees whose OWN branch is a weekend-off on this specific date
+    // (e.g. Kolkata staff on a 2nd Saturday when viewing "All branches"), and
+    // anyone whose branch has a holiday that day.
+    const allHolidays = await HrHoliday.findAll();
+    const branchHoliday = (br) => allHolidays.some((h) => String(h.date) === date && (!h.branch || String(h.branch).toLowerCase() === String(br || '').toLowerCase()));
+    const inScope = activeEmps.filter((e) =>
+      activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase())
+      && !branchWeekendOff(date, e.branch)
+      && !branchHoliday(e.branch)
+    );
     const shifts = {}; (await HrShift.findAll()).forEach((sh) => { shifts[sh.id] = sh; });
     const marks = {}; (await HrAttendance.findAll({ where: { date } })).forEach((m) => { marks[m.employeeId] = m; });
 
@@ -988,8 +1007,9 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
     const policy = getHrPolicy(s);
     const grace = Number(policy.lateRule.graceMinutes) || 30;
     const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
-    const VALID = ['present', 'absent_leave', 'half_day', 'lop'];
+    const VALID = ['present', 'absent_leave', 'half_day', 'lop', 'wfh'];
     const LEAVE_TYPES = ['casual', 'medical', 'privilege', 'wfh'];
+    const WFH_YEARLY_CAP = 12;
 
     const results = [];
     for (const en of entries) {
@@ -999,31 +1019,45 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       let status = VALID.includes(en.status) ? en.status : 'present';
       let note = null;
       let forcedLop = false;
+      let wfhExtra = false, wfhDeficit = false;
 
-      // Leave-backed statuses deduct from the chosen leave type's balance NOW.
-      // If balance is insufficient, force LOP (no negative balances).
-      if (status === 'absent_leave' || status === 'half_day') {
-        const leaveType = LEAVE_TYPES.includes(en.leaveType) ? en.leaveType : null;
+      // WFH — a WORK status (counts present). Tracked by date like leave.
+      // Yearly cap 12 (block the 13th); 2nd+ in a month is flagged for a 30%
+      // per-day payroll deduction; under 8h worked is flagged as a time deficit.
+      if (status === 'wfh') {
+        const year = date.slice(0, 4);
+        const month = date.slice(0, 7);
+        const yearRows = await HrAttendance.findAll({ where: { employeeId: emp.id, status: 'wfh', date: { [Op.like]: `${year}-%` } } });
+        const yearUsed = yearRows.filter((r) => r.date !== date).length;
+        if (yearUsed >= WFH_YEARLY_CAP) { results.push({ employeeId: emp.id, error: 'wfh yearly limit reached (12)' }); continue; }
+        const monthUsed = yearRows.filter((r) => r.date !== date && r.date.slice(0, 7) === month).length;
+        wfhExtra = monthUsed >= 1; // this WFH is the 2nd+ in the month → 30% deduction
+        // Time-deficit: need >= 8h between login and logout.
+        const li = toMin(en.loginTime), lo = toMin(en.logoutTime);
+        if (li != null && lo != null) { const worked = lo - li; wfhDeficit = worked < 8 * 60; }
+        note = 'wfh' + (wfhExtra ? ':extra' : '') + (wfhDeficit ? ':deficit' : '');
+        await HrLeave.destroy({ where: { employeeId: emp.id, date } });
+      } else if (status === 'absent_leave' || status === 'half_day') {
+        // Leave-backed statuses deduct from the chosen leave type's balance NOW.
+        // If balance is insufficient, force LOP (no negative balances).
+        const leaveType = ['casual', 'medical', 'privilege'].includes(en.leaveType) ? en.leaveType : (en.leaveType === 'wfh' ? null : null);
         if (!leaveType) { results.push({ employeeId: en.employeeId, error: 'leave type required' }); continue; }
         const need = status === 'half_day' ? 0.5 : 1;
         const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
-        // Used = existing approved leaves of this type in the same month (excluding this date).
         const month = date.slice(0, 7);
-        const existing = await HrLeave.findAll({ where: { employeeId: emp.id, type: leaveType, date: { [Op.like]: `${month}-%` } } });
+        const existing = await HrLeave.findAll({ where: { employeeId: emp.id, type: leaveType } });
         let used = 0;
-        existing.forEach((l) => { if (l.date !== date) used += (l.duration === 'half' ? 0.5 : 1); });
+        existing.forEach((l) => { if (l.date !== date && String(l.date).slice(0, 7) === month) used += (l.duration === 'half' ? 0.5 : 1); });
         const remaining = (Number(alloc[leaveType]) || 0) - used;
         if (remaining >= need) {
-          // Record/replace the leave for this date.
           await HrLeave.destroy({ where: { employeeId: emp.id, date } });
           await HrLeave.create({ employeeId: emp.id, type: leaveType, date, duration: need === 0.5 ? 'half' : 'full', paid: true, status: 'approved', appliedById: req.hrActor ? req.hrActor.id : null });
           note = 'leave:' + leaveType;
         } else {
-          // No balance → force LOP for the unpaid portion.
           await HrLeave.destroy({ where: { employeeId: emp.id, date } });
           forcedLop = true;
           if (status === 'absent_leave') { status = 'lop'; note = 'lop:no_balance'; }
-          else { note = 'half_lop:no_balance'; } // half day but the leave half is unpaid (LOP)
+          else { note = 'half_lop:no_balance'; }
         }
       } else {
         // present / lop → clear any leave record for the date.
@@ -1031,6 +1065,7 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       }
 
       // Late detection for present/half_day with a login time and a shift start.
+      // WFH is NOT late-checked (they can log in anytime; 8h deficit rule applies).
       let late = false;
       if ((status === 'present' || status === 'half_day')) {
         const sh = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
@@ -1039,8 +1074,8 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
         if (start && login != null) late = login > (toMin(start) + grace);
       }
 
-      // Map to the HrAttendance.status vocabulary (present|absent|half_day|leave|lop).
-      const attStatus = status === 'absent_leave' ? 'leave' : status; // present|half_day|lop|leave
+      // Map to the HrAttendance.status vocabulary. WFH stored as 'wfh'.
+      const attStatus = status === 'absent_leave' ? 'leave' : status; // present|half_day|lop|leave|wfh
       const [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: attStatus } });
       row.status = attStatus;
       row.loginTime = en.loginTime || null;
@@ -1049,7 +1084,7 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       row.note = note;
       row.markedById = req.hrActor ? req.hrActor.id : null;
       await row.save();
-      results.push({ employeeId: emp.id, status: attStatus, late, forcedLop });
+      results.push({ employeeId: emp.id, status: attStatus, late, forcedLop, wfhExtra, wfhDeficit });
     }
     hrLog(req, 'attendance.day', `${date}: ${results.length} employees`);
     res.json({ date, results });
@@ -1114,19 +1149,26 @@ router.get('/attendance/day/:date/summary', requireHrAccess, async (req, res, ne
     const date = String(req.params.date);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
     const branches = await scopedBranches(req);
-    const activeEmps = (await HrUser.findAll({ where: { active: true } })).filter((e) => branches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()));
+    const allHolidays = await HrHoliday.findAll();
+    const branchHoliday = (br) => allHolidays.some((h) => String(h.date) === date && (!h.branch || String(h.branch).toLowerCase() === String(br || '').toLowerCase()));
+    const activeEmps = (await HrUser.findAll({ where: { active: true } }))
+      .filter((e) => branches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase()))
+      .filter((e) => !branchWeekendOff(date, e.branch) && !branchHoliday(e.branch));
     const marks = {}; (await HrAttendance.findAll({ where: { date } })).forEach((m) => { marks[m.employeeId] = m; });
-    const presentVal = (m) => { if (!m) return 0; if (m.status === 'present') return 1; if (m.status === 'half_day') return 0.5; return 0; };
+    // WFH counts as present (they're working). Half-day = 0.5.
+    const presentVal = (m) => { if (!m) return 0; if (m.status === 'present' || m.status === 'wfh') return 1; if (m.status === 'half_day') return 0.5; return 0; };
     const byBranch = {};
-    let totalPresent = 0, totalAbsent = 0, total = activeEmps.length;
+    let totalPresent = 0, totalAbsent = 0, lateCount = 0, total = activeEmps.length;
     for (const e of activeEmps) {
       const bk = e.branch || '—';
       byBranch[bk] = byBranch[bk] || { present: 0, total: 0 };
       byBranch[bk].total += 1;
-      const pv = presentVal(marks[e.id]);
+      const m = marks[e.id];
+      const pv = presentVal(m);
       byBranch[bk].present += pv;
       totalPresent += pv;
-      if (pv === 0 && marks[e.id]) totalAbsent += 1; // marked but not present (leave/lop)
+      if (pv === 0 && m) totalAbsent += 1; // marked but not present (leave/lop)
+      if (m && m.late) lateCount += 1;
     }
     const pct = (p, t) => t > 0 ? Math.round((p / t) * 100) : 0;
     res.json({
@@ -1134,6 +1176,7 @@ router.get('/attendance/day/:date/summary', requireHrAccess, async (req, res, ne
       present: { count: totalPresent, value: totalPresent, total, pct: pct(totalPresent, total) },
       byBranch: Object.entries(byBranch).map(([b, v]) => ({ branch: b, count: v.present, present: v.present, total: v.total, pct: pct(v.present, v.total) })),
       absent: { count: totalAbsent },
+      late: { count: lateCount },
     });
   } catch (e) { next(e); }
 });
