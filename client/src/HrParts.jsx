@@ -1382,7 +1382,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
-  const isHrRole = ['hr', 'recruiter', 'manager', 'tl'].includes(f.type);
+  const isHrDept = /^(hr|human resource|human resources)$/i.test(String(f.department || '').trim());
   const save = async () => {
     if (!f.name.trim()) return setErr('Name is required.');
     setBusy(true); setErr('');
@@ -1394,7 +1394,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
         maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
         reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
         shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, isHrManager: f.isHrManager, active: f.active,
-        targets: isHrRole ? { dailyInterviews: Number(f.dailyInterviews) || 0, monthlyOnboarding: Number(f.monthlyOnboarding) || 0 } : undefined,
+        targets: isHrDept ? { dailyInterviews: Number(f.dailyInterviews) || 0, monthlyOnboarding: Number(f.monthlyOnboarding) || 0 } : undefined,
       }) });
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -1421,8 +1421,8 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           <label className="text-xs font-bold text-slate-500">Birthday<input type="date" className={inputCls} value={f.birthday || ''} onChange={(e) => set('birthday', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Marital status<select className={inputCls} value={f.maritalStatus || ''} onChange={(e) => set('maritalStatus', e.target.value)}><option value="">—</option><option value="single">Single</option><option value="married">Married</option></select></label>
           {f.maritalStatus === 'married' && <label className="text-xs font-bold text-slate-500">Anniversary<input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => set('anniversary', e.target.value)} /></label>}
-          {isAdmin && isHrRole && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
-          {isAdmin && isHrRole && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
+          {isAdmin && isHrDept && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
+          {isAdmin && isHrDept && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
           {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set('isHrManager', e.target.checked)} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>}
           {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>}
           <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} /> Active</label>
