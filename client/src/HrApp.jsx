@@ -4042,7 +4042,7 @@ function HrAdmin({ user }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['shifts', 'Shifts'], ['holidays', 'Holidays'], ['careers', 'Careers Page'], ['emails', 'Emails'], ['settings', 'Settings'], ['logs', 'Logs']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['settings', 'Settings'], ['logs', 'Log']];
 
   return (
     <div className="max-w-5xl">
@@ -4638,9 +4638,9 @@ export default function HrApp() {
   const nav = [
     ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
     { id: 'tasks', label: 'Task' },
-    ...(isHrStaff ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
+    ...(isHrStaff ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
     ...(isHrManager ? [{ id: 'corehr', label: 'Core HR', children: [
       { id: 'corehr_attendance', label: 'Attendance' },
       { id: 'corehr_leave', label: 'Leave' },
