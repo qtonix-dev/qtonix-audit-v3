@@ -1181,88 +1181,386 @@ function SummaryBox({ label, value, sub, color, active, onClick }) {
 // Minimal dashboard for non-HR employees: a greeting, HR announcements, and any
 // upcoming interviews where they sit on the panel. (HR/Admin see HrDashboard.)
 function EmployeeDashboard({ user }) {
+  const [clock, setClock] = useState(null);
+  const [leave, setLeave] = useState(null);
+  const [reviews, setReviews] = useState([]);
+  const [whos, setWhos] = useState(null);
+  const [cel, setCel] = useState(null);
+  const [celTab, setCelTab] = useState('birthdays');
   const [ann, setAnn] = useState([]);
   const [interviews, setInterviews] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  const [holidays, setHolidays] = useState([]);
+  const [now, setNow] = useState(new Date());
+  const [busy, setBusy] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
+  const [calOpen, setCalOpen] = useState(false);
+
+  const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
+  const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
+  const loadReviews = () => hrApi('/me/reviews').then((r) => setReviews(r.reviews || [])).catch(() => {});
   useEffect(() => {
-    Promise.allSettled([
-      hrApi('/announcements'),
-      hrApi('/my-interviews'),
-    ]).then(([a, iv]) => {
-      if (a.status === 'fulfilled') setAnn(Array.isArray(a.value) ? a.value : (a.value.announcements || []));
-      if (iv.status === 'fulfilled') {
-        const jobs = (iv.value && iv.value.jobs) || [];
-        const flat = [];
-        jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
-        // Upcoming only, soonest first.
-        const now = Date.now();
-        flat.sort((x, y) => new Date(x.at || 0) - new Date(y.at || 0));
-        setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= now - 3600000));
-      }
-      setLoaded(true);
-    });
+    loadClock(); loadLeave(); loadReviews();
+    hrApi('/me/whos-in').then(setWhos).catch(() => {});
+    hrApi('/me/celebrations').then(setCel).catch(() => {});
+    hrApi('/announcements').then((r) => setAnn(Array.isArray(r) ? r : (r.announcements || []))).catch(() => {});
+    hrApi('/my-interviews').then((r) => {
+      const jobs = (r && r.jobs) || []; const flat = [];
+      jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
+      const t = Date.now(); flat.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+      setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= t - 3600000));
+    }).catch(() => {});
+    hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
   }, []);
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
+
   const hour = new Date(Date.now() + 330 * 60000).getUTCHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const firstName = titleCase(String(user.name || '').split(' ')[0] || 'there');
-  const fmt = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
-  const recentAnn = (ann || []).slice(0, 6);
+  const pad = (n) => String(n).padStart(2, '0');
+  const t12 = (hhmm) => { if (!hhmm) return ''; let [h, m] = hhmm.split(':').map(Number); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${pad(h)}:${pad(m)} ${ap}`; };
+  const clockAction = async (action) => { setBusy(true); try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action }) }); await loadClock(); } catch (e) { alert(e.message); } finally { setBusy(false); } };
+
+  const quote = 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
+  const st = clock ? clock.state : 'out';
+  const breakMin = clock ? (clock.breakMin || 0) : 0;
+
+  // upcoming holidays (branch-aware, sorted, future)
+  const todayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const upcoming = (holidays || []).filter((h) => String(h.date) >= todayStr && (!h.branch || h.branch === user.branch)).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const nextHol = upcoming[0];
+  const fmtHol = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  const fmtShort = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return d; } };
+  const fmtDT = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+
+  const decide = async (id, approve) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
+
+  const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
+  const ringColor = { casual: '#22C55E', medical: '#0EA5E9', privilege: '#F59E0B', wfh: '#8B5CF6' };
+  const celRows = cel ? (celTab === 'birthdays' ? cel.birthdays : celTab === 'anniversaries' ? cel.anniversaries : cel.joinees) : [];
+  const initials = (n) => String(n || '').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-[#050A1F]">{greeting}, {firstName}!</h1>
-        <p className="text-slate-400 mt-1">Here’s what’s relevant to you today.</p>
+    <div className="max-w-6xl mx-auto">
+      {/* greeting hero */}
+      <div className="rounded-2xl p-8 mb-5 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
+        <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
+        <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
+        <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— Oliver Wendell Holmes</span></p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-5">
-        {/* Announcements */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6A00" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg>
-            <h2 className="text-sm font-extrabold text-[#050A1F] uppercase tracking-wide">Announcements</h2>
+      <div className="grid lg:grid-cols-3 gap-4 items-start">
+        {/* LEFT */}
+        <div className="flex flex-col gap-4">
+          {/* WEB LOGIN */}
+          <div className="rounded-2xl p-5 text-white" style={{ background: ORNG }}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold uppercase tracking-wide">Web login</span>
+              <button onClick={() => setCalOpen(true)} className="text-xs font-extrabold rounded-lg px-2.5 py-1" style={{ background: 'rgba(255,255,255,.18)' }}>View all ›</button>
+            </div>
+            <div className="text-4xl font-extrabold tracking-wide mt-2" style={{ fontVariantNumeric: 'tabular-nums' }}>{pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}</div>
+            <div className="text-xs mt-1" style={{ color: '#ffe4d3' }}>{now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}</div>
+            {st === 'leave' ? (
+              <div className="mt-4 rounded-xl py-3 text-center font-extrabold" style={{ background: 'rgba(255,255,255,.15)' }}>On approved leave today</div>
+            ) : st === 'out' ? (
+              <>
+                <div className="mt-4"><button disabled={busy} onClick={() => clockAction('in')} className="w-full rounded-xl py-2.5 font-extrabold text-sm bg-white disabled:opacity-60" style={{ color: '#FF4500' }}>Web Clock-In</button></div>
+                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>You haven’t clocked in yet today.</div>
+              </>
+            ) : st === 'in' ? (
+              <>
+                <div className="mt-4 flex gap-2.5">
+                  <button disabled={busy} onClick={() => clockAction('break')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: 'rgba(255,255,255,.18)' }}>Take Break</button>
+                  <button disabled={busy} onClick={() => clockAction('out')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Logout</button>
+                </div>
+                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In at <b>{t12(clock.loginTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
+              </>
+            ) : st === 'break' ? (
+              <>
+                <div className="mt-4 flex gap-2.5">
+                  <button disabled={busy} onClick={() => clockAction('break_end')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm bg-white disabled:opacity-60" style={{ color: '#FF4500' }}>Finish Break</button>
+                  <button disabled={busy} onClick={() => clockAction('out')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Logout</button>
+                </div>
+                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>On break since <b>{t12(clock.breakOpen)}</b> · In at <b>{t12(clock.loginTime)}</b></div>
+              </>
+            ) : (
+              <>
+                <div className="mt-4"><button onClick={() => setCalOpen(true)} className="w-full rounded-xl py-2.5 font-extrabold text-sm text-white" style={{ background: 'rgba(255,255,255,.18)' }}>View attendance</button></div>
+                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In <b>{t12(clock.loginTime)}</b> · Out <b>{t12(clock.logoutTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
+              </>
+            )}
           </div>
-          {!loaded ? <div className="text-slate-300 text-sm py-8 text-center">Loading…</div>
-            : recentAnn.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No announcements yet.</div>
-              : <div className="space-y-3">
-                  {recentAnn.map((a, i) => (
-                    <div key={a.id || i} className="border-l-2 border-orange-300 pl-3">
-                      <div className="text-sm font-bold text-[#050A1F]">{a.title || 'Announcement'}</div>
-                      {a.body && <div className="text-[13px] text-slate-500 mt-0.5 line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
-                      <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmt(a.createdAt) : ''}</div>
+
+          {/* REVIEW */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Review</h3>
+            {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
+              <>
+                <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
+                {reviews.map((it) => (
+                  <div key={it.id} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
+                    <span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who} ({it.type}{it.duration === 'half' ? ', half-day' : ''} · {fmtShort(it.date)})
+                    <span className="ml-auto flex gap-1.5">
+                      <button onClick={() => decide(it.id, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
+                      <button onClick={() => decide(it.id, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* LEAVE BALANCE */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#22C55E]" />Leave balance</h3>
+            <div className="flex gap-3.5 flex-wrap">
+              {['casual', 'medical', 'privilege', 'wfh'].map((k) => {
+                const bal = leave ? (leave.balance[k] ?? 0) : 0; const alloc = leave ? (leave.allocation[k] ?? 0) : 0;
+                return (
+                  <div key={k} className="text-center" style={{ width: 74 }}>
+                    <div className="rounded-full flex flex-col items-center justify-center mx-auto mb-1.5" style={{ width: 64, height: 64, border: `6px solid ${ringColor[k]}` }}>
+                      <span className="text-[15px] font-extrabold text-[#050A1F]">{bal}</span><span className="text-[9px] text-slate-400 font-bold">of {alloc}</span>
                     </div>
-                  ))}
-                </div>}
+                    <div className="text-[11px] font-bold text-slate-500 capitalize">{k}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-2.5 mt-4">
+              <button onClick={() => setApplyOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-white" style={{ background: ORNG }}>+ Apply Leave</button>
+              <button onClick={() => setHistOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-slate-700 bg-slate-100">Leave History</button>
+            </div>
+          </div>
         </div>
 
-        {/* Upcoming panel interviews */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
-            <h2 className="text-sm font-extrabold text-[#050A1F] uppercase tracking-wide">Your upcoming interviews</h2>
+        {/* MIDDLE */}
+        <div className="flex flex-col gap-4">
+          {/* WHO IS IN */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Who is in <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· my team &amp; dept</span></h3>
+            <div className="flex gap-2 mb-3">
+              {[['not_in', 'Not in', '#EF4444'], ['late', 'Late', '#F59E0B'], ['in', 'On time', '#16A34A'], ['leave', 'Leave', '#64748b']].map(([k, lbl, c]) => (
+                <div key={k} className="flex-1 text-center rounded-lg py-2 border border-slate-100"><span className="block text-lg font-extrabold" style={{ color: c }}>{whos ? (whos.counts[k] || 0) : 0}</span><span className="text-[11px] font-bold text-slate-500">{lbl}</span></div>
+              ))}
+            </div>
+            {whos && whos.people.length === 0 && <div className="text-sm text-slate-400 py-2">No team members to show.</div>}
+            {whos && whos.people.slice(0, 6).map((p) => (
+              <div key={p.id} className="flex items-center gap-2.5 py-1.5 border-t border-slate-50">
+                <div className="w-7 h-7 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-extrabold flex items-center justify-center">{initials(p.name)}</div>
+                <div><div className="text-[13px] font-bold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
+                <span className="ml-auto text-[10px] font-extrabold rounded px-1.5 py-0.5" style={p.status === 'late' ? { background: '#FEF3C7', color: '#B45309' } : p.status === 'leave' ? { background: '#EDE9FE', color: '#6D28D9' } : p.status === 'in' ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#64748b' }}>
+                  {p.status === 'late' ? `LATE ${t12(p.at)}` : p.status === 'leave' ? 'LEAVE' : p.status === 'in' ? `IN ${t12(p.at)}` : 'NOT IN'}
+                </span>
+              </div>
+            ))}
           </div>
-          {!loaded ? <div className="text-slate-300 text-sm py-8 text-center">Loading…</div>
-            : interviews.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No upcoming interviews on your panel.</div>
-              : <div className="space-y-2.5">
-                  {interviews.slice(0, 8).map((iv, i) => (
-                    <div key={i} className="rounded-xl border border-slate-100 bg-slate-50/50 px-3.5 py-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-bold text-[#050A1F]">{titleCase(iv.name)}</div>
-                        {iv.roundLabel && <span className="text-[10px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">{iv.roundLabel}</span>}
-                      </div>
-                      <div className="text-[12px] text-slate-500">{iv.jobTitle}</div>
-                      <div className="text-[12px] text-slate-600 font-semibold mt-0.5">{fmt(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
-                      {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-blue-600 hover:underline">Join link →</a>}
-                    </div>
-                  ))}
-                </div>}
+
+          {/* HOLIDAYS */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#F59E0B]" />Upcoming holidays</h3>
+            {!nextHol ? <div className="text-sm text-slate-400">No upcoming holidays.</div> : (
+              <>
+                <div className="text-2xl font-extrabold text-[#050A1F]">{nextHol.name}</div>
+                <div className="font-extrabold text-sm mt-0.5" style={{ color: '#FF4500' }}>{fmtHol(nextHol.date)}</div>
+                <div className="mt-2.5">{upcoming.slice(1, 4).map((h, i) => (<div key={i} className="flex justify-between py-2 border-t border-slate-100 text-[13px]"><span>{h.name}</span><span className="text-slate-400 font-bold">{fmtShort(h.date)}</span></div>))}</div>
+              </>
+            )}
+          </div>
+
+          {/* INTERVIEWS */}
+          {interviews.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#050A1F]" />Your upcoming interviews</h3>
+              <div className="flex flex-col gap-2">
+                {interviews.slice(0, 5).map((iv, i) => (
+                  <div key={i} className="border border-slate-100 rounded-xl px-3 py-2.5">
+                    <div className="text-[13px] font-extrabold text-[#050A1F]">{titleCase(iv.name)}{iv.roundLabel ? <span className="ml-2 text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{iv.roundLabel}</span> : null}</div>
+                    <div className="text-[11px] text-slate-400">{iv.jobTitle}</div>
+                    <div className="text-[12px] font-bold text-slate-600 mt-0.5">{fmtDT(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT */}
+        <div className="flex flex-col gap-4">
+          {/* ANNOUNCEMENTS */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Announcements</h3>
+            {ann.length === 0 ? <div className="text-sm text-slate-400">No announcements yet.</div> : ann.slice(0, 5).map((a, i) => (
+              <div key={a.id || i} className="border-l-[3px] pl-3 mb-3.5 last:mb-0" style={{ borderColor: '#FF6A00' }}>
+                <div className="text-sm font-extrabold text-[#050A1F]">{a.title || 'Announcement'}</div>
+                {a.body && <div className="text-[12px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
+                <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmtDT(a.createdAt) : ''}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* CELEBRATIONS */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#8B5CF6]" />Celebrations <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· company-wide</span></h3>
+            <div className="flex gap-1.5 mb-3">
+              {[['birthdays', 'Birthdays'], ['anniversaries', 'Anniversaries'], ['joinees', 'New joinees']].map(([k, lbl]) => (
+                <button key={k} onClick={() => setCelTab(k)} className={`text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg ${celTab === k ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={celTab === k ? { background: '#050A1F' } : {}}>{lbl}</button>
+              ))}
+            </div>
+            {celRows.length === 0 ? <div className="text-sm text-slate-400 py-1">Nothing coming up.</div> : celRows.slice(0, 6).map((r, i) => (
+              <div key={i} className="flex items-center gap-2.5 py-2 border-t border-slate-50">
+                <div className="w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center" style={{ background: '#ede9fe', color: '#6d28d9' }}>{initials(r.name)}</div>
+                <div><div className="text-[13px] font-bold text-[#050A1F]">{r.name}</div><div className="text-[11px] text-slate-400">{r.sub}</div></div>
+                <span className="ml-auto text-[11px] font-extrabold" style={{ color: '#FF4500' }}>{r.when}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {applyOpen && <ApplyLeaveModal approverName={leave ? leave.approverName : ''} onClose={() => setApplyOpen(false)} onDone={() => { setApplyOpen(false); loadLeave(); }} />}
+      {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
+      {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
+    </div>
+  );
+}
+
+// Minimal dashboard for non-HR employees end.
+
+// Apply for leave (self-service). Creates a pending request routed to the
+// employee's approver.
+function ApplyLeaveModal({ approverName, onClose, onDone }) {
+  const [type, setType] = useState('casual');
+  const [duration, setDuration] = useState('full');
+  const [date, setDate] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const submit = async () => {
+    if (!date) { setErr('Choose a date.'); return; }
+    setBusy(true); setErr('');
+    try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify({ type, duration, date, reason }) }); onDone(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-base font-extrabold text-[#050A1F]">Apply for leave</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-4">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Leave type</div>
+            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <option value="casual">Casual</option><option value="medical">Medical</option><option value="privilege">Privilege</option><option value="wfh">Work from home</option>
+            </select>
+          </div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Duration</div>
+            <div className="flex gap-2">
+              <button onClick={() => setDuration('full')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === 'full' ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>Full day</button>
+              <button onClick={() => setDuration('half')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === 'half' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>Half day</button>
+            </div>
+          </div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
+          {approverName && <div className="text-[12px] text-slate-400">Approver: <b className="text-slate-600">{approverName}</b></div>}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Submitting…' : 'Submit request'}</button>
         </div>
       </div>
     </div>
   );
 }
 
-// Minimal dashboard for non-HR employees end.
+// Leave history — every leave the employee has applied, with status.
+function LeaveHistoryModal({ leaves, onClose }) {
+  const stCls = { pending: { background: '#FEF3C7', color: '#B45309' }, approved: { background: '#DCFCE7', color: '#15803D' }, rejected: { background: '#FEE2E2', color: '#B91C1C' } };
+  const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  const fmtApplied = (iso) => { try { return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ''; } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0"><div className="text-base font-extrabold text-[#050A1F]">Leave history</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 overflow-auto">
+          {(!leaves || leaves.length === 0) ? <div className="text-sm text-slate-400 py-6 text-center">You haven’t applied for any leave yet.</div> : (
+            <table className="w-full text-sm">
+              <thead><tr className="text-left">{['Applied', 'Type', 'Date', 'Duration', 'Approver', 'Status'].map((h) => <th key={h} className="text-[11px] font-extrabold uppercase text-slate-400 pb-2 px-2 border-b border-slate-100">{h}</th>)}</tr></thead>
+              <tbody>
+                {leaves.map((l) => (
+                  <tr key={l.id} className="border-b border-slate-50">
+                    <td className="px-2 py-2.5 text-slate-500">{fmtApplied(l.createdAt)}</td>
+                    <td className="px-2 py-2.5 capitalize font-semibold text-[#050A1F]">{l.type}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{fmt(l.date)}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.duration === 'half' ? 'Half day' : 'Full day'}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.approverName || l.approvedBy || '—'}</td>
+                    <td className="px-2 py-2.5"><span className="text-[10px] font-extrabold rounded-md px-2 py-0.5 capitalize" style={stCls[l.status] || stCls.pending}>{l.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The signed-in employee's own attendance calendar (month grid, color-coded).
+function MyAttendanceCalendar({ onClose }) {
+  const [month, setMonth] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7));
+  const [data, setData] = useState(null);
+  useEffect(() => { hrApi(`/me/attendance-calendar?month=${month}`).then(setData).catch(() => setData({ days: {} })); }, [month]);
+  const [y, m] = month.split('-').map(Number);
+  const first = new Date(y, m - 1, 1).getDay();
+  const dim = new Date(y, m, 0).getDate();
+  const cls = {
+    present: { background: '#ECFDF3', borderColor: '#A7F3D0', mk: '#15803D', label: 'P' },
+    late: { background: '#FFFBEB', borderColor: '#FDE68A', mk: '#B45309', label: 'Late' },
+    absent: { background: '#FEF2F2', borderColor: '#FECACA', mk: '#B91C1C', label: 'A' },
+    leave: { background: '#F5F3FF', borderColor: '#DDD6FE', mk: '#6D28D9', label: 'Leave' },
+    holiday: { background: '#EFF6FF', borderColor: '#BFDBFE', mk: '#1d4ed8', label: 'Holiday' },
+    weekoff: { background: '#F1F5F9', borderColor: '#E2E8F0', mk: '#64748b', label: 'Off' },
+    none: { background: '#fff', borderColor: '#eef2f9', mk: '#cbd5e1', label: '' },
+  };
+  const shift = (d) => { const nd = new Date(y, m - 1 + d, 1); setMonth(`${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`); };
+  const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-base font-extrabold text-[#050A1F]">My attendance</div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => shift(-1)} className="w-7 h-7 rounded-lg hover:bg-slate-100 text-slate-500">‹</button>
+            <span className="text-sm font-bold text-slate-600 w-36 text-center">{monthLabel}</span>
+            <button onClick={() => shift(1)} className="w-7 h-7 rounded-lg hover:bg-slate-100 text-slate-500">›</button>
+            <button onClick={onClose} className="text-slate-400 text-xl leading-none ml-2">×</button>
+          </div>
+        </div>
+        <div className="p-6">
+          <div className="grid grid-cols-7 gap-1.5 mb-1.5">{['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="text-[10px] font-extrabold text-slate-400 text-center uppercase">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1.5">
+            {Array.from({ length: first }).map((_, i) => <div key={`e${i}`} />)}
+            {Array.from({ length: dim }).map((_, i) => {
+              const d = i + 1; const ds = `${month}-${String(d).padStart(2, '0')}`;
+              const info = data && data.days ? data.days[ds] : null; const stt = info ? info.status : 'none'; const c = cls[stt] || cls.none;
+              return (
+                <div key={d} className="rounded-lg border p-1.5 relative" style={{ aspectRatio: '1', background: c.background, borderColor: c.borderColor }} title={info && info.login ? `In ${info.login}${info.logout ? ` · Out ${info.logout}` : ''}` : (info && info.holiday) || ''}>
+                  <div className="text-[11px] font-bold text-slate-700">{d}</div>
+                  {c.label && <div className="absolute bottom-1 left-1.5 text-[9px] font-extrabold" style={{ color: c.mk }}>{c.label}</div>}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-3.5 flex-wrap mt-4 text-[11px] font-bold text-slate-600">
+            {[['Present', '#A7F3D0'], ['Late', '#FDE68A'], ['Absent', '#FECACA'], ['Leave', '#DDD6FE'], ['Holiday', '#BFDBFE'], ['Week off', '#E2E8F0']].map(([l, c]) => (
+              <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: c }} />{l}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
@@ -4956,6 +5254,7 @@ export default function HrApp() {
   const [navKey, setNavKey] = useState(0); // bump to force a fresh sub-view on nav
   const [mobileNav, setMobileNav] = useState(false);
   const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
+  const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
   // setView also writes a clean URL (/hr/<view>).
   const setView = (v) => { setViewRaw(v); const target = `/hr/${v}`; if (location.pathname !== target) navigate(target); };
   // Keep view in sync when the user navigates back/forward.
@@ -5091,9 +5390,19 @@ export default function HrApp() {
       </header>
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
-        {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin
-          ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
-          : <EmployeeDashboard user={user} />)}
+        {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin ? (
+          <div>
+            <div className="flex justify-end mb-4">
+              <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1">
+                <button onClick={() => setDashView('hr')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'hr' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'hr' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>HR Dashboard</button>
+                <button onClick={() => setDashView('emp')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'emp' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'emp' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>Employee Dashboard</button>
+              </div>
+            </div>
+            {dashView === 'hr'
+              ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
+              : <EmployeeDashboard user={user} />}
+          </div>
+        ) : <EmployeeDashboard user={user} />)}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}

@@ -1578,6 +1578,10 @@ const HrAttendance = sequelize.define('HrAttendance', {
   note: { type: DataTypes.STRING(200), allowNull: true },
   approvedBy: { type: DataTypes.STRING(160), allowNull: true }, // approver name (leave/WFH)
   notes: { type: DataTypes.STRING(500), allowNull: true },      // free-text HR note
+  // Self-service web clock: accumulated break windows [{start:'HH:MM',end:'HH:MM'}]
+  // and the currently-open break start (null when not on break).
+  breaks: { type: DataTypes.JSON, defaultValue: [] },
+  breakOpen: { type: DataTypes.STRING(5), allowNull: true },
   markedById: { type: DataTypes.INTEGER, allowNull: true },
   source: { type: DataTypes.STRING(20), defaultValue: 'manual' }, // manual|api
 }, { tableName: 'hr_attendance', indexes: [
@@ -1598,6 +1602,13 @@ const HrLeave = sequelize.define('HrLeave', {
   paid: { type: DataTypes.BOOLEAN, defaultValue: true },
   reason: { type: DataTypes.STRING(300), allowNull: true },
   approvedBy: { type: DataTypes.STRING(160), allowNull: true },
+  // Approval routing for self-applied leave: the intended approver (an HrUser),
+  // and who actually decided it + when.
+  approverId: { type: DataTypes.INTEGER, allowNull: true },
+  approverName: { type: DataTypes.STRING(160), allowNull: true },
+  decidedById: { type: DataTypes.INTEGER, allowNull: true },
+  decidedAt: { type: DataTypes.DATE, allowNull: true },
+  decidedByKind: { type: DataTypes.STRING(10), allowNull: true }, // hr|admin
   documentUrl: { type: DataTypes.STRING(500), allowNull: true }, // medical certificate etc.
   status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
   appliedById: { type: DataTypes.INTEGER, allowNull: true },

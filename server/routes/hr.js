@@ -1041,6 +1041,311 @@ router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===========================================================================
+// EMPLOYEE SELF-SERVICE (employee dashboard): web clock, leave apply/history,
+// approvals, who's-in, celebrations, personal attendance calendar.
+// ===========================================================================
+const nowIST = () => new Date(Date.now() + 330 * 60000);
+const istDateStr = () => nowIST().toISOString().slice(0, 10);
+const istHHMM = () => nowIST().toISOString().slice(11, 16);
+const hhmmToMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+
+// Resolve who may approve THIS employee's leave: their reports-to chain; if none
+// resolvable, branch HR managers + admins. Returns {approverId, approverName, kind}.
+async function resolveLeaveApprover(emp) {
+  if (emp.reportsToId) {
+    const senior = await HrUser.findByPk(emp.reportsToId);
+    if (senior && senior.active) return { approverId: senior.id, approverName: senior.name, kind: 'hr' };
+  }
+  if (emp.reportsToAdminId) {
+    const adm = await User.findByPk(emp.reportsToAdminId);
+    if (adm && adm.active) return { approverId: adm.id, approverName: adm.name, kind: 'admin' };
+  }
+  // Fallback: an all-branch or same-branch HR manager.
+  const mgrs = await HrUser.findAll({ where: { active: true } });
+  const branchMgr = mgrs.find((m) => (m.hrManagerScope || '').toLowerCase() === String(emp.branch || '').toLowerCase() && m.id !== emp.id);
+  if (branchMgr) return { approverId: branchMgr.id, approverName: branchMgr.name, kind: 'hr' };
+  const allMgr = mgrs.find((m) => (m.hrManagerScope || '').toLowerCase() === 'all' && m.id !== emp.id);
+  if (allMgr) return { approverId: allMgr.id, approverName: allMgr.name, kind: 'hr' };
+  const admin = await User.findOne({ where: { role: 'admin', active: true } });
+  if (admin) return { approverId: admin.id, approverName: admin.name, kind: 'admin' };
+  return { approverId: null, approverName: 'HR', kind: 'hr' };
+}
+
+// GET /me/clock → today's web-clock state for the signed-in employee.
+router.get('/me/clock', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ state: 'na' });
+    const empId = req.hrActor.id;
+    const date = istDateStr();
+    // On approved leave today?
+    const leave = await HrLeave.findOne({ where: { employeeId: empId, date, status: 'approved' } });
+    const row = await HrAttendance.findOne({ where: { employeeId: empId, date } });
+    const breaks = (row && Array.isArray(row.breaks)) ? row.breaks : [];
+    let breakMin = 0; breaks.forEach((b) => { const s = hhmmToMin(b.start), e = hhmmToMin(b.end); if (s != null && e != null) breakMin += (e - s); });
+    let state = 'out';
+    if (leave && leave.duration === 'full') state = 'leave';
+    else if (row) {
+      if (row.breakOpen) state = 'break';
+      else if (row.logoutTime) state = 'done';
+      else if (row.loginTime) state = 'in';
+    }
+    res.json({
+      state, date,
+      loginTime: row ? row.loginTime : null, logoutTime: row ? row.logoutTime : null,
+      breakOpen: row ? row.breakOpen : null, breaks, breakMin, late: row ? row.late : false,
+      onLeave: !!leave, leaveType: leave ? leave.type : null,
+      shift: null,
+    });
+  } catch (e) { next(e); }
+});
+
+// POST /me/clock  body:{action:'in'|'break'|'break_end'|'out'} → mutate the state.
+router.post('/me/clock', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only employees can clock in.' });
+    const emp = await HrUser.findByPk(req.hrActor.id);
+    if (!emp) return res.status(404).json({ error: 'Not found.' });
+    const action = String((req.body && req.body.action) || '');
+    const date = istDateStr();
+    const time = istHHMM();
+    // Block clocking on a full-day approved leave.
+    const leave = await HrLeave.findOne({ where: { employeeId: emp.id, date, status: 'approved', duration: 'full' } });
+    if (leave && action === 'in') return res.status(400).json({ error: 'You are on approved leave today.' });
+
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const grace = Number(policy.lateRule.graceMinutes) || 30;
+    let [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: 'present', source: 'api' } });
+
+    if (action === 'in') {
+      if (row.loginTime) return res.status(400).json({ error: 'Already clocked in.' });
+      row.loginTime = time; row.status = 'present'; row.source = 'api';
+      // Late = login later than shift start + grace (if a shift is set).
+      const shift = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+      if (shift && shift.startTime) row.late = hhmmToMin(time) > hhmmToMin(shift.startTime) + grace;
+      row.markedById = emp.id;
+    } else if (action === 'break') {
+      if (!row.loginTime) return res.status(400).json({ error: 'Clock in first.' });
+      if (row.breakOpen) return res.status(400).json({ error: 'Already on a break.' });
+      if (row.logoutTime) return res.status(400).json({ error: 'You have clocked out.' });
+      row.breakOpen = time;
+    } else if (action === 'break_end') {
+      if (!row.breakOpen) return res.status(400).json({ error: 'You are not on a break.' });
+      const list = Array.isArray(row.breaks) ? row.breaks.slice() : [];
+      list.push({ start: row.breakOpen, end: time });
+      row.breaks = list; row.changed('breaks', true); row.breakOpen = null;
+    } else if (action === 'out') {
+      if (!row.loginTime) return res.status(400).json({ error: 'Clock in first.' });
+      // Auto-close an open break at logout.
+      if (row.breakOpen) { const list = Array.isArray(row.breaks) ? row.breaks.slice() : []; list.push({ start: row.breakOpen, end: time }); row.breaks = list; row.changed('breaks', true); row.breakOpen = null; }
+      row.logoutTime = time;
+    } else {
+      return res.status(400).json({ error: 'Unknown action.' });
+    }
+    await row.save();
+    res.json({ ok: true, date, loginTime: row.loginTime, logoutTime: row.logoutTime, breakOpen: row.breakOpen, breaks: row.breaks, late: row.late });
+  } catch (e) { next(e); }
+});
+
+// GET /me/leave → the signed-in employee's balance + full history.
+router.get('/me/leave', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ allocation: {}, balance: {}, leaves: [] });
+    const emp = await HrUser.findByPk(req.hrActor.id);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const alloc = allocationFor(policy, emp);
+    const rows = await HrLeave.findAll({ where: { employeeId: emp.id }, order: [['date', 'DESC']] });
+    const used = { casual: 0, medical: 0, privilege: 0, wfh: 0 };
+    rows.forEach((r) => { if (r.status === 'approved') used[r.type] = (used[r.type] || 0) + (r.duration === 'half' ? 0.5 : 1); });
+    const approver = await resolveLeaveApprover(emp);
+    res.json({
+      allocation: alloc, used,
+      balance: Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (used[k] || 0)).toFixed(1)])),
+      approverName: approver.approverName,
+      leaves: rows.map((r) => r.toJSON()),
+    });
+  } catch (e) { next(e); }
+});
+
+// POST /me/leave → apply for leave (self). Creates a PENDING request routed to
+// the employee's approver.
+router.post('/me/leave', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only employees can apply for leave.' });
+    const emp = await HrUser.findByPk(req.hrActor.id);
+    const b = req.body || {};
+    const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : null;
+    const duration = b.duration === 'half' ? 'half' : 'full';
+    if (!type) return res.status(400).json({ error: 'Choose a valid leave type.' });
+    if (!date) return res.status(400).json({ error: 'Choose a valid date.' });
+    // Prevent duplicate pending/approved on same date+type.
+    const dup = await HrLeave.findOne({ where: { employeeId: emp.id, date, type, status: { [Op.in]: ['pending', 'approved'] } } });
+    if (dup) return res.status(400).json({ error: 'You already have a request for this date and type.' });
+    const approver = await resolveLeaveApprover(emp);
+    const row = await HrLeave.create({
+      employeeId: emp.id, type, date, duration, paid: type !== 'wfh',
+      reason: String(b.reason || '').slice(0, 300), status: 'pending',
+      appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
+    });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// GET /me/reviews → items awaiting THIS person's action: juniors' pending leave
+// they can approve (as reports-to senior, or as branch HR manager/admin).
+router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
+  try {
+    const actorId = req.hrActor.id;
+    const isAdminActor = req.hrActor.kind === 'admin' || req.isHrAdmin;
+    const pend = await HrLeave.findAll({ where: { status: 'pending' }, order: [['createdAt', 'ASC']] });
+    const out = [];
+    for (const lv of pend) {
+      let canDecide = false;
+      // Direct approver match.
+      if (lv.approverId && ((lv.decidedByKind === 'admin' && isAdminActor && lv.approverId === actorId) || (lv.decidedByKind !== 'admin' && req.hrActor.kind === 'hr' && lv.approverId === actorId))) canDecide = true;
+      // HR manager / admin safety net for their branch.
+      if (!canDecide) {
+        const applicant = await HrUser.findByPk(lv.employeeId);
+        if (applicant && canManageBranch(req, applicant.branch)) canDecide = true;
+      }
+      if (!canDecide) continue;
+      const applicant = await HrUser.findByPk(lv.employeeId);
+      out.push({ id: lv.id, kind: 'leave', who: applicant ? applicant.name : 'Employee', employeeId: lv.employeeId,
+        type: lv.type, date: lv.date, duration: lv.duration, reason: lv.reason });
+    }
+    res.json({ reviews: out, count: out.length });
+  } catch (e) { next(e); }
+});
+
+// POST /me/leave/:id/decide  body:{approve:bool} → approve/reject a pending leave.
+router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
+  try {
+    const lv = await HrLeave.findByPk(Number(req.params.id));
+    if (!lv) return res.status(404).json({ error: 'Leave request not found.' });
+    if (lv.status !== 'pending') return res.status(400).json({ error: 'This request was already decided.' });
+    const actorId = req.hrActor.id;
+    const isAdminActor = req.hrActor.kind === 'admin' || req.isHrAdmin;
+    const applicant = await HrUser.findByPk(lv.employeeId);
+    let allowed = false;
+    if (lv.approverId && ((lv.decidedByKind === 'admin' && isAdminActor && lv.approverId === actorId) || (lv.decidedByKind !== 'admin' && req.hrActor.kind === 'hr' && lv.approverId === actorId))) allowed = true;
+    if (!allowed && applicant && canManageBranch(req, applicant.branch)) allowed = true;
+    if (!allowed) return res.status(403).json({ error: 'You can’t decide this request.' });
+
+    const approve = !!(req.body && req.body.approve);
+    lv.status = approve ? 'approved' : 'rejected';
+    lv.decidedById = actorId; lv.decidedAt = new Date();
+    lv.approvedBy = approve ? req.hrActor.name : null;
+    await lv.save();
+    // On approval, reflect the leave on the attendance record for that date.
+    if (approve) {
+      const attStatus = lv.type === 'wfh' ? 'wfh' : (lv.duration === 'half' ? 'half_day' : 'leave');
+      const [att] = await HrAttendance.findOrCreate({ where: { employeeId: lv.employeeId, date: lv.date }, defaults: { status: attStatus } });
+      att.status = attStatus; att.note = `leave:${lv.type}`; att.approvedBy = req.hrActor.name; await att.save();
+    }
+    res.json({ ok: true, status: lv.status });
+  } catch (e) { next(e); }
+});
+
+// GET /me/whos-in → today's status for the employee's department + direct reports.
+router.get('/me/whos-in', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ people: [], counts: {} });
+    const me = await HrUser.findByPk(req.hrActor.id);
+    const date = istDateStr();
+    const all = await HrUser.findAll({ where: { active: true } });
+    // Scope: same department OR reports to me.
+    const peers = all.filter((u) => u.id !== me.id && (
+      (u.department && me.department && u.department.toLowerCase() === me.department.toLowerCase()) ||
+      u.reportsToId === me.id));
+    const att = await HrAttendance.findAll({ where: { employeeId: peers.map((p) => p.id), date } });
+    const byEmp = Object.fromEntries(att.map((a) => [a.employeeId, a]));
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const grace = Number(getHrPolicy(s).lateRule.graceMinutes) || 30;
+    const people = peers.map((p) => {
+      const a = byEmp[p.id];
+      let status = 'not_in', at = null;
+      if (a) {
+        if (a.status === 'leave' || a.status === 'half_day') status = 'leave';
+        else if (a.loginTime) { status = a.late ? 'late' : 'in'; at = a.loginTime; }
+      }
+      return { id: p.id, name: p.name, department: p.department, reportsToMe: p.reportsToId === me.id, status, at };
+    }).sort((x, y) => x.name.localeCompare(y.name));
+    const counts = { not_in: 0, late: 0, in: 0, leave: 0 };
+    people.forEach((p) => { counts[p.status === 'in' ? 'in' : p.status] = (counts[p.status === 'in' ? 'in' : p.status] || 0) + 1; });
+    res.json({ people, counts });
+  } catch (e) { next(e); }
+});
+
+// GET /me/celebrations → company-wide birthdays / work anniversaries / new joinees.
+router.get('/me/celebrations', requireHrAccess, async (req, res, next) => {
+  try {
+    const all = await HrUser.findAll({ where: { active: true } });
+    const today = nowIST();
+    const md = (d) => { const x = new Date(d); return [x.getMonth(), x.getDate()]; };
+    const within = (d, days) => {
+      if (!d) return null; const [mo, da] = md(d);
+      const now = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      let next = new Date(today.getFullYear(), mo, da);
+      if (next < now) next = new Date(today.getFullYear() + 1, mo, da);
+      const diff = Math.round((next - now) / 86400000);
+      return diff <= days ? diff : null;
+    };
+    const lbl = (diff) => diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : `in ${diff}d`;
+    const birthdays = [], annivs = [], joinees = [];
+    all.forEach((u) => {
+      const bd = within(u.birthday, 30);
+      if (bd != null) birthdays.push({ name: u.name, sub: `${u.department || ''}${u.branch ? ' · ' + u.branch : ''}`, when: lbl(bd), diff: bd });
+      if (u.joiningDate) {
+        const ja = within(u.joiningDate, 30);
+        const years = today.getFullYear() - new Date(u.joiningDate).getFullYear();
+        if (ja != null && years >= 1) annivs.push({ name: u.name, sub: `${years} year${years > 1 ? 's' : ''} · ${u.department || ''}`, when: lbl(ja), diff: ja });
+        // New joinees: joined within the last 30 days.
+        const jd = new Date(u.joiningDate); const daysSince = Math.round((today - jd) / 86400000);
+        if (daysSince >= 0 && daysSince <= 30) joinees.push({ name: u.name, sub: `${u.department || ''}${u.branch ? ' · ' + u.branch : ''}`, when: 'New', diff: daysSince });
+      }
+    });
+    birthdays.sort((a, b) => a.diff - b.diff); annivs.sort((a, b) => a.diff - b.diff); joinees.sort((a, b) => a.diff - b.diff);
+    res.json({ birthdays, anniversaries: annivs, joinees });
+  } catch (e) { next(e); }
+});
+
+// GET /me/attendance-calendar?month=YYYY-MM → the signed-in employee's own month
+// of attendance for the calendar popup (present/late/absent/leave/holiday/weekoff).
+router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ month: '', days: {} });
+    const emp = await HrUser.findByPk(req.hrActor.id);
+    const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : istDateStr().slice(0, 7);
+    const rows = await HrAttendance.findAll({ where: { employeeId: emp.id } });
+    const marks = {};
+    rows.forEach((r) => { if (String(r.date).slice(0, 7) === month) marks[r.date] = r; });
+    const holidaysAll = await HrHoliday.findAll();
+    const holidays = {};
+    holidaysAll.forEach((h) => { if (String(h.date).slice(0, 7) === month && (!h.branch || h.branch === emp.branch)) holidays[String(h.date)] = h.name; });
+    const [y, m] = month.split('-').map(Number);
+    const dim = new Date(y, m, 0).getDate();
+    const days = {};
+    for (let d = 1; d <= dim; d++) {
+      const ds = `${month}-${String(d).padStart(2, '0')}`;
+      const mk = marks[ds];
+      let status = 'none';
+      if (holidays[ds]) status = 'holiday';
+      else if (branchWeekendOff(ds, emp.branch)) status = 'weekoff';
+      else if (mk) {
+        if (mk.status === 'leave' || mk.status === 'half_day') status = 'leave';
+        else if (mk.status === 'wfh') status = 'present';
+        else if (mk.status === 'absent' || mk.status === 'lop') status = 'absent';
+        else if (mk.loginTime) status = mk.late ? 'late' : 'present';
+      }
+      days[ds] = { status, login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null, holiday: holidays[ds] || null };
+    }
+    res.json({ month, branch: emp.branch, days });
+  } catch (e) { next(e); }
+});
+
 // PUT /attendance/day/:date  → bulk upsert marks for a day.
 // body: { entries: [{ employeeId, status, loginTime?, logoutTime?, leaveType? }] }
 // status: present | absent_leave | half_day | lop
