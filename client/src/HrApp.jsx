@@ -1298,8 +1298,8 @@ function EmployeeDashboard({ user }) {
               <>
                 <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
                 {reviews.map((it) => (
-                  <div key={it.id} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
-                    <span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who} ({it.type}{it.duration === 'half' ? ', half-day' : ''} · {fmtShort(it.date)})
+                  <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
+                    <span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who} ({it.type}{it.duration === 'half' ? ', half-day' : ''} · {it.days > 1 ? `${fmtShort(it.date)}–${fmtShort(it.dateTo)} · ${it.days} days` : fmtShort(it.date)})
                     <span className="ml-auto flex gap-1.5">
                       <button onClick={() => decide(it.id, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
                       <button onClick={() => decide(it.id, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
@@ -1314,7 +1314,7 @@ function EmployeeDashboard({ user }) {
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#22C55E]" />Leave balance</h3>
             <div className="flex gap-3.5 flex-wrap">
-              {['casual', 'medical', 'privilege', 'wfh'].map((k) => {
+              {['casual', 'medical', 'privilege'].map((k) => {
                 const bal = leave ? (leave.balance[k] ?? 0) : 0; const alloc = leave ? (leave.allocation[k] ?? 0) : 0;
                 return (
                   <div key={k} className="text-center" style={{ width: 74 }}>
@@ -1429,16 +1429,26 @@ function EmployeeDashboard({ user }) {
 // Apply for leave (self-service). Creates a pending request routed to the
 // employee's approver.
 function ApplyLeaveModal({ approverName, onClose, onDone }) {
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const [type, setType] = useState('casual');
   const [duration, setDuration] = useState('full');
-  const [date, setDate] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10));
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [halfDate, setHalfDate] = useState(today);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // Keep To in step when From moves past it.
+  const onFrom = (v) => { setFrom(v); if (to < v) setTo(v); };
+  const dayCount = (() => { if (duration === 'half') return 0.5; const a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00'); return Math.max(1, Math.round((b - a) / 86400000) + 1); })();
   const submit = async () => {
-    if (!date) { setErr('Choose a date.'); return; }
-    setBusy(true); setErr('');
-    try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify({ type, duration, date, reason }) }); onDone(); }
+    setErr('');
+    const body = duration === 'half'
+      ? { type, duration: 'half', date: halfDate, reason }
+      : { type, duration: 'full', from, to, reason };
+    if (duration === 'full' && to < from) { setErr('The end date can’t be before the start date.'); return; }
+    setBusy(true);
+    try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify(body) }); onDone(); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
@@ -1458,9 +1468,19 @@ function ApplyLeaveModal({ approverName, onClose, onDone }) {
               <button onClick={() => setDuration('half')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === 'half' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>Half day</button>
             </div>
           </div>
-          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          {duration === 'full' ? (
+            <div className="flex gap-2">
+              <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">From</div><input type="date" value={from} min={today} onChange={(e) => onFrom(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+              <div className="flex-1"><div className="text-[12px] font-bold text-slate-600 mb-1">To</div><input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+            </div>
+          ) : (
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          )}
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
-          {approverName && <div className="text-[12px] text-slate-400">Approver: <b className="text-slate-600">{approverName}</b></div>}
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-slate-500">Applying for <b className="text-slate-700">{dayCount === 0.5 ? 'half a day' : `${dayCount} day${dayCount > 1 ? 's' : ''}`}</b></span>
+            {approverName && <span className="text-slate-400">Approver: <b className="text-slate-600">{approverName}</b></span>}
+          </div>
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1476,22 +1496,39 @@ function LeaveHistoryModal({ leaves, onClose }) {
   const stCls = { pending: { background: '#FEF3C7', color: '#B45309' }, approved: { background: '#DCFCE7', color: '#15803D' }, rejected: { background: '#FEE2E2', color: '#B91C1C' } };
   const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
   const fmtApplied = (iso) => { try { return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return ''; } };
+  // Group multi-day requests (shared groupId) into a single history row.
+  const groups = [];
+  const byKey = {};
+  (leaves || []).forEach((l) => {
+    const key = l.groupId || `s${l.id}`;
+    if (!byKey[key]) { byKey[key] = { key, rows: [] }; groups.push(byKey[key]); }
+    byKey[key].rows.push(l);
+  });
+  const items = groups.map((g) => {
+    const rows = g.rows.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const first = rows[0];
+    return {
+      id: g.key, type: first.type, duration: first.duration, status: first.status,
+      approver: first.approverName || first.approvedBy || '—', createdAt: first.createdAt,
+      from: rows[0].date, to: rows[rows.length - 1].date, days: rows.length,
+    };
+  }).sort((a, b) => String(b.from).localeCompare(String(a.from)));
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col" style={{ maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0"><div className="text-base font-extrabold text-[#050A1F]">Leave history</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
         <div className="p-6 overflow-auto">
-          {(!leaves || leaves.length === 0) ? <div className="text-sm text-slate-400 py-6 text-center">You haven’t applied for any leave yet.</div> : (
+          {items.length === 0 ? <div className="text-sm text-slate-400 py-6 text-center">You haven’t applied for any leave yet.</div> : (
             <table className="w-full text-sm">
-              <thead><tr className="text-left">{['Applied', 'Type', 'Date', 'Duration', 'Approver', 'Status'].map((h) => <th key={h} className="text-[11px] font-extrabold uppercase text-slate-400 pb-2 px-2 border-b border-slate-100">{h}</th>)}</tr></thead>
+              <thead><tr className="text-left">{['Applied', 'Type', 'Dates', 'Duration', 'Approver', 'Status'].map((h) => <th key={h} className="text-[11px] font-extrabold uppercase text-slate-400 pb-2 px-2 border-b border-slate-100">{h}</th>)}</tr></thead>
               <tbody>
-                {leaves.map((l) => (
+                {items.map((l) => (
                   <tr key={l.id} className="border-b border-slate-50">
                     <td className="px-2 py-2.5 text-slate-500">{fmtApplied(l.createdAt)}</td>
                     <td className="px-2 py-2.5 capitalize font-semibold text-[#050A1F]">{l.type}</td>
-                    <td className="px-2 py-2.5 text-slate-600">{fmt(l.date)}</td>
-                    <td className="px-2 py-2.5 text-slate-600">{l.duration === 'half' ? 'Half day' : 'Full day'}</td>
-                    <td className="px-2 py-2.5 text-slate-600">{l.approverName || l.approvedBy || '—'}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.days > 1 ? `${fmt(l.from)} – ${fmt(l.to)}` : fmt(l.from)}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.duration === 'half' ? 'Half day' : (l.days > 1 ? `${l.days} days` : 'Full day')}</td>
+                    <td className="px-2 py-2.5 text-slate-600">{l.approver}</td>
                     <td className="px-2 py-2.5"><span className="text-[10px] font-extrabold rounded-md px-2 py-0.5 capitalize" style={stCls[l.status] || stCls.pending}>{l.status}</span></td>
                   </tr>
                 ))}

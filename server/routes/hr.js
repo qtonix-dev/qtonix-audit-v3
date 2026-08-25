@@ -1177,20 +1177,45 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const emp = await HrUser.findByPk(req.hrActor.id);
     const b = req.body || {};
     const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : null;
     const duration = b.duration === 'half' ? 'half' : 'full';
     if (!type) return res.status(400).json({ error: 'Choose a valid leave type.' });
-    if (!date) return res.status(400).json({ error: 'Choose a valid date.' });
-    // Prevent duplicate pending/approved on same date+type.
-    const dup = await HrLeave.findOne({ where: { employeeId: emp.id, date, type, status: { [Op.in]: ['pending', 'approved'] } } });
-    if (dup) return res.status(400).json({ error: 'You already have a request for this date and type.' });
+    const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+
+    // Build the list of dates. Half day → a single date. Full day → a From/To
+    // range (inclusive); a single date is just from===to.
+    let dates = [];
+    if (duration === 'half') {
+      const date = valid(b.date) ? b.date : (valid(b.from) ? b.from : null);
+      if (!date) return res.status(400).json({ error: 'Choose a valid date.' });
+      dates = [date];
+    } else {
+      const from = valid(b.from) ? b.from : (valid(b.date) ? b.date : null);
+      const to = valid(b.to) ? b.to : from;
+      if (!from) return res.status(400).json({ error: 'Choose a valid start date.' });
+      if (to < from) return res.status(400).json({ error: 'The end date can’t be before the start date.' });
+      // Expand inclusive range into individual dates (cap at 60 days).
+      let cur = new Date(from + 'T00:00:00'); const end = new Date(to + 'T00:00:00'); let guard = 0;
+      while (cur <= end && guard < 60) { dates.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); guard += 1; }
+    }
+
+    // Reject if any date already has a pending/approved request of this type.
+    const existing = await HrLeave.findAll({ where: { employeeId: emp.id, type, status: { [Op.in]: ['pending', 'approved'] } } });
+    const clash = dates.find((d) => existing.some((e) => e.date === d));
+    if (clash) return res.status(400).json({ error: `You already have a request for ${clash}.` });
+
     const approver = await resolveLeaveApprover(emp);
-    const row = await HrLeave.create({
-      employeeId: emp.id, type, date, duration, paid: type !== 'wfh',
-      reason: String(b.reason || '').slice(0, 300), status: 'pending',
-      appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
-    });
-    res.status(201).json(row.toJSON());
+    const groupId = dates.length > 1 ? `lg${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` : null;
+    const reason = String(b.reason || '').slice(0, 300);
+    const created = [];
+    for (const date of dates) {
+      const row = await HrLeave.create({
+        employeeId: emp.id, type, date, duration, paid: type !== 'wfh',
+        reason, status: 'pending', groupId,
+        appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
+      });
+      created.push(row.toJSON());
+    }
+    res.status(201).json({ status: 'pending', days: created.length, groupId, leaves: created });
   } catch (e) { next(e); }
 });
 
@@ -1200,27 +1225,43 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
   try {
     const actorId = req.hrActor.id;
     const isAdminActor = req.hrActor.kind === 'admin' || req.isHrAdmin;
-    const pend = await HrLeave.findAll({ where: { status: 'pending' }, order: [['createdAt', 'ASC']] });
-    const out = [];
+    const pend = await HrLeave.findAll({ where: { status: 'pending' }, order: [['date', 'ASC']] });
+    const decidable = [];
     for (const lv of pend) {
       let canDecide = false;
-      // Direct approver match.
       if (lv.approverId && ((lv.decidedByKind === 'admin' && isAdminActor && lv.approverId === actorId) || (lv.decidedByKind !== 'admin' && req.hrActor.kind === 'hr' && lv.approverId === actorId))) canDecide = true;
-      // HR manager / admin safety net for their branch.
       if (!canDecide) {
         const applicant = await HrUser.findByPk(lv.employeeId);
         if (applicant && canManageBranch(req, applicant.branch)) canDecide = true;
       }
-      if (!canDecide) continue;
-      const applicant = await HrUser.findByPk(lv.employeeId);
-      out.push({ id: lv.id, kind: 'leave', who: applicant ? applicant.name : 'Employee', employeeId: lv.employeeId,
-        type: lv.type, date: lv.date, duration: lv.duration, reason: lv.reason });
+      if (canDecide) decidable.push(lv);
+    }
+    // Group multi-day requests (same groupId) into a single review item; the
+    // client approves/rejects the whole group via the group key.
+    const nameCache = {};
+    const nameOf = async (id) => { if (nameCache[id] !== undefined) return nameCache[id]; const u = await HrUser.findByPk(id); nameCache[id] = u ? u.name : 'Employee'; return nameCache[id]; };
+    const groups = {};
+    for (const lv of decidable) {
+      const key = lv.groupId || `single:${lv.id}`;
+      if (!groups[key]) groups[key] = { key, ids: [], employeeId: lv.employeeId, type: lv.type, duration: lv.duration, reason: lv.reason, dates: [] };
+      groups[key].ids.push(lv.id); groups[key].dates.push(lv.date);
+    }
+    const out = [];
+    for (const g of Object.values(groups)) {
+      g.dates.sort();
+      out.push({
+        id: g.ids[0], groupKey: g.key, ids: g.ids, kind: 'leave',
+        who: await nameOf(g.employeeId), employeeId: g.employeeId,
+        type: g.type, duration: g.duration, reason: g.reason,
+        date: g.dates[0], dateTo: g.dates[g.dates.length - 1], days: g.dates.length,
+      });
     }
     res.json({ reviews: out, count: out.length });
   } catch (e) { next(e); }
 });
 
 // POST /me/leave/:id/decide  body:{approve:bool} → approve/reject a pending leave.
+// If the leave belongs to a multi-day group, the whole group is decided together.
 router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
   try {
     const lv = await HrLeave.findByPk(Number(req.params.id));
@@ -1235,17 +1276,22 @@ router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
     if (!allowed) return res.status(403).json({ error: 'You can’t decide this request.' });
 
     const approve = !!(req.body && req.body.approve);
-    lv.status = approve ? 'approved' : 'rejected';
-    lv.decidedById = actorId; lv.decidedAt = new Date();
-    lv.approvedBy = approve ? req.hrActor.name : null;
-    await lv.save();
-    // On approval, reflect the leave on the attendance record for that date.
-    if (approve) {
-      const attStatus = lv.type === 'wfh' ? 'wfh' : (lv.duration === 'half' ? 'half_day' : 'leave');
-      const [att] = await HrAttendance.findOrCreate({ where: { employeeId: lv.employeeId, date: lv.date }, defaults: { status: attStatus } });
-      att.status = attStatus; att.note = `leave:${lv.type}`; att.approvedBy = req.hrActor.name; await att.save();
+    // Gather every pending day in this request (grouped multi-day, or just this one).
+    const rows = lv.groupId
+      ? await HrLeave.findAll({ where: { groupId: lv.groupId, status: 'pending' } })
+      : [lv];
+    for (const r of rows) {
+      r.status = approve ? 'approved' : 'rejected';
+      r.decidedById = actorId; r.decidedAt = new Date();
+      r.approvedBy = approve ? req.hrActor.name : null;
+      await r.save();
+      if (approve) {
+        const attStatus = r.type === 'wfh' ? 'wfh' : (r.duration === 'half' ? 'half_day' : 'leave');
+        const [att] = await HrAttendance.findOrCreate({ where: { employeeId: r.employeeId, date: r.date }, defaults: { status: attStatus } });
+        att.status = attStatus; att.note = `leave:${r.type}`; att.approvedBy = req.hrActor.name; await att.save();
+      }
     }
-    res.json({ ok: true, status: lv.status });
+    res.json({ ok: true, status: approve ? 'approved' : 'rejected', days: rows.length });
   } catch (e) { next(e); }
 });
 

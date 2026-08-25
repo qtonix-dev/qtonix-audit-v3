@@ -1609,6 +1609,7 @@ const HrLeave = sequelize.define('HrLeave', {
   decidedById: { type: DataTypes.INTEGER, allowNull: true },
   decidedAt: { type: DataTypes.DATE, allowNull: true },
   decidedByKind: { type: DataTypes.STRING(10), allowNull: true }, // hr|admin
+  groupId: { type: DataTypes.STRING(40), allowNull: true }, // links per-day rows of one multi-day request
   documentUrl: { type: DataTypes.STRING(500), allowNull: true }, // medical certificate etc.
   status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
   appliedById: { type: DataTypes.INTEGER, allowNull: true },
