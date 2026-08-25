@@ -1396,7 +1396,8 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
     type: user.type || 'employee', branch: user.branch || '', department: user.department || '',
     joiningDate: user.joiningDate || '', birthday: user.birthday || '', maritalStatus: user.maritalStatus || '', anniversary: user.anniversary || '',
     reportsTo: user.reportsToId ? `hr:${user.reportsToId}` : (user.reportsToAdminId ? `admin:${user.reportsToAdminId}` : ''),
-    shiftId: user.shiftId || '', canPostAnnouncements: !!user.canPostAnnouncements, isHrManager: !!user.isHrManager, active: user.active !== false,
+    shiftId: user.shiftId || '', canPostAnnouncements: !!user.canPostAnnouncements, isHrManager: !!user.isHrManager,
+    hrManagerScope: user.hrManagerScope || (user.isHrManager ? (user.branch || 'all') : ''), active: user.active !== false,
     dailyInterviews: (user.targets && user.targets.dailyInterviews) || 0, monthlyOnboarding: (user.targets && user.targets.monthlyOnboarding) || 0,
   });
   const [busy, setBusy] = useState(false);
@@ -1413,7 +1414,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
         branch: f.branch, department: f.department, joiningDate: f.joiningDate || null, birthday: f.birthday || null,
         maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
         reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
-        shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, isHrManager: f.isHrManager, active: f.active,
+        shiftId: f.shiftId || null, canPostAnnouncements: f.canPostAnnouncements, isHrManager: f.isHrManager, hrManagerScope: f.hrManagerScope || '', active: f.active,
         targets: isHrDept ? { dailyInterviews: Number(f.dailyInterviews) || 0, monthlyOnboarding: Number(f.monthlyOnboarding) || 0 } : undefined,
       }) });
       onSaved();
@@ -1443,7 +1444,32 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           {f.maritalStatus === 'married' && <label className="text-xs font-bold text-slate-500">Anniversary<input type="date" className={inputCls} value={f.anniversary || ''} onChange={(e) => set('anniversary', e.target.value)} /></label>}
           {isAdmin && isHrDept && <label className="text-xs font-bold text-slate-500">Daily interview target<input type="number" className={inputCls} value={f.dailyInterviews} onChange={(e) => set('dailyInterviews', e.target.value)} /></label>}
           {isAdmin && isHrDept && <label className="text-xs font-bold text-slate-500">Monthly hiring target<input type="number" className={inputCls} value={f.monthlyOnboarding} onChange={(e) => set('monthlyOnboarding', e.target.value)} /></label>}
-          {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 mt-1 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2"><input type="checkbox" checked={f.isHrManager} onChange={(e) => set('isHrManager', e.target.checked)} /> <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements for their branch ({f.branch || 'their branch'})</span></label>}
+          {isAdmin && (() => {
+            const scope = f.hrManagerScope || '';
+            const isMgr = !!scope || !!f.isHrManager;
+            const isAll = scope === 'all';
+            const ownBranch = f.branch || '';
+            return (
+              <div className="col-span-2 mt-1 rounded-lg bg-orange-50 border border-orange-100 px-3 py-2.5 space-y-2">
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={isMgr} onChange={(e) => { const on = e.target.checked; set('isHrManager', on); set('hrManagerScope', on ? (scope || ownBranch || 'all') : ''); }} />
+                  <span><b>HR Manager</b> — can manage employees, jobs, candidates & announcements</span>
+                </label>
+                {isMgr && (
+                  <div className="ml-6 space-y-1.5">
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input type="radio" name="hrmgr-scope-editmodal" checked={isAll} onChange={() => { set('hrManagerScope', 'all'); set('isHrManager', true); }} />
+                      <span>All branches <span className="text-xs text-slate-400">— complete access to all employees</span></span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input type="radio" name="hrmgr-scope-editmodal" checked={isMgr && !isAll} onChange={() => { set('hrManagerScope', ownBranch || 'all'); set('isHrManager', true); }} />
+                      <span>Own branch {ownBranch ? `(${ownBranch})` : ''} <span className="text-xs text-slate-400">— only their branch</span></span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {isAdmin && <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set('canPostAnnouncements', e.target.checked)} /> Can post announcements to the notice board</label>}
           <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} /> Active</label>
         </div>

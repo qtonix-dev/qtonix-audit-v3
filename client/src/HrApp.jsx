@@ -1689,12 +1689,14 @@ function TargetBar({ label, done, target, color }) {
 
 // --- Recruitment -----------------------------------------------------------
 
-function HrRecruitment({ isAdmin, me, intent }) {
+function HrRecruitment({ isAdmin, me, intent, hrView = true }) {
   const rNav = useNavigate();
   const rLoc = useLocation();
-  const RTABS = ['jobs', 'candidates', 'pipeline'];
+  // Regular employees (interview panelists) see ONLY the candidate list — no Job
+  // Post, no Pipeline. HR staff/admin see the full set.
+  const RTABS = hrView ? ['jobs', 'candidates', 'pipeline'] : ['candidates'];
   const urlTab = (() => { const seg = (rLoc.pathname.split('/')[3] || '').toLowerCase(); return RTABS.includes(seg) ? seg : null; })();
-  const [tab, setTabRaw] = useState(urlTab || (intent && intent.tab ? intent.tab : 'jobs'));
+  const [tab, setTabRaw] = useState(urlTab || (hrView && intent && intent.tab ? intent.tab : (hrView ? 'jobs' : 'candidates')));
   const setTab = (t) => { setTabRaw(t); const target = `/hr/recruitment/${t}`; if (rLoc.pathname !== target) rNav(target); };
   useEffect(() => { if (urlTab && urlTab !== tab) setTabRaw(urlTab); }, [urlTab]);
   // Ensure the URL reflects the initial tab (e.g. arriving via an intent).
@@ -1718,7 +1720,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
   const [candList, setCandList] = useState(intent && intent.candList ? intent.candList : 'active'); // 'active' | 'hired' | 'rejected'
   const [candWeekOnly, setCandWeekOnly] = useState(!!(intent && intent.weekOnly));
   const [jobScope, setJobScope] = useState(intent && intent.jobScope ? intent.jobScope : null); // 'mine' | 'all' | null
-  const tabs = [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']];
+  const tabs = hrView ? [['jobs', 'Job Post'], ['candidates', 'Candidate List'], ['pipeline', 'Pipeline']] : [['candidates', 'Candidate List']];
 
   const loadJobs = () => hrApi('/job-posts').then(setJobs).catch(() => {});
   useEffect(() => {
@@ -4970,24 +4972,42 @@ export default function HrApp() {
   const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
   const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = '/hr/login'; }); };
 
+  // For plain employees, whether they sit on any interview panel (drives whether
+  // the Recruitment tab — candidate-list only — is shown at all).
+  const [hasPanel, setHasPanel] = useState(false);
+  useEffect(() => {
+    if (!user) return;
+    const dept = /^(hr|human resource|human resources)$/i.test(String(user.department || '').trim());
+    const hrLike = user.isAdmin || ['hr', 'recruiter'].includes(user.type) || dept || user.isHrManager || user.hrManagerScope;
+    if (hrLike) { setHasPanel(false); return; }
+    hrApi('/my-interviews').then((r) => {
+      const jobs = (r && r.jobs) || [];
+      setHasPanel(jobs.some((j) => (j.candidates || []).length > 0));
+    }).catch(() => setHasPanel(false));
+  }, [user && user.id]);
+
   if (checking) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
   if (!user) return <HrLogin onSignIn={(u) => setUser(u)} />;
 
   const isAdmin = !!user.isAdmin;
-  // Schedulers (hr/recruiter/manager/tl) + admins get the full dashboard and
-  // the unread-mail box; pure interview panelists / plain employees do not.
-  const SCHEDULER_TYPES = ['hr', 'recruiter', 'manager', 'tl'];
-  const isScheduler = isAdmin || (user.type && SCHEDULER_TYPES.includes(user.type));
-  // Core HR (and everything under it) is for HR Managers (any scope) + admins.
-  const isHrManager = isAdmin || !!user.isHrManager || !!user.hrManagerScope || user.type === 'manager';
-  // Recruitment is for HR staff + admins.
-  const isHrStaff = isAdmin || ['hr', 'recruiter', 'manager', 'tl'].includes(user.type) || /^(hr|human resource|human resources)$/i.test(String(user.department || '').trim());
+  // True HR = the HR department, or the hr/recruiter roles. Generic "manager"/"tl"
+  // job types are NOT HR (e.g. a sales team lead) and must not get HR surfaces.
+  const isHrDept = /^(hr|human resource|human resources)$/i.test(String(user.department || '').trim());
+  const isHrStaff = isAdmin || ['hr', 'recruiter'].includes(user.type) || isHrDept;
+  // Core HR is for HR Managers (any scope) + admins. An HR Manager is someone
+  // explicitly flagged/scoped as one — not any generic "manager" job type.
+  const isHrManager = isAdmin || !!user.isHrManager || !!user.hrManagerScope;
+  // Schedulers (may schedule interviews) — hr/recruiter roles + admins. Used for
+  // the Email box only; does NOT by itself grant the HR dashboard or Recruitment.
+  const isScheduler = isAdmin || ['hr', 'recruiter'].includes(user.type) || isHrDept;
+  // Only HR-department staff (and admins) may create/manage job posts.
+  const canPostJobs = isAdmin || isHrDept || ['hr', 'recruiter'].includes(user.type);
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Task' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
-    ...(isHrStaff ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
+    ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
     ...(isHrManager ? [{ id: 'corehr', label: 'Core HR', children: [
       { id: 'corehr_attendance', label: 'Attendance' },
       { id: 'corehr_leave', label: 'Leave' },
@@ -5081,7 +5101,7 @@ export default function HrApp() {
         {effectiveView === 'corehr_expenses' && <CoreHrPlaceholder title="Expenses" />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
         {effectiveView === 'corehr_onboarding' && <CoreHrPlaceholder title="Onboarding" />}
-        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} />}
+        {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} hrView={isHrStaff} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
           <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: true, leadLinks: false }} />

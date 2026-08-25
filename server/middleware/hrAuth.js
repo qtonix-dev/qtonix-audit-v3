@@ -118,4 +118,13 @@ function canViewInternal(req) {
   return !!req.isHrAdmin || (req.hrType && SCHEDULER_TYPES.includes(req.hrType));
 }
 
-module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireAllBranchOrAdmin, canViewInternal, canManageBranch };
+// Job posts may only be created/managed by the HR department and admins — not
+// by generic managers/TLs from other departments.
+function requireJobPoster(req, res, next) {
+  if (req.isHrAdmin) return next();
+  const dept = req.hrUser && /^(hr|human resource|human resources)$/i.test(String(req.hrUser.department || '').trim());
+  if (dept || (req.hrType && ['hr', 'recruiter'].includes(req.hrType))) return next();
+  return res.status(403).json({ error: 'Only HR or an admin can manage job posts.' });
+}
+
+module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireAllBranchOrAdmin, requireJobPoster, canViewInternal, canManageBranch };

@@ -5,7 +5,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings } = require('../models');
-const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
+const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 
 const router = express.Router();
@@ -1608,7 +1608,7 @@ router.put('/job-posts/:id/round-panels', requireHrAccess, requireHrManager, asy
 
 // Create or update a draft (the builder auto-saves as the HR moves through steps).
 // Only admins and HR managers create job posts.
-router.post('/job-posts', requireHrAccess, requireScheduler, async (req, res, next) => {
+router.post('/job-posts', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'Job title is required.' });
@@ -1629,7 +1629,7 @@ router.post('/job-posts', requireHrAccess, requireScheduler, async (req, res, ne
   } catch (e) { next(e); }
 });
 
-router.put('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.put('/job-posts/:id', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -1655,7 +1655,7 @@ router.put('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res,
 });
 
 // Publish: mint a public token (if not already) and flip status to published.
-router.post('/job-posts/:id/publish', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/job-posts/:id/publish', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -1681,7 +1681,7 @@ router.post('/job-posts/:id/publish', requireHrAccess, requireHrManager, async (
   } catch (e) { next(e); }
 });
 
-router.post('/job-posts/:id/close', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/job-posts/:id/close', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -1692,7 +1692,7 @@ router.post('/job-posts/:id/close', requireHrAccess, requireHrManager, async (re
 
 // Toggle a published job between Live and Paused (paused hides the public form
 // but keeps the post and its candidates).
-router.post('/job-posts/:id/pause', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/job-posts/:id/pause', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     const row = await HrJobPost.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Job post not found.' });
@@ -1704,7 +1704,7 @@ router.post('/job-posts/:id/pause', requireHrAccess, requireHrManager, async (re
   } catch (e) { next(e); }
 });
 
-router.delete('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.delete('/job-posts/:id', requireHrAccess, requireJobPoster, async (req, res, next) => {
   try {
     if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can delete a job post.' });
     const row = await HrJobPost.findByPk(req.params.id);
@@ -1830,6 +1830,14 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     else if (rejectedMode === 'only') rows = rows.filter((r) => isRejected(r) && !isBlacklisted(r));
     else if (hiredMode === 'only') rows = rows.filter((r) => !isRejected(r) && !isBlacklisted(r) && isHired(r));
     else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !isRejected(r) && !isBlacklisted(r));
+    // Non-HR employees (plain panelists) may only see candidates whose interview
+    // panel they sit on — never the whole pipeline.
+    const isHrDeptActor = req.hrUser && /^(hr|human resource|human resources)$/i.test(String(req.hrUser.department || '').trim());
+    const isHrLikeActor = !!req.isHrAdmin || !!req.isHrManager || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)) || isHrDeptActor;
+    if (!isHrLikeActor && req.hrActor && req.hrActor.kind === 'hr') {
+      const myId = req.hrActor.id;
+      rows = rows.filter((r) => (r.interviews || []).some((iv) => (iv.panelists || []).some((p) => p.id === myId)));
+    }
     // Strip the big resumeText from list payloads.
     res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
