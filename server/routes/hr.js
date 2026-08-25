@@ -3347,28 +3347,69 @@ router.get('/targets-progress', requireHrAccess, async (req, res, next) => {
 router.get('/dashboard-stats', requireHrAccess, async (req, res, next) => {
   try {
     const jobs = await HrJobPost.findAll();
-    const openJobs = jobs.filter((j) => j.status === 'published').length;
+    // Open positions = ACTIVE (published) out of the TOTAL of all real listings
+    // (published + paused + draft + closed). Drafts count toward total; only
+    // published are "active/open".
+    const totalJobs = jobs.length;
+    const activeJobs = jobs.filter((j) => j.status === 'published').length;
+    const openJobs = activeJobs; // kept for back-compat (numeric)
+
     const cands = await HrCandidate.findAll();
     const now = Date.now();
     const weekAgo = now - 7 * 864e5;
-    const applicationsThisWeek = cands.filter((c) => new Date(c.createdAt).getTime() >= weekAgo).length;
-    // Candidates per stage (per job stage id → label handled client-side; here counts by stage id).
+
+    // Total applications = every candidate/application on the platform.
+    const totalApplications = cands.length;
+
+    // Applications this week = added to the platform in the last 7 days.
+    const applicationsThisWeek = cands.filter((c) => c.createdAt && new Date(c.createdAt).getTime() >= weekAgo).length;
+
+    // Classification helpers.
+    const REJECTED_STAGES = new Set(['rejected', 'reject', 'declined', 'disqualified']);
+    const isRejected = (c) => !!c.rejected || REJECTED_STAGES.has(String(c.stage || '').toLowerCase());
+    const isHired = (c) => isHiredCandidate(c);
+    const isCold = (c) => !!c.cold;
+
+    // Active candidates = in an active stage, EXCLUDING hired, rejected and cold.
+    const activeCandidates = cands.filter((c) => !isHired(c) && !isRejected(c) && !isCold(c)).length;
+
+    // Candidates per stage (active only) for the funnel.
     const byStage = {};
-    cands.forEach((c) => { if (!c.rejected) byStage[c.stage] = (byStage[c.stage] || 0) + 1; });
-    // Time-to-hire: avg days from created → offer accepted, for accepted offers.
+    cands.forEach((c) => { if (!isHired(c) && !isRejected(c) && !isCold(c)) byStage[c.stage] = (byStage[c.stage] || 0) + 1; });
+
+    // Avg time-to-hire: days from application (createdAt) → when they became
+    // hired. Prefer the timeline entry that moved them to a hired stage; fall
+    // back to the offer's accepted/joining date; then offer letter sent date.
     const hireDays = [];
     cands.forEach((c) => {
-      if (c.offer && c.offer.status === 'accepted') {
-        const acc = (c.offer.salaryDiscussions || []); // fallback
-        const created = new Date(c.createdAt).getTime();
-        const done = c.offer.offerLetter && c.offer.offerLetter.sentAt ? new Date(c.offer.offerLetter.sentAt).getTime() : now;
-        hireDays.push(Math.max(0, Math.round((done - created) / 864e5)));
+      if (!isHired(c) || !c.createdAt) return;
+      const created = new Date(c.createdAt).getTime();
+      let hiredAt = null;
+      // 1) timeline move into a hired stage
+      const tl = Array.isArray(c.timeline) ? c.timeline : [];
+      for (const ev of tl) {
+        const txt = String((ev && ev.text) || '').toLowerCase();
+        if (/\b(hired|onboarded|joined|selected)\b/.test(txt) && ev.at) { hiredAt = new Date(ev.at).getTime(); break; }
       }
+      // 2) offer joining/accepted date
+      if (!hiredAt && c.offer) {
+        if (c.offer.joiningDate) hiredAt = new Date(c.offer.joiningDate).getTime();
+        else if (c.offer.offerLetter && c.offer.offerLetter.sentAt) hiredAt = new Date(c.offer.offerLetter.sentAt).getTime();
+      }
+      if (hiredAt && hiredAt >= created) hireDays.push(Math.round((hiredAt - created) / 864e5));
     });
     const avgTimeToHire = hireDays.length ? Math.round(hireDays.reduce((a, b) => a + b, 0) / hireDays.length) : null;
-    const totalActive = cands.filter((c) => !c.rejected).length;
-    const hired = cands.filter(isHiredCandidate).length;
-    res.json({ openJobs, applicationsThisWeek, byStage, avgTimeToHire, totalActive, hired, totalCandidates: cands.length });
+
+    const hired = cands.filter(isHired).length;
+    res.json({
+      // Open positions as a fraction (active / total).
+      openJobs, activeJobs, totalJobs,
+      totalApplications,
+      totalActive: activeCandidates,
+      applicationsThisWeek,
+      avgTimeToHire,
+      byStage, hired, totalCandidates: cands.length,
+    });
   } catch (e) { next(e); }
 });
 

@@ -1078,7 +1078,8 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const stageRows = Object.entries(byStage).map(([id, n]) => ({ id, label: stageLabels[id] || id, n })).sort((a, b) => b.n - a.n);
   const SRC = { manual: 'Manual', linkedin: 'LinkedIn', naukri: 'Naukri', indeed: 'Indeed', referral: 'Referral', careers_page: 'Careers', public_form: 'Careers' };
   const cards = [
-    ['Open positions', stats ? stats.openJobs : m.openJobs, '#2563EB', 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z', { tab: 'jobs', jobScope: 'mine' }],
+    ['Open positions', stats ? `${stats.activeJobs ?? stats.openJobs}/${stats.totalJobs ?? '—'}` : (m.openJobs || '—'), '#2563EB', 'M20 7h-4V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z', { tab: 'jobs', jobScope: 'mine' }],
+    ['Total applications', stats ? stats.totalApplications : '—', '#0EA5E9', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8', { tab: 'candidates', candScope: 'all' }],
     ['Active candidates', stats ? stats.totalActive : m.candidates, '#FF6A00', 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', { tab: 'candidates', candScope: 'all' }],
     ['Applications this week', stats ? stats.applicationsThisWeek : '—', '#8b5cf6', 'M22 11.08V12a10 10 0 1 1-5.93-9.14 M22 4L12 14.01l-3-3', { tab: 'candidates', candScope: 'all', weekOnly: true }],
     ['Avg time-to-hire', stats && stats.avgTimeToHire != null ? `${stats.avgTimeToHire}d` : '—', '#16A34A', 'M12 8v4l3 3 M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', null],
@@ -1211,7 +1212,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
       )}
 
       {/* Accent stat cards, CRM-style */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map(([label, val, color, icon, navTarget]) => {
           const clickable = navTarget && onNav;
           return (
