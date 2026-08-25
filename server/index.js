@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v292';
+const APP_VERSION = 'v293';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -602,6 +602,10 @@ connectWithRetry()
       // encouragement nudges) — sent from the admin mailbox.
       try { require('./jobs/crmReminders').start(require('./models')); }
       catch (e) { console.error('[crm-mail] not started:', e.message); }
+      // HR celebration emails (birthday, work anniversary, new-joinee welcome) —
+      // founder-signed, sent from adam@qtonix.com.
+      try { require('./jobs/hrCelebrations').start(require('./models')); }
+      catch (e) { console.error('[hr-celebration] not started:', e.message); }
     });
   })
   .catch((e) => {

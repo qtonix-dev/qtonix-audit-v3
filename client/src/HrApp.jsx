@@ -1621,6 +1621,54 @@ function MyAttendanceCalendar({ onClose }) {
   );
 }
 
+// Auto-sliding celebration banner on the HR dashboard — birthdays, work
+// anniversaries and new joinees for today. Mirrors the Sales CRM slider:
+// advances every 10s with dot navigation.
+function HrCelebrationSlider({ items }) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    if (!items || items.length <= 1) return;
+    const t = setInterval(() => setIdx((n) => (n + 1) % items.length), 10000);
+    return () => clearInterval(t);
+  }, [items && items.length]);
+  useEffect(() => { if (items && idx >= items.length) setIdx(0); }, [items, idx]);
+  if (!items || items.length === 0) return null;
+  const c = items[Math.min(idx, items.length - 1)];
+  const first = String(c.name || '').split(' ')[0];
+  const initials = String(c.name || '?').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+  const cfg = c.type === 'birthday'
+    ? { emoji: '🎂', msg: `Happy Birthday, ${first}!`, sub: `${c.name} · Wishing you a wonderful day!`, grad: 'linear-gradient(90deg,#FDF2F8,#FFF7ED)', border: '#FBCFE8', accent: '#DB2777' }
+    : c.type === 'work'
+    ? { emoji: '🏆', msg: `Happy ${c.yearsLabel || ''} Work Anniversary, ${first}!`, sub: `${c.name} · Thank you for ${c.years ? `${c.years} year${c.years === 1 ? '' : 's'} of ` : ''}being with us!`, grad: 'linear-gradient(90deg,#FFF7ED,#FEF3C7)', border: '#FDE68A', accent: '#B45309' }
+    : c.type === 'joinee'
+    ? { emoji: '👋', msg: `Welcome, ${first}!`, sub: `${c.name}${c.designation ? ` · ${c.designation}` : ''} just joined the team`, grad: 'linear-gradient(90deg,#EFF6FF,#F0FDFA)', border: '#BFDBFE', accent: '#1D4ED8' }
+    : { emoji: '💍', msg: `Happy Anniversary, ${first}!`, sub: `${c.name} · Congratulations on your special day!`, grad: 'linear-gradient(90deg,#FDF2F8,#FFF7ED)', border: '#FBCFE8', accent: '#DB2777' };
+  return (
+    <div>
+      <div className="rounded-2xl overflow-hidden shadow-sm border" style={{ borderColor: cfg.border }}>
+        <div className="px-5 py-4 flex items-center gap-4" style={{ background: cfg.grad }}>
+          <div className="text-4xl" style={{ animation: 'bounce 1.5s infinite' }}>{cfg.emoji}</div>
+          {c.avatar
+            ? <img src={c.avatar} alt={c.name} className="w-14 h-14 rounded-full object-cover border-2 border-white shadow" />
+            : <div className="w-14 h-14 rounded-full flex items-center justify-center text-white font-extrabold text-lg shadow" style={{ background: cfg.accent }}>{initials}</div>}
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-extrabold text-[#050A1F]">{cfg.msg}</div>
+            <div className="text-[12px] font-semibold" style={{ color: cfg.accent }}>{cfg.sub}</div>
+          </div>
+        </div>
+      </div>
+      {items.length > 1 && (
+        <div className="flex items-center justify-center gap-1.5 mt-2">
+          {items.map((s, i) => (
+            <button key={`${s.id}-${s.type}-${i}`} onClick={() => setIdx(i)} aria-label={`Slide ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5' : 'w-1.5 bg-slate-300 hover:bg-slate-400'}`} style={i === idx ? { background: '#FF6A00' } : {}} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
@@ -1677,6 +1725,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const softTint = (hex) => `${hex}0F`;
   return (
     <div className="space-y-5">
+      {celebrations.length > 0 && <HrCelebrationSlider items={celebrations} companyLogo={user && user.companyLogo} />}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>

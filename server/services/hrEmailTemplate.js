@@ -43,6 +43,7 @@ function shell(opts) {
     kicker = 'Qtonix Recruitment', headline = '', subhead = '',
     greetingName = '', introHtml = '', details = [], ctaLabel, ctaUrl, ctaNote = '',
     outroHtml = '', signature = {}, rawBody = null,
+    footerLine = 'This message was sent by the Qtonix recruitment team.',
   } = opts;
 
   const detailRows = details.map((d) => detailRow(d.label, d.value)).join('');
@@ -108,7 +109,7 @@ function shell(opts) {
 
   <tr><td align="center" style="padding:24px 20px 6px;">
     <div style="font-size:13px;font-weight:700;color:${NAVY};">Qtonix</div>
-    <div style="font-size:12px;color:#95A0B8;margin-top:6px;line-height:1.6;">This message was sent by the Qtonix recruitment team.<br>&copy; ${new Date().getFullYear()} Qtonix. All rights reserved.</div>
+    <div style="font-size:12px;color:#95A0B8;margin-top:6px;line-height:1.6;">${esc(footerLine)}<br>&copy; ${new Date().getFullYear()} Qtonix. All rights reserved.</div>
   </td></tr>
 
 </table>
@@ -345,6 +346,62 @@ function taskAdditionalInfoRequest({ candidateName, role, messageHtml, deadlineT
   });
 }
 
+// ---- Employee celebration emails (auto-sent, founder-signed) --------------
+// All three share the founder signature + a warm, non-recruitment footer line.
+const FOUNDER_SIG = { name: 'Sandeep Kumar Swain', title: 'Founder / Director \u00b7 Qtonix', email: 'adam@qtonix.com' };
+const CELEBRATION_FOOTER = 'Sent with warm wishes from Qtonix.';
+
+// Birthday wish — sent on the employee's birthday.
+function birthdayWish({ employeeName }) {
+  return shell({
+    kicker: 'A note from the Founder',
+    headline: `Happy Birthday, ${esc(firstName(employeeName))}! \uD83C\uDF82`,
+    subhead: 'Wishing you a wonderful year ahead.',
+    greetingName: employeeName,
+    introHtml: `On behalf of everyone at Qtonix, I want to wish you a very happy birthday. Days like today are a reminder of how lucky we are to have you on the team \u2014 your energy and dedication make a real difference.<br><br>I hope the year ahead brings you good health, growth, and plenty of moments worth celebrating. Take today to relax and enjoy yourself \u2014 you\u2019ve earned it.<br><br>Here\u2019s to you!`,
+    signature: FOUNDER_SIG,
+    footerLine: CELEBRATION_FOOTER,
+  });
+}
+
+// Work anniversary — sent on the anniversary of the joining date (>= 1 year).
+function workAnniversary({ employeeName, years, joinedText, department, branch }) {
+  const yLabel = years === 1 ? '1st' : years === 2 ? '2nd' : years === 3 ? '3rd' : `${years}th`;
+  const details = [
+    joinedText ? { label: 'Joined Qtonix', value: esc(joinedText) } : null,
+    { label: 'Years with us', value: esc(`${years} year${years === 1 ? '' : 's'}`) },
+    (department || branch) ? { label: 'Team', value: esc([department, branch].filter(Boolean).join(' \u00b7 ')) } : null,
+  ].filter(Boolean);
+  return shell({
+    kicker: 'A note from the Founder',
+    headline: `Happy ${yLabel} Work Anniversary! \uD83C\uDFC6`,
+    subhead: `${years} year${years === 1 ? '' : 's'} of making Qtonix better.`,
+    greetingName: employeeName,
+    introHtml: `Congratulations on completing <strong>${years} year${years === 1 ? '' : 's'}</strong> with Qtonix! It\u2019s a milestone worth pausing to celebrate.<br><br>Since the day you joined, you\u2019ve grown into someone the team leans on, and your contribution has shaped where we are today. Thank you for your commitment, your consistency, and the spirit you bring to work every day.<br><br>I\u2019m grateful to have you with us, and I\u2019m looking forward to all that the years ahead will bring.`,
+    details,
+    signature: FOUNDER_SIG,
+    footerLine: CELEBRATION_FOOTER,
+  });
+}
+
+// New-joinee welcome — sent when a new employee joins.
+function welcomeJoinee({ employeeName, designation, department, branch }) {
+  const details = [
+    designation ? { label: 'Your role', value: esc(designation) } : null,
+    (department || branch) ? { label: 'Team', value: esc([department, branch].filter(Boolean).join(' \u00b7 ')) } : null,
+  ].filter(Boolean);
+  return shell({
+    kicker: 'A note from the Founder',
+    headline: `Welcome to Qtonix, ${esc(firstName(employeeName))}! \uD83D\uDC4B`,
+    subhead: 'We\u2019re glad to have you on board.',
+    greetingName: employeeName,
+    introHtml: `A very warm welcome to the Qtonix family! I\u2019m thrilled you\u2019ve chosen to build the next chapter of your career with us.<br><br>Every person here plays a part in what we\u2019re building, and I have no doubt you\u2019ll bring something valuable to the team. In your first few days, take the time to settle in, meet your colleagues, and ask plenty of questions \u2014 everyone here is happy to help.<br><br>We\u2019re excited to see all that you\u2019ll achieve. Welcome aboard!`,
+    details,
+    signature: FOUNDER_SIG,
+    footerLine: CELEBRATION_FOOTER,
+  });
+}
+
 module.exports = {
   taskReceived, taskAdditionalInfoRequest,
   shortlistedEmail,
@@ -353,4 +410,5 @@ module.exports = {
   rejectionEmail,
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,
+  birthdayWish, workAnniversary, welcomeJoinee,
 };

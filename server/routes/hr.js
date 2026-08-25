@@ -4534,16 +4534,17 @@ router.post('/missed-commitments/:candidateId/dismiss', requireHrAccess, async (
 router.get('/celebrations', requireHrAccess, async (req, res, next) => {
   try {
     const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'birthday', 'joiningDate', 'anniversary', 'designation'] });
-    const now = new Date();
-    const mmdd = (d) => { if (!d) return null; const x = new Date(d); return `${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
-    const today = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const now = new Date(Date.now() + (5 * 60 + 30) * 60000); // IST
+    const mmdd = (d) => { if (!d) return null; const s = String(d).slice(0, 10); return `${s.slice(5, 7)}-${s.slice(8, 10)}`; };
+    const today = `${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
     const ordinal = (n) => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
     const items = [];
     users.forEach((u) => {
       if (mmdd(u.birthday) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'birthday' });
       if (mmdd(u.joiningDate) === today) {
-        const years = u.joiningDate ? (now.getFullYear() - new Date(u.joiningDate).getFullYear()) : 0;
+        const years = u.joiningDate ? (now.getUTCFullYear() - new Date(String(u.joiningDate).slice(0, 10) + 'T00:00:00').getUTCFullYear()) : 0;
         if (years > 0) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'work', years, yearsLabel: ordinal(years) });
+        else items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'joinee', designation: u.designation });
       }
       if (mmdd(u.anniversary) === today) items.push({ id: u.id, name: u.name, avatar: u.avatar, type: 'anniversary' });
     });
