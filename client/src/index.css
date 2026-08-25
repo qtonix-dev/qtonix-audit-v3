@@ -6,22 +6,23 @@ body { margin: 0; font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -a
 
 /* Rich-text content (notes, lead descriptions, job descriptions). Tailwind's
    preflight strips list + heading styling, so restore it inside rich-text blocks. */
-.rich-text { line-height: 1.7; }
-.rich-text h1 { font-size: 1.25rem; font-weight: 800; color: #050A1F; margin: 1.25rem 0 0.5rem; line-height: 1.3; }
-.rich-text h2 { font-size: 1.1rem; font-weight: 800; color: #050A1F; margin: 1.15rem 0 0.5rem; line-height: 1.3; }
-.rich-text h3 { font-size: 1rem; font-weight: 800; color: #050A1F; margin: 1.1rem 0 0.4rem; line-height: 1.3; }
-.rich-text h4 { font-size: 0.95rem; font-weight: 700; color: #050A1F; margin: 1rem 0 0.35rem; }
-.rich-text h1:first-child, .rich-text h2:first-child, .rich-text h3:first-child { margin-top: 0; }
-.rich-text ul { list-style: disc; padding-left: 1.5rem; margin: 0.5rem 0 0.9rem; }
-.rich-text ol { list-style: decimal; padding-left: 1.5rem; margin: 0.5rem 0 0.9rem; }
-.rich-text li { margin: 0.3rem 0; padding-left: 0.15rem; }
-.rich-text li::marker { color: #FF6A00; }
-.rich-text p { margin: 0 0 0.9em; }
+.rich-text, .task-detail-html { line-height: 1.7; }
+.rich-text h1, .task-detail-html h1 { font-size: 1.25rem; font-weight: 800; color: #050A1F; margin: 1.25rem 0 0.5rem; line-height: 1.3; }
+.rich-text h2, .task-detail-html h2 { font-size: 1.1rem; font-weight: 800; color: #050A1F; margin: 1.15rem 0 0.5rem; line-height: 1.3; }
+.rich-text h3, .task-detail-html h3 { font-size: 1rem; font-weight: 800; color: #050A1F; margin: 1.1rem 0 0.4rem; line-height: 1.3; }
+.rich-text h4, .task-detail-html h4 { font-size: 0.95rem; font-weight: 700; color: #050A1F; margin: 1rem 0 0.35rem; }
+.rich-text h1:first-child, .rich-text h2:first-child, .rich-text h3:first-child, .task-detail-html > :first-child { margin-top: 0; }
+.rich-text ul, .task-detail-html ul { list-style: disc; padding-left: 1.5rem; margin: 0.5rem 0 0.9rem; }
+.rich-text ol, .task-detail-html ol { list-style: decimal; padding-left: 1.5rem; margin: 0.5rem 0 0.9rem; }
+.rich-text li, .task-detail-html li { margin: 0.3rem 0; padding-left: 0.15rem; }
+.rich-text li::marker, .task-detail-html li::marker { color: #FF6A00; }
+.rich-text p, .task-detail-html p { margin: 0 0 0.9em; }
+.task-detail-html p:last-child { margin-bottom: 0; }
 .rich-text blockquote { border-left: 3px solid #e2e8f0; margin: 0.5rem 0; padding-left: 0.75rem; color: #475569; }
 .rich-text b, .rich-text strong { font-weight: 700; }
 .rich-text i, .rich-text em { font-style: italic; }
 .rich-text u { text-decoration: underline; }
-.rich-text a { color: #2563EB; text-decoration: underline; }
+.rich-text a, .task-detail-html a { color: #2563EB; text-decoration: underline; }
 
 /* Motivator TV announcement ticker. */
 @keyframes tv-ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }

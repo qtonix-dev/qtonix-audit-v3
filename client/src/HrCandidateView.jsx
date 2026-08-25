@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { hrApi, fileToBase64, ResumeMatchBadge } from './HrApp.jsx';
 import { titleCase } from './HrParts.jsx';
-import { MailEditor, ChipInput } from './Leads.jsx';
+import { MailEditor, ChipInput, RichText } from './Leads.jsx';
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
 const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -984,11 +984,18 @@ function TaskSubmissions({ c, reload }) {
   };
   const copyLink = (t) => { const url = `${window.location.origin}/task/${t.token}`; navigator.clipboard?.writeText(url); };
   const openEdit = (t) => { setEditFor(t.id); setEditTitle(t.title || ''); setEditDetails(t.details || ''); setErr(''); };
+  const deleteTask = async (t) => {
+    if (!window.confirm(`Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.`)) return;
+    setBusyId(t.id);
+    try { await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'DELETE' }); reload(); }
+    catch (e) { alert(e.message); } finally { setBusyId(null); }
+  };
+  const editHtmlEmpty = (h) => !h || !String(h).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
   const saveEdit = async (t) => {
-    if (!editDetails.trim()) { setErr('Please enter the task details.'); return; }
+    if (editHtmlEmpty(editDetails)) { setErr('Please enter the task details.'); return; }
     setBusy(true); setErr('');
     try {
-      const r = await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'PATCH', body: JSON.stringify({ title: editTitle.trim(), details: editDetails.trim(), notify: true }) });
+      const r = await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'PATCH', body: JSON.stringify({ title: editTitle.trim(), details: editDetails, notify: true }) });
       setEditFor(null);
       reload();
       if (r && r.emailed === false) alert('Task updated. (The correction email could not be sent — check the recruitment mailbox connection.)');
@@ -1034,6 +1041,7 @@ function TaskSubmissions({ c, reload }) {
                 {!submitted && !infoRequested && editFor !== t.id && <button onClick={() => openEdit(t)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-600">✎ Edit</button>}
                 {(!submitted || infoRequested) && <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-500">Copy link</button>}
                 {expired && <button onClick={() => reactivate(t)} disabled={busyId === t.id} className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busyId === t.id ? 'Reactivating…' : '↻ Reactivate (48h)'}</button>}
+                <button onClick={() => deleteTask(t)} disabled={busyId === t.id} className="rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-bold text-red-500 hover:bg-red-50 disabled:opacity-50" title="Delete task">🗑 Delete</button>
               </div>
             </div>
             {editFor === t.id ? (
@@ -1042,14 +1050,14 @@ function TaskSubmissions({ c, reload }) {
                 <div className="text-[11px] font-bold text-slate-500 mb-1">Task title</div>
                 <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" placeholder="Task title" />
                 <div className="text-[11px] font-bold text-slate-500 mb-1">Task details</div>
-                <textarea rows={4} value={editDetails} onChange={(e) => setEditDetails(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Describe the task…" />
+                <RichText value={editDetails} onChange={setEditDetails} minHeight={120} placeholder="Describe the task…" />
                 <div className="text-[11px] text-amber-700 mt-2">Saving will re-open the 48-hour window and email the candidate a correction (“ignore the previous email”) with the updated details.</div>
                 <div className="flex justify-end gap-2 mt-2">
                   <button onClick={() => setEditFor(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-bold text-slate-600">Cancel</button>
                   <button onClick={() => saveEdit(t)} disabled={busy} className="rounded-lg px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save & notify'}</button>
                 </div>
               </div>
-            ) : (t.details && <div className="px-4 py-2.5 text-[13px] text-slate-600 whitespace-pre-wrap border-b border-slate-50">{t.details}</div>)}
+            ) : (t.details && <div className="px-4 py-2.5 text-[13px] text-slate-600 border-b border-slate-50 task-detail-html" dangerouslySetInnerHTML={{ __html: t.details }} />)}
             {infoRequested && t.infoRequest && (
               <div className="px-4 py-2.5 bg-purple-50/50 border-b border-purple-100 text-[12px] text-purple-800">
                 <span className="font-bold">Additional info requested</span> by {t.infoRequest.by}: {t.infoRequest.message}
@@ -2046,8 +2054,9 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
   const shown = emps.filter((e) => !dept || e.department === dept);
   const toggle = (id) => { setPicked((pp) => pp.includes(id) ? pp.filter((x) => x !== id) : [...pp, id]); };
   const fmtT = (iso) => { try { return new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch { return iso; } }
+  const htmlEmpty = (h) => !h || !String(h).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
   const send = async () => {
-    if (!details.trim()) { setErr('Please enter the task details.'); return; }
+    if (htmlEmpty(details)) { setErr('Please enter the task details.'); return; }
     setBusy(true); setErr('');
     try {
       const r = await hrApi(`/candidates/${candidate.id}/assign-task`, { method: 'POST', body: JSON.stringify({ title, details, assignedIds: picked }) });
@@ -2063,6 +2072,15 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
     } catch (e) { setErr(e.message); } finally { setBusyTaskId(null); }
   };
   const copyLink = (t) => { try { navigator.clipboard.writeText(`${window.location.origin}/task/${t.token}`); } catch {} };
+  const deleteTask = async (t) => {
+    if (!window.confirm(`Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.`)) return;
+    setBusyTaskId(t.id); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidate.id}/task/${t.id}`, { method: 'DELETE' });
+      setTasks(Array.isArray(r.tasks) ? r.tasks : tasks.filter((x) => x.id !== t.id));
+      onDone && onDone();
+    } catch (e) { setErr(e.message); } finally { setBusyTaskId(null); }
+  };
   const now = Date.now();
 
   return (
@@ -2099,12 +2117,13 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
                         {t.assignedNames && t.assignedNames.length > 0 && <div className="text-[11px] text-slate-400">Reviewers: {t.assignedNames.join(', ')}</div>}
                       </div>
                     </div>
-                    {t.details && <div className="text-[12px] text-slate-600 mt-2 whitespace-pre-wrap line-clamp-3">{t.details}</div>}
+                    {t.details && <div className="text-[12px] text-slate-600 mt-2 line-clamp-3">{String(t.details).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()}</div>}
                     {!submitted && (
                       <div className="mt-2 flex items-center gap-2 flex-wrap">
                         <div className="flex-1 min-w-[180px] text-[11px] font-mono text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 truncate">{`${window.location.origin}/task/${t.token}`}</div>
                         <button onClick={() => copyLink(t)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Copy link</button>
                         {expired && <button onClick={() => reactivate(t)} disabled={busyTaskId === t.id} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busyTaskId === t.id ? 'Reactivating…' : '↻ Reactivate (48h)'}</button>}
+                        <button onClick={() => deleteTask(t)} disabled={busyTaskId === t.id} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 disabled:opacity-50">🗑 Delete</button>
                       </div>
                     )}
                     {submitted && (t.files || []).length > 0 && <div className="text-[11px] text-green-700 font-semibold mt-2">✅ {t.files.length} file{t.files.length === 1 ? '' : 's'} submitted — see the Files tab.</div>}
@@ -2120,7 +2139,7 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
           <>
           <div className="space-y-3">
             <div><Lbl>Task title (optional)</Lbl><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Build a responsive dashboard component" /></div>
-            <div><Lbl>Task details</Lbl><textarea className={inp} rows={5} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="Describe the task, what to build, and what to submit…" /></div>
+            <div><Lbl>Task details</Lbl><RichText value={details} onChange={setDetails} minHeight={140} placeholder="Describe the task, what to build, and what to submit…" /></div>
             <div>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold text-slate-500">Assign employees {picked.length ? `(${picked.length})` : ''}</div>
@@ -2144,7 +2163,7 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
-            <button onClick={send} disabled={busy || !details.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send task'}</button>
+            <button onClick={send} disabled={busy || htmlEmpty(details)} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send task'}</button>
           </div>
           </>
           )}

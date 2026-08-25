@@ -2294,6 +2294,36 @@ async function resolveAssignees(ids) {
 
 const TASK_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
 
+// Lightweight allowlist sanitizer for rich-text task details. Keeps basic
+// formatting tags (produced by the editor) and strips anything unsafe —
+// scripts, styles, event handlers, and javascript: URLs — before the HTML is
+// stored, shown on the public upload page, or embedded in candidate emails.
+function sanitizeTaskHtml(input) {
+  let html = String(input || '');
+  if (!html) return '';
+  // Drop entire dangerous elements with their content.
+  html = html.replace(/<\s*(script|style|iframe|object|embed|link|meta)[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  html = html.replace(/<\s*(script|style|iframe|object|embed|link|meta)[^>]*>/gi, '');
+  const ALLOWED = new Set(['p', 'br', 'b', 'strong', 'i', 'em', 'u', 's', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'blockquote', 'span', 'div']);
+  html = html.replace(/<\/?([a-z0-9]+)([^>]*)>/gi, (m, tag, attrs) => {
+    const t = String(tag).toLowerCase();
+    if (!ALLOWED.has(t)) return '';
+    const closing = /^<\//.test(m);
+    if (closing) return `</${t}>`;
+    // Only keep href on <a>, and only http(s)/mailto.
+    let keep = '';
+    if (t === 'a') {
+      const hrefMatch = attrs.match(/href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      const href = hrefMatch ? (hrefMatch[2] || hrefMatch[3] || hrefMatch[4] || '') : '';
+      if (/^(https?:|mailto:)/i.test(href)) keep = ` href="${href.replace(/"/g, '&quot;')}" target="_blank" rel="noopener noreferrer"`;
+    }
+    return `<${t}${keep}>`;
+  });
+  // Strip any leftover on* handlers or javascript: that slipped through.
+  html = html.replace(/javascript:/gi, '');
+  return html.slice(0, 8000);
+}
+
 // Assign an assessment task to a candidate: create the task, email the candidate
 // a link to the public upload page (active 48h). HR, an assigned employee, or an
 // admin may send. Old tasks/files are preserved — a re-assign adds a new task.
@@ -2303,7 +2333,8 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     const b = req.body || {};
     const details = String(b.details || '').trim();
-    if (!details) return res.status(400).json({ error: 'Please enter the task details.' });
+    if (!details || !details.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()) return res.status(400).json({ error: 'Please enter the task details.' });
+    const detailsHtml = sanitizeTaskHtml(details);
     const assignees = await resolveAssignees(b.assignedIds || []);
     // Permission: admins and HR schedulers can always send. A non-scheduler
     // employee may send only if they're one of the assignees.
@@ -2316,7 +2347,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
     const task = {
       id: `tk${now}`,
       title: String(b.title || '').slice(0, 160),
-      details: details.slice(0, 4000),
+      details: detailsHtml.slice(0, 8000),
       assignedIds: assignees.map((a) => a.id),
       assignedNames: assignees.map((a) => a.name),
       token: crypto.randomBytes(12).toString('hex'),
@@ -2352,7 +2383,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
           const deadlineText = new Date(task.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskAssignment({
             candidateName: row.name, role: job ? job.title : '', taskTitle: task.title,
-            taskDetailsHtml: task.details.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            taskDetailsHtml: task.details,
             deadlineText: `${deadlineText} IST`, uploadUrl, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
@@ -2362,6 +2393,24 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
       } catch (e) { console.error('[task] assign email failed:', e.message); }
     }
     res.json({ ...row.toJSON(), emailed, taskId: task.id });
+  } catch (e) { next(e); }
+});
+
+// Delete an assessment task from a candidate. HR/admin only.
+router.delete('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin && !canViewInternal(req)) return res.status(403).json({ error: 'Only HR or an admin can delete a task.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    const removed = tasks[idx];
+    tasks.splice(idx, 1);
+    row.tasks = tasks; row.changed('tasks', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} deleted the assessment task${removed.title ? ` (“${removed.title}”)` : ''}.`, by: req.hrActor.name });
+    await row.save();
+    res.json({ ...row.toJSON(), deletedTaskId: req.params.taskId });
   } catch (e) { next(e); }
 });
 
@@ -2380,7 +2429,9 @@ router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, n
     const b = req.body || {};
     const prev = tasks[idx];
     const newTitle = b.title !== undefined ? String(b.title).slice(0, 160) : prev.title;
-    const newDetails = b.details !== undefined ? String(b.details).slice(0, 4000) : prev.details;
+    const rawDetails = b.details !== undefined ? String(b.details) : prev.details;
+    const newDetails = b.details !== undefined ? sanitizeTaskHtml(rawDetails) : prev.details;
+    if (b.details !== undefined && !newDetails.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()) return res.status(400).json({ error: 'Please enter the task details.' });
     const changed = newTitle !== prev.title || newDetails !== prev.details;
     if (!changed) return res.status(400).json({ error: 'No changes to the task details.' });
     const now = Date.now();
@@ -2407,7 +2458,7 @@ router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, n
           const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskUpdated({
             candidateName: row.name, role: job ? job.title : '', taskTitle: t.title,
-            taskDetailsHtml: String(t.details || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            taskDetailsHtml: t.details,
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
@@ -2454,7 +2505,7 @@ router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (r
           const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskAssignment({
             candidateName: row.name, role: job ? job.title : '', taskTitle: t.title,
-            taskDetailsHtml: String(t.details || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            taskDetailsHtml: t.details,
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
