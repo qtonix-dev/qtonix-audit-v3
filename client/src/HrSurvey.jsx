@@ -30,7 +30,7 @@ function IconBtn({ title, onClick, children, color = 'slate', danger }) {
 }
 
 // ============================ ADMIN ============================
-export default function HrSurveyAdmin() {
+export default function HrSurveyAdmin({ isAdmin = false } = {}) {
   const [surveys, setSurveys] = useState([]);
   const [err, setErr] = useState('');
   const [detailId, setDetailId] = useState(null); // survey being viewed in detail
@@ -42,7 +42,7 @@ export default function HrSurveyAdmin() {
 
   if (detailId) {
     const s = surveys.find((x) => x._id === detailId);
-    return <SurveyDetail survey={s} surveyId={detailId} onBack={() => { setDetailId(null); load(); }} reload={load} />;
+    return <SurveyDetail survey={s} surveyId={detailId} isAdmin={isAdmin} onBack={() => { setDetailId(null); load(); }} reload={load} />;
   }
   return (
     <div>
@@ -262,7 +262,7 @@ function SurveyCreateModal({ survey, reload, setErr, onClose }) {
 
 // Survey detail page — lead-detail style. Shows results for a chosen period,
 // AI analysis, and a PDF download.
-function SurveyDetail({ survey, surveyId, onBack, reload }) {
+function SurveyDetail({ survey, surveyId, onBack, reload, isAdmin = false }) {
   const [periods, setPeriods] = useState([]);
   const [period, setPeriod] = useState('');
   const [data, setData] = useState(null);
@@ -306,7 +306,7 @@ function SurveyDetail({ survey, surveyId, onBack, reload }) {
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           {periods.length > 0 && <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold">{periods.map((p) => <option key={p} value={p}>{p}</option>)}</select>}
           <button onClick={analyze} disabled={analyzing || !data || data.total === 0} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#050A1F' }}>{analyzing ? 'Analysing…' : '✨ Analyse with AI'}</button>
-          <button onClick={preview} disabled={!data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />Preview report</button>
+          {isAdmin && <button onClick={preview} disabled={!data || data.total === 0} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}><IconPdf size={15} />Preview report</button>}
         </div>
       </div>
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}

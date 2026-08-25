@@ -42,22 +42,78 @@ function buildTags({ title, description, image, url, siteName = 'Qtonix' }) {
   return rows.join('\n');
 }
 
-// Read an HTML file, replace its <title> and inject the meta block right after
-// <head>. Falls back to returning the raw file if anything goes wrong.
+// Read an HTML file, replace its <title> and inject the meta block (and optional
+// JSON-LD structured data) right after <head>. Falls back to the raw file.
 function injectIntoHtml(filePath, meta) {
   let html = fs.readFileSync(filePath, 'utf8');
   const tags = buildTags(meta);
+  const jsonLd = meta.jsonLd ? `<script type="application/ld+json">${JSON.stringify(meta.jsonLd)}</script>` : '';
+  const block = jsonLd ? `${tags}\n${jsonLd}` : tags;
   // Replace/insert <title>.
   if (/<title>[\s\S]*?<\/title>/i.test(html)) {
     html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${esc(meta.title || 'Qtonix Careers')}</title>`);
   }
   // Insert the tags immediately after the opening <head> tag.
   if (/<head[^>]*>/i.test(html)) {
-    html = html.replace(/(<head[^>]*>)/i, `$1\n${tags}`);
+    html = html.replace(/(<head[^>]*>)/i, `$1\n${block}`);
   } else {
-    html = `${tags}\n${html}`;
+    html = `${block}\n${html}`;
   }
   return html;
 }
 
-module.exports = { buildTags, injectIntoHtml, clip, esc };
+// Build Google JobPosting structured data (https://developers.google.com/search/
+// docs/appearance/structured-data/job-posting). Only includes fields we have.
+function jobPostingLd(job, { url, orgName = 'Qtonix', orgUrl, logo, base } = {}) {
+  const clean = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const empMap = { full_time: 'FULL_TIME', part_time: 'PART_TIME', internship: 'INTERN', freelance: 'CONTRACTOR' };
+  const ld = {
+    '@context': 'https://schema.org/',
+    '@type': 'JobPosting',
+    title: job.title,
+    description: clean(job.description) || job.title,
+    datePosted: (job.createdAt ? new Date(job.createdAt) : new Date()).toISOString().slice(0, 10),
+    employmentType: empMap[job.employmentType] || 'FULL_TIME',
+    hiringOrganization: { '@type': 'Organization', name: orgName, sameAs: orgUrl || base || undefined, logo: logo || undefined },
+    directApply: true,
+  };
+  if (url) ld.url = url;
+  // Locations. Remote → TELECOMMUTE; otherwise a postal address per location.
+  const locs = Array.isArray(job.locations) ? job.locations.filter(Boolean) : [];
+  if (job.workMode === 'remote') {
+    ld.jobLocationType = 'TELECOMMUTE';
+    ld.applicantLocationRequirements = { '@type': 'Country', name: 'India' };
+  }
+  if (locs.length) {
+    ld.jobLocation = locs.map((l) => ({
+      '@type': 'Place',
+      address: { '@type': 'PostalAddress', addressLocality: String(l).split(',')[0].trim(), addressCountry: 'IN', streetAddress: String(l) },
+    }));
+  } else if (job.workMode !== 'remote') {
+    ld.jobLocation = [{ '@type': 'Place', address: { '@type': 'PostalAddress', addressCountry: 'IN' } }];
+  }
+  // Salary (only when present and not hidden).
+  if (!job.hideSalary && (job.salaryMin || job.salaryMax)) {
+    const unitMap = { hourly: 'HOUR', monthly: 'MONTH', annual: 'YEAR' };
+    ld.baseSalary = {
+      '@type': 'MonetaryAmount', currency: job.salaryCurrency || 'INR',
+      value: { '@type': 'QuantitativeValue', minValue: job.salaryMin || undefined, maxValue: job.salaryMax || undefined, unitText: unitMap[job.salaryPeriod] || 'MONTH' },
+    };
+  }
+  return ld;
+}
+
+// Build an ItemList of job postings for the careers listing page.
+function careersItemListLd(jobs, { base } = {}) {
+  return {
+    '@context': 'https://schema.org/',
+    '@type': 'ItemList',
+    itemListElement: (jobs || []).map((j, i) => ({
+      '@type': 'ListItem', position: i + 1,
+      url: base && j.publicToken ? `${base}/jobs/${j.publicToken}` : undefined,
+      name: j.title,
+    })),
+  };
+}
+
+module.exports = { buildTags, injectIntoHtml, clip, esc, jobPostingLd, careersItemListLd };

@@ -555,7 +555,7 @@ router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
     const shift = row.shiftId ? await HrShift.findByPk(row.shiftId) : null;
-    const canEditPayroll = req.isHrAdmin || req.isHrManager;
+    const canEditPayroll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
     res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll, canEditSelf: isSelf || canEditLocked, shift: shift ? shift.toJSON() : null });
   } catch (e) { next(e); }
 });
@@ -596,7 +596,9 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
       // Sections only Admin or an HR Manager may edit (payroll, performance
       // cards, salary history, attendance and leave live in dedicated endpoints).
       const lockedSections = ['payroll', 'performance', 'payrollHistory', 'performanceCards'];
-      const canEditPayroll = req.isHrAdmin || req.isHrManager;
+      // Payroll/compensation may be edited by Admin, HR Managers, and HR staff
+      // (hr/recruiter) — the people who actually maintain compensation records.
+      const canEditPayroll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
       const merged = { ...current };
       openSections.forEach((s) => { if (incoming[s] !== undefined) merged[s] = incoming[s]; });
       lockedSections.forEach((s) => {
@@ -951,6 +953,42 @@ router.delete('/attendance/wipe-all', requireHrAccess, requireHrAdmin, async (re
   } catch (e) { next(e); }
 });
 
+// GET /attendance/approvers/:employeeId → the list of people who can approve
+// this employee's leave/WFH: their reports-to chain (senior → their senior → …),
+// plus HR Managers (all-branch, and managers scoped to the employee's branch),
+// plus admins. Searchable dropdown on the client.
+router.get('/attendance/approvers/:employeeId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const emp = await HrUser.findByPk(Number(req.params.employeeId));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const out = []; const seen = new Set();
+    const add = (u, role) => { if (!u || seen.has(`hr:${u.id}`)) return; seen.add(`hr:${u.id}`); out.push({ id: u.id, name: u.name, designation: u.designation || '', branch: u.branch || '', role }); };
+
+    // 1) Walk the reports-to chain.
+    let cur = emp; let hops = 0;
+    while (cur && cur.reportsToId && hops < 8) {
+      const senior = await HrUser.findByPk(cur.reportsToId);
+      if (!senior || seen.has(`hr:${senior.id}`)) break;
+      add(senior, 'Reporting manager');
+      cur = senior; hops += 1;
+    }
+    // 2) HR Managers: all-branch, plus those scoped to the employee's branch.
+    const managers = await HrUser.findAll({ where: { active: true } });
+    managers.forEach((m) => {
+      const scope = m.hrManagerScope || (m.isHrManager ? (m.branch || '') : '');
+      if (!scope) return;
+      if (scope.toLowerCase() === 'all') add(m, 'HR Manager (all branches)');
+      else if (String(scope).toLowerCase() === String(emp.branch || '').toLowerCase()) add(m, 'HR Manager');
+    });
+    // 3) Admins (CRM users) who can approve.
+    const admins = await User.findAll({ where: { active: true } });
+    admins.forEach((a) => { if ((a.role === 'admin') && !seen.has(`admin:${a.id}`)) { seen.add(`admin:${a.id}`); out.push({ id: `admin:${a.id}`, name: a.name, designation: 'Admin', branch: '', role: 'Admin' }); } });
+
+    res.json({ approvers: out });
+  } catch (e) { next(e); }
+});
+
 // GET /attendance/day/:date?branch= → active employees grouped branch→dept with marks
 router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
   try {
@@ -995,7 +1033,8 @@ router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
         shiftName: sh ? sh.name : null, shiftStart: sh ? sh.startTime : null, shiftEnd: sh ? sh.endTime : null,
         status: m ? m.status : null, loginTime: m ? m.loginTime : null, logoutTime: m ? m.logoutTime : null,
         late: m ? m.late : false, leaveType, note: m ? m.note : null,
-        mark: m ? { status: m.status, loginTime: m.loginTime, logoutTime: m.logoutTime, late: m.late, leaveType, note: m.note } : null,
+        approvedBy: m ? m.approvedBy : null, notes: m ? m.notes : null,
+        mark: m ? { status: m.status, loginTime: m.loginTime, logoutTime: m.logoutTime, late: m.late, leaveType, note: m.note, approvedBy: m.approvedBy, notes: m.notes } : null,
       });
     }
     res.json({ date, branch: branch || null, branches, graceMinutes: grace, groups });
@@ -1091,14 +1130,23 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
 
       // Map to the HrAttendance.status vocabulary. WFH stored as 'wfh'.
       const attStatus = status === 'absent_leave' ? 'leave' : status; // present|half_day|lop|leave|wfh
+      const approvedBy = (status === 'absent_leave' || status === 'half_day' || status === 'wfh') ? (String(en.approvedBy || '').slice(0, 160) || null) : null;
+      const notes = en.notes ? String(en.notes).slice(0, 500) : null;
       const [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: attStatus } });
       row.status = attStatus;
       row.loginTime = en.loginTime || null;
       row.logoutTime = en.logoutTime || null;
       row.late = late;
       row.note = note;
+      row.approvedBy = approvedBy;
+      row.notes = notes;
       row.markedById = req.hrActor ? req.hrActor.id : null;
       await row.save();
+      // Mirror approver onto the leave record where one was created.
+      if (note && note.startsWith('leave:') && approvedBy) {
+        const lv = await HrLeave.findOne({ where: { employeeId: emp.id, date } });
+        if (lv) { lv.approvedBy = approvedBy; if (notes) lv.reason = notes; await lv.save(); }
+      }
       results.push({ employeeId: emp.id, status: attStatus, late, forcedLop, wfhExtra, wfhDeficit });
     }
     hrLog(req, 'attendance.day', `${date}: ${results.length} employees`);
@@ -1590,6 +1638,18 @@ router.put('/job-posts/:id', requireHrAccess, requireHrManager, async (req, res,
     // Ensure JSON columns persist (Sequelize needs an explicit change flag).
     ['locations', 'skills', 'formFields', 'questions', 'stages', 'assignedHrIds', 'roundPanels'].forEach((k) => { if (fields[k] !== undefined) row.changed(k, true); });
     await row.save();
+    // If a title/description/location-affecting change lands on a published
+    // job, refresh the cached AI share meta (best-effort, non-blocking).
+    try {
+      if (row.status === 'published' && (fields.title !== undefined || fields.description !== undefined || fields.locations !== undefined || fields.department !== undefined || fields.skills !== undefined)) {
+        const jobMeta = require('../services/jobMeta');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const key = s && s.getKey ? s.getKey('openai') : null;
+        const meta = await jobMeta.generateJobMeta(row, key);
+        row.ogTitle = meta.title; row.ogDescription = meta.description; row.ogGeneratedAt = new Date();
+        await row.save();
+      }
+    } catch (e) { console.error('[job.update] meta refresh failed:', e.message); }
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -1603,6 +1663,19 @@ router.post('/job-posts/:id/publish', requireHrAccess, requireHrManager, async (
     row.status = 'published';
     row.publishedAt = new Date();
     await row.save();
+    // Generate + cache AI share meta (best-effort; doesn't block publishing).
+    try {
+      const jobMeta = require('../services/jobMeta');
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const key = s && s.getKey ? s.getKey('openai') : null;
+      const meta = await jobMeta.generateJobMeta(row, key);
+      row.ogTitle = meta.title; row.ogDescription = meta.description; row.ogGeneratedAt = new Date();
+      await row.save();
+      // Ensure the branded OG image exists (built once, shared by all posts).
+      const branding = (s && s.hrCareers) || {};
+      const fs2 = require('fs');
+      if (!fs2.existsSync(jobMeta.ogImagePath())) await jobMeta.buildOgImage(branding.logo || '');
+    } catch (e) { console.error('[job.publish] meta gen failed:', e.message); }
     hrLog(req, 'job.publish', row.title);
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -3616,6 +3689,22 @@ router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) 
       s.changed('hrCareers', true);
     }
     await s.save();
+    // If careers branding changed, refresh the careers AI meta + rebuild the OG
+    // image with the (possibly new) logo. Best-effort, non-blocking on failure.
+    if (b.careers && typeof b.careers === 'object') {
+      try {
+        const jobMeta = require('../services/jobMeta');
+        const key = s.getKey ? s.getKey('openai') : null;
+        const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 30 });
+        const meta = await jobMeta.generateCareersMeta(jobs, s.hrCareers, key);
+        const cur = s.hrCareers || {};
+        s.hrCareers = { ...cur, ogTitle: meta.title, ogDescription: meta.description };
+        s.changed('hrCareers', true);
+        await s.save();
+        // Rebuild the branded share image with the current logo.
+        if (b.careers.logo !== undefined) await jobMeta.buildOgImage(s.hrCareers.logo || '');
+      } catch (e) { console.error('[settings] careers meta gen failed:', e.message); }
+    }
     hrLog(req, 'settings.update', b.careers ? 'careers page' : (b.autoScore !== undefined ? `auto-score ${b.autoScore ? 'on' : 'off'}` : 'settings'));
     res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
   } catch (e) { next(e); }

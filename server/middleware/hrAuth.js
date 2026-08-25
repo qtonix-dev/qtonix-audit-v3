@@ -73,6 +73,14 @@ function requireHrAdmin(req, res, next) {
   next();
 }
 
+// Admin OR an ALL-branch HR Manager. Use for company-wide actions like running
+// employee surveys and viewing their results. Branch-scoped managers do NOT
+// qualify (a survey spans all branches).
+function requireAllBranchOrAdmin(req, res, next) {
+  if (req.isHrAdmin || req.hrManagerAll) return next();
+  return res.status(403).json({ error: 'Only an admin or an all-branch HR manager can do this.' });
+}
+
 // Admin OR HR Manager. Use for branch-scoped management (employees, job posts,
 // applicant assignment, announcements). Route handlers still enforce that an HR
 // Manager acts only within their own branch.
@@ -110,4 +118,4 @@ function canViewInternal(req) {
   return !!req.isHrAdmin || (req.hrType && SCHEDULER_TYPES.includes(req.hrType));
 }
 
-module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, canViewInternal, canManageBranch };
+module.exports = { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireAllBranchOrAdmin, canViewInternal, canManageBranch };

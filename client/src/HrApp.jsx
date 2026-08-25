@@ -885,6 +885,8 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
   // Toggle behaviour: clicking the active status again clears it (status + times +
   // leave type) locally AND marks it for deletion on the server on next save.
   const [cleared, setCleared] = useState({}); // empId → true (to delete on save)
+  const [absentFor, setAbsentFor] = useState(null); // employee whose Absent popup is open
+  const openAbsent = (e) => setAbsentFor(e);
   const pick = (id, status) => {
     const cur = marks[id] && marks[id].status;
     if (cur === status) {
@@ -908,7 +910,7 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
 
   const save = async () => {
     setErr(''); setMsg(''); setSaving(true);
-    const entries = Object.entries(marks).filter(([, v]) => v && v.status).map(([id, v]) => ({ employeeId: Number(id), status: v.status, loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '' }));
+    const entries = Object.entries(marks).filter(([, v]) => v && v.status).map(([id, v]) => ({ employeeId: Number(id), status: v.status, loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '', approvedBy: v.approvedBy || '', notes: v.notes || '', duration: v.duration || '' }));
     // Toggled-off employees → tell the server to delete their record for this day.
     Object.keys(cleared).forEach((id) => { if (!marks[id]) entries.push({ employeeId: Number(id), clear: true }); });
     try {
@@ -980,7 +982,13 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
                     {emps.filter(matches).map((e) => {
                       const mk = marks[e.id] || {};
                       const late = isLate(e, mk);
-                      const showTimes = mk.status === 'present' || mk.status === 'wfh' || mk.status === 'half_day';
+                      const isPresent = mk.status === 'present';
+                      const isAbsentish = mk.status === 'absent_leave' || mk.status === 'half_day' || mk.status === 'lop' || mk.status === 'wfh';
+                      // Human label for the current absent-type selection.
+                      const absentLabel = mk.status === 'lop' ? 'LOP'
+                        : mk.status === 'wfh' ? 'WFH'
+                        : mk.status === 'half_day' ? `Half day${mk.leaveType ? ` · ${mk.leaveType}` : ''}`
+                        : mk.status === 'absent_leave' ? `Leave${mk.leaveType ? ` · ${mk.leaveType}` : ''}` : 'Absent';
                       return (
                         <div key={e.id} className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 flex items-center gap-3 flex-wrap">
                           <div className="min-w-[160px] flex-1">
@@ -989,32 +997,26 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
                             </div>
                             <div className="text-[11px] text-slate-400">{e.employeeId || '—'}{e.shiftName ? ` · ${e.shiftName} (${e.shiftStart})` : ''}</div>
                           </div>
-                          {/* 5 status buttons (toggle off by clicking again) */}
-                          <div className="flex items-center gap-1">
-                            {Object.entries(ATT_STATUS).map(([key, cfg]) => (
-                              <button key={key} onClick={() => pick(e.id, key)}
-                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition ${mk.status === key ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-                                style={mk.status === key ? { background: cfg.fill } : {}}>
-                                {cfg.label}
-                              </button>
-                            ))}
+                          {/* Two buttons: Present (toggle) + Absent (opens popup). */}
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => pick(e.id, 'present')}
+                              className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold border transition ${isPresent ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                              style={isPresent ? { background: '#22C55E' } : {}}>Present</button>
+                            <button onClick={() => openAbsent(e)}
+                              className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold border transition ${isAbsentish ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                              style={isAbsentish ? { background: mk.status === 'wfh' ? '#8B5CF6' : mk.status === 'lop' ? '#64748B' : mk.status === 'half_day' ? '#F59E0B' : '#EF4444' } : {}}>
+                              {isAbsentish ? absentLabel : 'Absent'}
+                            </button>
                           </div>
-                          {/* leave type for absent/half day (WFH is NOT a leave type here) */}
-                          {(mk.status === 'half_day' || mk.status === 'absent_leave') && (
-                            <select value={mk.leaveType || 'casual'} onChange={(ev) => setMark(e.id, { leaveType: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold">
-                              <option value="casual">Casual</option>
-                              <option value="medical">Medical</option>
-                              <option value="privilege">Privilege</option>
-                            </select>
-                          )}
                           {/* login/logout times for present, wfh, half day */}
-                          {showTimes && (
+                          {(isPresent || mk.status === 'wfh' || mk.status === 'half_day') && (
                             <div className="flex items-center gap-1.5">
-                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title={mk.status === 'half_day' ? 'Login (after 4h)' : 'Login'} />
-                              {mk.status !== 'half_day' && <><span className="text-slate-300">–</span>
-                              <input type="time" value={mk.logoutTime || ''} onChange={(ev) => setMark(e.id, { logoutTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Logout" /></>}
+                              <input type="time" value={mk.loginTime || ''} onChange={(ev) => setMark(e.id, { loginTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title={mk.status === 'half_day' ? 'Login' : 'Login'} />
+                              <span className="text-slate-300">–</span>
+                              <input type="time" value={mk.logoutTime || ''} onChange={(ev) => setMark(e.id, { logoutTime: ev.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-xs" title="Logout" />
                             </div>
                           )}
+                          {mk.approvedBy && <span className="text-[10px] text-slate-400">✓ {mk.approvedBy}</span>}
                           {/* → open employee profile */}
                           <button onClick={() => onOpenEmployee && onOpenEmployee(e.id)} className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-[#050A1F] hover:bg-slate-100" title="Open employee profile"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
                         </div>
@@ -1030,6 +1032,138 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
           </div>
         </div>
       )}
+      {absentFor && <AbsentModal emp={absentFor} mark={marks[absentFor.id] || {}} date={date} onClose={() => setAbsentFor(null)} onSave={(patch) => { setMark(absentFor.id, patch); setCleared((c) => { const n = { ...c }; delete n[absentFor.id]; return n; }); setAbsentFor(null); }} onClear={() => { setMarks((m) => { const n = { ...m }; delete n[absentFor.id]; return n; }); setCleared((c) => ({ ...c, [absentFor.id]: true })); setAbsentFor(null); }} />}
+    </div>
+  );
+}
+
+// Absent popup: choose Leave / LOP / WFH. Leave adds day-type, leave type,
+// approver and notes; WFH adds approver + times; LOP is a single choice.
+function AbsentModal({ emp, mark, date, onClose, onSave, onClear }) {
+  const initKind = mark.status === 'lop' ? 'lop' : mark.status === 'wfh' ? 'wfh' : (mark.status === 'half_day' || mark.status === 'absent_leave') ? 'leave' : '';
+  const [kind, setKind] = useState(initKind);
+  const [duration, setDuration] = useState(mark.status === 'half_day' ? 'half' : 'full');
+  const [leaveType, setLeaveType] = useState(mark.leaveType || 'casual');
+  const [approvedBy, setApprovedBy] = useState(mark.approvedBy || '');
+  const [notes, setNotes] = useState(mark.notes || '');
+  const [loginTime, setLoginTime] = useState(mark.loginTime || '');
+  const [logoutTime, setLogoutTime] = useState(mark.logoutTime || '');
+  const [approvers, setApprovers] = useState([]);
+  const [search, setSearch] = useState('');
+  const [showList, setShowList] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { hrApi(`/attendance/approvers/${emp.id}`).then((r) => setApprovers(r.approvers || [])).catch(() => setApprovers([])); }, [emp.id]);
+
+  const filtered = approvers.filter((a) => !search || `${a.name} ${a.designation} ${a.role}`.toLowerCase().includes(search.toLowerCase()));
+  const needsApprover = kind === 'leave' || kind === 'wfh';
+
+  const save = () => {
+    setErr('');
+    if (!kind) { setErr('Please choose a status.'); return; }
+    if (kind === 'leave') {
+      if (!leaveType) { setErr('Select a leave type.'); return; }
+      if (!approvedBy) { setErr('Select who approved this leave.'); return; }
+      onSave({ status: duration === 'half' ? 'half_day' : 'absent_leave', duration, leaveType, approvedBy, notes,
+        loginTime: duration === 'half' ? loginTime : '', logoutTime: duration === 'half' ? logoutTime : '' });
+    } else if (kind === 'lop') {
+      onSave({ status: 'lop', leaveType: '', approvedBy: '', notes });
+    } else if (kind === 'wfh') {
+      if (!approvedBy) { setErr('Select who approved this WFH.'); return; }
+      onSave({ status: 'wfh', approvedBy, notes, loginTime, logoutTime });
+    }
+  };
+
+  const Pill = ({ v, label, color }) => (
+    <button onClick={() => { setKind(v); setErr(''); }} className={`flex-1 rounded-xl border px-3 py-3 text-sm font-bold transition ${kind === v ? 'text-white border-transparent' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`} style={kind === v ? { background: color } : {}}>{label}</button>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-base font-extrabold text-[#050A1F]">Mark absent — {titleCase(emp.name)}</div><div className="text-[11px] text-slate-400">{date}</div></div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <div className="flex gap-2">
+            <Pill v="leave" label="Leave" color="#EF4444" />
+            <Pill v="lop" label="LOP" color="#64748B" />
+            <Pill v="wfh" label="Work from home" color="#8B5CF6" />
+          </div>
+
+          {kind === 'leave' && (
+            <div className="space-y-3">
+              <div>
+                <div className="text-[12px] font-bold text-slate-600 mb-1">Duration</div>
+                <div className="flex gap-2">
+                  <button onClick={() => setDuration('full')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === 'full' ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>Full day</button>
+                  <button onClick={() => setDuration('half')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === 'half' ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 text-slate-500'}`}>Half day</button>
+                </div>
+              </div>
+              <div>
+                <div className="text-[12px] font-bold text-slate-600 mb-1">Leave type</div>
+                <select value={leaveType} onChange={(e) => setLeaveType(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  <option value="casual">Casual</option>
+                  <option value="medical">Medical</option>
+                  <option value="privilege">Privilege</option>
+                </select>
+              </div>
+              {duration === 'half' && (
+                <div className="flex items-center gap-2">
+                  <input type="time" value={loginTime} onChange={(e) => setLoginTime(e.target.value)} className="flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="Login" />
+                  <span className="text-slate-300">–</span>
+                  <input type="time" value={logoutTime} onChange={(e) => setLogoutTime(e.target.value)} className="flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="Logout" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {kind === 'wfh' && (
+            <div className="flex items-center gap-2">
+              <input type="time" value={loginTime} onChange={(e) => setLoginTime(e.target.value)} className="flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="Login" />
+              <span className="text-slate-300">–</span>
+              <input type="time" value={logoutTime} onChange={(e) => setLogoutTime(e.target.value)} className="flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="Logout" />
+            </div>
+          )}
+
+          {/* Approved by — searchable dropdown (leave + WFH). */}
+          {needsApprover && (
+            <div>
+              <div className="text-[12px] font-bold text-slate-600 mb-1">Approved by</div>
+              <div className="relative">
+                <input value={approvedBy || search} onChange={(e) => { setSearch(e.target.value); setApprovedBy(''); setShowList(true); }} onFocus={() => setShowList(true)}
+                  placeholder="Search senior / HR manager…" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                {showList && filtered.length > 0 && !approvedBy && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {filtered.map((a) => (
+                      <button key={a.id} onClick={() => { setApprovedBy(a.name); setSearch(''); setShowList(false); }} className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-50 last:border-0">
+                        <div className="text-sm font-semibold text-[#050A1F]">{a.name}</div>
+                        <div className="text-[11px] text-slate-400">{a.role}{a.designation ? ` · ${a.designation}` : ''}{a.branch ? ` · ${a.branch}` : ''}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {approvedBy && <div className="text-[11px] text-green-600 font-semibold mt-1">✓ {approvedBy} <button onClick={() => { setApprovedBy(''); setSearch(''); }} className="text-slate-400 ml-1">change</button></div>}
+            </div>
+          )}
+
+          {kind && (
+            <div>
+              <div className="text-[12px] font-bold text-slate-600 mb-1">Notes {kind === 'lop' ? '' : '(optional)'}</div>
+              <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Any note…" />
+            </div>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-between gap-2">
+          <button onClick={onClear} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-500">Clear</button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={save} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Apply</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1044,6 +1178,91 @@ function SummaryBox({ label, value, sub, color, active, onClick }) {
   );
 }
 
+// Minimal dashboard for non-HR employees: a greeting, HR announcements, and any
+// upcoming interviews where they sit on the panel. (HR/Admin see HrDashboard.)
+function EmployeeDashboard({ user }) {
+  const [ann, setAnn] = useState([]);
+  const [interviews, setInterviews] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    Promise.allSettled([
+      hrApi('/announcements'),
+      hrApi('/my-interviews'),
+    ]).then(([a, iv]) => {
+      if (a.status === 'fulfilled') setAnn(Array.isArray(a.value) ? a.value : (a.value.announcements || []));
+      if (iv.status === 'fulfilled') {
+        const jobs = (iv.value && iv.value.jobs) || [];
+        const flat = [];
+        jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
+        // Upcoming only, soonest first.
+        const now = Date.now();
+        flat.sort((x, y) => new Date(x.at || 0) - new Date(y.at || 0));
+        setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= now - 3600000));
+      }
+      setLoaded(true);
+    });
+  }, []);
+  const hour = new Date(Date.now() + 330 * 60000).getUTCHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = titleCase(String(user.name || '').split(' ')[0] || 'there');
+  const fmt = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+  const recentAnn = (ann || []).slice(0, 6);
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-extrabold text-[#050A1F]">{greeting}, {firstName}!</h1>
+        <p className="text-slate-400 mt-1">Here’s what’s relevant to you today.</p>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-5">
+        {/* Announcements */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6A00" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg>
+            <h2 className="text-sm font-extrabold text-[#050A1F] uppercase tracking-wide">Announcements</h2>
+          </div>
+          {!loaded ? <div className="text-slate-300 text-sm py-8 text-center">Loading…</div>
+            : recentAnn.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No announcements yet.</div>
+              : <div className="space-y-3">
+                  {recentAnn.map((a, i) => (
+                    <div key={a.id || i} className="border-l-2 border-orange-300 pl-3">
+                      <div className="text-sm font-bold text-[#050A1F]">{a.title || 'Announcement'}</div>
+                      {a.body && <div className="text-[13px] text-slate-500 mt-0.5 line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
+                      <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmt(a.createdAt) : ''}</div>
+                    </div>
+                  ))}
+                </div>}
+        </div>
+
+        {/* Upcoming panel interviews */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+            <h2 className="text-sm font-extrabold text-[#050A1F] uppercase tracking-wide">Your upcoming interviews</h2>
+          </div>
+          {!loaded ? <div className="text-slate-300 text-sm py-8 text-center">Loading…</div>
+            : interviews.length === 0 ? <div className="text-slate-400 text-sm py-8 text-center">No upcoming interviews on your panel.</div>
+              : <div className="space-y-2.5">
+                  {interviews.slice(0, 8).map((iv, i) => (
+                    <div key={i} className="rounded-xl border border-slate-100 bg-slate-50/50 px-3.5 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-bold text-[#050A1F]">{titleCase(iv.name)}</div>
+                        {iv.roundLabel && <span className="text-[10px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">{iv.roundLabel}</span>}
+                      </div>
+                      <div className="text-[12px] text-slate-500">{iv.jobTitle}</div>
+                      <div className="text-[12px] text-slate-600 font-semibold mt-0.5">{fmt(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
+                      {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-blue-600 hover:underline">Join link →</a>}
+                    </div>
+                  ))}
+                </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Minimal dashboard for non-HR employees end.
 function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
@@ -4180,7 +4399,34 @@ function HrAdmin({ user, onOpenCandidate }) {
                 <SharedField label="Shift *"><select className={inputCls} value={edit.shiftId || ''} onChange={(e) => setEdit({ ...edit, shiftId: e.target.value })}><option value="">— select shift —</option>{shifts.map((sh) => <option key={sh._id} value={sh._id}>{sh.name}</option>)}</select></SharedField>
                 <SharedField label="Reports to"><select className={inputCls} value={edit.reportsTo || ''} onChange={(e) => setEdit({ ...edit, reportsTo: e.target.value })}><option value="">— none —</option>{reportingOptions.filter((o) => o.value !== `hr:${edit._id}`).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></SharedField>
                 <div className="flex items-center gap-2 pt-6"><input type="checkbox" id="inc-edit" checked={!!edit.branchIncharge} onChange={(e) => setEdit({ ...edit, branchIncharge: e.target.checked })} /><label htmlFor="inc-edit" className="text-sm font-semibold text-slate-600">Branch in-charge</label></div>
-                <SharedField label="HR Manager access"><select className={inputCls} value={edit.hrManagerScope || ''} onChange={(e) => setEdit({ ...edit, hrManagerScope: e.target.value, isHrManager: !!e.target.value })}><option value="">Not a manager</option><option value="all">All branches</option><option value="Bhubaneswar">Bhubaneswar only</option><option value="Kolkata">Kolkata only</option></select></SharedField>
+                <SharedField label="HR Manager access">
+                  {(() => {
+                    const scope = edit.hrManagerScope || '';
+                    const isMgr = !!scope;
+                    const isAll = scope === 'all';
+                    const ownBranch = edit.branch || '';
+                    return (
+                      <div className="space-y-2 pt-1">
+                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                          <input type="checkbox" checked={isMgr} onChange={(e) => setEdit({ ...edit, hrManagerScope: e.target.checked ? (ownBranch || 'all') : '', isHrManager: e.target.checked })} />
+                          HR Manager
+                        </label>
+                        {isMgr && (
+                          <div className="ml-6 space-y-1.5">
+                            <label className="flex items-center gap-2 text-sm text-slate-600">
+                              <input type="radio" name="hrmgr-scope-edit" checked={isAll} onChange={() => setEdit({ ...edit, hrManagerScope: 'all', isHrManager: true })} />
+                              All branches <span className="text-xs text-slate-400">— manage everyone across all branches</span>
+                            </label>
+                            <label className="flex items-center gap-2 text-sm text-slate-600">
+                              <input type="radio" name="hrmgr-scope-edit" checked={!isAll} onChange={() => setEdit({ ...edit, hrManagerScope: ownBranch || 'all', isHrManager: true })} />
+                              Own branch {ownBranch ? `(${ownBranch})` : ''} <span className="text-xs text-slate-400">— manage only their branch</span>
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </SharedField>
                 <SharedField label="New password" hint="Leave blank to keep current"><input type="text" className={inputCls} value={edit.newPassword || ''} onChange={(e) => setEdit({ ...edit, newPassword: e.target.value })} /></SharedField>
               </div>
               {/^(hr|human resource|human resources)$/i.test((edit.department || '').trim()) && (
@@ -4737,7 +4983,7 @@ export default function HrApp() {
   // Recruitment is for HR staff + admins.
   const isHrStaff = isAdmin || ['hr', 'recruiter', 'manager', 'tl'].includes(user.type) || /^(hr|human resource|human resources)$/i.test(String(user.department || '').trim());
   const nav = [
-    ...(isScheduler ? [{ id: 'dashboard', label: 'Dashboard' }] : []),
+    { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Task' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
@@ -4751,11 +4997,10 @@ export default function HrApp() {
       { id: 'corehr_onboarding', label: 'Onboarding' },
       { id: 'employees', label: 'Employee' },
     ] }] : []),
-    ...(isAdmin ? [{ id: 'survey', label: 'Survey' }] : []),
+    ...((isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') ? [{ id: 'survey', label: 'Survey' }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
-  // Land non-schedulers on their interviews rather than an empty dashboard.
-  const effectiveView = (view === 'dashboard' && !isScheduler) ? 'interview' : view;
+  const effectiveView = view;
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
@@ -4826,7 +5071,9 @@ export default function HrApp() {
       </header>
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
-        {effectiveView === 'dashboard' && <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />}
+        {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin
+          ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
+          : <EmployeeDashboard user={user} />)}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}
@@ -4848,7 +5095,7 @@ export default function HrApp() {
         {effectiveView === 'templates' && <EmailTemplatesPage />}
         {effectiveView === 'signature' && <EmailSignaturePage />}
         {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
-        {effectiveView === 'survey' && isAdmin && <HrSurveyAdmin />}
+        {effectiveView === 'survey' && (isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') && <HrSurveyAdmin isAdmin={isAdmin} />}
       </main>
     </div>
   );

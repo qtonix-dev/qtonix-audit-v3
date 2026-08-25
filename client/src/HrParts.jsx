@@ -206,12 +206,32 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
           <div className="mt-4 space-y-2">
             <div className="rounded-lg bg-orange-50 border border-orange-100 px-3 py-2.5">
               <label className="text-sm text-slate-600 block mb-1"><b>HR Manager access</b> — scope of management privileges</label>
-              <select className={inputCls} value={f.hrManagerScope || ''} onChange={(e) => set({ hrManagerScope: e.target.value, isHrManager: !!e.target.value })}>
-                <option value="">Not a manager</option>
-                <option value="all">All branches (full HR management)</option>
-                <option value="Bhubaneswar">Bhubaneswar only</option>
-                <option value="Kolkata">Kolkata only</option>
-              </select>
+              {(() => {
+                const scope = f.hrManagerScope || '';
+                const isMgr = !!scope;
+                const isAll = scope === 'all';
+                const ownBranch = f.branch || '';
+                return (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                      <input type="checkbox" checked={isMgr} onChange={(e) => set({ hrManagerScope: e.target.checked ? (ownBranch || 'all') : '', isHrManager: e.target.checked })} />
+                      HR Manager
+                    </label>
+                    {isMgr && (
+                      <div className="ml-6 space-y-1.5">
+                        <label className="flex items-center gap-2 text-sm text-slate-600">
+                          <input type="radio" name="hrmgr-scope-add" checked={isAll} onChange={() => set({ hrManagerScope: 'all', isHrManager: true })} />
+                          All branches <span className="text-xs text-slate-400">— manage everyone</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-slate-600">
+                          <input type="radio" name="hrmgr-scope-add" checked={!isAll} onChange={() => set({ hrManagerScope: ownBranch || 'all', isHrManager: true })} />
+                          Own branch {ownBranch ? `(${ownBranch})` : ''} <span className="text-xs text-slate-400">— their branch only</span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="text-[11px] text-slate-400 mt-1">Managers can manage employees, attendance & leave for their scope. No access to admin settings.</div>
             </div>
             <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={f.canPostAnnouncements} onChange={(e) => set({ canPostAnnouncements: e.target.checked })} /> Can post announcements to the notice board</label>

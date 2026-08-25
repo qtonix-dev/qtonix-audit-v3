@@ -488,6 +488,7 @@ const Settings = sequelize.define(
     hrOnboardingTasks: { type: DataTypes.JSON, defaultValue: ['Collect ID & address proof', 'Sign employment contract', 'Issue laptop / equipment', 'Create email & system accounts', 'Add to payroll', 'Share employee handbook', 'Assign onboarding buddy'] },
     // Resume-match auto-scoring on add/apply/feedback (admins can turn off to save API credits).
     hrAutoScore: { type: DataTypes.BOOLEAN, defaultValue: true },
+    ogBackfillDone: { type: DataTypes.BOOLEAN, defaultValue: false },
     // Public careers page branding.
     hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
 
@@ -1445,6 +1446,10 @@ const HrJobPost = sequelize.define('HrJobPost', {
   roundPanels: { type: DataTypes.JSON, defaultValue: {} },
   // --- Public embed ---
   publicToken: { type: DataTypes.STRING(40), allowNull: true, unique: true },
+  // AI-generated share/SEO meta, cached so we don't regenerate on every request.
+  ogTitle: { type: DataTypes.STRING(200), defaultValue: '' },
+  ogDescription: { type: DataTypes.STRING(400), defaultValue: '' },
+  ogGeneratedAt: { type: DataTypes.DATE, allowNull: true },
   publishedAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'hr_job_posts' });
 HrJobPost.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
@@ -1571,6 +1576,8 @@ const HrAttendance = sequelize.define('HrAttendance', {
   logoutTime: { type: DataTypes.STRING(5), allowNull: true }, // HH:MM
   late: { type: DataTypes.BOOLEAN, defaultValue: false },
   note: { type: DataTypes.STRING(200), allowNull: true },
+  approvedBy: { type: DataTypes.STRING(160), allowNull: true }, // approver name (leave/WFH)
+  notes: { type: DataTypes.STRING(500), allowNull: true },      // free-text HR note
   markedById: { type: DataTypes.INTEGER, allowNull: true },
   source: { type: DataTypes.STRING(20), defaultValue: 'manual' }, // manual|api
 }, { tableName: 'hr_attendance', indexes: [
@@ -1590,6 +1597,7 @@ const HrLeave = sequelize.define('HrLeave', {
   duration: { type: DataTypes.STRING(10), defaultValue: 'full' }, // full|half
   paid: { type: DataTypes.BOOLEAN, defaultValue: true },
   reason: { type: DataTypes.STRING(300), allowNull: true },
+  approvedBy: { type: DataTypes.STRING(160), allowNull: true },
   documentUrl: { type: DataTypes.STRING(500), allowNull: true }, // medical certificate etc.
   status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
   appliedById: { type: DataTypes.INTEGER, allowNull: true },

@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const { Op, HrSurvey, HrSurveyResponse, HrUser, Settings } = require('../models');
-const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
+const { requireHrAccess, requireHrAdmin, requireAllBranchOrAdmin } = require('../middleware/hrAuth');
 
 const DEFAULT_MOOD_QUESTIONS = [
   { id: 'q1', text: 'Our workplace is free from distraction', type: 'scale5', comment: true, options: [] },
@@ -57,7 +57,7 @@ async function settingsKey(name) {
 }
 
 // ---- Admin: list / create / update / delete ----
-router.get('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.get('/', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     // Participants = active HR employees (admins never take surveys).
     const eligible = await HrUser.count({ where: { active: true } });
@@ -72,7 +72,7 @@ router.get('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.post('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Survey name is required.' });
@@ -89,7 +89,7 @@ router.post('/', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.put('/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.put('/:id', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const row = await HrSurvey.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Survey not found.' });
@@ -104,7 +104,7 @@ router.put('/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.delete('/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.delete('/:id', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const row = await HrSurvey.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Survey not found.' });
@@ -225,7 +225,7 @@ function buildResponseData(survey, b, user) {
 
 // Activate (make live) a draft survey. Resets the period so live responses start
 // fresh, and clears any test responses so they don't mix into real results.
-router.post('/:id/activate', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/:id/activate', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
@@ -243,7 +243,7 @@ router.post('/:id/activate', requireHrAccess, requireHrAdmin, async (req, res, n
 // Take the survey in TEST mode (admin preview). Writes into the reserved `test`
 // period. Multiple test submissions are allowed (no once-per-period guard) so
 // the admin can try different answers. Works whether draft or active.
-router.post('/:id/test-respond', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/:id/test-respond', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
@@ -259,7 +259,7 @@ router.post('/:id/test-respond', requireHrAccess, requireHrAdmin, async (req, re
 });
 
 // Test follow-ups (same as live, but admin-only and doesn't require active).
-router.post('/:id/test-followups', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.post('/:id/test-followups', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
@@ -272,7 +272,7 @@ router.post('/:id/test-followups', requireHrAccess, requireHrAdmin, async (req, 
 });
 
 // Clear all test responses/analysis for a survey.
-router.delete('/:id/test-responses', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.delete('/:id/test-responses', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
@@ -283,7 +283,7 @@ router.delete('/:id/test-responses', requireHrAccess, requireHrAdmin, async (req
 });
 
 // ---- Admin: results & analysis ----
-router.get('/:id/periods', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.get('/:id/periods', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const rows = await HrSurveyResponse.findAll({ where: { surveyId: req.params.id }, attributes: ['period'], group: ['period'], order: [['period', 'DESC']] });
     res.json({ periods: rows.map((r) => r.period).filter((p) => p && p !== 'test') });
@@ -328,7 +328,7 @@ async function buildResults(survey, period) {
   };
 }
 
-router.get('/:id/results', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+router.get('/:id/results', requireHrAccess, requireAllBranchOrAdmin, async (req, res, next) => {
   try {
     const survey = await HrSurvey.findByPk(req.params.id);
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });

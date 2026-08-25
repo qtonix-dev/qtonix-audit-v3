@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v286';
+const APP_VERSION = 'v288';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -105,6 +105,24 @@ app.get('/careers-shared.js', (req, res) => {
   res.type('application/javascript').sendFile(path.join(__dirname, 'public/careers-shared.js'));
 });
 
+// Branded OG share image (1200x630, blue box + centered logo). Cached on disk;
+// regenerated when missing or when ?refresh=1. Served for all share cards.
+app.get('/og/share.png', async (req, res) => {
+  try {
+    const jobMeta = require('./services/jobMeta');
+    const p = jobMeta.ogImagePath();
+    const fs2 = require('fs');
+    if (req.query.refresh === '1' || !fs2.existsSync(p)) {
+      const { Settings } = require('./models');
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const branding = (s && s.hrCareers) || {};
+      await jobMeta.buildOgImage(branding.logo || '');
+    }
+    if (fs2.existsSync(p)) { res.type('png'); return res.sendFile(p); }
+    return res.status(404).end();
+  } catch (e) { return res.status(404).end(); }
+});
+
 // Public listing page — the full job post with the application form on the
 // Public branded careers listing (all published roles at one URL).
 app.get('/jobs/:token', async (req, res) => {
@@ -116,11 +134,13 @@ app.get('/jobs/:token', async (req, res) => {
     const branding = (s && s.hrCareers) || {};
     const base = `${req.protocol}://${req.get('host')}`;
     if (job) {
+      // Prefer cached AI meta; fall back to a clean derived title/description.
       const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : (job.branch || '');
-      const desc = og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
+      const title = job.ogTitle || `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`;
+      const desc = job.ogDescription || og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
+      const jsonLd = og.jobPostingLd(job, { url: `${base}/jobs/${req.params.token}`, base, logo: branding.logo || `${base}/og/share.png` });
       const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
-        title: `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`,
-        description: desc, image: branding.logo || '', url: `${base}/jobs/${req.params.token}`,
+        title, description: desc, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
       });
       return res.type('html').send(html);
     }
@@ -142,15 +162,18 @@ app.get('/schedule/:token', (req, res) => {
 // right (the shareable careers page). Same token, no auth.
 app.get('/careers/:token', async (req, res) => {
   try {
-    const { Settings } = require('./models');
+    const { Settings, HrJobPost } = require('./models');
     const og = require('./services/ogTags');
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const branding = (s && s.hrCareers) || {};
     const base = `${req.protocol}://${req.get('host')}`;
+    // Cached careers meta lives on branding (hrCareers.ogTitle/ogDescription).
+    const title = branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
+    const description = branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
+    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
+    const jsonLd = og.careersItemListLd(jobs, { base });
     const html = og.injectIntoHtml(path.join(__dirname, 'public/careers-page.html'), {
-      title: branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix',
-      description: branding.description || 'Explore open roles and join our team at Qtonix.',
-      image: branding.logo || '', url: `${base}/careers/${req.params.token}`,
+      title, description, image: `${base}/og/share.png`, url: `${base}/careers/${req.params.token}`, jsonLd,
     });
     res.type('html').send(html);
   } catch (e) { res.sendFile(path.join(__dirname, 'public/careers-page.html')); }
@@ -569,6 +592,9 @@ connectWithRetry()
       // Weekly log cleanup (Sunday ~9AM IST, prunes audit+call logs older than 3 months).
       try { require('./jobs/logCleanup').start(require('./models')); }
       catch (e) { console.error('[log-cleanup] not started:', e.message); }
+      // One-time OG meta/image backfill for existing published jobs.
+      try { require('./jobs/ogBackfill').start(require('./models')); }
+      catch (e) { console.error('[og-backfill] not started:', e.message); }
       // Unopened-email nudge (flags tracked emails not opened within 24h).
       try { require('./jobs/unopenedEmail').start(require('./models')); }
       catch (e) { console.error('[unopened-email] not started:', e.message); }
