@@ -1584,6 +1584,14 @@ const HrAttendance = sequelize.define('HrAttendance', {
   breakOpen: { type: DataTypes.STRING(5), allowNull: true },
   markedById: { type: DataTypes.INTEGER, allowNull: true },
   source: { type: DataTypes.STRING(20), defaultValue: 'manual' }, // manual|api
+  // Audit trail when HR manually overwrites a web-clocked time. Records who
+  // corrected it, when, and the original login/logout before the change.
+  timeEditedById: { type: DataTypes.INTEGER, allowNull: true },
+  timeEditedByName: { type: DataTypes.STRING(160), allowNull: true },
+  timeEditedByAvatar: { type: DataTypes.TEXT, allowNull: true },
+  timeEditedAt: { type: DataTypes.DATE, allowNull: true },
+  originalLoginTime: { type: DataTypes.STRING(5), allowNull: true },
+  originalLogoutTime: { type: DataTypes.STRING(5), allowNull: true },
 }, { tableName: 'hr_attendance', indexes: [
   { name: 'idx_hr_att_emp_date', unique: true, fields: ['employeeId', 'date'] },
   { name: 'idx_hr_att_emp', fields: ['employeeId'] },

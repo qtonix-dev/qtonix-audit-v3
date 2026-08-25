@@ -853,6 +853,25 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
 }
 
 // Daily entry page: employees grouped branch → dept, 5 status buttons each.
+// Small avatar circle shown on an attendance record that HR manually corrected.
+// Hover to see who edited it, when, and the original clock times. Falls back to
+// the HR person's initials when no photo is set.
+function EditedByBadge({ edit }) {
+  if (!edit) return null;
+  const initials = String(edit.byName || 'HR').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+  const when = (() => { try { return new Date(edit.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } })();
+  const orig = [edit.originalLogin ? `in ${edit.originalLogin}` : null, edit.originalLogout ? `out ${edit.originalLogout}` : null].filter(Boolean).join(' · ');
+  const title = `Time corrected by ${edit.byName || 'HR'}${when ? ' on ' + when : ''}${orig ? ` — original: ${orig}` : ' — no original clock time'}`;
+  return (
+    <span className="inline-flex items-center gap-1" title={title}>
+      <span className="text-[10px] text-amber-600 font-bold">edited</span>
+      {edit.byAvatar
+        ? <img src={edit.byAvatar} alt={edit.byName || 'HR'} className="w-5 h-5 rounded-full object-cover border border-amber-200" />
+        : <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-extrabold flex items-center justify-center border border-amber-200">{initials}</span>}
+    </span>
+  );
+}
+
 function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
   const [data, setData] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -871,7 +890,7 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
       Object.values(d.groups || {}).forEach((depts) => Object.values(depts).forEach((emps) => emps.forEach((e) => {
         if (e.status) {
           const uiStatus = e.status === 'leave' ? 'absent_leave' : (e.status === 'absent' ? 'lop' : e.status);
-          init[e.id] = { status: uiStatus, loginTime: e.loginTime || '', logoutTime: e.logoutTime || '', leaveType: e.leaveType || '', late: !!e.late };
+          init[e.id] = { status: uiStatus, loginTime: e.loginTime || '', logoutTime: e.logoutTime || '', leaveType: e.leaveType || '', late: !!e.late, timeEdited: e.timeEdited || null, source: e.source || null };
         }
       })));
       setMarks(init);
@@ -1017,6 +1036,7 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
                             </div>
                           )}
                           {mk.approvedBy && <span className="text-[10px] text-slate-400">✓ {mk.approvedBy}</span>}
+                          {mk.timeEdited && <EditedByBadge edit={mk.timeEdited} />}
                           {/* → open employee profile */}
                           <button onClick={() => onOpenEmployee && onOpenEmployee(e.id)} className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-[#050A1F] hover:bg-slate-100" title="Open employee profile"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
                         </div>
@@ -1580,9 +1600,12 @@ function MyAttendanceCalendar({ onClose }) {
               const d = i + 1; const ds = `${month}-${String(d).padStart(2, '0')}`;
               const info = data && data.days ? data.days[ds] : null; const stt = info ? info.status : 'none'; const c = cls[stt] || cls.none;
               return (
-                <div key={d} className="rounded-lg border p-1.5 relative" style={{ aspectRatio: '1', background: c.background, borderColor: c.borderColor }} title={info && info.login ? `In ${info.login}${info.logout ? ` · Out ${info.logout}` : ''}` : (info && info.holiday) || ''}>
+                <div key={d} className="rounded-lg border p-1.5 relative" style={{ aspectRatio: '1', background: c.background, borderColor: c.borderColor }} title={info && info.timeEdited ? `Time corrected by ${info.timeEdited.byName || 'HR'}` : (info && info.login ? `In ${info.login}${info.logout ? ` · Out ${info.logout}` : ''}` : (info && info.holiday) || '')}>
                   <div className="text-[11px] font-bold text-slate-700">{d}</div>
                   {c.label && <div className="absolute bottom-1 left-1.5 text-[9px] font-extrabold" style={{ color: c.mk }}>{c.label}</div>}
+                  {info && info.timeEdited && (info.timeEdited.byAvatar
+                    ? <img src={info.timeEdited.byAvatar} alt="edited" className="absolute top-1 right-1 w-4 h-4 rounded-full object-cover border border-amber-300" title={`Corrected by ${info.timeEdited.byName || 'HR'}`} />
+                    : <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-amber-100 text-amber-700 text-[7px] font-extrabold flex items-center justify-center border border-amber-300">{String(info.timeEdited.byName || 'HR').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase()}</span>)}
                 </div>
               );
             })}

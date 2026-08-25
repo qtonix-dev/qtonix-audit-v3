@@ -1033,7 +1033,11 @@ router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
         shiftName: sh ? sh.name : null, shiftStart: sh ? sh.startTime : null, shiftEnd: sh ? sh.endTime : null,
         status: m ? m.status : null, loginTime: m ? m.loginTime : null, logoutTime: m ? m.logoutTime : null,
         late: m ? m.late : false, leaveType, note: m ? m.note : null,
-        approvedBy: m ? m.approvedBy : null, notes: m ? m.notes : null,
+        approvedBy: m ? m.approvedBy : null, notes: m ? m.notes : null, source: m ? m.source : null,
+        timeEdited: m && m.timeEditedAt ? {
+          byName: m.timeEditedByName, byAvatar: m.timeEditedByAvatar, at: m.timeEditedAt,
+          originalLogin: m.originalLoginTime, originalLogout: m.originalLogoutTime,
+        } : null,
         mark: m ? { status: m.status, loginTime: m.loginTime, logoutTime: m.logoutTime, late: m.late, leaveType, note: m.note, approvedBy: m.approvedBy, notes: m.notes } : null,
       });
     }
@@ -1386,7 +1390,8 @@ router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) =>
         else if (mk.status === 'absent' || mk.status === 'lop') status = 'absent';
         else if (mk.loginTime) status = mk.late ? 'late' : 'present';
       }
-      days[ds] = { status, login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null, holiday: holidays[ds] || null };
+      days[ds] = { status, login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null, holiday: holidays[ds] || null,
+        timeEdited: mk && mk.timeEditedAt ? { byName: mk.timeEditedByName, byAvatar: mk.timeEditedByAvatar, at: mk.timeEditedAt, originalLogin: mk.originalLoginTime, originalLogout: mk.originalLogoutTime } : null };
     }
     res.json({ month, branch: emp.branch, days });
   } catch (e) { next(e); }
@@ -1484,9 +1489,27 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       const approvedBy = (status === 'absent_leave' || status === 'half_day' || status === 'wfh') ? (String(en.approvedBy || '').slice(0, 160) || null) : null;
       const notes = en.notes ? String(en.notes).slice(0, 500) : null;
       const [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: attStatus } });
+      const newLogin = en.loginTime || null;
+      const newLogout = en.logoutTime || null;
+      // Audit: if HR changes a login/logout time that already had a value (i.e. an
+      // override of what the employee web-clocked, or a prior manual entry), record
+      // who corrected it, when, and the original times. First correction captures
+      // the true original; later edits keep the earliest original.
+      const timeChanged = (row.loginTime || null) !== newLogin || (row.logoutTime || null) !== newLogout;
+      const hadClock = !!(row.loginTime || row.logoutTime);
+      if (timeChanged && hadClock) {
+        if (!row.timeEditedAt) { // capture the pre-edit original only once
+          row.originalLoginTime = row.loginTime || null;
+          row.originalLogoutTime = row.logoutTime || null;
+        }
+        row.timeEditedById = req.hrActor ? req.hrActor.id : null;
+        row.timeEditedByName = req.hrActor ? req.hrActor.name : null;
+        row.timeEditedByAvatar = emp && req.hrUser ? (req.hrUser.avatar || null) : null;
+        row.timeEditedAt = new Date();
+      }
       row.status = attStatus;
-      row.loginTime = en.loginTime || null;
-      row.logoutTime = en.logoutTime || null;
+      row.loginTime = newLogin;
+      row.logoutTime = newLogout;
       row.late = late;
       row.note = note;
       row.approvedBy = approvedBy;
