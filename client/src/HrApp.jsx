@@ -152,36 +152,6 @@ function fmtAgeH(ms) {
   return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
-// Rotating birthday / work-anniversary banner (mirrors the CRM CelebrationSlider).
-function HrCelebrations({ celebrations, user }) {
-  const [idx, setIdx] = useState(0);
-  const slides = celebrations || [];
-  useEffect(() => { if (slides.length <= 1) return; const t = setInterval(() => setIdx((n) => (n + 1) % slides.length), 10000); return () => clearInterval(t); }, [slides.length]);
-  useEffect(() => { if (idx >= slides.length) setIdx(0); }, [slides.length, idx]);
-  if (slides.length === 0) return null;
-  const c = slides[Math.min(idx, slides.length - 1)];
-  const msg = c.type === 'birthday' ? '🎂 Happy Birthday' : c.type === 'work' ? `🏆 Happy ${c.yearsLabel ? `${c.yearsLabel} ` : ''}Work Anniversary` : '💍 Happy Anniversary';
-  const sub = c.type === 'birthday' ? 'Wishing you a wonderful day!' : c.type === 'work' ? `Thank you for ${c.years ? `${c.years} year${c.years === 1 ? '' : 's'} of ` : ''}being with us!` : 'Congratulations on your special day!';
-  return (
-    <div className="relative">
-      <div className="rounded-2xl overflow-hidden shadow-sm border border-pink-200">
-        <div className="px-5 py-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#FDF2F8,#FFF7ED)' }}>
-          <div className="text-4xl animate-bounce" style={{ animationDuration: '1.5s' }}>{c.type === 'birthday' ? '🎂' : c.type === 'work' ? '🏆' : '💍'}</div>
-          <Avatar name={c.name} src={c.avatar} size={56} />
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-extrabold text-[#050A1F]">{msg}, {(c.name || '').split(' ')[0]}!</div>
-            <div className="text-[11px] text-pink-600 font-semibold">{c.name} · {sub}</div>
-          </div>
-        </div>
-      </div>
-      {slides.length > 1 && (
-        <div className="flex items-center justify-center gap-1.5 mt-2">
-          {slides.map((s, i) => <button key={`${s.id}-${s.type}-${i}`} onClick={() => setIdx(i)} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-5 bg-[#FF6A00]' : 'w-1.5 bg-slate-300 hover:bg-slate-400'}`} />)}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // Post a company announcement (admins + permitted HR).
 function AnnouncementModal({ onClose, onSaved }) {
@@ -1624,6 +1594,22 @@ function MyAttendanceCalendar({ onClose }) {
 // Auto-sliding celebration banner on the HR dashboard — birthdays, work
 // anniversaries and new joinees for today. Mirrors the Sales CRM slider:
 // advances every 10s with dot navigation.
+// Fetches today's celebrations once and renders the shared slider (used above
+// the dashboard tabs so it appears a single time for both dashboards).
+function DashboardCelebrations() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    const load = () => hrApi('/celebrations').then((r) => setItems(r.items || [])).catch(() => {});
+    load();
+    const iv = setInterval(load, 60 * 60 * 1000); // hourly, clears at day boundary
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(iv); window.removeEventListener('focus', onFocus); };
+  }, []);
+  if (!items.length) return null;
+  return <div className="mb-4"><HrCelebrationSlider items={items} /></div>;
+}
+
 function HrCelebrationSlider({ items }) {
   const [idx, setIdx] = useState(0);
   useEffect(() => {
@@ -1680,7 +1666,6 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const [missedModal, setMissedModal] = useState(null); // { ownerId } | null
   const [mail, setMail] = useState(null);
   const [mailTab, setMailTab] = useState('new');
-  const [celebrations, setCelebrations] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [annCanPost, setAnnCanPost] = useState(false);
   const [showAnnModal, setShowAnnModal] = useState(false);
@@ -1702,7 +1687,6 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
     hrApi('/source-analytics').then((r) => setAnalytics(r.sources || [])).catch(() => {});
     hrApi('/missed-commitments').then(setMissed).catch(() => {});
     hrApi('/unread-mail').then(setMail).catch(() => {});
-    hrApi('/celebrations').then((r) => setCelebrations(r.items || [])).catch(() => {});
     loadAnnouncements();
     const iv = setInterval(loadLive, 30000);
     const onFocus = () => loadLive();
@@ -1725,7 +1709,6 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
   const softTint = (hex) => `${hex}0F`;
   return (
     <div className="space-y-5">
-      {celebrations.length > 0 && <HrCelebrationSlider items={celebrations} companyLogo={user && user.companyLogo} />}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
@@ -1735,9 +1718,6 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 11l18-5v12L3 14v-3zM11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg> Post announcement
         </button>}
       </div>
-
-      {/* Celebrations — birthdays & work anniversaries (CRM-style slider) */}
-      <HrCelebrations celebrations={celebrations} user={user} />
 
       {/* Announcements / notice board */}
       {announcements.length > 0 && (
@@ -5501,6 +5481,7 @@ export default function HrApp() {
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin ? (
           <div>
+            <DashboardCelebrations />
             <div className="flex justify-end mb-4">
               <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1">
                 <button onClick={() => setDashView('hr')} className={`px-4 py-2 rounded-lg text-[13px] font-extrabold ${dashView === 'hr' ? 'text-white' : 'text-slate-500'}`} style={dashView === 'hr' ? { background: 'linear-gradient(90deg,#FF6A00,#FF4500)' } : {}}>HR Dashboard</button>
@@ -5511,7 +5492,7 @@ export default function HrApp() {
               ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
               : <EmployeeDashboard user={user} />}
           </div>
-        ) : <EmployeeDashboard user={user} />)}
+        ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} /></div>)}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}
