@@ -1741,19 +1741,22 @@ router.get('/candidates', requireHrAccess, async (req, res, next) => {
     // hides them; the Hired tab (?hired=only) shows only them.
     const hiredMode = String(req.query.hired || '').toLowerCase();
     const rejectedMode = String(req.query.rejected || '').toLowerCase();
+    const blacklistMode = String(req.query.blacklist || '').toLowerCase();
     const isHired = (r) => isHiredCandidate(r);
     // A candidate counts as rejected if the flag is set OR they sit in a
     // rejected-type stage (covers older data rejected before the flag existed).
     const REJECTED_STAGES = new Set(['rejected', 'reject', 'declined', 'disqualified']);
     const isRejected = (r) => r.rejected || REJECTED_STAGES.has(String(r.stage || '').toLowerCase());
+    const isBlacklisted = (r) => !!r.blacklisted;
     // Cold candidates are parked; ?cold=only shows just them, ?cold=hide removes
     // them from the list. Default keeps them (badged) so they stay findable.
     const coldMode = String(req.query.cold || '').toLowerCase();
-    if (coldMode === 'only') rows = rows.filter((r) => r.cold && !isRejected(r));
+    if (coldMode === 'only') rows = rows.filter((r) => r.cold && !isRejected(r) && !isBlacklisted(r));
     else if (coldMode === 'hide') rows = rows.filter((r) => !r.cold);
-    if (rejectedMode === 'only') rows = rows.filter(isRejected);
-    else if (hiredMode === 'only') rows = rows.filter((r) => !isRejected(r) && isHired(r));
-    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !isRejected(r));
+    if (blacklistMode === 'only') rows = rows.filter(isBlacklisted);
+    else if (rejectedMode === 'only') rows = rows.filter((r) => isRejected(r) && !isBlacklisted(r));
+    else if (hiredMode === 'only') rows = rows.filter((r) => !isRejected(r) && !isBlacklisted(r) && isHired(r));
+    else if (hiredMode !== 'all' && !req.query.stage && !req.query.jobPostId) rows = rows.filter((r) => !isHired(r) && !isRejected(r) && !isBlacklisted(r));
     // Strip the big resumeText from list payloads.
     res.json(rows.map((r) => { const o = r.toJSON(); delete o.resumeText; return o; }));
   } catch (e) { next(e); }
@@ -2362,6 +2365,61 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
   } catch (e) { next(e); }
 });
 
+// Edit an assessment task's details (title/details). Reactivates the 48h window
+// on the SAME token and emails the candidate a correction ("ignore the previous
+// email") with the updated details. HR/admin only.
+router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin && !canViewInternal(req)) return res.status(403).json({ error: 'Only HR or an admin can edit a task.' });
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const tasks = Array.isArray(row.tasks) ? row.tasks.slice() : [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    if (tasks[idx].submittedAt) return res.status(400).json({ error: 'This task was already submitted and can’t be edited.' });
+    const b = req.body || {};
+    const prev = tasks[idx];
+    const newTitle = b.title !== undefined ? String(b.title).slice(0, 160) : prev.title;
+    const newDetails = b.details !== undefined ? String(b.details).slice(0, 4000) : prev.details;
+    const changed = newTitle !== prev.title || newDetails !== prev.details;
+    if (!changed) return res.status(400).json({ error: 'No changes to the task details.' });
+    const now = Date.now();
+    // Editing re-opens the 48h window on the same token so the link stays valid.
+    tasks[idx] = { ...prev, title: newTitle, details: newDetails, deadline: new Date(now + TASK_WINDOW_MS).toISOString(), status: 'pending', editedAt: new Date(now).toISOString(), editedBy: req.hrActor.name };
+    row.tasks = tasks; row.changed('tasks', true);
+    pushTimeline(row, { type: 'task', text: `${req.hrActor.name} edited the assessment task${newTitle ? ` (“${newTitle}”)` : ''} and re-sent the corrected details.`, by: req.hrActor.name });
+    await row.save();
+
+    // Email the candidate the correction (best-effort), same upload link.
+    let emailed = false;
+    if (row.email && b.notify !== false) {
+      try {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const s = await Settings.findOne({ where: { singleton: 'settings' } });
+        const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+        const mailbox = mailboxEmail(s);
+        if (token && mailbox) {
+          const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+          const sig = await rejectSignature(req.hrActor, mailbox);
+          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const t = tasks[idx];
+          const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+          const bodyHtml = hrEmail.taskUpdated({
+            candidateName: row.name, role: job ? job.title : '', taskTitle: t.title,
+            taskDetailsHtml: String(t.details || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>'),
+            deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
+          });
+          const cc = await assignedHrCc(row, { excludeEmail: mailbox });
+          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Updated assessment task details${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          emailed = true;
+        }
+      } catch (e) { console.error('[task] edit email failed:', e.message); }
+    }
+    res.json({ ...row.toJSON(), emailed, taskId: prev.id });
+  } catch (e) { next(e); }
+});
+
 // Reactivate an expired (unsubmitted) task link: push the deadline 48h from now
 // and set it back to pending. Same token, so the URL goes live again. HR/admin.
 router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (req, res, next) => {
@@ -2950,14 +3008,21 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
           }
         }
         if (b.joiningDate !== undefined) offer.joiningDate = b.joiningDate ? String(b.joiningDate).slice(0, 40) : '';
+        if (b.joinedConfirmed !== undefined) offer.joinedConfirmed = !!b.joinedConfirmed;
         if (b.notJoined) {
           offer.notJoined = true;
           offer.notJoinedAt = offer.notJoinedAt || now;
           offer.notJoinedReason = String(b.notJoinedReason || '').slice(0, 300);
+          // A candidate who accepted but didn't join is moved to the Blacklist.
+          row.blacklisted = true;
+          row.blacklistedAt = new Date();
+          row.blacklistReason = String(b.notJoinedReason || '').slice(0, 300);
         } else {
           offer.notJoined = false; offer.notJoinedAt = null; offer.notJoinedReason = '';
+          // Un-marking did-not-join also lifts the blacklist (if it was set this way).
+          if (row.blacklisted) { row.blacklisted = false; row.blacklistedAt = null; row.blacklistReason = ''; }
         }
-        pushTimeline(row, { type: 'offer', text: `Hire details updated by ${req.hrActor.name}${offer.notJoined ? ' — marked did-not-join' : (offer.joiningDate ? ` — joining ${offer.joiningDate}` : '')}.`, by: req.hrActor.name });
+        pushTimeline(row, { type: 'offer', text: `Hire details updated by ${req.hrActor.name}${offer.notJoined ? ' — marked did-not-join, moved to Blacklist' : (offer.joiningDate ? ` — joining ${offer.joiningDate}` : '')}.`, by: req.hrActor.name });
         break;
       }
       case 'mark_not_joined':
@@ -3518,6 +3583,7 @@ const HR_EMAIL_CATALOG = [
   { id: 'interview_panel', name: 'Interview invite (panel)', description: 'Interview details sent to the internal panellists / interviewers.', sentTo: 'Interview panellists', subjectMatch: ['interview panel'] },
   { id: 'interview_reschedule', name: 'Interview reschedule', description: 'Sent when an interview is rescheduled, to the candidate (and panel).', sentTo: 'Candidate & panel', subjectMatch: ['interview rescheduled'] },
   { id: 'assessment_task', name: 'Assessment task', description: 'Sends an assessment/assignment task to a candidate with a deadline + upload link.', sentTo: 'The candidate', subjectMatch: ['assessment task'] },
+  { id: 'task_updated', name: 'Assessment task — updated', description: 'Correction email when a task’s details are edited: asks the candidate to ignore the previous email and use the updated details (same upload link).', sentTo: 'The candidate', subjectMatch: ['updated assessment task', 'updated task details'] },
   { id: 'task_received', name: 'Task received', description: 'Confirms to the candidate that their submitted task was received.', sentTo: 'The candidate', subjectMatch: ['task received', 'we received your submission', 'submission received'] },
   { id: 'task_additional_info', name: 'Task — more info requested', description: 'Asks a candidate for additional information / a revised task submission.', sentTo: 'The candidate', subjectMatch: ['additional information', 'more information'] },
   { id: 'rejection', name: 'Rejection', description: 'Sent to a candidate when their application is not moving forward.', sentTo: 'The candidate', subjectMatch: ['update on your application', 'regarding your application'] },
@@ -3539,6 +3605,7 @@ function hrPreviewHtml(id, sig, mailbox) {
     case 'interview_panel': return hrEmail.interviewInvitePanel({ panelistName: 'Rahul Verma', candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: when, durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig });
     case 'interview_reschedule': return hrEmail.interviewReschedule({ recipientName: 'Ava Thompson', isPanel: false, candidateName: 'Ava Thompson', role, roundLabel: 'Technical Round', whenText: 'Thursday, 28 August 2026, 3:00 PM IST', durationMins: 30, mode: 'online', meetLink: 'https://meet.google.com/abc-defg-hij', notes: '', signature: sig });
     case 'assessment_task': return hrEmail.taskAssignment({ candidateName: 'Ava Thompson', role, taskTitle: 'Build a responsive dashboard component', taskDetailsHtml: 'Build a small React dashboard with a chart and a filterable table. Include a short README.', deadlineText: 'Sunday, 24 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
+    case 'task_updated': return hrEmail.taskUpdated({ candidateName: 'Ava Thompson', role, taskTitle: 'Build a responsive dashboard component', taskDetailsHtml: 'Build a small React dashboard with a chart and a filterable table. Include a short README. (Updated: please use the new design tokens shared in the brief.)', deadlineText: 'Sunday, 24 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
     case 'task_received': return hrEmail.taskReceived({ candidateName: 'Ava Thompson', role, isAdditional: false, signature: sig });
     case 'task_additional_info': return hrEmail.taskAdditionalInfoRequest({ candidateName: 'Ava Thompson', role, messageHtml: 'Could you please share the source repository link and a short note on your approach?', deadlineText: 'Friday, 29 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
     case 'rejection': return hrEmail.rejectionEmail({ role, bodyHtml: rejectBody, signature: sig });
@@ -3568,14 +3635,27 @@ router.get('/email-catalog/:id/activity', requireHrAccess, requireHrAdmin, async
   try {
     const meta = HR_EMAIL_CATALOG.find((e) => e.id === req.params.id);
     if (!meta) return res.status(404).json({ error: 'Unknown email.' });
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(50, Math.max(5, parseInt(req.query.pageSize, 10) || 15));
     let outbound = [];
-    try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 800 }); } catch { outbound = []; }
-    const rows = outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return meta.subjectMatch.some((m) => sub.includes(m)); }).slice(0, 200);
-    // Attach candidate names where available.
+    try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 2000 }); } catch { outbound = []; }
+    const all = outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return meta.subjectMatch.some((m) => sub.includes(m)); });
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const start = (page - 1) * pageSize;
+    const rows = all.slice(start, start + pageSize);
     const candIds = [...new Set(rows.map((r) => r.candidateId).filter(Boolean))];
     const cands = candIds.length ? await HrCandidate.findAll({ where: { id: candIds } }) : [];
     const nameOf = Object.fromEntries(cands.map((c) => [c.id, c.name]));
-    res.json({ activity: rows.map((r) => ({ toEmail: (r.toEmail || '').split(',')[0].trim(), toName: nameOf[r.candidateId] || '', sentAt: r.sentAt, status: 'sent', subject: r.subject || '' })) });
+    res.json({
+      activity: rows.map((r) => ({
+        toEmail: (r.toEmail || '').split(',')[0].trim(),
+        toName: nameOf[r.candidateId] || '',
+        candidateId: r.candidateId || null,
+        sentAt: r.sentAt, status: 'sent', subject: r.subject || '',
+      })),
+      page, pageSize, total, totalPages,
+    });
   } catch (e) { next(e); }
 });
 

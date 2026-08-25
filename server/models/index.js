@@ -1491,6 +1491,11 @@ const HrCandidate = sequelize.define('HrCandidate', {
   cold: { type: DataTypes.BOOLEAN, defaultValue: false },
   coldAt: { type: DataTypes.DATE, allowNull: true },
   coldReason: { type: DataTypes.STRING(300), defaultValue: '' },
+  // Blacklisted — e.g. an accepted candidate who ultimately did not join. Kept
+  // separate from "cold" (parked). Blacklisted candidates show in their own tab.
+  blacklisted: { type: DataTypes.BOOLEAN, defaultValue: false },
+  blacklistedAt: { type: DataTypes.DATE, allowNull: true },
+  blacklistReason: { type: DataTypes.STRING(300), defaultValue: '' },
   // interviews: [...]
   interviews: { type: DataTypes.JSON, defaultValue: [] },
   // activities: [{ id, kind:'task'|'call', mode:'scheduled'|'done', title/agenda,

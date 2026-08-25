@@ -239,6 +239,16 @@ const STAGE = { not_started: { label: 'Not started', cls: 'bg-slate-100 text-sla
 // Solid-fill cell colors (monday.com style) for the Priority + Status columns.
 const PRIO_FILL = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
 const STAGE_FILL = { not_started: '#94A3B8', in_progress: '#F59E0B', completed: '#22C55E' };
+// Strip TipTap/HTML to a short plain-text preview for the task list cell.
+function plainPreview(html) {
+  if (!html) return '';
+  let s = String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')          // drop tags
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ').trim();
+  return s;
+}
 
 function TAvatar({ person, size = 24 }) {
   if (!person) return <div className="rounded-full bg-slate-200" style={{ width: size, height: size }} />;
@@ -381,12 +391,15 @@ function HrTasksView({ user, isAdmin }) {
           <div className="flex items-center justify-center h-9 border-r border-slate-100">
             <button onClick={() => patchTask(t._id, { stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`w-4 h-4 rounded-full border-2 ${t.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
           </div>
-          {/* task name (click → drawer) */}
-          <div className={`px-3 h-9 flex items-center border-r border-slate-100 ${isSub ? 'pl-10' : ''}`}>
-            {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
-            <button onClick={() => setOpenTask(t)} className={`text-sm font-semibold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
-            {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
-            {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
+          {/* task name + description preview (click → drawer) */}
+          <div className={`px-3 py-1 min-h-9 flex flex-col justify-center border-r border-slate-100 overflow-hidden ${isSub ? 'pl-10' : ''}`}>
+            <div className="flex items-center min-w-0">
+              {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
+              <button onClick={() => setOpenTask(t)} className={`text-sm font-bold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+              {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
+              {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
+            </div>
+            {(() => { const d = plainPreview(t.description); return d ? <div className="text-[11px] text-slate-400 truncate leading-tight">{d}</div> : null; })()}
           </div>
           {/* assignee (inline picker) */}
           <div className="px-2 h-9 flex items-center border-r border-slate-100">
@@ -1542,6 +1555,7 @@ function HrRecruitment({ isAdmin, me, intent }) {
                 {Btn(list === 'active', () => setCandList('active'), 'Active')}
                 {Btn(list === 'hired', () => setCandList('hired'), 'Hired')}
                 {Btn(list === 'rejected', () => setCandList('rejected'), 'Rejected')}
+                {Btn(list === 'blacklist', () => setCandList('blacklist'), 'Blacklist')}
               </div>
             </div>
           );
@@ -1874,6 +1888,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const curView = listMode || 'active';
   const isHiredView = listMode === 'hired';
   const isRejectedView = listMode === 'rejected';
+  const isBlacklistView = listMode === 'blacklist';
   const myId = me && (me._id || me.id);
   const mineOnly = (scope || (isAdmin ? 'all' : 'mine')) === 'mine';
   const isMineCand = (c) => myId && (Number(c.recruiterId) === Number(myId) || (me && me.name && c.recruiterName === me.name));
@@ -1885,6 +1900,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
     if (kw && kw.trim()) params.set('q', kw.trim());
     if (isHiredView) params.set('hired', 'only');
     if (isRejectedView) params.set('rejected', 'only');
+    if (isBlacklistView) params.set('blacklist', 'only');
     const qs = params.toString() ? `?${params.toString()}` : '';
     return hrApi(`/candidates${qs}`).then(setCands).catch(() => {});
   };
@@ -1893,10 +1909,38 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
   useEffect(() => { setSourceFilter(initialSource || ''); }, [initialSource]);
   const job = (id) => jobs.find((j) => j._id === id) || {};
+  // Map every stage id → {label,color} across ALL jobs, plus the built-in
+  // defaults, so a candidate whose own job no longer lists the stage (deleted /
+  // reassigned) still resolves to a proper name instead of a raw "st_..." id.
+  const globalStageMap = (() => {
+    const m = {
+      applied: { label: 'Applied', color: '#2563EB' },
+      screening: { label: 'Screening', color: '#0891B2' },
+      interview: { label: 'Interview', color: '#F5A524' },
+      hired: { label: 'Hired', color: '#16A34A' },
+      onboarded: { label: 'Onboarded', color: '#16A34A' },
+      rejected: { label: 'Rejected', color: '#DC2626' },
+    };
+    jobs.forEach((j) => (j.stages || []).forEach((s) => { if (s && s.id) m[s.id] = { label: s.label, color: s.color || '#64748B' }; }));
+    return m;
+  })();
+  const prettifyStageId = (id) => {
+    const raw = String(id || '').trim();
+    if (!raw) return 'In review';
+    // A raw custom-stage id like "st_1787050931044" has no human label — show a
+    // neutral fallback rather than the internal id.
+    if (/^st_\d+/i.test(raw) || /^stage[_-]?\d+/i.test(raw)) return 'In review';
+    return raw.replace(/[_-]+/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+  };
   const stageLabel = (c) => {
+    if (c.blacklisted) return { label: 'Blacklisted', color: '#111827' };
     if (c.rejected) return { label: 'Rejected', color: '#DC2626' };
-    const st = ((job(c.jobPostId).stages) || []).find((s) => s.id === c.stage);
-    return { label: st ? st.label : c.stage, color: st ? st.color : '#64748B' };
+    if (c.cold) return { label: 'Cold', color: '#0891B2' };
+    const own = ((job(c.jobPostId).stages) || []).find((s) => s.id === c.stage);
+    if (own) return { label: own.label, color: own.color || '#64748B' };
+    const g = globalStageMap[c.stage];
+    if (g) return g;
+    return { label: prettifyStageId(c.stage), color: '#64748B' };
   };
 
   useEffect(() => { if (openCandidateId) { setViewId(openCandidateId); setViewTab(openCandidateTab || null); } }, [openCandidateId, openCandidateTab]);
@@ -2120,17 +2164,22 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
   const o = candidate.offer || {};
   const [salary, setSalary] = useState(o.acceptedAmount || o.finalCtc || '');
   const [joiningDate, setJoiningDate] = useState(o.joiningDate ? String(o.joiningDate).slice(0, 10) : '');
-  const [joined, setJoined] = useState(o.notJoined ? 'no' : 'yes');
+  // No default — HR must pick Joined / Didn't join on the joining day. Only
+  // pre-select if a status was already recorded before.
+  const [joined, setJoined] = useState(o.notJoined === true ? 'no' : (o.joinedConfirmed ? 'yes' : ''));
   const [reason, setReason] = useState(o.notJoinedReason || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const save = async () => {
+    if (!joined) { setErr('Please select whether the candidate joined or didn’t join.'); return; }
+    if (joined === 'no' && !reason.trim()) { setErr('Please enter a reason for not joining.'); return; }
     setBusy(true); setErr('');
     try {
       await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({
         op: 'manage_hire',
         acceptedAmount: salary.trim(),
         joiningDate: joiningDate || '',
+        joinedConfirmed: joined === 'yes',
         notJoined: joined === 'no',
         notJoinedReason: joined === 'no' ? reason.trim() : '',
       }) });
@@ -2146,13 +2195,18 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Accepted salary</div><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="e.g. 8L" /></div>
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining date</div><input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
           <div>
-            <div className="text-[12px] font-bold text-slate-600 mb-1">Joining status</div>
+            <div className="text-[12px] font-bold text-slate-600 mb-1">Joining status <span className="text-slate-400 font-normal">— confirm on the joining day</span></div>
             <div className="flex gap-2">
-              <button onClick={() => setJoined('yes')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'yes' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>✓ Joined</button>
-              <button onClick={() => setJoined('no')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'no' ? 'border-red-400 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>✗ Didn't join</button>
+              <button onClick={() => { setJoined('yes'); setErr(''); }} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'yes' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>✓ Joined</button>
+              <button onClick={() => { setJoined('no'); setErr(''); }} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'no' ? 'border-red-400 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>✗ Didn't join</button>
             </div>
+            {!joined && <div className="text-[11px] text-slate-400 mt-1.5">No status selected yet.</div>}
           </div>
-          {joined === 'no' && <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason (optional)</div><textarea rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. accepted another offer, no-show…" /></div>}
+          {joined === 'no' && <div>
+            <div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div>
+            <textarea rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. accepted another offer, no-show…" />
+            <div className="text-[11px] text-amber-600 mt-1.5 font-semibold">This candidate will be moved to the Blacklist.</div>
+          </div>}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -3668,7 +3722,7 @@ function PhoneNormalizeCard() {
 }
 
 // HR Admin → Daily checklist: configure the HR Manager's recurring daily checks.
-function HrEmailsTab() {
+function HrEmailsTab({ onOpenCandidate }) {
   const [data, setData] = useState(null);
   const [preview, setPreview] = useState(null);
   const [activity, setActivity] = useState(null);
@@ -3726,7 +3780,7 @@ function HrEmailsTab() {
       </div>
 
       {preview && <HrEmailPreviewModal id={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
-      {activity && <HrEmailActivityModal id={activity.id} name={activity.name} fmtDate={fmtDate} onClose={() => setActivity(null)} />}
+      {activity && <HrEmailActivityModal id={activity.id} name={activity.name} fmtDate={fmtDate} onOpenCandidate={onOpenCandidate} onClose={() => setActivity(null)} />}
     </div>
   );
 }
@@ -3757,50 +3811,69 @@ function HrEmailPreviewModal({ id, name, onClose }) {
 }
 
 // Popup: recent send activity as a paginated table.
-function HrEmailActivityModal({ id, name, fmtDate, onClose }) {
+function HrEmailActivityModal({ id, name, fmtDate, onOpenCandidate, onClose }) {
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
-  const perPage = 10;
-  useEffect(() => { hrApi(`/email-catalog/${id}/activity`).then(setData).catch(() => setData({ activity: [], note: 'Could not load activity.' })); }, [id]);
+  const [loading, setLoading] = useState(true);
+  const perPage = 15;
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    hrApi(`/email-catalog/${id}/activity?page=${page}&pageSize=${perPage}`)
+      .then((d) => { if (alive) { setData(d); setLoading(false); } })
+      .catch(() => { if (alive) { setData({ activity: [], note: 'Could not load activity.', total: 0, totalPages: 1 }); setLoading(false); } });
+    return () => { alive = false; };
+  }, [id, page]);
   const rows = (data && data.activity) || [];
-  const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
-  const pageRows = rows.slice((page - 1) * perPage, page * perPage);
+  const total = (data && data.total) || 0;
+  const totalPages = (data && data.totalPages) || 1;
+  const openCand = (a) => { if (a.candidateId && onOpenCandidate) { onClose(); onOpenCandidate(a.candidateId); } };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col" style={{ height: '86vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div><div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div><div className="text-[11px] text-slate-400">{rows.length > 0 ? `${rows.length} recent send${rows.length === 1 ? '' : 's'}` : 'Recent sends'}</div></div>
+          <div><div className="text-sm font-extrabold text-[#050A1F]">Activity — {name}</div><div className="text-[11px] text-slate-400">{total > 0 ? `${total} email${total === 1 ? '' : 's'} sent` : 'Sent emails'}</div></div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
         </div>
         <div className="flex-1 overflow-auto p-5">
-          {!data ? <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>
-            : rows.length === 0 ? <div className="text-slate-400 text-sm py-16 text-center">{data.note || 'No sends recorded yet.'}</div>
+          {loading ? <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>
+            : rows.length === 0 ? <div className="text-slate-400 text-sm py-16 text-center">{(data && data.note) || 'No sends recorded yet.'}</div>
               : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recipient</th>
-                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</th>
-                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date &amp; time</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Candidate</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Time</th>
                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {pageRows.map((a, i) => (
-                        <tr key={i} className="border-b border-slate-100 last:border-0">
-                          <td className="px-4 py-3 font-semibold text-[#050A1F] whitespace-nowrap">{a.toName || '—'}</td>
-                          <td className="px-4 py-3 text-slate-600">{a.toEmail}</td>
-                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtDate(a.sentAt)}</td>
-                          <td className="px-4 py-3 text-right whitespace-nowrap"><span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[11px] font-bold">✓ Sent</span></td>
-                        </tr>
-                      ))}
+                      {rows.map((a, i) => {
+                        const dt = a.sentAt ? new Date(a.sentAt) : null;
+                        const dstr = dt ? dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                        const tstr = dt ? dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—';
+                        return (
+                          <tr key={i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {a.candidateId
+                                ? <button onClick={() => openCand(a)} className="font-semibold text-[#0435AC] hover:underline">{a.toName || a.toEmail || 'View candidate'}</button>
+                                : <span className="font-semibold text-[#050A1F]">{a.toName || a.toEmail || '—'}</span>}
+                              {a.toName && a.toEmail ? <div className="text-[11px] text-slate-400">{a.toEmail}</div> : null}
+                            </td>
+                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{dstr}</td>
+                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{tstr}</td>
+                            <td className="px-4 py-3 text-right whitespace-nowrap"><span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[11px] font-bold">✓ Sent</span></td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
         </div>
-        {rows.length > perPage && (
+        {totalPages > 1 && (
           <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between shrink-0">
             <div className="text-xs text-slate-400">Page {page} of {totalPages}</div>
             <div className="flex items-center gap-2">
@@ -3996,7 +4069,7 @@ function HrCareersTab() {
   );
 }
 
-function HrAdmin({ user }) {
+function HrAdmin({ user, onOpenCandidate }) {
   const [tab, setTab] = useState('org');
   const [users, setUsers] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -4209,7 +4282,7 @@ function HrAdmin({ user }) {
       {tab === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
-      {tab === 'emails' && <HrEmailsTab />}
+      {tab === 'emails' && <HrEmailsTab onOpenCandidate={onOpenCandidate} />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
@@ -4774,7 +4847,7 @@ export default function HrApp() {
         {effectiveView === 'profile' && <MyProfilePage user={user} onUpdated={refreshUser} />}
         {effectiveView === 'templates' && <EmailTemplatesPage />}
         {effectiveView === 'signature' && <EmailSignaturePage />}
-        {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} />}
+        {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'survey' && isAdmin && <HrSurveyAdmin />}
       </main>
     </div>

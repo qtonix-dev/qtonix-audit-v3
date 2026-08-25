@@ -272,6 +272,30 @@ function taskAssignment({ candidateName, role, taskTitle, taskDetailsHtml, deadl
   });
 }
 
+// Correction of a previously-sent assessment task. Same layout/fields as
+// taskAssignment, but tells the candidate to ignore the earlier email and use
+// the updated details. Reuses the SAME upload link (token reactivated).
+function taskUpdated({ candidateName, role, taskTitle, taskDetailsHtml, deadlineText, uploadUrl, signature }) {
+  const details = [
+    taskTitle ? { label: 'Task', value: esc(taskTitle) } : null,
+    { label: 'Submit by', value: esc(deadlineText) },
+    { label: 'How to submit', value: 'Upload your files on the secure link below' },
+  ].filter(Boolean);
+  return shell({
+    kicker: 'Assessment Task',
+    headline: 'Updated task details',
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `Please <strong>ignore the previous email</strong> about your task — the details have been updated.${role ? ` Here are the correct details for the <strong>${esc(role)}</strong> role.` : ' Here are the correct details.'}${taskDetailsHtml ? `<br><br><div style="background:#F4F7FE;border:1px solid #E2E9F8;border-radius:12px;padding:16px 18px;">${taskDetailsHtml}</div>` : ''}`,
+    details,
+    ctaLabel: uploadUrl ? 'Upload your files' : null,
+    ctaUrl: uploadUrl || null,
+    ctaNote: 'This link is active for 48 hours. You can upload multiple files. If the link expires, reply to this email and we\u2019ll reactivate it.',
+    outroHtml: 'Sorry for the mix-up. Please complete and submit within the deadline. If you have any questions, just reply to this email. Good luck!',
+    signature,
+  });
+}
+
 // Candidate's resume has been shortlisted — they've passed the initial review
 // and will be moving forward to the interview stage. Warm, encouraging tone; no
 // CTA button (HR schedules the interview separately and sends the invite).
@@ -325,6 +349,7 @@ module.exports = {
   taskReceived, taskAdditionalInfoRequest,
   shortlistedEmail,
   taskAssignment,
+  taskUpdated,
   rejectionEmail,
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,
