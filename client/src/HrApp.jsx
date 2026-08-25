@@ -1170,7 +1170,7 @@ function SummaryBox({ label, value, sub, color, active, onClick }) {
 
 // Minimal dashboard for non-HR employees: a greeting, HR announcements, and any
 // upcoming interviews where they sit on the panel. (HR/Admin see HrDashboard.)
-function EmployeeDashboard({ user }) {
+function EmployeeDashboard({ user, onOpenCandidate }) {
   const [clock, setClock] = useState(null);
   const [leave, setLeave] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -1185,21 +1185,22 @@ function EmployeeDashboard({ user }) {
   const [applyOpen, setApplyOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
+  const [decideItem, setDecideItem] = useState(null); // leave review item open in the decision popup
 
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
   const loadReviews = () => hrApi('/me/reviews').then((r) => setReviews(r.reviews || [])).catch(() => {});
+  const loadInterviews = () => hrApi('/my-interviews').then((r) => {
+    const jobs = (r && r.jobs) || []; const flat = [];
+    jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
+    const t = Date.now(); flat.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+    setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= t - 3600000));
+  }).catch(() => {});
   useEffect(() => {
-    loadClock(); loadLeave(); loadReviews();
+    loadClock(); loadLeave(); loadReviews(); loadInterviews();
     hrApi('/me/whos-in').then(setWhos).catch(() => {});
     hrApi('/me/celebrations').then(setCel).catch(() => {});
     hrApi('/announcements').then((r) => setAnn(Array.isArray(r) ? r : (r.announcements || []))).catch(() => {});
-    hrApi('/my-interviews').then((r) => {
-      const jobs = (r && r.jobs) || []; const flat = [];
-      jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
-      const t = Date.now(); flat.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
-      setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= t - 3600000));
-    }).catch(() => {});
     hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
   }, []);
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -1222,8 +1223,11 @@ function EmployeeDashboard({ user }) {
   const fmtHol = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
   const fmtShort = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return d; } };
   const fmtDT = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+  const fmtDay = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  const weekday = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' }); } catch { return ''; } };
 
-  const decide = async (id, approve) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
+  const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
+  const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { alert(e.message); } };
 
   const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
   const ringColor = { casual: '#22C55E', medical: '#0EA5E9', privilege: '#F59E0B', wfh: '#8B5CF6' };
@@ -1233,14 +1237,30 @@ function EmployeeDashboard({ user }) {
   return (
     <div className="max-w-6xl mx-auto">
       {/* greeting hero */}
-      <div className="rounded-2xl p-8 mb-5 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
+      <div className="rounded-2xl p-8 mb-4 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
         <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
         <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
         <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— Oliver Wendell Holmes</span></p>
       </div>
 
+      {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
+      {ann.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+          <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Announcements</h3>
+          <div className="grid md:grid-cols-2 gap-x-6 gap-y-3.5">
+            {ann.slice(0, 4).map((a, i) => (
+              <div key={a.id || i} className="border-l-[3px] pl-3" style={{ borderColor: '#FF6A00' }}>
+                <div className="text-sm font-extrabold text-[#050A1F]">{a.title || 'Announcement'}</div>
+                {a.body && <div className="text-[12px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
+                <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmtDT(a.createdAt) : ''}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-4 items-start">
-        {/* LEFT */}
+        {/* LEFT — Web login + Leave balance */}
         <div className="flex flex-col gap-4">
           {/* WEB LOGIN */}
           <div className="rounded-2xl p-5 text-white" style={{ background: ORNG }}>
@@ -1281,25 +1301,6 @@ function EmployeeDashboard({ user }) {
             )}
           </div>
 
-          {/* REVIEW */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Review</h3>
-            {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
-              <>
-                <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
-                {reviews.map((it) => (
-                  <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
-                    <span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who} ({it.type}{it.duration === 'half' ? ', half-day' : ''} · {it.days > 1 ? `${fmtShort(it.date)}–${fmtShort(it.dateTo)} · ${it.days} days` : fmtShort(it.date)})
-                    <span className="ml-auto flex gap-1.5">
-                      <button onClick={() => decide(it.id, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
-                      <button onClick={() => decide(it.id, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
-                    </span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-
           {/* LEAVE BALANCE */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#22C55E]" />Leave balance</h3>
@@ -1321,9 +1322,91 @@ function EmployeeDashboard({ user }) {
               <button onClick={() => setHistOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-slate-700 bg-slate-100">Leave History</button>
             </div>
           </div>
+
+          {/* CELEBRATIONS */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#8B5CF6]" />Celebrations <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· company-wide</span></h3>
+            <div className="flex gap-1.5 mb-3">
+              {[['birthdays', 'Birthdays'], ['anniversaries', 'Anniversaries'], ['joinees', 'New joinees']].map(([k, lbl]) => (
+                <button key={k} onClick={() => setCelTab(k)} className={`text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg ${celTab === k ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={celTab === k ? { background: '#050A1F' } : {}}>{lbl}</button>
+              ))}
+            </div>
+            {celRows.length === 0 ? <div className="text-sm text-slate-400 py-1">Nothing coming up.</div> : celRows.slice(0, 6).map((r, i) => (
+              <div key={i} className="flex items-center gap-2.5 py-2 border-t border-slate-50">
+                <div className="w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center" style={{ background: '#ede9fe', color: '#6d28d9' }}>{initials(r.name)}</div>
+                <div><div className="text-[13px] font-bold text-[#050A1F]">{r.name}</div><div className="text-[11px] text-slate-400">{r.sub}</div></div>
+                <span className="ml-auto text-[11px] font-extrabold" style={{ color: '#FF4500' }}>{r.when}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* MIDDLE */}
+        {/* MIDDLE — Review + Interviews */}
+        <div className="flex flex-col gap-4">
+          {/* REVIEW */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Review</h3>
+            {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
+              <>
+                <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
+                {reviews.map((it) => {
+                  if (it.kind === 'leave') return (
+                    <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
+                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who}
+                        <div className="text-[11px] text-slate-400">{it.type}{it.duration === 'half' ? ' · half day' : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
+                      </div>
+                      <button onClick={() => setDecideItem(it)} className="ml-auto text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: ORNG }}>Take Decision</button>
+                    </div>
+                  );
+                  if (it.kind === 'interview_attendance') return (
+                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
+                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Interview</span> · Did <b>{titleCase(it.who)}</b> attend?</div>
+                      <div className="text-[11px] text-slate-400 mb-1.5">{it.roundLabel ? `${it.roundLabel} · ` : ''}{fmtDT(it.at)}</div>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => markAttendance(it.candidateId, it.interviewId, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Attended</button>
+                        <button onClick={() => markAttendance(it.candidateId, it.interviewId, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>No-show</button>
+                      </div>
+                    </div>
+                  );
+                  // interview_feedback
+                  return (
+                    <div key={it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 mt-2">
+                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Feedback</span> · {titleCase(it.who)}
+                        <div className="text-[11px] text-slate-400">{it.roundLabel ? `${it.roundLabel} · ` : ''}awaiting your feedback</div>
+                      </div>
+                      <button onClick={() => onOpenCandidate && onOpenCandidate(it.candidateId, 'feedback')} className="ml-auto text-[11px] font-extrabold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#dbeafe', color: '#1d4ed8' }}>Submit feedback ›</button>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {/* INTERVIEWS */}
+          {interviews.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#050A1F]" />Your upcoming interviews</h3>
+              <div className="flex flex-col gap-2.5">
+                {interviews.slice(0, 5).map((iv, i) => (
+                  <div key={i} className="border border-slate-100 rounded-xl px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className="text-[13px] font-extrabold text-[#050A1F] hover:text-[#FF4500] text-left">{titleCase(iv.name)}</button>
+                      {iv.roundLabel ? <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{iv.roundLabel}</span> : null}
+                    </div>
+                    <div className="text-[11px] text-slate-400">{iv.jobTitle}</div>
+                    <div className="text-[12px] font-bold text-slate-600 mt-0.5">{fmtDT(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
+                    <div className="flex items-center gap-3 mt-2">
+                      {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#0F9D58' }}>Join interview</a>}
+                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className="text-[11px] font-extrabold" style={{ color: '#1d4ed8' }}>View candidate ›</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT — Who's in + Holidays */}
         <div className="flex flex-col gap-4">
           {/* WHO IS IN */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
@@ -1350,59 +1433,22 @@ function EmployeeDashboard({ user }) {
             <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#F59E0B]" />Upcoming holidays</h3>
             {!nextHol ? <div className="text-sm text-slate-400">No upcoming holidays.</div> : (
               <>
-                <div className="text-2xl font-extrabold text-[#050A1F]">{nextHol.name}</div>
-                <div className="font-extrabold text-sm mt-0.5" style={{ color: '#FF4500' }}>{fmtHol(nextHol.date)}</div>
-                <div className="mt-2.5">{upcoming.slice(1, 4).map((h, i) => (<div key={i} className="flex justify-between py-2 border-t border-slate-100 text-[13px]"><span>{h.name}</span><span className="text-slate-400 font-bold">{fmtShort(h.date)}</span></div>))}</div>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-3xl leading-none">{nextHol.emoji || '📅'}</span>
+                  <div>
+                    <div className="text-xl font-extrabold text-[#050A1F] leading-tight">{nextHol.name}</div>
+                    <div className="font-extrabold text-sm" style={{ color: '#FF4500' }}>{fmtHol(nextHol.date)}</div>
+                  </div>
+                </div>
+                <div className="mt-2.5">{upcoming.slice(1, 5).map((h, i) => (
+                  <div key={i} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px]">
+                    <span className="text-lg leading-none">{h.emoji || '📅'}</span>
+                    <span className="flex-1">{h.name}</span>
+                    <span className="text-slate-400 font-bold">{fmtShort(h.date)}</span>
+                  </div>
+                ))}</div>
               </>
             )}
-          </div>
-
-          {/* INTERVIEWS */}
-          {interviews.length > 0 && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#050A1F]" />Your upcoming interviews</h3>
-              <div className="flex flex-col gap-2">
-                {interviews.slice(0, 5).map((iv, i) => (
-                  <div key={i} className="border border-slate-100 rounded-xl px-3 py-2.5">
-                    <div className="text-[13px] font-extrabold text-[#050A1F]">{titleCase(iv.name)}{iv.roundLabel ? <span className="ml-2 text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{iv.roundLabel}</span> : null}</div>
-                    <div className="text-[11px] text-slate-400">{iv.jobTitle}</div>
-                    <div className="text-[12px] font-bold text-slate-600 mt-0.5">{fmtDT(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* RIGHT */}
-        <div className="flex flex-col gap-4">
-          {/* ANNOUNCEMENTS */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Announcements</h3>
-            {ann.length === 0 ? <div className="text-sm text-slate-400">No announcements yet.</div> : ann.slice(0, 5).map((a, i) => (
-              <div key={a.id || i} className="border-l-[3px] pl-3 mb-3.5 last:mb-0" style={{ borderColor: '#FF6A00' }}>
-                <div className="text-sm font-extrabold text-[#050A1F]">{a.title || 'Announcement'}</div>
-                {a.body && <div className="text-[12px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
-                <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmtDT(a.createdAt) : ''}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* CELEBRATIONS */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#8B5CF6]" />Celebrations <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· company-wide</span></h3>
-            <div className="flex gap-1.5 mb-3">
-              {[['birthdays', 'Birthdays'], ['anniversaries', 'Anniversaries'], ['joinees', 'New joinees']].map(([k, lbl]) => (
-                <button key={k} onClick={() => setCelTab(k)} className={`text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg ${celTab === k ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={celTab === k ? { background: '#050A1F' } : {}}>{lbl}</button>
-              ))}
-            </div>
-            {celRows.length === 0 ? <div className="text-sm text-slate-400 py-1">Nothing coming up.</div> : celRows.slice(0, 6).map((r, i) => (
-              <div key={i} className="flex items-center gap-2.5 py-2 border-t border-slate-50">
-                <div className="w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center" style={{ background: '#ede9fe', color: '#6d28d9' }}>{initials(r.name)}</div>
-                <div><div className="text-[13px] font-bold text-[#050A1F]">{r.name}</div><div className="text-[11px] text-slate-400">{r.sub}</div></div>
-                <span className="ml-auto text-[11px] font-extrabold" style={{ color: '#FF4500' }}>{r.when}</span>
-              </div>
-            ))}
           </div>
         </div>
       </div>
@@ -1410,11 +1456,74 @@ function EmployeeDashboard({ user }) {
       {applyOpen && <ApplyLeaveModal approverName={leave ? leave.approverName : ''} onClose={() => setApplyOpen(false)} onDone={() => { setApplyOpen(false); loadLeave(); }} />}
       {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
+      {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
     </div>
   );
 }
 
 // Minimal dashboard for non-HR employees end.
+
+// Leave decision popup — opened from the Review box. Shows the employee, the
+// leave breakdown (half/full/multi with per-day weekday), the last leave they
+// took, a notes box, and Approve / Decline.
+function LeaveDecisionModal({ item, onClose, onDecide }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fmtDay = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  const weekday = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' }); } catch { return ''; } };
+  const dates = item.dates && item.dates.length ? item.dates : [item.date];
+  const durLabel = item.duration === 'half' ? 'Half day' : dates.length > 1 ? `Multiple days · ${dates.length} days` : 'Full day';
+  const go = async (approve) => { setBusy(true); try { await onDecide(approve, note); } finally { setBusy(false); } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">Take decision</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Employee</div>
+            <div className="text-[15px] font-extrabold text-[#050A1F]">{titleCase(item.who)}</div>
+          </div>
+          <div className="rounded-xl bg-slate-50 border border-slate-100 p-3.5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] font-extrabold rounded px-2 py-0.5 capitalize" style={{ background: '#EEF3FF', color: '#1d4ed8' }}>{item.type}</span>
+              <span className="text-[12px] font-extrabold text-[#050A1F]">{durLabel}</span>
+            </div>
+            {dates.length > 1 ? (
+              <div className="space-y-1">
+                {dates.map((d, i) => (
+                  <div key={d} className="text-[13px] text-slate-700"><span className="font-bold">Day {i + 1}</span> — {fmtDay(d)} <span className="text-slate-400">({weekday(d)})</span></div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[13px] text-slate-700">{fmtDay(dates[0])} <span className="text-slate-400">({weekday(dates[0])})</span>{item.duration === 'half' ? ' · half day' : ''}</div>
+            )}
+            {item.reason && <div className="text-[12px] text-slate-500 mt-2 pt-2 border-t border-slate-200/70">Reason: {item.reason}</div>}
+          </div>
+          <div className="rounded-xl border border-slate-100 p-3.5">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Last leave taken</div>
+            {item.lastLeave ? (
+              <div className="text-[13px] text-slate-700">
+                {item.lastLeave.from === item.lastLeave.to ? fmtDay(item.lastLeave.from) : `${fmtDay(item.lastLeave.from)} – ${fmtDay(item.lastLeave.to)}`}
+                <span className="text-slate-400"> · {item.lastLeave.days} day{item.lastLeave.days === 1 ? '' : 's'} · {item.lastLeave.daysAgo} day{item.lastLeave.daysAgo === 1 ? '' : 's'} ago</span>
+              </div>
+            ) : <div className="text-[13px] text-slate-400">No previous leave on record.</div>}
+          </div>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Notes <span className="normal-case font-semibold text-slate-300">(optional)</span></div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Add a note for the employee…" className={inputCls} />
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button disabled={busy} onClick={() => go(false)} className="rounded-lg px-4 py-2 text-sm font-extrabold disabled:opacity-50" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Decline</button>
+          <button disabled={busy} onClick={() => go(true)} className="rounded-lg px-5 py-2 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Approve'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Apply for leave (self-service). Creates a pending request routed to the
 // employee's approver.
@@ -5490,9 +5599,9 @@ export default function HrApp() {
             </div>
             {dashView === 'hr'
               ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
-              : <EmployeeDashboard user={user} />}
+              : <EmployeeDashboard user={user} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} />}
           </div>
-        ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} /></div>)}
+        ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}

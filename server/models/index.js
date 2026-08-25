@@ -489,6 +489,7 @@ const Settings = sequelize.define(
     // Resume-match auto-scoring on add/apply/feedback (admins can turn off to save API credits).
     hrAutoScore: { type: DataTypes.BOOLEAN, defaultValue: true },
     ogBackfillDone: { type: DataTypes.BOOLEAN, defaultValue: false },
+    holidayEmojiCache: { type: DataTypes.JSON, defaultValue: {} },
     // Public careers page branding.
     hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
 

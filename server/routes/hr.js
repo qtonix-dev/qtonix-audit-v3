@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
+const { resolveHolidayEmojis } = require('../services/holidayEmoji');
 
 const router = express.Router();
 
@@ -358,7 +359,15 @@ router.get('/holidays', requireHrAccess, async (req, res, next) => {
     const where = {};
     if (req.query.branch) where.branch = { [Op.in]: [req.query.branch, ''] };
     const rows = await HrHoliday.findAll({ where, order: [['date', 'ASC']] });
-    res.json(rows.map((h) => h.toJSON()));
+    // Attach a relevant emoji per holiday (cached; AI-filled when a key exists).
+    let emojiByName = {};
+    try {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const apiKey = s && s.getKey ? s.getKey('openai') : null;
+      const names = [...new Set(rows.map((h) => h.name))];
+      emojiByName = await resolveHolidayEmojis(names, { settings: s, apiKey });
+    } catch {}
+    res.json(rows.map((h) => ({ ...h.toJSON(), emoji: emojiByName[h.name] || '📅' })));
   } catch (e) { next(e); }
 });
 
@@ -1253,14 +1262,73 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
     const out = [];
     for (const g of Object.values(groups)) {
       g.dates.sort();
+      // Last approved leave this employee took before now (for context in the popup).
+      let lastLeave = null;
+      try {
+        const prev = await HrLeave.findAll({ where: { employeeId: g.employeeId, status: 'approved' }, order: [['date', 'DESC']] });
+        const todayStr = istDateStr();
+        const past = prev.filter((l) => l.date < todayStr);
+        if (past.length) {
+          // Collapse a multi-day group to its span for the "last leave" summary.
+          const gid = past[0].groupId;
+          const sameGroup = gid ? past.filter((l) => l.groupId === gid) : [past[0]];
+          const ds = sameGroup.map((l) => l.date).sort();
+          const daysAgo = Math.round((new Date(todayStr) - new Date(ds[ds.length - 1])) / 86400000);
+          lastLeave = { from: ds[0], to: ds[ds.length - 1], days: ds.length, type: past[0].type, daysAgo };
+        }
+      } catch {}
       out.push({
         id: g.ids[0], groupKey: g.key, ids: g.ids, kind: 'leave',
         who: await nameOf(g.employeeId), employeeId: g.employeeId,
         type: g.type, duration: g.duration, reason: g.reason,
         date: g.dates[0], dateTo: g.dates[g.dates.length - 1], days: g.dates.length,
+        dates: g.dates, lastLeave,
       });
     }
+
+    // Interview review items: for interviews this person sat on whose time has
+    // passed, ask attended/no-show; once attended, ask for feedback until given.
+    if (req.hrActor.kind === 'hr') {
+      const myId = req.hrActor.id;
+      const cands = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
+      const nowMs = Date.now();
+      for (const c of cands) {
+        for (const iv of (c.interviews || [])) {
+          const onPanel = (iv.panelists || []).some((p) => p.id === myId);
+          if (!onPanel || !iv.at) continue;
+          if (new Date(iv.at).getTime() > nowMs) continue; // still upcoming
+          const attendance = (iv.attendanceByPanelist || {})[myId]; // 'attended' | 'no_show' | undefined
+          const feedbackDone = !!(iv.feedbackByPanelist || {})[myId];
+          if (!attendance) {
+            out.push({ id: `iv-att-${c.id}-${iv.id}`, kind: 'interview_attendance', candidateId: c.id, interviewId: iv.id,
+              who: c.name, roundLabel: iv.roundLabel || '', at: iv.at });
+          } else if (attendance === 'attended' && !feedbackDone) {
+            out.push({ id: `iv-fb-${c.id}-${iv.id}`, kind: 'interview_feedback', candidateId: c.id, interviewId: iv.id,
+              who: c.name, roundLabel: iv.roundLabel || '', at: iv.at });
+          }
+        }
+      }
+    }
+
     res.json({ reviews: out, count: out.length });
+  } catch (e) { next(e); }
+});
+
+// POST /me/interview/:candidateId/:interviewId/attendance  body:{attended:bool}
+// Panelist marks whether the candidate attended (or was a no-show).
+router.post('/me/interview/:candidateId/:interviewId/attendance', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only panelists can do this.' });
+    const myId = req.hrActor.id;
+    const c = await HrCandidate.findByPk(Number(req.params.candidateId));
+    if (!c) return res.status(404).json({ error: 'Candidate not found.' });
+    const ivs = Array.isArray(c.interviews) ? c.interviews.slice() : [];
+    const iv = ivs.find((x) => String(x.id) === String(req.params.interviewId));
+    if (!iv) return res.status(404).json({ error: 'Interview not found.' });
+    if (!(iv.panelists || []).some((p) => p.id === myId)) return res.status(403).json({ error: 'You are not on this panel.' });
+    iv.attendanceByPanelist = { ...(iv.attendanceByPanelist || {}), [myId]: req.body && req.body.attended ? 'attended' : 'no_show' };
+    c.interviews = ivs; c.changed('interviews', true); await c.save();
+    res.json({ ok: true, attendance: iv.attendanceByPanelist[myId] });
   } catch (e) { next(e); }
 });
 
@@ -1280,6 +1348,7 @@ router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
     if (!allowed) return res.status(403).json({ error: 'You can’t decide this request.' });
 
     const approve = !!(req.body && req.body.approve);
+    const decisionNote = String((req.body && req.body.note) || '').slice(0, 300) || null;
     // Gather every pending day in this request (grouped multi-day, or just this one).
     const rows = lv.groupId
       ? await HrLeave.findAll({ where: { groupId: lv.groupId, status: 'pending' } })
@@ -1288,11 +1357,12 @@ router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
       r.status = approve ? 'approved' : 'rejected';
       r.decidedById = actorId; r.decidedAt = new Date();
       r.approvedBy = approve ? req.hrActor.name : null;
+      if (decisionNote) r.reason = r.reason ? `${r.reason} — ${decisionNote}` : decisionNote;
       await r.save();
       if (approve) {
         const attStatus = r.type === 'wfh' ? 'wfh' : (r.duration === 'half' ? 'half_day' : 'leave');
         const [att] = await HrAttendance.findOrCreate({ where: { employeeId: r.employeeId, date: r.date }, defaults: { status: attStatus } });
-        att.status = attStatus; att.note = `leave:${r.type}`; att.approvedBy = req.hrActor.name; await att.save();
+        att.status = attStatus; att.note = `leave:${r.type}`; att.approvedBy = req.hrActor.name; if (decisionNote) att.notes = decisionNote; await att.save();
       }
     }
     res.json({ ok: true, status: approve ? 'approved' : 'rejected', days: rows.length });
