@@ -823,7 +823,9 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
         type: first.type, from: grp[0].date, to: grp[grp.length - 1].date, days,
         duration: grp.length === 1 ? first.duration : 'full',
         reason: first.reason || '', status: stage,
+        appliedAt: first.createdAt,
         decidedByName: first.approvedBy || null, decidedAt: grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || null,
+        remark: first.remark || null,
       });
     });
     Object.values(empHistory).forEach((list) => list.sort((a, b) => String(b.from).localeCompare(String(a.from))));
@@ -864,6 +866,7 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
         status: stage,
         approverId: first.approverId, approverName: first.approverName,
         decidedByName: first.approvedBy || null, decidedAt,
+        remark: first.remark || null,
         documentUrl: first.documentUrl || null,
         canDecide: first.status === 'pending' && (
           (first.decidedByKind === 'admin' && req.hrActor.kind === 'admin' && first.approverId === req.adminUser?.id) ||
@@ -909,6 +912,7 @@ router.post('/leave/:groupOrId/decide', requireHrAccess, async (req, res, next) 
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can decide leave.' });
     const decision = req.body && req.body.decision; // 'approve' | 'decline'
     if (!['approve', 'decline'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
+    const remark = String((req.body && req.body.remark) || (req.body && req.body.note) || '').slice(0, 500);
     const key = req.params.groupOrId;
     const where = key.startsWith('g:') ? { groupId: key.slice(2) } : { id: Number(key) };
     const rows = await HrLeave.findAll({ where });
@@ -923,6 +927,7 @@ router.post('/leave/:groupOrId/decide', requireHrAccess, async (req, res, next) 
       r.decidedAt = now;
       r.decidedByKind = req.hrActor.kind;
       r.viewedByApprover = true;
+      if (remark) r.remark = remark;
       // Reflect an approved full-day leave onto the attendance calendar.
       if (decision === 'approve') {
         try {

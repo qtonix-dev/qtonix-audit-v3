@@ -1651,6 +1651,8 @@ const HrLeave = sequelize.define('HrLeave', {
   // Two-stage pending: false = "Applied" (just submitted), true = "Pending for
   // approval" (the approver has opened/seen it in the Leave console).
   viewedByApprover: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Optional remark the approver adds when approving or declining.
+  remark: { type: DataTypes.STRING(500), allowNull: true },
   appliedById: { type: DataTypes.INTEGER, allowNull: true },
 }, { tableName: 'hr_leaves', indexes: [{ name: 'idx_hr_leave_emp', fields: ['employeeId'] }] });
 HrLeave.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };

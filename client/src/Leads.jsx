@@ -5264,6 +5264,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [items, setItems] = useState([]);
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
+  const [didLoad, setDidLoad] = useState(false); // true after first successful load; keeps UI mounted during search reloads
   const [period, setPeriod] = useState(thisMonthOnly ? 'thisMonth' : 'all');
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(20);
@@ -5406,13 +5407,16 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         setConfig(cfg.config || {});
       })
       .catch((e) => console.error(e))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); setDidLoad(true); });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [period, page, perPage]);
   useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [period]);
   // Debounce the server-side search so every keystroke doesn't hit the API.
+  // Skip the very first run (mount) — the main effect already loads page 1.
+  const qFirst = useRef(true);
   useEffect(() => {
-    const t = setTimeout(() => { setPage(1); load(); }, 350);
+    if (qFirst.current) { qFirst.current = false; return; }
+    const t = setTimeout(() => { setPage(1); load(); }, 400);
     return () => clearTimeout(t);
     /* eslint-disable-next-line */
   }, [q]);
@@ -5542,7 +5546,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     return acc;
   }, { booked: 0, collected: 0, due: 0 });
 
-  if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
+  if (loading && !didLoad) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
 
   return (
     <div>
@@ -5552,8 +5556,11 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           <div className="text-sm text-slate-400">{pageInfo.total} client{pageInfo.total === 1 ? '' : 's'}{user.role === 'manager' ? ' in your team' : ''}</div>
         </div>
         <div className="flex items-center gap-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+          <div className="relative">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+            {loading && didLoad && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">…</span>}
+          </div>
           <select value={period} onChange={(e) => setPeriod(e.target.value)}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600">
             <option value="thisMonth">This month</option>
