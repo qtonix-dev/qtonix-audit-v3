@@ -4359,6 +4359,7 @@ function DealsTab({ lead, config, user, onChange }) {
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
+  const [payAmount, setPayAmount] = useState(''); // amount actually received (partial < full spawns a balance installment)
   const [payTenure, setPayTenure] = useState('onetime');
   const [payStart, setPayStart] = useState('');
   const [payRenewal, setPayRenewal] = useState(''); // next renewal date (auto, editable)
@@ -4373,6 +4374,7 @@ function DealsTab({ lead, config, user, onChange }) {
       // editing) or today (when marking fresh).
       const pd = inst.paidDate || new Date().toISOString().slice(0, 10);
       setPayDate(pd);
+      setPayAmount(String(inst.amount ?? ''));
       // Tenure: existing value, else smart default by service. Recurring deals
       // follow their billing interval where present. Renewal date auto-computes.
       const svc = deal.service || deal.name;
@@ -4406,6 +4408,7 @@ function DealsTab({ lead, config, user, onChange }) {
         body: JSON.stringify({
           paid: true, gateway: payGateway, paidDate: payDate || undefined,
           ...(payRef ? { transactionId: payRef } : {}),
+          ...(payAmount !== '' && Number(payAmount) < Number(inst.amount || 0) ? { paidAmount: Number(payAmount) } : {}),
           tenure: payTenure,
           startDate: payStart || undefined,
           renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
@@ -4599,6 +4602,22 @@ function DealsTab({ lead, config, user, onChange }) {
                     payGateway === g ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}>{g}</button>
               ))}
+            </div>
+
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment received amount</label>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm font-bold text-slate-500">{payFor.deal.currency}</span>
+                <input type="number" min="0" step="any" value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              </div>
+              {payAmount !== '' && Number(payAmount) > 0 && Number(payAmount) < Number(payFor.inst.amount || 0) && (
+                <div className="text-[10px] text-amber-600 mt-1 font-semibold">Partial payment — a new installment for the {payFor.deal.currency} {(Number(payFor.inst.amount || 0) - Number(payAmount)).toLocaleString()} balance will be created automatically.</div>
+              )}
+              {payAmount !== '' && Number(payAmount) > Number(payFor.inst.amount || 0) && (
+                <div className="text-[10px] text-red-500 mt-1 font-semibold">Amount is more than the installment. It will be recorded as the full installment amount.</div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-1">Defaults to the full installment. Lower it to record a partial payment.</div>
             </div>
 
             <div className="mt-3">
@@ -5249,6 +5268,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(20);
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
+  const [recentPayments, setRecentPayments] = useState([]);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
   // Cards, table, or both. Remembered per user, since it's a lasting
@@ -5281,6 +5301,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [payGateway, setPayGateway] = useState('');
   const [payRef, setPayRef] = useState('');
   const [payDate, setPayDate] = useState(''); // payment received date (drives the sales month)
+  const [payAmount, setPayAmount] = useState(''); // amount actually received (partial < full spawns a balance installment)
   const [payTenure, setPayTenure] = useState('onetime');
   const [payStart, setPayStart] = useState('');
   const [payRenewal, setPayRenewal] = useState('');
@@ -5301,6 +5322,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     setPayGateway(''); setPayRef('');
     const pd = inst.paidDate || new Date().toISOString().slice(0, 10);
     setPayDate(pd);
+    setPayAmount(String(inst.amount ?? ''));
     const svc = deal.service || deal.name;
     const t = inst.tenure || (deal.planType === 'recurring' ? (deal.recurringInterval === 'quarterly' ? 'quarterly' : deal.recurringInterval === 'half-yearly' ? '6month' : deal.recurringInterval === 'yearly' ? '1year' : 'monthly') : defaultTenureFor(svc));
     setPayTenure(t); setRenewalEdited(false);
@@ -5361,20 +5383,23 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         method: 'PATCH',
         body: JSON.stringify({
           paid: true, ...(gateway ? { gateway } : {}), ...(transactionId ? { transactionId } : {}), ...(paidDate ? { paidDate } : {}),
+          ...(payAmount !== '' && Number(payAmount) < Number(inst.amount || 0) ? { paidAmount: Number(payAmount) } : {}),
           tenure: payTenure, startDate: payStart || undefined, renewalDate: payTenure === 'onetime' ? null : (payRenewal || undefined),
         }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayTenure('onetime'); setPayRenewal('');
+      setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayAmount(''); setPayTenure('onetime'); setPayRenewal('');
     } catch (e) { alert(e.message); }
     setBusy(null);
   };
   const load = () => {
     setLoading(true);
     const params = new URLSearchParams({ period, page: String(page), perPage: String(perPage) });
+    if (q.trim()) params.set('q', q.trim());
     Promise.all([api(`/leads/converted?${params}`), api('/leads/config')])
       .then(([r, cfg]) => {
         setItems(r.items || []);
+        setRecentPayments(r.recentPayments || []);
         setPageInfo({ total: r.total || 0, pages: r.pages || 1 });
         setConfig(cfg.config || {});
       })
@@ -5383,6 +5408,12 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [period, page, perPage]);
   useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [period]);
+  // Debounce the server-side search so every keystroke doesn't hit the API.
+  useEffect(() => {
+    const t = setTimeout(() => { setPage(1); load(); }, 350);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line */
+  }, [q]);
 
   const inThisMonth = (l) => {
     if (!l.convertedAt) return false;
@@ -5461,8 +5492,15 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     };
   };
 
-  const filtered = items
-    .filter((l) => (q ? (fullName(l) + ' ' + (l.website || '') + ' ' + (l.ownerName || '')).toLowerCase().includes(q.toLowerCase()) : true));
+  // Search is applied server-side (across all pages), so items are already
+  // filtered; no further client-side name filtering needed here.
+  const filtered = items;
+
+  // "Recently received the payment" — server returns these across all pages,
+  // already windowed to the last 30 days and newest-first.
+  const recent = Array.isArray(recentPayments) ? recentPayments : [];
+  const fmtWhen = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+  const fmtDay = (iso) => { try { return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
 
   // Converted-with-an-open-deal show as cards; converted with no open deal go
   // into a compact table below (server flags each row with `openDeal`).
@@ -5565,6 +5603,30 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         </div>
       ) : effViewMode === 'table' ? null : (
         <>
+        {recent.length > 0 && (
+          <div className="mb-5">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#0F9D58' }}>Recently received the payment · last 30 days · {recent.length}</div>
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {recent.slice(0, 12).map((rp, i) => (
+                <div key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')}
+                  className="bg-white rounded-2xl border p-4 cursor-pointer hover:shadow-md transition shadow-sm" style={{ borderColor: '#BBF7D0' }}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-base shrink-0" style={{ background: '#DCFCE7' }}>💰</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-extrabold text-[#050A1F] truncate">{titleCase(rp.name)}</div>
+                      <div className="text-[11px] text-slate-400 truncate">{rp.service || rp.dealName}{rp.ownerName ? ` · ${rp.ownerName}` : ''}</div>
+                    </div>
+                    {rp.partial && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5 shrink-0" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}
+                  </div>
+                  <div className="flex items-end justify-between mt-2.5">
+                    <div className="text-lg font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</div>
+                    <div className="text-[11px] text-slate-400 text-right">{rp.gateway || 'Payment'}<div>{fmtWhen(rp.at)}</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {openDealLeads.length > 0 && (
           <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Active — open deal or payment pending · {openDealLeads.length}</div>
         )}
@@ -5776,6 +5838,31 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         renewalClients.sort((a, b) => String(a.date).localeCompare(String(b.date)));
         return (
           <div className={effViewMode === 'table' ? '' : 'mt-6'}>
+            {/* 0) Recently received the payment (last 30 days) */}
+            {recent.length > 0 && (
+              <>
+                <div className="text-[11px] font-bold uppercase tracking-wide mb-2" style={{ color: '#0F9D58' }}>💰 Recently received the payment · last 30 days · {recent.length}</div>
+                <div className="bg-white rounded-2xl border overflow-hidden shadow-sm mb-6" style={{ borderColor: '#BBF7D0' }}>
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">
+                      <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Service</th><th className="px-4 py-2.5">Amount</th><th className="px-4 py-2.5">Gateway</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Received</th>
+                    </tr></thead>
+                    <tbody>
+                      {recent.slice(0, 30).map((rp, i) => (
+                        <tr key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')} className="border-b border-slate-50 last:border-0 hover:bg-green-50/40 cursor-pointer">
+                          <td className="px-4 py-2.5 font-bold text-[#050A1F]">{titleCase(rp.name)}{rp.partial && <span className="ml-2 text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.service || rp.dealName || '—'}</td>
+                          <td className="px-4 py-2.5 font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.gateway || '—'}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.ownerName || '—'}</td>
+                          <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDay(rp.at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
             {/* 1) Upcoming & Pending Payments */}
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
@@ -6067,6 +6154,19 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                   {g}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment received amount</label>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm font-bold text-slate-500">{payFor.deal.currency}</span>
+                <input type="number" min="0" step="any" value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              </div>
+              {payAmount !== '' && Number(payAmount) > 0 && Number(payAmount) < Number(payFor.inst.amount || 0) && (
+                <div className="text-[10px] text-amber-600 mt-1 font-semibold">Partial payment — a new installment for the {payFor.deal.currency} {(Number(payFor.inst.amount || 0) - Number(payAmount)).toLocaleString()} balance will be created automatically.</div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-1">Defaults to the full installment. Lower it to record a partial payment.</div>
             </div>
 
             <div className="mt-3">

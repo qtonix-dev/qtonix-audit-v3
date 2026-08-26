@@ -4449,8 +4449,8 @@ function HrEmailsTab({ onOpenCandidate }) {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="font-bold text-sm mb-1 text-[#050A1F]">Recruitment emails</h3>
-        <p className="text-xs text-slate-500 mb-4">Every automated email the recruitment system sends. Preview a sample or view recent send activity. All emails send from the linked recruitment mailbox.</p>
+        <h3 className="font-bold text-sm mb-1 text-[#050A1F]">Automated emails</h3>
+        <p className="text-xs text-slate-500 mb-4">Every automated email the system sends — recruitment emails (from the linked recruitment mailbox) and employee celebration emails (birthday, work anniversary, welcome), which are founder-signed and sent automatically from adam@qtonix.com. Preview a sample or view recent send activity.</p>
 
         {data && !data.connected && (
           <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2">The recruitment mailbox isn’t linked yet. Link it under <b>Settings → Recruitment mailbox</b> so these emails can send.</div>
@@ -4477,7 +4477,7 @@ function HrEmailsTab({ onOpenCandidate }) {
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600 max-w-[180px]">{e.sentTo}</td>
                     <td className="px-4 py-3">
-                      <div className="text-xs"><span className="font-mono text-slate-600">{e.sentFrom}</span><div className="text-[10px] text-slate-400">Recruitment mailbox</div></div>
+                      <div className="text-xs"><span className="font-mono text-slate-600">{e.sentFrom}</span><div className="text-[10px] text-slate-400">{e.auto ? 'Auto · Founder' : 'Recruitment mailbox'}</div></div>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
                       {e.lastSentAt ? fmtDate(e.lastSentAt) : <span className="text-slate-400">—</span>}
@@ -4560,7 +4560,7 @@ function HrEmailActivityModal({ id, name, fmtDate, onOpenCandidate, onClose }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Candidate</th>
+                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Recipient</th>
                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date</th>
                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Time</th>
                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-right">Status</th>

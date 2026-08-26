@@ -869,6 +869,8 @@ const CrmEmailLog = sequelize.define(
     type: { type: DataTypes.STRING(40), defaultValue: '' }, // reminder | target_hit | team_target_hit | push
     userId: { type: DataTypes.INTEGER, allowNull: true },
     toEmail: { type: DataTypes.STRING(255), defaultValue: '' },
+    toName: { type: DataTypes.STRING(255), defaultValue: '' },
+    subject: { type: DataTypes.TEXT, allowNull: true },
     sentAt: { type: DataTypes.DATE, allowNull: true },
     status: { type: DataTypes.STRING(20), defaultValue: 'sent' }, // sent | failed
     error: { type: DataTypes.TEXT, allowNull: true },

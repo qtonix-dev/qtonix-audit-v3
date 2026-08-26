@@ -1878,6 +1878,14 @@ router.get('/converted', requireAuth, async (req, res, next) => {
 
     const perPage = Math.min(100, Math.max(1, Number(req.query.perPage) || 20));
     const page = Math.max(1, Number(req.query.page) || 1);
+    // Free-text search across ALL converted leads (not just the current page):
+    // matches customer name, website, company, or owner. Applied before paging.
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const matchesQ = (l) => {
+      if (!q) return true;
+      const name = `${l.firstName || ''} ${l.lastName || ''}`.trim();
+      return `${name} ${l.website || ''} ${l.ownerName || ''} ${l.company || ''}`.toLowerCase().includes(q);
+    };
 
     // The Converted page is driven by WHEN MONEY WAS RECEIVED, not only when a
     // lead was converted. A payment can land in a later month than the
@@ -1894,7 +1902,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     const convertedInWindow = (l) => inWindow(l.convertedAt || l.createdAt);
 
     let rows, count;
-    if (!from) {
+    if (!from && !q) {
       const res2 = await Lead.findAndCountAll({
         where,
         order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']],
@@ -1902,13 +1910,49 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       });
       rows = res2.rows; count = res2.count;
     } else {
-      // Load all converted leads in scope, filter by the payment/conversion
-      // window, then paginate the result set in memory.
+      // A period filter and/or a search term means we must evaluate every
+      // in-scope converted lead in memory (name search spans firstName+lastName;
+      // payment-window matching lives in the JSON installments), then paginate.
       const all = await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']] });
-      const matched = all.filter((l) => convertedInWindow(l) || paidInWindow(l));
+      const matched = all.filter((l) => (convertedInWindow(l) || paidInWindow(l)) && matchesQ(l));
       count = matched.length;
       rows = matched.slice((page - 1) * perPage, (page - 1) * perPage + perPage);
     }
+    // "Recently received the payment" — computed across ALL in-scope converted
+    // leads (not just the current page), windowed to the last 30 days. Returned
+    // as its own list so the section is complete regardless of pagination/search.
+    const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+    const recentCutoff = Date.now() - RECENT_MS;
+    let recentPayments = [];
+    try {
+      const allForRecent = (!from && !q)
+        ? await Lead.findAll({ where, order: [['updatedAt', 'DESC']] })
+        : await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']] });
+      for (const l of allForRecent) {
+        if (!matchesQ(l)) continue;
+        const deals = Array.isArray(l.deals) ? l.deals : [];
+        for (const d of deals) {
+          for (const it of (d && d.installments || [])) {
+            if (!it || !it.paid) continue;
+            const whenStr = it.paidAt || (it.paidDate ? `${it.paidDate}T12:00:00.000Z` : null);
+            if (!whenStr) continue;
+            const t = new Date(whenStr).getTime();
+            if (Number.isNaN(t) || t < recentCutoff) continue;
+            recentPayments.push({
+              leadId: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.company || 'Client',
+              website: l.website || '', ownerName: l.ownerName || '',
+              amount: Number(it.amount || 0), currency: d.currency || 'USD',
+              gateway: it.gateway || '', transactionId: it.transactionId || '',
+              service: d.service || d.name || '', dealName: d.name || '', dealId: d.id,
+              seq: it.seq || null, partial: !!it.partial, at: new Date(whenStr).toISOString(),
+            });
+          }
+        }
+      }
+      recentPayments.sort((a, b2) => new Date(b2.at) - new Date(a.at));
+      recentPayments = recentPayments.slice(0, 100);
+    } catch { recentPayments = []; }
+
     res.json({
       items: rows.map((l) => {
         const o = l.toJSON();
@@ -1943,11 +1987,32 @@ router.get('/converted', requireAuth, async (req, res, next) => {
         o.nextRenewalDate = nextRenewal ? nextRenewal.date : null;
         o.nextRenewalService = nextRenewal ? nextRenewal.service : null;
         o.hasActiveRenewal = renewDates.length > 0;
+        // Most-recent payment across all deals — drives the "Recently received
+        // the payment" section (client-side windows it to the last 30 days).
+        let lastPay = null;
+        for (const d of deals) {
+          for (const it of (d && d.installments || [])) {
+            if (!it || !it.paid) continue;
+            const whenStr = it.paidAt || (it.paidDate ? `${it.paidDate}T12:00:00.000Z` : null);
+            if (!whenStr) continue;
+            const t = new Date(whenStr).getTime();
+            if (Number.isNaN(t)) continue;
+            if (!lastPay || t > lastPay.t) {
+              lastPay = { t, at: new Date(whenStr).toISOString(), amount: Number(it.amount || 0), currency: d.currency || 'USD', gateway: it.gateway || '', service: d.service || d.name || '', dealName: d.name || '', seq: it.seq || null, partial: !!it.partial };
+            }
+          }
+        }
+        o.lastPaymentAt = lastPay ? lastPay.at : null;
+        o.lastPaymentAmount = lastPay ? lastPay.amount : null;
+        o.lastPaymentCurrency = lastPay ? lastPay.currency : null;
+        o.lastPaymentGateway = lastPay ? lastPay.gateway : null;
+        o.lastPaymentService = lastPay ? lastPay.service : null;
+        o.lastPaymentPartial = lastPay ? lastPay.partial : false;
         return o;
       }),
       total: count, page, perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
-      period,
+      period, recentPayments,
     });
   } catch (e) { next(e); }
 });
@@ -3118,6 +3183,36 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
       pushTimeline(lead, 'deal', `Payment date updated for installment ${inst.seq} of "${deal.name}" → ${b.paidDate}`, req.user.name);
     }
 
+    // Partial payment: the admin received LESS than this installment's amount.
+    // We book what actually came in on THIS installment, then spin off a new
+    // follow-up installment for the outstanding balance so the money stays on
+    // the books and the client keeps showing under "payments due". A new
+    // installment (new id) also lets the celebration/sales logic count the
+    // amount that was genuinely collected.
+    let partialSpawn = null;
+    if (b.paid && b.paidAmount !== undefined && b.paidAmount !== null && b.paidAmount !== '') {
+      const received = Math.max(0, Number(b.paidAmount) || 0);
+      const full = Number(inst.amount) || 0;
+      if (received > 0 && received < full) {
+        const balance = Math.round((full - received) * 100) / 100;
+        // Shrink this installment to what was received; remember the original.
+        inst.originalAmount = inst.originalAmount !== undefined ? inst.originalAmount : full;
+        inst.amount = received;
+        inst.partial = true;
+        // Follow-up installment for the remaining balance, due ~1 month after
+        // this payment (admin can reschedule it later).
+        const baseDate = b.paidDate ? new Date(`${b.paidDate}T00:00:00`) : new Date();
+        const followDue = new Date(baseDate); followDue.setMonth(followDue.getMonth() + 1);
+        const maxSeq = (deal.installments || []).reduce((m, it2) => Math.max(m, Number(it2.seq || 0)), 0);
+        partialSpawn = {
+          id: `inst_${Date.now()}_bal`, seq: maxSeq + 1, amount: balance,
+          dueDate: followDue.toISOString().slice(0, 10),
+          paid: false, paidDate: null,
+          balanceOf: inst.seq, // trace: this covers the shortfall of installment N
+        };
+      }
+    }
+
     if (b.paid !== undefined) {
       inst.paid = !!b.paid;
       inst.paidDate = b.paid ? (b.paidDate || new Date().toISOString().slice(0, 10)) : null;
@@ -3159,6 +3254,12 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
           inst.endDate = inst.renewalDate;
         }
         pushTimeline(lead, 'deal', `Installment ${inst.seq} of "${deal.name}" marked paid (${deal.currency} ${inst.amount}${inst.gateway ? ' via ' + inst.gateway : ''}${inst.transactionId ? ' · ref ' + inst.transactionId : ''}${inst.startDate ? ' · starts ' + inst.startDate : ''}${inst.renewalDate ? ' · renews ' + inst.renewalDate : ''})`, req.user.name);
+      }
+      // If this was a partial payment, add the follow-up installment for the
+      // balance now (after the paid installment is fully settled above).
+      if (partialSpawn) {
+        deal.installments = [...(deal.installments || []), partialSpawn];
+        pushTimeline(lead, 'deal', `Partial payment on installment ${inst.seq} of "${deal.name}" — ${deal.currency} ${partialSpawn.amount} balance carried to new installment ${partialSpawn.seq} (due ${partialSpawn.dueDate})`, req.user.name);
       }
     }
     if (b.dueDate !== undefined) {

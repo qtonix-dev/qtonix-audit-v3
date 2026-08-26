@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -4180,6 +4180,11 @@ const HR_EMAIL_CATALOG = [
   { id: 'task_additional_info', name: 'Task — more info requested', description: 'Asks a candidate for additional information / a revised task submission.', sentTo: 'The candidate', subjectMatch: ['additional information', 'more information'] },
   { id: 'rejection', name: 'Rejection', description: 'Sent to a candidate when their application is not moving forward.', sentTo: 'The candidate', subjectMatch: ['update on your application', 'regarding your application'] },
   { id: 'offer', name: 'Offer', description: 'Sends the offer email (with attachments) to a selected candidate.', sentTo: 'The candidate', subjectMatch: ['regarding your offer', 'your offer', 'offer of employment'] },
+  // Employee celebration emails — founder-signed, auto-sent from adam@qtonix.com.
+  // Their activity comes from CrmEmailLog (employee recipients, not candidates).
+  { id: 'celebration_birthday', name: 'Birthday wish', description: 'Auto-sent to an employee on their birthday, signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_birthday' },
+  { id: 'celebration_anniversary', name: 'Work anniversary', description: 'Auto-sent to an employee on their work anniversary (1+ years), signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_anniversary' },
+  { id: 'celebration_welcome', name: 'Welcome (new joinee)', description: 'Auto-sent to a new employee on their joining day, signed by the Founder.', sentTo: 'The employee', source: 'celebration', logType: 'hr_welcome' },
 ];
 
 function hrPreviewHtml(id, sig, mailbox) {
@@ -4202,6 +4207,9 @@ function hrPreviewHtml(id, sig, mailbox) {
     case 'task_additional_info': return hrEmail.taskAdditionalInfoRequest({ candidateName: 'Ava Thompson', role, messageHtml: 'Could you please share the source repository link and a short note on your approach?', deadlineText: 'Friday, 29 August 2026, 5:30 PM IST', uploadUrl: `${base}/task/sample-token`, signature: sig });
     case 'rejection': return hrEmail.rejectionEmail({ role, bodyHtml: rejectBody, signature: sig });
     case 'offer': return hrEmail.shell({ kicker: 'Offer', heroIcon: '\uD83C\uDF89', headline: 'We\u2019d love for you to join us', subhead: role, greetingName: 'Ava', introHtml: 'We\u2019re delighted to offer you the role of <strong>' + role + '</strong> at Qtonix. Your offer letter is attached with the details of compensation, start date, and next steps.', outroHtml: 'Please review the attached letter and reply with any questions. We\u2019re excited to have you on board!', signature: sig });
+    case 'celebration_birthday': return hrEmail.birthdayWish({ employeeName: 'Ravi Kumar' });
+    case 'celebration_anniversary': return hrEmail.workAnniversary({ employeeName: 'Meena Patel', years: 3, joinedText: '12 August 2023', department: 'Engineering', branch: 'Bhubaneswar' });
+    case 'celebration_welcome': return hrEmail.welcomeJoinee({ employeeName: 'Arjun Das', designation: 'Software Engineer', department: 'Engineering', branch: 'Bhubaneswar' });
     default: return null;
   }
 }
@@ -4215,7 +4223,15 @@ router.get('/email-catalog', requireHrAccess, requireHrAdmin, async (req, res, n
     let outbound = [];
     try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 800 }); } catch { outbound = []; }
     const matchRows = (subjectMatch) => outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return subjectMatch.some((m) => sub.includes(m)); });
+    // Celebration emails log to CrmEmailLog (employee recipients), keyed by type.
+    let celLogs = [];
+    try { celLogs = await CrmEmailLog.findAll({ where: { type: ['hr_birthday', 'hr_anniversary', 'hr_welcome'], status: 'sent' }, order: [['sentAt', 'DESC']], limit: 2000 }); } catch { celLogs = []; }
+    const celByType = (t) => celLogs.filter((r) => r.type === t);
     const emails = HR_EMAIL_CATALOG.map((e) => {
+      if (e.source === 'celebration') {
+        const acts = celByType(e.logType);
+        return { id: e.id, name: e.name, description: e.description, sentTo: e.sentTo, sentFrom: 'adam@qtonix.com', editableSender: false, lastSentAt: acts.length ? acts[0].sentAt : null, totalSent: acts.length, auto: true };
+      }
       const acts = matchRows(e.subjectMatch);
       return { id: e.id, name: e.name, description: e.description, sentTo: e.sentTo, sentFrom: mailbox || '(recruitment mailbox not linked)', editableSender: false, lastSentAt: acts.length ? acts[0].sentAt : null, totalSent: acts.length };
     });
@@ -4229,6 +4245,29 @@ router.get('/email-catalog/:id/activity', requireHrAccess, requireHrAdmin, async
     if (!meta) return res.status(404).json({ error: 'Unknown email.' });
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(50, Math.max(5, parseInt(req.query.pageSize, 10) || 15));
+
+    // Celebration emails: activity comes from CrmEmailLog (employee recipients).
+    if (meta.source === 'celebration') {
+      let logs = [];
+      try { logs = await CrmEmailLog.findAll({ where: { type: meta.logType }, order: [['sentAt', 'DESC']], limit: 2000 }); } catch { logs = []; }
+      const total = logs.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const start = (page - 1) * pageSize;
+      const rows = logs.slice(start, start + pageSize);
+      // Backfill missing names from HrUser where we have userId.
+      const needIds = [...new Set(rows.filter((r) => !r.toName && r.userId).map((r) => r.userId))];
+      const users = needIds.length ? await HrUser.findAll({ where: { id: needIds } }) : [];
+      const nameOf = Object.fromEntries(users.map((u) => [u.id, u.name]));
+      return res.json({
+        activity: rows.map((r) => ({
+          toEmail: r.toEmail || '', toName: r.toName || nameOf[r.userId] || '',
+          candidateId: null, employeeId: r.userId || null,
+          sentAt: r.sentAt, status: r.status || 'sent', subject: r.subject || '',
+        })),
+        page, pageSize, total, totalPages,
+      });
+    }
+
     let outbound = [];
     try { outbound = await HrEmail.findAll({ where: { direction: 'outbound' }, order: [['sentAt', 'DESC']], limit: 2000 }); } catch { outbound = []; }
     const all = outbound.filter((e) => { const sub = String(e.subject || '').toLowerCase(); return meta.subjectMatch.some((m) => sub.includes(m)); });

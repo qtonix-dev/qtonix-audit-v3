@@ -37,13 +37,13 @@ function pickFounder(pool) {
   return pool.find((m) => m.email === 'adam@qtonix.com') || pool[0];
 }
 
-async function sendOnce(models, s, sender, { dedupeKey, type, userId, to, subject, bodyHtml }) {
+async function sendOnce(models, s, sender, { dedupeKey, type, userId, toName, to, subject, bodyHtml }) {
   const { CrmEmailLog } = models;
   if (!to) return false;
   const existing = await CrmEmailLog.findOne({ where: { dedupeKey } });
   if (existing) return true;
   let logRow;
-  try { logRow = await CrmEmailLog.create({ dedupeKey, type, userId: userId || null, toEmail: to, status: 'pending' }); }
+  try { logRow = await CrmEmailLog.create({ dedupeKey, type, userId: userId || null, toName: toName || '', toEmail: to, subject: subject || '', status: 'pending' }); }
   catch { return true; } // unique violation → another tick already handling it
   try {
     await gmail.sendMessage(s, sender.token, sender.email, {
@@ -78,7 +78,7 @@ async function tick(models) {
       // 1) Birthday
       if (isTodayMonthDay(e.birthday, t)) {
         const ok = await sendOnce(models, s, sender, {
-          dedupeKey: `hrbday:${e.id}:${year}`, type: 'hr_birthday', userId: e.id,
+          dedupeKey: `hrbday:${e.id}:${year}`, type: 'hr_birthday', userId: e.id, toName: e.name,
           to: e.email, subject: `Happy Birthday, ${String(e.name).split(' ')[0]}! \uD83C\uDF82`,
           bodyHtml: tpl.birthdayWish({ employeeName: e.name }),
         });
@@ -92,14 +92,14 @@ async function tick(models) {
         const joinedText = (() => { try { return new Date(String(e.joiningDate).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }); } catch { return null; } })();
         if (years >= 1) {
           const ok = await sendOnce(models, s, sender, {
-            dedupeKey: `hranniv:${e.id}:${year}`, type: 'hr_anniversary', userId: e.id,
+            dedupeKey: `hranniv:${e.id}:${year}`, type: 'hr_anniversary', userId: e.id, toName: e.name,
             to: e.email, subject: `Happy Work Anniversary, ${String(e.name).split(' ')[0]}! \uD83C\uDFC6`,
             bodyHtml: tpl.workAnniversary({ employeeName: e.name, years, joinedText, department: e.department, branch: e.branch }),
           });
           if (ok) sent += 1;
         } else if (years === 0) {
           const ok = await sendOnce(models, s, sender, {
-            dedupeKey: `hrwelcome:${e.id}`, type: 'hr_welcome', userId: e.id,
+            dedupeKey: `hrwelcome:${e.id}`, type: 'hr_welcome', userId: e.id, toName: e.name,
             to: e.email, subject: `Welcome to Qtonix, ${String(e.name).split(' ')[0]}! \uD83D\uDC4B`,
             bodyHtml: tpl.welcomeJoinee({ employeeName: e.name, designation: e.designation, department: e.department, branch: e.branch }),
           });
