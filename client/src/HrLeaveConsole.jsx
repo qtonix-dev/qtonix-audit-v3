@@ -31,9 +31,7 @@ export default function LeaveConsole({ user, isAdmin, onOpenEmployee }) {
   const [busyId, setBusyId] = useState(null);
   const [declineFor, setDeclineFor] = useState(null); // request being declined (note capture)
   const [declineNote, setDeclineNote] = useState('');
-  const [editAlloc, setEditAlloc] = useState(null); // employee id whose allocation is being edited
-  const [allocDraft, setAllocDraft] = useState({});
-  const [expanded, setExpanded] = useState({}); // employee id → history open
+  const [expanded, setExpanded] = useState({}); // employee id → leave history open
 
   const load = () => {
     setLoading(true);
@@ -86,10 +84,6 @@ export default function LeaveConsole({ user, isAdmin, onOpenEmployee }) {
       await hrApi(`/leave/${key}/decide`, { method: 'POST', body: JSON.stringify({ decision, note: declineNote || '' }) });
       setDeclineFor(null); setDeclineNote(''); load();
     } catch (e) { setErr(e.message); } finally { setBusyId(null); }
-  };
-  const saveAlloc = async (empId) => {
-    try { await hrApi(`/employees/${empId}/leave-allocation`, { method: 'PUT', body: JSON.stringify(allocDraft) }); setEditAlloc(null); load(); }
-    catch (e) { setErr(e.message); }
   };
 
   const exportCsv = () => {
@@ -249,27 +243,39 @@ export default function LeaveConsole({ user, isAdmin, onOpenEmployee }) {
                           <button onClick={() => onOpenEmployee && onOpenEmployee(e.id)} className="font-bold text-[#050A1F] hover:text-[#FF4500] text-left">{titleCase(e.name)}</button>
                           <div className="text-[11px] text-slate-400">{e.designation || e.department}</div>
                         </div>
-                        {editAlloc === e.id ? (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {TYPES.map((t) => (
-                              <div key={t.id} className="flex flex-col">
-                                <span className="text-[9px] font-bold uppercase" style={{ color: t.color }}>{t.label}</span>
-                                <input type="number" className="w-14 rounded border border-slate-300 px-1.5 py-1 text-xs" value={allocDraft[t.id]} onChange={(ev) => setAllocDraft((d) => ({ ...d, [t.id]: ev.target.value }))} />
-                              </div>
-                            ))}
-                            <button onClick={() => saveAlloc(e.id)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>Save</button>
-                            <button onClick={() => setEditAlloc(null)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-500">Cancel</button>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="flex gap-2 flex-wrap">
-                              {TYPES.map((t) => <Chip key={t.id} t={t} used={e.used[t.id] || 0} total={e.allocation[t.id] || 0} />)}
-                            </div>
-                            <button onClick={() => { setEditAlloc(e.id); setAllocDraft({ casual: e.allocation.casual, medical: e.allocation.medical, privilege: e.allocation.privilege, wfh: e.allocation.wfh }); }}
-                              className="text-[11px] font-bold text-slate-400 hover:text-slate-600 ml-auto">Edit credit</button>
-                          </>
-                        )}
+                        <div className="flex gap-2 flex-wrap">
+                          {TYPES.map((t) => <Chip key={t.id} t={t} used={e.used[t.id] || 0} total={e.allocation[t.id] || 0} />)}
+                        </div>
+                        <button onClick={() => setExpanded((x) => ({ ...x, [e.id]: !x[e.id] }))}
+                          className="text-[11px] font-bold text-slate-400 hover:text-slate-600 ml-auto flex items-center gap-1">
+                          {expanded[e.id] ? 'Hide history' : 'View history'}
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded[e.id] ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}><polyline points="6 9 12 15 18 9" /></svg>
+                        </button>
                       </div>
+                      {expanded[e.id] && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          {(e.history || []).length === 0 ? (
+                            <div className="text-xs text-slate-400 py-2">No leave records yet.</div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {e.history.map((h, i) => {
+                                const tp = TYPES.find((t) => t.id === h.type) || TYPES[0]; const sm = STATUS_META[h.status];
+                                return (
+                                  <div key={i} className="flex items-center gap-2 flex-wrap text-xs py-1.5 border-b border-slate-50 last:border-0">
+                                    <span className="font-bold uppercase text-[10px] rounded px-1.5 py-0.5" style={{ background: tp.color + '18', color: tp.color }}>{tp.label}</span>
+                                    <span className="text-slate-600 font-semibold">{h.from === h.to ? fmtDay(h.from) : `${fmtDayShort(h.from)} — ${fmtDay(h.to)}`}</span>
+                                    <span className="text-slate-400">· {h.days} day{h.days === 1 ? '' : 's'}{h.duration === 'half' ? ' (half)' : ''}</span>
+                                    {h.reason && <span className="text-slate-400 truncate max-w-[220px]">· “{h.reason}”</span>}
+                                    <span className="ml-auto text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: sm.bg, color: sm.color }}>{sm.label}</span>
+                                    {h.status === 'approved' && h.decidedByName && <span className="text-[10px] text-green-600 font-bold w-full pl-1">Approved by {titleCase(h.decidedByName)}{h.decidedAt ? ` · ${fmtWhen(h.decidedAt)}` : ''}</span>}
+                                    {h.status === 'declined' && h.decidedByName && <span className="text-[10px] text-red-500 font-bold w-full pl-1">Declined by {titleCase(h.decidedByName)}{h.decidedAt ? ` · ${fmtWhen(h.decidedAt)}` : ''}</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

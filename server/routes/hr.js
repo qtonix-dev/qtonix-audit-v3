@@ -806,11 +806,33 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
       if (r.paid && r.status === 'approved') u[r.type] = (u[r.type] || 0) + d;
     });
     const nameById = Object.fromEntries(emps.map((e) => [e.id, e]));
+    // Per-employee leave history (grouped so a multi-day request is one entry).
+    const historyByEmp = {};
+    leaves.forEach((r) => {
+      const key = `${r.employeeId}|${r.groupId || `s:${r.id}`}`;
+      (historyByEmp[key] || (historyByEmp[key] = [])).push(r);
+    });
+    const empHistory = {};
+    Object.values(historyByEmp).forEach((grp) => {
+      grp.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const first = grp[0];
+      const days = grp.reduce((n, r) => n + (r.duration === 'half' ? 0.5 : 1), 0);
+      const stage = first.status === 'rejected' ? 'declined' : first.status === 'approved' ? 'approved'
+        : (grp.some((r) => r.viewedByApprover) ? 'pending' : 'applied');
+      (empHistory[first.employeeId] || (empHistory[first.employeeId] = [])).push({
+        type: first.type, from: grp[0].date, to: grp[grp.length - 1].date, days,
+        duration: grp.length === 1 ? first.duration : 'full',
+        reason: first.reason || '', status: stage,
+        decidedByName: first.approvedBy || null, decidedAt: grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || null,
+      });
+    });
+    Object.values(empHistory).forEach((list) => list.sort((a, b) => String(b.from).localeCompare(String(a.from))));
+
     const employees = emps.map((e) => {
       const alloc = allocationFor(policy, e);
       const used = usedByEmp[e.id] || { casual: 0, medical: 0, privilege: 0, wfh: 0 };
       const balance = Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (used[k] || 0)).toFixed(1)]));
-      return { id: e.id, name: e.name, avatar: e.avatar, branch: e.branch || '', department: e.department || '', designation: e.designation || '', allocation: alloc, used, balance };
+      return { id: e.id, name: e.name, avatar: e.avatar, branch: e.branch || '', department: e.department || '', designation: e.designation || '', allocation: alloc, used, balance, history: empHistory[e.id] || [] };
     });
 
     // Requests feed. Multi-day requests share a groupId — collapse to one card
