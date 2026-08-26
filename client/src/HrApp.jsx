@@ -1247,6 +1247,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
   const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
   const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { alert(e.message); } };
+  const decideExpense = async (expenseId, decision) => { try { await hrApi(`/expenses/${expenseId}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); loadReviews(); } catch (e) { alert(e.message); } };
 
   const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
   const ringColor = { casual: '#22C55E', medical: '#0EA5E9', privilege: '#F59E0B', wfh: '#8B5CF6' };
@@ -1385,6 +1386,16 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                       <div className="flex gap-1.5">
                         <button onClick={() => markAttendance(it.candidateId, it.interviewId, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Attended</button>
                         <button onClick={() => markAttendance(it.candidateId, it.interviewId, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>No-show</button>
+                      </div>
+                    </div>
+                  );
+                  if (it.kind === 'expense_approval') return (
+                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
+                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Expense</span> · {titleCase(it.who)} raised <b>₹{Number(it.amount).toLocaleString('en-IN')}</b></div>
+                      <div className="text-[11px] text-slate-400 mb-1.5">{it.title}{it.category ? ` · ${it.category}` : ''}{it.branch ? ` · ${it.branch}` : ''} → {it.payeeName}{it.invoiceUrl ? <> · <a href={it.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">invoice</a></> : ''}</div>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => decideExpense(it.expenseId, 'approve')} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
+                        <button onClick={() => decideExpense(it.expenseId, 'reject')} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
                       </div>
                     </div>
                   );

@@ -1530,6 +1530,20 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       }
     }
 
+    // Expense approvals: submitted expenses awaiting admin sign-off. Only admins
+    // approve expenses, so these appear for admin actors.
+    if (isAdminActor) {
+      const pendingExp = await HrExpense.findAll({ where: { status: 'submitted' }, order: [['createdAt', 'ASC']] });
+      for (const ex of pendingExp) {
+        out.push({
+          id: `exp-${ex.id}`, kind: 'expense_approval', expenseId: ex.id,
+          who: ex.raisedByName || 'HR', title: ex.title, amount: Number(ex.amount || 0),
+          category: ex.category || '', branch: ex.branch || '', payeeName: ex.payeeName || '',
+          payeeType: ex.payeeType, invoiceUrl: ex.invoiceUrl || '', at: ex.createdAt,
+        });
+      }
+    }
+
     res.json({ reviews: out, count: out.length });
   } catch (e) { next(e); }
 });
@@ -1852,6 +1866,30 @@ router.post('/expenses/:id/decide', requireHrAccess, requireHrAdmin, async (req,
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
+// Per-month expense totals (for the "Total this month" drill-down popup).
+router.get('/expenses/monthly', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const where = {};
+    if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
+    const rows = await HrExpense.findAll({ where, limit: 5000 });
+    const byMonth = {};
+    for (const r of rows) {
+      const m = (r.expenseDate || '').slice(0, 7);
+      if (!m) continue;
+      if (!byMonth[m]) byMonth[m] = { month: m, count: 0, total: 0, paid: 0 };
+      byMonth[m].count++; byMonth[m].total += Number(r.amount || 0);
+      if (r.status === 'paid') byMonth[m].paid += Number(r.amount || 0);
+    }
+    const months = Object.values(byMonth).sort((a, b) => b.month.localeCompare(a.month)).map((m) => {
+      const [y, mo] = m.month.split('-');
+      const label = new Date(Number(y), Number(mo) - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      return { ...m, label };
+    });
+    res.json({ months });
+  } catch (e) { next(e); }
+});
+
 // Mark an approved expense as paid (raising HR or admin).
 router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
   try {
