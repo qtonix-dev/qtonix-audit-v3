@@ -5270,6 +5270,8 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [perPage, setPerPage] = useState(20);
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [recentPayments, setRecentPayments] = useState([]);
+  const [pendingPayments, setPendingPayments] = useState([]);
+  const [upcomingRenewals, setUpcomingRenewals] = useState([]);
   const [recentOpen, setRecentOpen] = useState(false); // Boxes "Recently received" section — minimized by default
   const [convTab, setConvTab] = useState('pending'); // pending | renewals | recent | all
   const [q, setQ] = useState('');
@@ -5403,6 +5405,8 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       .then(([r, cfg]) => {
         setItems(r.items || []);
         setRecentPayments(r.recentPayments || []);
+        setPendingPayments(r.pendingPayments || []);
+        setUpcomingRenewals(r.upcomingRenewals || []);
         setPageInfo({ total: r.total || 0, pages: r.pages || 1 });
         setConfig(cfg.config || {});
       })
@@ -5844,15 +5848,10 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       {/* ---- Tables section (admin only). Order:
            1) Upcoming & Pending Payments  2) Upcoming Renewals  3) All converted ---- */}
       {filtered.length > 0 && effViewMode !== 'cards' && (() => {
-        // Build the two focused tables from the same summarize() data.
-        const pendingClients = [];
-        const renewalClients = [];
-        for (const l of filtered) {
-          const s = summarize(l);
-          if (s.pending && s.pending.length > 0) pendingClients.push({ l, s });
-          if (l.nextRenewalDate) renewalClients.push({ l, date: l.nextRenewalDate, service: l.nextRenewalService });
-        }
-        renewalClients.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        // Pending payments and upcoming renewals come from the SERVER as full,
+        // in-scope lists (not the current page) so they aren't capped to ~20.
+        const pendingClients = Array.isArray(pendingPayments) ? pendingPayments : [];
+        const renewalClients = Array.isArray(upcomingRenewals) ? upcomingRenewals : [];
         const TABS = [
           ['pending', 'Upcoming & Pending Payments', pendingClients.length],
           ['renewals', 'Upcoming Renewals', renewalClients.length],
@@ -5889,18 +5888,15 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingClients.map(({ l, s }) => {
-                      const next = s.nextInst;
-                      return (
-                        <tr key={`pay-${l._id}`} onClick={() => onOpen(l._id, 'deals')} className="border-t border-slate-50 hover:bg-amber-50/40 cursor-pointer">
-                          <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}<div className="text-[11px] text-slate-400 font-normal">{l.website || ''}</div></td>
-                          <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
-                          <td className="px-4 py-3 text-xs">{next ? <span className="text-slate-600">{next.dueDate ? fmtDate(next.dueDate) : '—'}</span> : '—'}</td>
-                          <td className="px-4 py-3 text-xs font-bold text-amber-600">${(s.due || 0).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right"><span className="text-[10px] font-bold text-slate-400">{s.pending.length} payment{s.pending.length === 1 ? '' : 's'} →</span></td>
-                        </tr>
-                      );
-                    })}
+                    {pendingClients.map((p) => (
+                      <tr key={`pay-${p.leadId}`} onClick={() => onOpen(p.leadId, 'deals')} className="border-t border-slate-50 hover:bg-amber-50/40 cursor-pointer">
+                        <td className="px-4 py-3 font-bold text-[#050A1F]">{p.name}<div className="text-[11px] text-slate-400 font-normal">{p.website || ''}</div></td>
+                        <td className="px-4 py-3 text-slate-500 text-xs">{p.ownerName}</td>
+                        <td className="px-4 py-3 text-xs"><span className="text-slate-600">{p.nextDue ? fmtDate(p.nextDue) : '—'}</span></td>
+                        <td className="px-4 py-3 text-xs font-bold text-amber-600">${(p.due || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right"><span className="text-[10px] font-bold text-slate-400">{p.count} payment{p.count === 1 ? '' : 's'} →</span></td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
@@ -5924,14 +5920,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {renewalClients.map(({ l, date, service }) => {
-                      const rl = renewalLabel(date);
+                    {renewalClients.map((rc) => {
+                      const rl = renewalLabel(rc.date);
                       const tone = rl.tone === 'overdue' ? 'text-red-600' : rl.tone === 'soon' ? 'text-orange-600' : 'text-slate-600';
                       return (
-                        <tr key={`ren-${l._id}`} onClick={() => onOpen(l._id, 'deals')} className="border-t border-slate-50 hover:bg-indigo-50/40 cursor-pointer">
-                          <td className="px-4 py-3 font-bold text-[#050A1F]">{fullName(l)}<div className="text-[11px] text-slate-400 font-normal">{l.website || ''}</div></td>
-                          <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
-                          <td className="px-4 py-3 text-slate-500 text-xs">{service || '—'}</td>
+                        <tr key={`ren-${rc.leadId}`} onClick={() => onOpen(rc.leadId, 'deals')} className="border-t border-slate-50 hover:bg-indigo-50/40 cursor-pointer">
+                          <td className="px-4 py-3 font-bold text-[#050A1F]">{rc.name}<div className="text-[11px] text-slate-400 font-normal">{rc.website || ''}</div></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.ownerName}</td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{rc.service || '—'}</td>
                           <td className={`px-4 py-3 text-xs font-bold ${tone}`}>{rl.text}</td>
                         </tr>
                       );

@@ -1921,16 +1921,26 @@ router.get('/converted', requireAuth, async (req, res, next) => {
     // "Recently received the payment" — computed across ALL in-scope converted
     // leads (not just the current page), windowed to the last 30 days. Returned
     // as its own list so the section is complete regardless of pagination/search.
+    // The Upcoming & Pending Payments and Upcoming Renewals tables are ALSO built
+    // here from the full in-scope set, so they aren't capped to the current page.
     const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
     const recentCutoff = Date.now() - RECENT_MS;
     let recentPayments = [];
+    let pendingPayments = [];
+    let upcomingRenewals = [];
     try {
       const allForRecent = (!from && !q)
         ? await Lead.findAll({ where, order: [['updatedAt', 'DESC']] })
         : await Lead.findAll({ where, order: [['convertedAt', 'DESC'], ['updatedAt', 'DESC']] });
+      const todayStr2 = new Date().toISOString().slice(0, 10);
       for (const l of allForRecent) {
         if (!matchesQ(l)) continue;
+        // period filter also applies to the derived tables when a window is set
+        if (from && !(convertedInWindow(l) || paidInWindow(l))) continue;
         const deals = Array.isArray(l.deals) ? l.deals : [];
+        const nm = `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.company || 'Client';
+
+        // --- Recently received (last 30 days) ---
         for (const d of deals) {
           for (const it of (d && d.installments || [])) {
             if (!it || !it.paid) continue;
@@ -1939,7 +1949,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
             const t = new Date(whenStr).getTime();
             if (Number.isNaN(t) || t < recentCutoff) continue;
             recentPayments.push({
-              leadId: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.company || 'Client',
+              leadId: l.id, name: nm,
               website: l.website || '', ownerName: l.ownerName || '',
               amount: Number(it.amount || 0), currency: d.currency || 'USD',
               gateway: it.gateway || '', transactionId: it.transactionId || '',
@@ -1948,10 +1958,48 @@ router.get('/converted', requireAuth, async (req, res, next) => {
             });
           }
         }
+
+        // --- Upcoming & pending payments: any won deal with unpaid installments ---
+        const pendingInsts = [];
+        let due = 0;
+        for (const d of deals) {
+          if (!d || d.stage !== 'closed_won' || !Array.isArray(d.installments)) continue;
+          for (const it of d.installments) {
+            if (it && !it.paid) {
+              const amt = Number(it.amount || 0);
+              due += amt;
+              pendingInsts.push({ dueDate: it.dueDate || null, amount: amt, seq: it.seq || null, dealId: d.id, dealName: d.name || d.service || '' });
+            }
+          }
+        }
+        if (pendingInsts.length > 0) {
+          pendingInsts.sort((a, b2) => String(a.dueDate || '9999').localeCompare(String(b2.dueDate || '9999')));
+          pendingPayments.push({
+            leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '',
+            due, count: pendingInsts.length, nextDue: pendingInsts[0].dueDate, installments: pendingInsts,
+          });
+        }
+
+        // --- Upcoming renewals: soonest active renewal date across deals ---
+        const renewDates = [];
+        for (const d of deals) {
+          if (d && d.recurringStopped) continue;
+          for (const it of (d && d.installments || [])) {
+            if (it && it.renewalDate) renewDates.push({ date: it.renewalDate, service: d.service || d.name || '', dealId: d.id });
+          }
+        }
+        if (renewDates.length) {
+          renewDates.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
+          const fut = renewDates.find((r) => r.date >= todayStr2) || renewDates[0];
+          upcomingRenewals.push({ leadId: l.id, name: nm, website: l.website || '', ownerName: l.ownerName || '', date: fut.date, service: fut.service });
+        }
       }
       recentPayments.sort((a, b2) => new Date(b2.at) - new Date(a.at));
       recentPayments = recentPayments.slice(0, 100);
-    } catch { recentPayments = []; }
+      // Pending: soonest due first (nulls last). Renewals: soonest date first.
+      pendingPayments.sort((a, b2) => String(a.nextDue || '9999').localeCompare(String(b2.nextDue || '9999')));
+      upcomingRenewals.sort((a, b2) => String(a.date).localeCompare(String(b2.date)));
+    } catch { recentPayments = []; pendingPayments = []; upcomingRenewals = []; }
 
     res.json({
       items: rows.map((l) => {
@@ -2012,7 +2060,7 @@ router.get('/converted', requireAuth, async (req, res, next) => {
       }),
       total: count, page, perPage,
       pages: Math.max(1, Math.ceil(count / perPage)),
-      period, recentPayments,
+      period, recentPayments, pendingPayments, upcomingRenewals,
     });
   } catch (e) { next(e); }
 });
