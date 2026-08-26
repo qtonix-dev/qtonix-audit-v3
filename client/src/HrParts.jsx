@@ -384,9 +384,10 @@ export function ProfilePage({ me, targetId }) {
   const addPerfCard = (card) => setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] }));
   const delPerfCard = (id) => setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== id) }));
 
-  const save = async () => {
+  const save = async (overrideProfile) => {
     setSaving(true); setMsg(''); setErr('');
-    try { const r = await hrApi(`/profile/${id}`, { method: 'PUT', body: JSON.stringify({ profile: p, avatar }) }); setRow(r); setP(r.profile || {}); setMsg(`Saved — ${r.completion}% complete.`); }
+    const profileToSave = overrideProfile || p;
+    try { const r = await hrApi(`/profile/${id}`, { method: 'PUT', body: JSON.stringify({ profile: profileToSave, avatar }) }); setRow(r); setP(r.profile || {}); setMsg(`Saved — ${r.completion}% complete.`); }
     catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
   const addNote = async () => {
@@ -639,7 +640,7 @@ export function ProfilePage({ me, targetId }) {
                       ))}
                     </div>
                   )}
-                  {canEditPayroll && payHistory().length > 0 && <div className="flex justify-end mt-2"><button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
+                  {canEditPayroll && payHistory().length > 0 && <div className="flex justify-end mt-2"><button onClick={() => save()} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
                 </div>
 
                 {/* Performance history */}
@@ -684,7 +685,7 @@ export function ProfilePage({ me, targetId }) {
                       })}
                     </div>
                   )}
-                  {canEditPayroll && perfCards().length > 0 && <div className="flex justify-end mt-2"><button onClick={save} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
+                  {canEditPayroll && perfCards().length > 0 && <div className="flex justify-end mt-2"><button onClick={() => save()} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
                 </div>
               </div>
             )}
@@ -719,7 +720,7 @@ export function ProfilePage({ me, targetId }) {
                     })}
                   </div>
                 )}
-                <div className="flex justify-end mt-4"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+                <div className="flex justify-end mt-4"><button onClick={() => save()} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
               </div>
             )}
 
@@ -756,7 +757,7 @@ export function ProfilePage({ me, targetId }) {
                     })}
                   </div>
                 )}
-                <div className="flex justify-end mt-4"><button onClick={save} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+                <div className="flex justify-end mt-4"><button onClick={() => save()} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
               </div>
             )}
 
@@ -772,8 +773,8 @@ export function ProfilePage({ me, targetId }) {
         </div>
       </div>
       {resetOpen && <ResetPasswordModal user={{ _id: id, name: row.name }} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); setMsg('Password reset.'); }} />}
-      {payModal && <SalaryRecordModal initial={payModal} onClose={() => setPayModal(null)} onSave={async (entry) => { addPayEntry(entry); setPayModal(null); setTimeout(save, 0); }} />}
-      {perfModal && <PerformanceCardModal by={me?.name} onClose={() => setPerfModal(null)} onSave={async (card) => { addPerfCard(card); setPerfModal(null); setTimeout(save, 0); }} />}
+      {payModal && <SalaryRecordModal initial={payModal} onClose={() => setPayModal(null)} onSave={async (entry) => { const next = { ...p, payrollHistory: [...(p.payrollHistory || []), entry] }; setP(next); setPayModal(null); await save(next); }} />}
+      {perfModal && <PerformanceCardModal by={me?.name} onClose={() => setPerfModal(null)} onSave={async (card) => { const next = { ...p, performanceCards: [...(p.performanceCards || []), card] }; setP(next); setPerfModal(null); await save(next); }} />}
     </div>
   );
 }
