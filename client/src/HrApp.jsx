@@ -5551,20 +5551,24 @@ function HrOrgChartModal({ users, reporting, onClose }) {
 // Fixed left-edge "Report a bug / feedback" button, available on every HRMS
 // page for any signed-in user. Opens a small form that posts to /feedback;
 // submissions appear in Admin → Settings → Error Report.
-function FeedbackWidget() {
+function FeedbackWidget({ page, userName }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState('bug');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState('');
+  // Human-readable page label for the report (the SPA path alone is not useful).
+  const PAGE_LABELS = { dashboard: 'Dashboard', tasks: 'Task Manager', recruitment: 'Recruitment', attendance: 'Attendance', leave: 'Leave', employees: 'Employees', payroll: 'Payroll', admin: 'Admin / Settings', survey: 'Surveys', onboarding: 'Onboarding' };
+  const pageLabel = PAGE_LABELS[page] || page || 'HRMS';
   const submit = async () => {
     if (!message.trim()) { setErr('Please describe the issue.'); return; }
     setBusy(true); setErr('');
     try {
+      const path = (typeof window !== 'undefined' ? window.location.pathname + window.location.search : '');
       await hrApi('/feedback', { method: 'POST', body: JSON.stringify({
         kind, message: message.trim(),
-        pageUrl: (typeof window !== 'undefined' ? window.location.pathname + window.location.search : ''),
+        pageUrl: `${pageLabel}${path ? ` (${path})` : ''}`,
         userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
       }) });
       setDone(true); setMessage('');
@@ -5577,9 +5581,9 @@ function FeedbackWidget() {
       {/* Fixed tab on the left edge */}
       <button onClick={() => { setOpen(true); setDone(false); setErr(''); }}
         title="Report a bug or share feedback"
-        className="fixed left-0 top-1/2 -translate-y-1/2 z-[90] flex items-center gap-1.5 rounded-r-xl px-2 py-3 text-white text-[11px] font-extrabold shadow-lg hover:pl-3 transition-all"
-        style={{ background: 'linear-gradient(180deg,#FF6A00,#FF4500)', writingMode: 'vertical-rl', transform: 'translateY(-50%) rotate(180deg)' }}>
-        <span style={{ transform: 'rotate(180deg)' }}>🐞 Report a bug</span>
+        className="fixed right-0 top-1/2 z-[90] flex items-center gap-1.5 rounded-l-xl px-2 py-3 text-white text-[11px] font-extrabold shadow-lg hover:pr-3 transition-all"
+        style={{ background: 'linear-gradient(180deg,#FF6A00,#FF4500)', writingMode: 'vertical-rl', transform: 'translateY(-50%)' }}>
+        <span>🐞 Report a bug</span>
       </button>
 
       {open && (
@@ -5610,7 +5614,7 @@ function FeedbackWidget() {
                   <div className="text-xs font-bold text-slate-500 mb-1.5">What happened?</div>
                   <textarea autoFocus rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Describe the bug or feedback. Include what you clicked and what you expected."
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-                  <div className="text-[10px] text-slate-400 mt-1">We'll automatically include the page you're on.</div>
+                  <div className="text-[10px] text-slate-400 mt-1">Reporting from <b className="text-slate-500">{pageLabel}</b>{userName ? <> as <b className="text-slate-500">{titleCase(userName)}</b></> : null} — we'll include this automatically.</div>
                 </div>
                 {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2">{err}</div>}
                 <div className="flex justify-end gap-2">
@@ -5817,7 +5821,7 @@ export default function HrApp() {
         {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'survey' && (isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') && <HrSurveyAdmin isAdmin={isAdmin} />}
       </main>
-      <FeedbackWidget />
+      <FeedbackWidget page={effectiveView} userName={user && user.name} />
     </div>
   );
 }

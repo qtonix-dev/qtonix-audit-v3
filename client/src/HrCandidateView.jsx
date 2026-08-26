@@ -144,7 +144,8 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   })();
   const effectiveTab = (tab === 'offer' && !offerStageActive) ? 'resume' : tab;
   const hasTasks = Array.isArray(c.tasks) && c.tasks.length > 0;
-  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['comments', 'Comments'], ['feedback', 'Feedback'], ...(hasTasks ? [['task', 'Task']] : []), ['activity', 'Activity'], ...(c.canViewInternal !== false && offerStageActive ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
+  const hasInterviews = (c.interviews || []).length > 0;
+  const TABS = [['resume', 'Resume'], ['application', 'Application'], ['comments', 'Comments'], ['feedback', 'Feedback'], ...(hasTasks ? [['task', 'Task']] : []), ...(hasInterviews ? [['interviews', 'Interviews']] : []), ['activity', 'Activity'], ...(c.canViewInternal !== false && offerStageActive ? [['offer', 'Offer']] : []), ['mail', 'Mail'], ['timeline', 'Timeline'], ['attachments', 'Files']];
 
   return (
     <div>
@@ -232,7 +233,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
         {/* Tabs */}
         <div className="flex gap-0.5 px-3 border-b border-slate-100 overflow-x-auto">
           {TABS.map(([id, label]) => {
-            const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : id === 'task' ? (c.tasks || []).length : 0;
+            const count = id === 'comments' ? (c.comments || []).length : id === 'feedback' ? (c.feedback || []).length : id === 'attachments' ? (c.attachments || []).length : id === 'task' ? (c.tasks || []).length : id === 'interviews' ? (c.interviews || []).length : 0;
             return (
               <button key={id} onClick={() => setTab(id)}
                 className={`flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-bold whitespace-nowrap border-b-2 -mb-px transition ${effectiveTab === id ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
@@ -250,6 +251,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
           {effectiveTab === 'comments' && <CommentsTab c={c} reload={load} />}
           {effectiveTab === 'feedback' && <FeedbackTab c={c} onAdd={() => setShowFeedback(true)} />}
           {effectiveTab === 'task' && <TaskSubmissions c={c} reload={load} />}
+          {effectiveTab === 'interviews' && <InterviewsTab c={c} reload={load} onScheduleNew={() => setShowInterview(true)} onCompleteInterview={completeInterview} />}
           {effectiveTab === 'activity' && <ActivityTab c={c} reload={load} onAddTask={() => setActivityModal('task')} onAddCall={() => setActivityModal('call')} onCompleteInterview={completeInterview} />}
           {effectiveTab === 'offer' && <OfferTab c={c} isAdmin={isAdmin} reload={load} />}
           {effectiveTab === 'mail' && <MailTab c={c} />}
@@ -1243,6 +1245,61 @@ function CandidateInterviewParticipants({ iv, candidate, onClose, onComplete }) 
   );
 }
 
+// Dedicated Interviews tab — appears only when the candidate has interviews.
+// Shows upcoming and past interviews with View / Edit / Cancel / Complete, plus
+// a shortcut to schedule another. Mirrors the block that lives in Activity so HR
+// gets a clear, at-a-glance interview view (the "active interview" tab).
+function InterviewsTab({ c, reload, onScheduleNew, onCompleteInterview }) {
+  const all = (c.interviews || []).slice().sort((a, b) => new Date(a.at) - new Date(b.at));
+  const now = Date.now();
+  const upcoming = all.filter((iv) => new Date(iv.end || iv.at).getTime() >= now);
+  const past = all.filter((iv) => new Date(iv.end || iv.at).getTime() < now).reverse();
+  const [partIv, setPartIv] = useState(null);
+  const [rescheduleIv, setRescheduleIv] = useState(null);
+  const [cancelIv, setCancelIv] = useState(null);
+  const Row = ({ iv, isPast }) => (
+    <div className={`rounded-lg border p-3 flex items-center justify-between gap-2 ${isPast ? 'border-slate-100 bg-slate-50/50' : 'border-slate-200'}`}>
+      <div className="min-w-0">
+        <div className="text-sm font-bold text-slate-700 flex items-center gap-2">📹 {iv.roundLabel || 'Interview'}
+          {iv.meetLink && <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[10px] font-bold">Google Meet</span>}
+          {!isPast && <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[10px] font-bold">Upcoming</span>}
+        </div>
+        <div className="text-xs text-slate-400 mt-0.5">{fmt(iv.at)}{(iv.panelists || []).length ? ` · ${iv.panelists.length} panelist${iv.panelists.length === 1 ? '' : 's'}` : ''}{iv.by ? ` · by ${titleCase(iv.by)}` : ''}</div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {iv.meetLink && !isPast && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#0F9D58' }}>Join</a>}
+        <button onClick={() => setPartIv(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">View</button>
+        {!isPast && <button onClick={() => setRescheduleIv(iv)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50">Edit</button>}
+        {!isPast && <button onClick={() => setCancelIv(iv)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50">Cancel</button>}
+      </div>
+    </div>
+  );
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-sm text-slate-500">All interviews scheduled for this candidate.</div>
+        <button onClick={onScheduleNew} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>📅 Schedule interview</button>
+      </div>
+      {upcoming.length > 0 && (
+        <div className="mb-5">
+          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400 mb-2">Upcoming · {upcoming.length}</div>
+          <div className="space-y-2">{upcoming.map((iv) => <Row key={iv.id} iv={iv} isPast={false} />)}</div>
+        </div>
+      )}
+      {past.length > 0 && (
+        <div>
+          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400 mb-2">Past · {past.length}</div>
+          <div className="space-y-2">{past.map((iv) => <Row key={iv.id} iv={iv} isPast />)}</div>
+        </div>
+      )}
+      {all.length === 0 && <Empty>No interviews scheduled yet.</Empty>}
+      {partIv && <CandidateInterviewParticipants iv={partIv} candidate={c} onClose={() => setPartIv(null)} onComplete={(iv) => { setPartIv(null); onCompleteInterview && onCompleteInterview(iv); }} />}
+      {rescheduleIv && <RescheduleInterviewModal candidateId={c.id} iv={rescheduleIv} onClose={() => setRescheduleIv(null)} onDone={() => { setRescheduleIv(null); reload(); }} />}
+      {cancelIv && <CancelInterviewModal candidateId={c.id} iv={cancelIv} onClose={() => setCancelIv(null)} onDone={() => { setCancelIv(null); reload(); }} />}
+    </div>
+  );
+}
+
 function ActivityTab({ c, reload, onAddTask, onAddCall, onCompleteInterview }) {
   const list = c.activities || [];
   const interviews = (c.interviews || []).slice().sort((a, b) => new Date(b.at) - new Date(a.at));
@@ -1507,7 +1564,55 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, inte
       ) : (
         <>
           {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2 mb-3">{err}</div>}
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">New interview request</div>
+          {/* Existing interviews — shown first; editable (date/time) or cancellable with a note */}
+          {existing.length > 0 && (
+            <div className="mb-2">
+              <div className="text-sm font-extrabold text-[#050A1F] mb-3">Existing interviews · {existing.length}</div>
+              <div className="space-y-2.5">
+                {existing.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)).map((iv) => (
+                  <div key={iv.id} className="rounded-xl border border-slate-200 p-3">
+                    {editIv === iv.id ? (
+                      <div className="space-y-2.5">
+                        <div className="text-xs font-bold text-slate-500">Editing {iv.roundLabel || 'interview'} · currently {fmtIv(iv.at)}</div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">New date &amp; time (IST)</div><input type="datetime-local" className={inp} value={ivEditAt} onChange={(e) => setIvEditAt(e.target.value)} /></div>
+                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Duration (mins)</div><input type="number" className={inp} value={ivEditDur} onChange={(e) => setIvEditDur(e.target.value)} /></div>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email the updated invite to candidate &amp; panel</label>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setEditIv(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                          <button onClick={() => saveEdit(iv)} disabled={ivBusy || !ivEditAt} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{ivBusy ? 'Saving…' : 'Save'}</button>
+                        </div>
+                      </div>
+                    ) : cancelIvLocal === iv.id ? (
+                      <div className="space-y-2.5">
+                        <div className="text-xs text-slate-600">Cancel the <b>{iv.roundLabel || 'interview'}</b> on {fmtIv(iv.at)}? This removes the calendar event and notifies attendees.</div>
+                        <div><div className="text-[11px] font-bold text-slate-500 mb-1">Note (optional)</div><textarea rows={2} className={inp} value={ivCancelNote} onChange={(e) => setIvCancelNote(e.target.value)} placeholder="Shown in the cancellation email." /></div>
+                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email a cancellation to candidate &amp; panel</label>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => { setCancelIvLocal(null); setIvCancelNote(''); }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Keep</button>
+                          <button onClick={() => doCancel(iv)} disabled={ivBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{ivBusy ? 'Cancelling…' : 'Cancel interview'}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-[#050A1F]">{iv.roundLabel || 'Interview'}{iv.mode ? <span className="ml-2 text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-500">{iv.mode}</span> : null}</div>
+                          <div className="text-xs text-slate-500">{fmtIv(iv.at)}</div>
+                          {(iv.panelists || []).length > 0 && <div className="text-[11px] text-slate-400 truncate">Panel: {(iv.panelists || []).map((p) => titleCase(p.name)).join(', ')}</div>}
+                        </div>
+                        {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-green-600 shrink-0">Join</a>}
+                        <button onClick={() => startEdit(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 shrink-0">Edit</button>
+                        <button onClick={() => { setCancelIvLocal(iv.id); setEditIv(null); }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 shrink-0">Cancel</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className={`text-sm font-extrabold text-[#050A1F] mb-2 ${existing.length > 0 ? 'mt-6 pt-5 border-t border-slate-200' : ''}`}>New interview request</div>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs font-bold text-slate-500 mb-1">Round</div>
@@ -1553,53 +1658,6 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, inte
             <button onClick={schedule} disabled={busy || !at} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Scheduling…' : 'Schedule with Meet'}</button>
           </div>
 
-          {/* Existing interviews — editable (date/time) or cancellable with a note */}
-          {existing.length > 0 && (
-            <div className="mt-6 pt-5 border-t border-slate-200">
-              <div className="text-sm font-extrabold text-[#050A1F] mb-3">Existing interviews · {existing.length}</div>
-              <div className="space-y-2.5">
-                {existing.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)).map((iv) => (
-                  <div key={iv.id} className="rounded-xl border border-slate-200 p-3">
-                    {editIv === iv.id ? (
-                      <div className="space-y-2.5">
-                        <div className="text-xs font-bold text-slate-500">Editing {iv.roundLabel || 'interview'} · currently {fmtIv(iv.at)}</div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">New date &amp; time (IST)</div><input type="datetime-local" className={inp} value={ivEditAt} onChange={(e) => setIvEditAt(e.target.value)} /></div>
-                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Duration (mins)</div><input type="number" className={inp} value={ivEditDur} onChange={(e) => setIvEditDur(e.target.value)} /></div>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email the updated invite to candidate &amp; panel</label>
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => setEditIv(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
-                          <button onClick={() => saveEdit(iv)} disabled={ivBusy || !ivEditAt} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{ivBusy ? 'Saving…' : 'Save'}</button>
-                        </div>
-                      </div>
-                    ) : cancelIvLocal === iv.id ? (
-                      <div className="space-y-2.5">
-                        <div className="text-xs text-slate-600">Cancel the <b>{iv.roundLabel || 'interview'}</b> on {fmtIv(iv.at)}? This removes the calendar event and notifies attendees.</div>
-                        <div><div className="text-[11px] font-bold text-slate-500 mb-1">Note (optional)</div><textarea rows={2} className={inp} value={ivCancelNote} onChange={(e) => setIvCancelNote(e.target.value)} placeholder="Shown in the cancellation email." /></div>
-                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email a cancellation to candidate &amp; panel</label>
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => { setCancelIvLocal(null); setIvCancelNote(''); }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Keep</button>
-                          <button onClick={() => doCancel(iv)} disabled={ivBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{ivBusy ? 'Cancelling…' : 'Cancel interview'}</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-bold text-[#050A1F]">{iv.roundLabel || 'Interview'}{iv.mode ? <span className="ml-2 text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-500">{iv.mode}</span> : null}</div>
-                          <div className="text-xs text-slate-500">{fmtIv(iv.at)}</div>
-                          {(iv.panelists || []).length > 0 && <div className="text-[11px] text-slate-400 truncate">Panel: {(iv.panelists || []).map((p) => titleCase(p.name)).join(', ')}</div>}
-                        </div>
-                        {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-green-600 shrink-0">Join</a>}
-                        <button onClick={() => startEdit(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 shrink-0">Edit</button>
-                        <button onClick={() => { setCancelIvLocal(iv.id); setEditIv(null); }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 shrink-0">Cancel</button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </>
       )}
     </Modal>
