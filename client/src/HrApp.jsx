@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase } from './HrParts.jsx';
+import HrExpenses from './HrExpenses.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
 import { AppSwitcher } from './AppSwitcher.jsx';
@@ -5830,7 +5831,7 @@ export default function HrApp() {
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
-        {effectiveView === 'corehr_expenses' && <CoreHrPlaceholder title="Expenses" />}
+        {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
         {effectiveView === 'corehr_onboarding' && <CoreHrPlaceholder title="Onboarding" />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} hrView={isHrStaff} />}

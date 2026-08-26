@@ -493,6 +493,8 @@ const Settings = sequelize.define(
     // Quote-of-the-day cache for the employee dashboard: { date, quote, author,
     // recentAuthors[] } — refreshed once per day, shared by everyone.
     dailyQuoteCache: { type: DataTypes.JSON, defaultValue: {} },
+    // Admin/HR-editable expense category list (Core HR → Expenses).
+    hrExpenseCategories: { type: DataTypes.JSON, defaultValue: [] },
     // Public careers page branding.
     hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
 
@@ -1578,6 +1580,70 @@ const HrFeedback = sequelize.define('HrFeedback', {
 });
 HrFeedback.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Vendors that expenses can be paid to. Managed by HR managers / admins from
+// the Expenses page. Employees (payees for reimbursements) come from HrUser.
+const HrVendor = sequelize.define('HrVendor', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(200), allowNull: false },        // vendor / company name
+  contactPerson: { type: DataTypes.STRING(160), allowNull: true },
+  phone: { type: DataTypes.STRING(40), allowNull: true },
+  email: { type: DataTypes.STRING(160), allowNull: true },
+  address: { type: DataTypes.TEXT, allowNull: true },             // full address incl. city/state/zip
+  city: { type: DataTypes.STRING(80), allowNull: true },
+  state: { type: DataTypes.STRING(80), allowNull: true },
+  zip: { type: DataTypes.STRING(20), allowNull: true },
+  hasGst: { type: DataTypes.BOOLEAN, defaultValue: false },
+  gstin: { type: DataTypes.STRING(15), allowNull: true },         // 15-char GSTIN when hasGst
+  category: { type: DataTypes.STRING(80), allowNull: true },
+  branch: { type: DataTypes.STRING(80), allowNull: true },
+  notes: { type: DataTypes.TEXT, allowNull: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(120), allowNull: true },
+}, { tableName: 'hr_vendors', indexes: [{ name: 'idx_hr_vendor_active', fields: ['active'] }] });
+HrVendor.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Expenses raised by HR, approved by admin, then marked paid. Payee is either a
+// vendor (HrVendor) or an employee (HrUser). Invoice stored as an ImageKit URL.
+const HrExpense = sequelize.define('HrExpense', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  title: { type: DataTypes.STRING(200), allowNull: false },
+  category: { type: DataTypes.STRING(80), allowNull: true },
+  amount: { type: DataTypes.FLOAT, defaultValue: 0 },
+  currency: { type: DataTypes.STRING(8), defaultValue: 'INR' },
+  expenseDate: { type: DataTypes.STRING(10), allowNull: true },   // YYYY-MM-DD
+  branch: { type: DataTypes.STRING(80), allowNull: true },        // Bhubaneswar | Kolkata
+  payeeType: { type: DataTypes.STRING(12), defaultValue: 'vendor' }, // 'vendor' | 'employee'
+  vendorId: { type: DataTypes.INTEGER, allowNull: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: true },
+  payeeName: { type: DataTypes.STRING(200), allowNull: true },
+  description: { type: DataTypes.TEXT, allowNull: true },
+  invoiceUrl: { type: DataTypes.STRING(600), allowNull: true },
+  invoiceName: { type: DataTypes.STRING(200), allowNull: true },
+  // Lifecycle: submitted → approved → paid, or rejected (terminal).
+  status: { type: DataTypes.STRING(20), defaultValue: 'submitted' },
+  raisedById: { type: DataTypes.INTEGER, allowNull: true },
+  raisedByKind: { type: DataTypes.STRING(10), defaultValue: 'hr' },
+  raisedByName: { type: DataTypes.STRING(120), allowNull: true },
+  approvedById: { type: DataTypes.INTEGER, allowNull: true },
+  approvedByName: { type: DataTypes.STRING(120), allowNull: true },
+  approvedAt: { type: DataTypes.DATE, allowNull: true },
+  rejectionReason: { type: DataTypes.STRING(500), allowNull: true },
+  // Payment record. For bank transfer we also capture bank + txn id + date.
+  paymentMethod: { type: DataTypes.STRING(20), allowNull: true }, // cash|bank|upi|cheque
+  paymentRef: { type: DataTypes.STRING(120), allowNull: true },   // upi ref / cheque no. / txn id
+  bankName: { type: DataTypes.STRING(40), allowNull: true },      // kotak|indian|indian_cc (bank transfer)
+  paymentDate: { type: DataTypes.STRING(10), allowNull: true },   // YYYY-MM-DD
+  paidById: { type: DataTypes.INTEGER, allowNull: true },
+  paidByName: { type: DataTypes.STRING(120), allowNull: true },
+  paidAt: { type: DataTypes.DATE, allowNull: true },
+}, {
+  tableName: 'hr_expenses',
+  indexes: [{ name: 'idx_hr_expense_status', fields: ['status'] }, { name: 'idx_hr_expense_branch', fields: ['branch'] }],
+});
+HrExpense.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 // Per-employee onboarding checklist. Each row is one task for one employee,
 // seeded from the admin-configured template (Settings.hrOnboardingTasks).
@@ -1893,7 +1959,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

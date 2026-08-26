@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -1647,6 +1647,243 @@ router.get('/me/whos-in', requireHrAccess, async (req, res, next) => {
     const counts = { not_in: 0, late: 0, in: 0, leave: 0 };
     people.forEach((p) => { counts[p.status === 'in' ? 'in' : p.status] = (counts[p.status === 'in' ? 'in' : p.status] || 0) + 1; });
     res.json({ people, counts });
+  } catch (e) { next(e); }
+});
+
+// ===== Core HR → Expenses & Vendors =====
+// Default expense categories; admins/HR managers can edit the list (stored in
+// Settings.hrExpenseCategories).
+const DEFAULT_EXPENSE_CATEGORIES = ['Rent', 'Utilities', 'Salary advance', 'Vendor payment', 'Office supplies', 'Travel', 'Food & Welfare', 'Marketing', 'Software / Subscriptions', 'Reimbursement', 'Miscellaneous'];
+const EXPENSE_BRANCHES = ['Bhubaneswar', 'Kolkata'];
+const PAYMENT_METHODS = ['cash', 'bank', 'upi', 'cheque'];
+const BANK_NAMES = ['kotak', 'indian', 'indian_cc'];
+
+async function getExpenseCategories(s) {
+  const list = s && s.hrExpenseCategories;
+  return Array.isArray(list) && list.length ? list : DEFAULT_EXPENSE_CATEGORIES;
+}
+// A valid GSTIN is 15 chars: 2 digits, 10-char PAN, 1 entity digit, 'Z', 1 checksum.
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+// ---- Expense categories ----
+router.get('/expense-categories', requireHrAccess, async (req, res, next) => {
+  try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); res.json({ categories: await getExpenseCategories(s), branches: EXPENSE_BRANCHES }); }
+  catch (e) { next(e); }
+});
+// HR managers + admins can edit the category list.
+router.put('/expense-categories', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can edit categories.' });
+    const list = Array.isArray(req.body && req.body.categories) ? req.body.categories.map((c) => String(c).trim()).filter(Boolean).slice(0, 60) : null;
+    if (!list) return res.status(400).json({ error: 'categories must be an array.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    s.hrExpenseCategories = list; s.changed('hrExpenseCategories', true); await s.save();
+    res.json({ categories: list });
+  } catch (e) { next(e); }
+});
+
+// ---- Vendors ----
+router.get('/vendors', requireHrAccess, async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.active !== 'all') where.active = true;
+    const rows = await HrVendor.findAll({ where, order: [['name', 'ASC']] });
+    res.json({ vendors: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+function validateVendor(b) {
+  const name = String(b.name || '').trim();
+  if (!name) return { error: 'Vendor / company name is required.' };
+  const hasGst = !!b.hasGst;
+  let gstin = null;
+  if (hasGst) {
+    gstin = String(b.gstin || '').trim().toUpperCase();
+    if (gstin.length !== 15 || !GSTIN_RE.test(gstin)) return { error: 'Enter a valid 15-character GSTIN.' };
+  }
+  return {
+    data: {
+      name, contactPerson: String(b.contactPerson || '').trim() || null,
+      phone: String(b.phone || '').trim() || null, email: String(b.email || '').trim() || null,
+      address: String(b.address || '').trim() || null, city: String(b.city || '').trim() || null,
+      state: String(b.state || '').trim() || null, zip: String(b.zip || '').trim() || null,
+      hasGst, gstin, category: String(b.category || '').trim() || null,
+      branch: EXPENSE_BRANCHES.includes(b.branch) ? b.branch : null,
+      notes: String(b.notes || '').trim() || null,
+    },
+  };
+}
+router.post('/vendors', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can add vendors.' });
+    const v = validateVendor(req.body || {});
+    if (v.error) return res.status(400).json({ error: v.error });
+    const row = await HrVendor.create({ ...v.data, createdById: req.hrActor.id, createdByName: req.hrActor.name });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.put('/vendors/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can edit vendors.' });
+    const row = await HrVendor.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Vendor not found.' });
+    const v = validateVendor(req.body || {});
+    if (v.error) return res.status(400).json({ error: v.error });
+    Object.assign(row, v.data);
+    if (req.body.active !== undefined) row.active = !!req.body.active;
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/vendors/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can delete vendors.' });
+    const row = await HrVendor.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Vendor not found.' });
+    // If the vendor has expenses, soft-delete (deactivate) to preserve history.
+    const used = await HrExpense.count({ where: { vendorId: row.id } });
+    if (used > 0) { row.active = false; await row.save(); return res.json({ ok: true, deactivated: true }); }
+    await row.destroy();
+    res.json({ ok: true, deleted: true });
+  } catch (e) { next(e); }
+});
+// Vendor payment history — paid expenses for this vendor.
+router.get('/vendors/:id/history', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrExpense.findAll({ where: { vendorId: req.params.id }, order: [['paidAt', 'DESC'], ['createdAt', 'DESC']] });
+    res.json({ expenses: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// ---- Expenses ----
+function expenseScopeOk(req, branch) {
+  // All-branch managers & admins: any branch. Scoped managers: their branch only.
+  if (req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope) return true;
+  return String(branch || '').toLowerCase() === String(req.hrManagerScope || req.hrBranch || '').toLowerCase();
+}
+router.get('/expenses', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view expenses.' });
+    const where = {};
+    // Branch scoping for single-branch managers.
+    if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
+    const rows = await HrExpense.findAll({ where, order: [['expenseDate', 'DESC'], ['createdAt', 'DESC']], limit: 2000 });
+    // Summary counts (INR amounts).
+    const monthStr = istDateStr().slice(0, 7);
+    let paidThisMonth = 0, totalThisMonth = 0;
+    const counts = { submitted: 0, approved: 0, paid: 0, rejected: 0 };
+    rows.forEach((r) => {
+      counts[r.status] = (counts[r.status] || 0) + 1;
+      if ((r.expenseDate || '').slice(0, 7) === monthStr) totalThisMonth += Number(r.amount || 0);
+      if (r.status === 'paid' && (r.paymentDate || r.expenseDate || '').slice(0, 7) === monthStr) paidThisMonth += Number(r.amount || 0);
+    });
+    res.json({
+      expenses: rows.map((r) => r.toJSON()),
+      counts: { pending: counts.submitted, approved: counts.approved, paid: counts.paid, rejected: counts.rejected },
+      paidThisMonth, totalThisMonth,
+    });
+  } catch (e) { next(e); }
+});
+function buildExpensePayee(b) {
+  const payeeType = b.payeeType === 'employee' ? 'employee' : 'vendor';
+  return { payeeType, vendorId: payeeType === 'vendor' ? (b.vendorId || null) : null, employeeId: payeeType === 'employee' ? (b.employeeId || null) : null };
+}
+router.post('/expenses', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can raise expenses.' });
+    const b = req.body || {};
+    const title = String(b.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Title is required.' });
+    const amount = Number(b.amount || 0);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
+    if (!EXPENSE_BRANCHES.includes(b.branch)) return res.status(400).json({ error: 'Choose a branch.' });
+    if (!expenseScopeOk(req, b.branch)) return res.status(403).json({ error: 'You can only raise expenses for your branch.' });
+    const payee = buildExpensePayee(b);
+    // Resolve payee name.
+    let payeeName = String(b.payeeName || '').trim();
+    if (!payeeName && payee.payeeType === 'vendor' && payee.vendorId) { const v = await HrVendor.findByPk(payee.vendorId); payeeName = v ? v.name : ''; }
+    if (!payeeName && payee.payeeType === 'employee' && payee.employeeId) { const e = await HrUser.findByPk(payee.employeeId); payeeName = e ? e.name : ''; }
+    const row = await HrExpense.create({
+      title, category: String(b.category || '').trim() || null, amount, currency: 'INR',
+      expenseDate: b.expenseDate || istDateStr(), branch: b.branch, ...payee, payeeName: payeeName || null,
+      description: String(b.description || '').trim() || null,
+      invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      status: 'submitted', raisedById: req.hrActor.id, raisedByKind: req.hrActor.kind, raisedByName: req.hrActor.name,
+    });
+    hrLog(req, 'expense.raise', title);
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.put('/expenses/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Expense not found.' });
+    if (row.status === 'paid') return res.status(400).json({ error: 'A paid expense cannot be edited.' });
+    const b = req.body || {};
+    if (b.title !== undefined) row.title = String(b.title).trim() || row.title;
+    if (b.category !== undefined) row.category = String(b.category).trim() || null;
+    if (b.amount !== undefined && Number(b.amount) > 0) row.amount = Number(b.amount);
+    if (b.expenseDate !== undefined) row.expenseDate = b.expenseDate;
+    if (b.branch !== undefined && EXPENSE_BRANCHES.includes(b.branch)) row.branch = b.branch;
+    if (b.description !== undefined) row.description = String(b.description).trim() || null;
+    if (b.invoiceUrl !== undefined) { row.invoiceUrl = String(b.invoiceUrl).trim() || null; row.invoiceName = String(b.invoiceName || '').trim() || row.invoiceName; }
+    if (b.payeeType !== undefined) { Object.assign(row, buildExpensePayee(b)); if (b.payeeName) row.payeeName = String(b.payeeName).trim(); }
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+// Admin approves / rejects.
+router.post('/expenses/:id/decide', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Expense not found.' });
+    if (row.status !== 'submitted') return res.status(400).json({ error: 'Only a submitted expense can be approved or rejected.' });
+    const decision = req.body && req.body.decision;
+    if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
+    if (decision === 'approve') {
+      row.status = 'approved'; row.approvedById = req.hrActor.id; row.approvedByName = req.hrActor.name; row.approvedAt = new Date();
+    } else {
+      row.status = 'rejected'; row.rejectionReason = String((req.body && req.body.reason) || '').slice(0, 500) || null;
+      row.approvedById = req.hrActor.id; row.approvedByName = req.hrActor.name; row.approvedAt = new Date();
+    }
+    await row.save();
+    hrLog(req, `expense.${decision}`, row.title);
+    try { if (row.raisedById) await HrNotification.create({ userId: row.raisedById, actorKind: 'hr', type: 'info', text: `Expense "${row.title}" (₹${Number(row.amount).toLocaleString('en-IN')}) was ${decision === 'approve' ? 'approved' : 'rejected'} by ${req.hrActor.name}.` }); } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+// Mark an approved expense as paid (raising HR or admin).
+router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Expense not found.' });
+    if (row.status !== 'approved') return res.status(400).json({ error: 'Only an approved expense can be marked paid.' });
+    const b = req.body || {};
+    const method = String(b.paymentMethod || '').toLowerCase();
+    if (!PAYMENT_METHODS.includes(method)) return res.status(400).json({ error: 'Choose a payment method.' });
+    row.paymentMethod = method;
+    row.paymentDate = b.paymentDate || istDateStr();
+    row.paymentRef = String(b.paymentRef || '').trim() || null;
+    if (method === 'bank') {
+      if (!BANK_NAMES.includes(String(b.bankName || ''))) return res.status(400).json({ error: 'Choose the bank for the transfer.' });
+      row.bankName = b.bankName;
+      if (!row.paymentRef) return res.status(400).json({ error: 'Transaction ID is required for a bank transfer.' });
+    } else { row.bankName = null; }
+    row.status = 'paid'; row.paidById = req.hrActor.id; row.paidByName = req.hrActor.name; row.paidAt = new Date();
+    await row.save();
+    hrLog(req, 'expense.pay', row.title);
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/expenses/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Expense not found.' });
+    if (row.status === 'paid') return res.status(400).json({ error: 'A paid expense cannot be deleted.' });
+    await row.destroy();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
