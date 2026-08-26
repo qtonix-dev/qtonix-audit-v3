@@ -95,6 +95,23 @@ async function rejectSignature(hrActor, mailbox) {
 // sections (payroll, performance, identity). Everyone else is view-only there.
 const HR_STAFF_TYPES = ['hr', 'recruiter'];
 
+// Normalize a person's name to "First Middle Last" casing so names are stored
+// uniformly (e.g. "SANDEEP KUMAR SWAIN" → "Sandeep Kumar Swain"). Preserves
+// intra-word punctuation (O'Brien, Jean-Paul) and common lowercase particles.
+function titleCaseName(raw) {
+  const s = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (!s) return s;
+  const small = new Set(['de', 'da', 'van', 'von', 'der', 'bin', 'al', 'la', 'le']);
+  return s.split(' ').map((word, i) => word.split('-').map((part) => {
+    if (!part) return part;
+    const lower = part.toLowerCase();
+    if (i > 0 && small.has(lower)) return lower;
+    // Handle O'Brien / D'Souza
+    return lower.replace(/(^|['’])([a-z\u00C0-\u024F])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  }).join('-')).join(' ');
+}
+
+
 // A candidate is considered hired/onboarded if their pipeline stage is a hired
 // stage OR they have an accepted offer. This covers both workflows: HR moving
 // the candidate's stage directly to "Hired", and completing the offer flow.
@@ -1821,7 +1838,7 @@ router.get('/employees/:id/leave-eligibility', requireHrAccess, async (req, res,
 router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const b = req.body || {};
-    const name = String(b.name || '').trim();
+    const name = titleCaseName(String(b.name || '').trim());
     const email = String(b.email || '').toLowerCase().trim();
     const password = String(b.password || '');
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are all required.' });
@@ -1902,7 +1919,7 @@ router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, nex
     if (b.employeeId !== undefined && idNum(b.employeeId) && others.some((u) => idNum(u.employeeId) === idNum(b.employeeId))) {
       return res.status(409).json({ error: `Employee ID number ${idNum(b.employeeId)} is already in use (branch prefix ignored).` });
     }
-    if (b.name !== undefined) row.name = String(b.name).trim();
+    if (b.name !== undefined) row.name = titleCaseName(String(b.name).trim());
     if (b.employeeId !== undefined) row.employeeId = b.employeeId || null;
     if (b.phone !== undefined) row.phone = b.phone;
     if (b.designation !== undefined) row.designation = b.designation;

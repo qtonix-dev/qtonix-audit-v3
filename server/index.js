@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v298';
+const APP_VERSION = 'v299';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -561,6 +561,32 @@ connectWithRetry()
       await HrShift.findOrCreate({ where: { name: 'General (9-6)' }, defaults: { name: 'General (9-6)', startTime: '09:00', endTime: '18:00', breakStart: '13:00', breakEnd: '13:45' } });
     } catch (e) {
       console.error('[migrate] HR branch/department seed skipped:', e.message);
+    }
+    // One-time, idempotent: normalize stored employee names to Title Case
+    // ("SANDEEP KUMAR SWAIN" → "Sandeep Kumar Swain") so every place that shows a
+    // name is uniform. Only rows whose name actually changes are saved.
+    try {
+      const { HrUser } = require('./models');
+      const tc = (raw) => {
+        const s = String(raw || '').trim().replace(/\s+/g, ' ');
+        if (!s) return s;
+        const small = new Set(['de', 'da', 'van', 'von', 'der', 'bin', 'al', 'la', 'le']);
+        return s.split(' ').map((word, i) => word.split('-').map((part) => {
+          if (!part) return part;
+          const lower = part.toLowerCase();
+          if (i > 0 && small.has(lower)) return lower;
+          return lower.replace(/(^|['’])([a-z\u00C0-\u024F])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+        }).join('-')).join(' ');
+      };
+      const people = await HrUser.findAll();
+      let fixed = 0;
+      for (const u of people) {
+        const norm = tc(u.name);
+        if (norm && norm !== u.name) { u.name = norm; await u.save(); fixed += 1; }
+      }
+      if (fixed) console.log(`[migrate] normalized ${fixed} employee name(s) to Title Case`);
+    } catch (e) {
+      console.error('[migrate] employee name normalization skipped:', e.message);
     }
     } // end if (connected)
 

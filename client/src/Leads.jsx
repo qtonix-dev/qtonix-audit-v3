@@ -5269,6 +5269,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [perPage, setPerPage] = useState(20);
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [recentPayments, setRecentPayments] = useState([]);
+  const [recentOpen, setRecentOpen] = useState(false); // Boxes "Recently received" section — minimized by default
   const [convTab, setConvTab] = useState('pending'); // pending | renewals | recent | all
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
@@ -5606,26 +5607,34 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         <>
         {recent.length > 0 && (
           <div className="mb-5">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#0F9D58' }}>Recently received the payment · last 30 days · {recent.length}</div>
-            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {recent.slice(0, 12).map((rp, i) => (
-                <div key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')}
-                  className="bg-white rounded-2xl border p-4 cursor-pointer hover:shadow-md transition shadow-sm" style={{ borderColor: '#BBF7D0' }}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-base shrink-0" style={{ background: '#DCFCE7' }}>💰</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-extrabold text-[#050A1F] truncate">{titleCase(rp.name)}</div>
-                      <div className="text-[11px] text-slate-400 truncate">{rp.service || rp.dealName}{rp.ownerName ? ` · ${rp.ownerName}` : ''}</div>
+            <button onClick={() => setRecentOpen((o) => !o)} className="w-full flex items-center justify-between mb-2 group">
+              <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#0F9D58' }}>💰 Recently received the payment · last 30 days · {recent.length}</span>
+              <span className="flex items-center gap-1 text-[11px] font-bold text-slate-400 group-hover:text-slate-600">
+                {recentOpen ? 'Minimize' : 'Expand'}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${recentOpen ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9" /></svg>
+              </span>
+            </button>
+            {recentOpen && (
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {recent.map((rp, i) => (
+                  <div key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')}
+                    className="bg-white rounded-2xl border p-4 cursor-pointer hover:shadow-md transition shadow-sm" style={{ borderColor: '#BBF7D0' }}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-base shrink-0" style={{ background: '#DCFCE7' }}>💰</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-extrabold text-[#050A1F] truncate">{titleCase(rp.name)}</div>
+                        <div className="text-[11px] text-slate-400 truncate">{rp.service || rp.dealName}{rp.ownerName ? ` · ${rp.ownerName}` : ''}</div>
+                      </div>
+                      {rp.partial && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5 shrink-0" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}
                     </div>
-                    {rp.partial && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5 shrink-0" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}
+                    <div className="flex items-end justify-between mt-2.5">
+                      <div className="text-lg font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</div>
+                      <div className="text-[11px] text-slate-400 text-right">{rp.gateway || 'Payment'}<div>{fmtWhen(rp.at)}</div></div>
+                    </div>
                   </div>
-                  <div className="flex items-end justify-between mt-2.5">
-                    <div className="text-lg font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</div>
-                    <div className="text-[11px] text-slate-400 text-right">{rp.gateway || 'Payment'}<div>{fmtWhen(rp.at)}</div></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {openDealLeads.length > 0 && (

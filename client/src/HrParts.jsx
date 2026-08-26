@@ -1170,6 +1170,11 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
   const isHrManager = !!(me && me.isHrManager);
   const canManage = isAdmin || isHrManager;
   const myBranch = me && me.branch;
+  // An all-branch HR manager (scope 'all' or the explicit hrManagerAll flag)
+  // manages every branch, exactly like an admin. A branch-scoped manager only
+  // manages their own branch.
+  const managerAll = !!(me && (me.hrManagerAll || String(me.hrManagerScope || '').toLowerCase() === 'all'));
+  const canManageRow = (u) => isAdmin || managerAll || (isHrManager && u && u.branch === myBranch);
   const [rows, setRows] = useState([]);
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -1246,7 +1251,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
         <h1 className="text-2xl font-extrabold text-[#050A1F]">Employees</h1>
         {canManage && <button onClick={() => setShow(true)} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>+ Add employee</button>}
       </div>
-      {isHrManager && !isAdmin && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">You have the privilege to manage employees in the <b>{myBranch}</b> branch.</div>}
+      {isHrManager && !isAdmin && <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">{managerAll ? <>You have the privilege to manage employees across <b>all branches</b>.</> : <>You have the privilege to manage employees in the <b>{myBranch}</b> branch.</>}</div>}
       {msg && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">{msg}</div>}
 
       {/* Filters */}
@@ -1287,7 +1292,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
                         <IconBtn title="Remove from HR list" onClick={() => removeDirector(u)} color="text-slate-400 hover:text-red-600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6 7l1 13a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 17 20l1-13" /></svg></IconBtn>
                       </div>
                     ) : <div className="text-right text-[10px] text-slate-300">Director</div>
-                  ) : canManage && (isAdmin || u.branch === myBranch) ? (
+                  ) : canManageRow(u) ? (
                     <div className="flex items-center justify-end gap-0.5">
                       <IconBtn title="View profile" onClick={() => onOpenProfile(u._id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></IconBtn>
                       <IconBtn title="Edit" onClick={() => openEdit(u)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></svg></IconBtn>
