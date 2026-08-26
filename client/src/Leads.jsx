@@ -5269,6 +5269,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
   const [perPage, setPerPage] = useState(20);
   const [pageInfo, setPageInfo] = useState({ total: 0, pages: 1 });
   const [recentPayments, setRecentPayments] = useState([]);
+  const [convTab, setConvTab] = useState('pending'); // pending | renewals | recent | all
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
   // Cards, table, or both. Remembered per user, since it's a lasting
@@ -5836,34 +5837,26 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           if (l.nextRenewalDate) renewalClients.push({ l, date: l.nextRenewalDate, service: l.nextRenewalService });
         }
         renewalClients.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const TABS = [
+          ['pending', 'Upcoming & Pending Payments', pendingClients.length],
+          ['renewals', 'Upcoming Renewals', renewalClients.length],
+          ['recent', 'Recently received · 30 days', recent.length],
+          ['all', 'All converted clients', filtered.length],
+        ];
         return (
           <div className={effViewMode === 'table' ? '' : 'mt-6'}>
-            {/* 0) Recently received the payment (last 30 days) */}
-            {recent.length > 0 && (
-              <>
-                <div className="text-[11px] font-bold uppercase tracking-wide mb-2" style={{ color: '#0F9D58' }}>💰 Recently received the payment · last 30 days · {recent.length}</div>
-                <div className="bg-white rounded-2xl border overflow-hidden shadow-sm mb-6" style={{ borderColor: '#BBF7D0' }}>
-                  <table className="w-full text-sm">
-                    <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">
-                      <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Service</th><th className="px-4 py-2.5">Amount</th><th className="px-4 py-2.5">Gateway</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Received</th>
-                    </tr></thead>
-                    <tbody>
-                      {recent.slice(0, 30).map((rp, i) => (
-                        <tr key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')} className="border-b border-slate-50 last:border-0 hover:bg-green-50/40 cursor-pointer">
-                          <td className="px-4 py-2.5 font-bold text-[#050A1F]">{titleCase(rp.name)}{rp.partial && <span className="ml-2 text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{rp.service || rp.dealName || '—'}</td>
-                          <td className="px-4 py-2.5 font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{rp.gateway || '—'}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{rp.ownerName || '—'}</td>
-                          <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDay(rp.at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+            {/* Tab bar */}
+            <div className="flex flex-wrap gap-1.5 mb-4 bg-slate-100 p-1 rounded-xl w-fit">
+              {TABS.map(([id, label, count]) => (
+                <button key={id} onClick={() => setConvTab(id)}
+                  className={`px-3.5 py-1.5 rounded-lg text-[12px] font-extrabold transition-colors ${convTab === id ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  {label} <span className={`ml-1 ${convTab === id ? 'text-[#FF4500]' : 'text-slate-400'}`}>{count}</span>
+                </button>
+              ))}
+            </div>
+
             {/* 1) Upcoming & Pending Payments */}
+            {convTab === 'pending' && (<>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">💳 Upcoming &amp; Pending Payments · {pendingClients.length}</div>
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
               {pendingClients.length === 0 ? (
@@ -5896,8 +5889,10 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                 </table>
               )}
             </div>
+            </>)}
 
             {/* 2) Upcoming Renewals */}
+            {convTab === 'renewals' && (<>
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">🔁 Upcoming Renewals · {renewalClients.length}</div>
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm mb-6">
               {renewalClients.length === 0 ? (
@@ -5929,14 +5924,46 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                 </table>
               )}
             </div>
+            </>)}
 
-            {/* 3) All converted clients */}
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients</div>
+            {/* 3) Recently received the payment (last 30 days) */}
+            {convTab === 'recent' && (
+              <>
+                <div className="text-[11px] font-bold uppercase tracking-wide mb-2" style={{ color: '#0F9D58' }}>💰 Recently received the payment · last 30 days · {recent.length}</div>
+                <div className="bg-white rounded-2xl border overflow-hidden shadow-sm mb-6" style={{ borderColor: '#BBF7D0' }}>
+                  {recent.length === 0 ? (
+                    <div className="text-slate-300 text-sm text-center py-8">No payments received in the last 30 days.</div>
+                  ) : (
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-left text-[11px] text-slate-400 uppercase border-b border-slate-100">
+                      <th className="px-4 py-2.5">Client</th><th className="px-4 py-2.5">Service</th><th className="px-4 py-2.5">Amount</th><th className="px-4 py-2.5">Gateway</th><th className="px-4 py-2.5">Owner</th><th className="px-4 py-2.5">Received</th>
+                    </tr></thead>
+                    <tbody>
+                      {recent.slice(0, 50).map((rp, i) => (
+                        <tr key={`${rp.leadId}-${rp.dealId}-${rp.seq}-${i}`} onClick={() => onOpen(rp.leadId, 'deals')} className="border-b border-slate-50 last:border-0 hover:bg-green-50/40 cursor-pointer">
+                          <td className="px-4 py-2.5 font-bold text-[#050A1F]">{titleCase(rp.name)}{rp.partial && <span className="ml-2 text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>PARTIAL</span>}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.service || rp.dealName || '—'}</td>
+                          <td className="px-4 py-2.5 font-extrabold" style={{ color: '#0F9D58' }}>{rp.currency} {Number(rp.amount).toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.gateway || '—'}</td>
+                          <td className="px-4 py-2.5 text-slate-500">{rp.ownerName || '—'}</td>
+                          <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDay(rp.at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  )}
+                </div>
+              </>
+            )}
+            {/* 4) All converted clients — heading only; the table renders below */}
+            {convTab === 'all' && (
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">All converted clients · {filtered.length}</div>
+            )}
           </div>
         );
       })()}
 
-      {filtered.length > 0 && effViewMode !== 'cards' && (
+      {filtered.length > 0 && effViewMode !== 'cards' && convTab === 'all' && (
         <div className={effViewMode === 'table' ? '' : ''}>
           <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
             <table className="w-full text-sm">

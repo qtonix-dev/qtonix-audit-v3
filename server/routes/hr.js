@@ -564,6 +564,8 @@ router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
     const shift = row.shiftId ? await HrShift.findByPk(row.shiftId) : null;
+    // Payroll/compensation may be edited by Admin, HR staff (hr/recruiter), and
+    // HR Managers WITHIN THEIR BRANCH SCOPE (all-branch managers → everyone).
     const canEditPayroll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
     res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll, canEditSelf: isSelf || canEditLocked, shift: shift ? shift.toJSON() : null });
   } catch (e) { next(e); }
@@ -607,6 +609,8 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
       const lockedSections = ['payroll', 'performance', 'payrollHistory', 'performanceCards'];
       // Payroll/compensation may be edited by Admin, HR Managers, and HR staff
       // (hr/recruiter) — the people who actually maintain compensation records.
+      // Payroll/compensation may be edited by Admin, HR staff (hr/recruiter),
+      // and HR Managers (the people who maintain compensation records).
       const canEditPayroll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
       const merged = { ...current };
       openSections.forEach((s) => { if (incoming[s] !== undefined) merged[s] = incoming[s]; });
@@ -619,7 +623,8 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
       row.profile = merged; row.changed('profile', true);
     }
     await row.save();
-    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked });
+    const canEditPayrollResp = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll: canEditPayrollResp, canEditSelf: isSelf || canEditLocked });
   } catch (e) { next(e); }
 });
 
@@ -1074,7 +1079,7 @@ async function resolveLeaveApprover(emp) {
     const adm = await User.findByPk(emp.reportsToAdminId);
     if (adm && adm.active) return { approverId: adm.id, approverName: adm.name, kind: 'admin' };
   }
-  // Fallback: an all-branch or same-branch HR manager.
+  // Fallback: an all-branch or same-branch HR manager (never the employee).
   const mgrs = await HrUser.findAll({ where: { active: true } });
   const branchMgr = mgrs.find((m) => (m.hrManagerScope || '').toLowerCase() === String(emp.branch || '').toLowerCase() && m.id !== emp.id);
   if (branchMgr) return { approverId: branchMgr.id, approverName: branchMgr.name, kind: 'hr' };
@@ -1083,6 +1088,33 @@ async function resolveLeaveApprover(emp) {
   const admin = await User.findOne({ where: { role: 'admin', active: true } });
   if (admin) return { approverId: admin.id, approverName: admin.name, kind: 'admin' };
   return { approverId: null, approverName: 'HR', kind: 'hr' };
+}
+
+// The reporting chain of approvers for an employee: immediate senior, then that
+// senior's senior, walking reportsToId upward. Never includes the employee. If
+// there's no reporting line, falls back to the resolved HR-manager/admin.
+async function resolveApproverChain(emp) {
+  const chain = [];
+  const seen = new Set([emp.id]);
+  let cur = emp; let hops = 0;
+  while (cur && cur.reportsToId && hops < 8) {
+    if (seen.has(cur.reportsToId)) break;
+    const senior = await HrUser.findByPk(cur.reportsToId);
+    if (!senior || !senior.active) break;
+    seen.add(senior.id);
+    chain.push({ id: senior.id, name: senior.name, designation: senior.designation || '', kind: 'hr' });
+    cur = senior; hops += 1;
+  }
+  // Admin reporting line (if the employee reports directly to a CRM admin).
+  if (!chain.length && emp.reportsToAdminId) {
+    const adm = await User.findByPk(emp.reportsToAdminId);
+    if (adm && adm.active) chain.push({ id: `admin:${adm.id}`, name: adm.name, designation: 'Admin', kind: 'admin' });
+  }
+  if (!chain.length) {
+    const fb = await resolveLeaveApprover(emp);
+    if (fb.approverId) chain.push({ id: fb.approverId, name: fb.approverName, designation: '', kind: fb.kind });
+  }
+  return chain;
 }
 
 // GET /me/clock → today's web-clock state for the signed-in employee.
@@ -1173,10 +1205,12 @@ router.get('/me/leave', requireHrAccess, async (req, res, next) => {
     const used = { casual: 0, medical: 0, privilege: 0, wfh: 0 };
     rows.forEach((r) => { if (r.status === 'approved') used[r.type] = (used[r.type] || 0) + (r.duration === 'half' ? 0.5 : 1); });
     const approver = await resolveLeaveApprover(emp);
+    const approverChain = await resolveApproverChain(emp);
     res.json({
       allocation: alloc, used,
       balance: Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (used[k] || 0)).toFixed(1)])),
       approverName: approver.approverName,
+      approverChain,
       leaves: rows.map((r) => r.toJSON()),
     });
   } catch (e) { next(e); }

@@ -628,7 +628,7 @@ export function ProfilePage({ me, targetId }) {
                           <div className="bg-white rounded-xl border border-slate-100 p-4 flex items-center justify-between gap-3">
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="text-lg font-extrabold text-[#050A1F]">₹{Number(e.ctc || 0).toLocaleString('en-IN')}</span>
+                                <span className="text-lg font-extrabold text-[#050A1F]">₹{Number(e.ctc || 0).toLocaleString('en-IN')}<span className="text-xs font-semibold text-slate-400"> /mo</span></span>
                                 <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: (e.reason === 'Joining' ? '#DCFCE7' : '#FFF7ED'), color: (e.reason === 'Joining' ? '#16A34A' : '#C2410C') }}>{e.reason}</span>
                               </div>
                               <div className="text-xs text-slate-400 mt-0.5">Effective {fmtLong(e.effectiveDate)}{e.note ? ` · ${e.note}` : ''}</div>
@@ -790,7 +790,7 @@ function SalaryRecordModal({ initial, onClose, onSave }) {
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Add salary record</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
         <div className="p-6 space-y-4">
-          <Field label="Annual CTC (₹)"><input type="number" className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} placeholder="e.g. 600000" /></Field>
+          <Field label="Monthly Salary (₹)"><input type="number" className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} placeholder="e.g. 50000" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Reason"><select className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)}>{REASONS.map((r) => <option key={r}>{r}</option>)}</select></Field>
             <Field label="Effective date"><input type="date" className={inputCls} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></Field>
@@ -1268,7 +1268,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
           <tbody>
             {filtered.map((u) => (
               <tr key={u._id} className={`border-t border-slate-100 ${u.active === false ? 'opacity-60' : ''}`}>
-                <td className="px-4 py-3"><button onClick={() => isAdmin && onOpenProfile(u._id)} className="flex items-center gap-2 text-left"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F] hover:text-[#FF4500]">{titleCase(u.name)}</span>{u.active === false && <span className="text-[9px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-bold">Inactive</span>}</button></td>
+                <td className="px-4 py-3"><button onClick={() => canManage && onOpenProfile(u._id)} className="flex items-center gap-2 text-left"><Avatar name={u.name} src={u.avatar} size={30} /><span className="font-bold text-[#050A1F] hover:text-[#FF4500]">{titleCase(u.name)}</span>{u.active === false && <span className="text-[9px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-bold">Inactive</span>}</button></td>
                 <td className="px-4 py-3 text-slate-500">{u.employeeId || '—'}</td>
                 <td className="px-4 py-3"><span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">{ROLE_LABELS[u.type] || u.type}</span></td>
                 <td className="px-4 py-3 text-slate-500">{u.department || '—'}</td>

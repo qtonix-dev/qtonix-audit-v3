@@ -260,7 +260,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
 
       {showFeedback && <FeedbackModal iv={feedbackIv} onClose={() => { setShowFeedback(false); setFeedbackIv(null); }}
         onSubmit={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/feedback`, { method: 'POST', body: JSON.stringify({ ...payload, interviewId: feedbackIv ? feedbackIv.id : undefined, roundLabel: feedbackIv ? feedbackIv.roundLabel : undefined, round: feedbackIv ? feedbackIv.round : undefined }) })); setShowFeedback(false); setFeedbackIv(null); setTab('feedback'); }} />}
-      {showInterview && <InterviewModal candidateId={c.id} candidateStage={c.stage} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} onClose={() => setShowInterview(false)} onDone={load} />}
+      {showInterview && <InterviewModal candidateId={c.id} candidateStage={c.stage} stages={stages} roundPanels={(c.job && c.job.roundPanels) || {}} interviews={c.interviews || []} onClose={() => setShowInterview(false)} onDone={load} />}
       {showEdit && <EditModal c={c} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />}
       {activityModal && <ActivityModal kind={activityModal} candidateId={c.id} onClose={() => setActivityModal(null)} onSaved={() => { setActivityModal(null); load(); setTab('comments'); }} />}
       {showReject && <RejectModal candidateId={c.id} candidateEmail={c.email} onClose={() => setShowReject(false)} onReject={async (payload) => { await act(() => hrApi(`/candidates/${c.id}/reject`, { method: 'POST', body: JSON.stringify(payload) })); setShowReject(false); }} />}
@@ -1414,10 +1414,15 @@ function FeedbackModal({ onClose, onSubmit, iv }) {
 }
 
 // ---------- Interview modal (calendar + Meet) ----------
-function InterviewModal({ candidateId, candidateStage, stages, roundPanels, onClose, onDone }) {
+function InterviewModal({ candidateId, candidateStage, stages, roundPanels, interviews, onClose, onDone }) {
   const [at, setAt] = useState('');
   const [duration, setDuration] = useState(30);
   const [mode, setMode] = useState('online');
+  // Existing interviews shown below the form; each can be edited (date/time) or
+  // cancelled with a note. Kept in local state so edits reflect immediately.
+  const [existing, setExisting] = useState(Array.isArray(interviews) ? interviews.slice() : []);
+  const [editIv, setEditIv] = useState(null); // interview id being edited inline
+  const [cancelIvLocal, setCancelIvLocal] = useState(null); // interview being cancelled inline
   // Default the round to the candidate's current stage (if it's a real stage).
   const [round, setRound] = useState(() => (stages || []).some((s) => s.id === candidateStage) ? candidateStage : '');
   const [notes, setNotes] = useState('');
@@ -1453,6 +1458,40 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, onCl
     try { const r = await hrApi(`/candidates/${candidateId}/schedule-interview`, { method: 'POST', body: JSON.stringify({ start: startIso, durationMins: duration, mode, round, notes, sendEmail, panelistIds: picked, timeZone: 'Asia/Kolkata' }) }); setResult(r); onDone && onDone(); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
+
+  // ---- existing-interview inline edit / cancel ----
+  const toLocalInput = (iso) => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+      const g = (t) => (parts.find((p) => p.type === t) || {}).value;
+      let hh = g('hour'); if (hh === '24') hh = '00';
+      return `${g('year')}-${g('month')}-${g('day')}T${hh}:${g('minute')}`;
+    } catch { return ''; }
+  };
+  const fmtIv = (iso) => { if (!iso) return ''; try { return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }); } catch { return iso; } };
+  const [ivBusy, setIvBusy] = useState(false);
+  const [ivEditAt, setIvEditAt] = useState('');
+  const [ivEditDur, setIvEditDur] = useState(30);
+  const [ivEmail, setIvEmail] = useState(true);
+  const [ivCancelNote, setIvCancelNote] = useState('');
+  const startEdit = (iv) => { setEditIv(iv.id); setCancelIvLocal(null); setIvEditAt(toLocalInput(iv.at)); setIvEditDur(iv.end && iv.at ? Math.max(15, Math.round((new Date(iv.end) - new Date(iv.at)) / 60000)) : 30); setIvEmail(true); };
+  const saveEdit = async (iv) => {
+    if (!ivEditAt) return; setIvBusy(true);
+    try {
+      const startIso = new Date(`${ivEditAt}:00+05:30`).toISOString();
+      await hrApi(`/candidates/${candidateId}/interview/${iv.id}/reschedule`, { method: 'POST', body: JSON.stringify({ start: startIso, durationMins: Number(ivEditDur) || 30, sendEmail: ivEmail, timeZone: 'Asia/Kolkata' }) });
+      setExisting((list) => list.map((x) => x.id === iv.id ? { ...x, at: startIso, end: new Date(new Date(startIso).getTime() + (Number(ivEditDur) || 30) * 60000).toISOString() } : x));
+      setEditIv(null); onDone && onDone();
+    } catch (e) { alert(e.message); } finally { setIvBusy(false); }
+  };
+  const doCancel = async (iv) => {
+    setIvBusy(true);
+    try {
+      await hrApi(`/candidates/${candidateId}/interview/${iv.id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: ivCancelNote, sendEmail: ivEmail }) });
+      setExisting((list) => list.filter((x) => x.id !== iv.id));
+      setCancelIvLocal(null); setIvCancelNote(''); onDone && onDone();
+    } catch (e) { alert(e.message); } finally { setIvBusy(false); }
+  };
   return (
     <Modal title="Schedule Meeting" onClose={onClose} wide>
       {result ? (
@@ -1468,6 +1507,7 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, onCl
       ) : (
         <>
           {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2 mb-3">{err}</div>}
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">New interview request</div>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><div className="text-xs font-bold text-slate-500 mb-1">Round</div>
@@ -1512,6 +1552,54 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, onCl
             <button onClick={onClose} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-bold text-slate-600">Cancel</button>
             <button onClick={schedule} disabled={busy || !at} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Scheduling…' : 'Schedule with Meet'}</button>
           </div>
+
+          {/* Existing interviews — editable (date/time) or cancellable with a note */}
+          {existing.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-slate-200">
+              <div className="text-sm font-extrabold text-[#050A1F] mb-3">Existing interviews · {existing.length}</div>
+              <div className="space-y-2.5">
+                {existing.slice().sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0)).map((iv) => (
+                  <div key={iv.id} className="rounded-xl border border-slate-200 p-3">
+                    {editIv === iv.id ? (
+                      <div className="space-y-2.5">
+                        <div className="text-xs font-bold text-slate-500">Editing {iv.roundLabel || 'interview'} · currently {fmtIv(iv.at)}</div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">New date &amp; time (IST)</div><input type="datetime-local" className={inp} value={ivEditAt} onChange={(e) => setIvEditAt(e.target.value)} /></div>
+                          <div><div className="text-[11px] font-bold text-slate-500 mb-1">Duration (mins)</div><input type="number" className={inp} value={ivEditDur} onChange={(e) => setIvEditDur(e.target.value)} /></div>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email the updated invite to candidate &amp; panel</label>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setEditIv(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Cancel</button>
+                          <button onClick={() => saveEdit(iv)} disabled={ivBusy || !ivEditAt} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{ivBusy ? 'Saving…' : 'Save'}</button>
+                        </div>
+                      </div>
+                    ) : cancelIvLocal === iv.id ? (
+                      <div className="space-y-2.5">
+                        <div className="text-xs text-slate-600">Cancel the <b>{iv.roundLabel || 'interview'}</b> on {fmtIv(iv.at)}? This removes the calendar event and notifies attendees.</div>
+                        <div><div className="text-[11px] font-bold text-slate-500 mb-1">Note (optional)</div><textarea rows={2} className={inp} value={ivCancelNote} onChange={(e) => setIvCancelNote(e.target.value)} placeholder="Shown in the cancellation email." /></div>
+                        <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={ivEmail} onChange={(e) => setIvEmail(e.target.checked)} /> Email a cancellation to candidate &amp; panel</label>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => { setCancelIvLocal(null); setIvCancelNote(''); }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Keep</button>
+                          <button onClick={() => doCancel(iv)} disabled={ivBusy} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: '#DC2626' }}>{ivBusy ? 'Cancelling…' : 'Cancel interview'}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-[#050A1F]">{iv.roundLabel || 'Interview'}{iv.mode ? <span className="ml-2 text-[10px] font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-500">{iv.mode}</span> : null}</div>
+                          <div className="text-xs text-slate-500">{fmtIv(iv.at)}</div>
+                          {(iv.panelists || []).length > 0 && <div className="text-[11px] text-slate-400 truncate">Panel: {(iv.panelists || []).map((p) => titleCase(p.name)).join(', ')}</div>}
+                        </div>
+                        {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-green-600 shrink-0">Join</a>}
+                        <button onClick={() => startEdit(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 shrink-0">Edit</button>
+                        <button onClick={() => { setCancelIvLocal(iv.id); setEditIv(null); }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 shrink-0">Cancel</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
     </Modal>

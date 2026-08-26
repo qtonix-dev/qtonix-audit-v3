@@ -233,26 +233,40 @@ function AssigneePicker({ value, onChange, allowClear, compact }) {
   const [open, setOpen] = useState(false);
   const [people, setPeople] = useState([]);
   const [q, setQ] = useState('');
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState(null); // fixed-position coords so the dropdown escapes overflow-hidden cells
   useEffect(() => { if (open) hrApi(`/tasks/assignable?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])); }, [open, q]);
+  // Position the popover under the button using viewport coords (fixed), so it
+  // isn't clipped by the grid cell's overflow. Recomputed on open + scroll.
+  useEffect(() => {
+    if (!open) return;
+    const place = () => { const r = btnRef.current && btnRef.current.getBoundingClientRect(); if (r) setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 268) }); };
+    place();
+    window.addEventListener('scroll', place, true); window.addEventListener('resize', place);
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
+  }, [open]);
   return (
-    <div className="relative">
-      <button onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50'}>
-        {value ? <><TAvatar person={value} size={20} /><span className="font-semibold text-[#050A1F] truncate">{value.name}</span></> : <span className="text-slate-400">Assign…</span>}
+    <div className="relative w-full min-w-0">
+      <button ref={btnRef} onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full min-w-0' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 w-full min-w-0'}>
+        {value ? <><TAvatar person={value} size={20} /><span className="text-xs text-slate-600 truncate min-w-0">{titleCase(value.name)}</span></> : <span className="text-slate-400 truncate">Assign…</span>}
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2">
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
-          <div className="max-h-56 overflow-auto">
-            {allowClear && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
-            {people.map((p) => (
-              <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
-                <TAvatar person={p} size={24} />
-                <div className="min-w-0"><div className="text-xs font-semibold text-[#050A1F] truncate">{p.name}</div><div className="text-[10px] text-slate-400 truncate">{p.designation || p.department}</div></div>
-              </button>
-            ))}
-            {people.length === 0 && <div className="text-xs text-slate-400 px-2 py-3 text-center">No people found.</div>}
+        <>
+          <div className="fixed inset-0 z-[59]" onClick={() => setOpen(false)} />
+          <div className="fixed z-[60] w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2" style={{ top: pos ? pos.top : 0, left: pos ? pos.left : 0 }}>
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <div className="max-h-56 overflow-auto">
+              {allowClear && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
+              {people.map((p) => (
+                <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
+                  <TAvatar person={p} size={24} />
+                  <div className="min-w-0"><div className="text-xs font-semibold text-[#050A1F] truncate">{titleCase(p.name)}</div><div className="text-[10px] text-slate-400 truncate">{p.designation || p.department}</div></div>
+                </button>
+              ))}
+              {people.length === 0 && <div className="text-xs text-slate-400 px-2 py-3 text-center">No people found.</div>}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -367,13 +381,13 @@ function HrTasksView({ user, isAdmin }) {
               {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
               <button onClick={() => setOpenTask(t)} className={`text-sm font-bold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
               {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
-              {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {t.assignee.name}</span>}
+              {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {titleCase(t.assignee.name)}</span>}
             </div>
             {(() => { const d = plainPreview(t.description); return d ? <div className="text-[11px] text-slate-400 truncate leading-tight">{d}</div> : null; })()}
           </div>
           {/* assignee (inline picker) */}
-          <div className="px-2 h-9 flex items-center border-r border-slate-100">
-            {tracking ? <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && t.assignee.name}</span></span>
+          <div className="px-2 h-9 flex items-center border-r border-slate-100 min-w-0 overflow-hidden">
+            {tracking ? <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate min-w-0"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && titleCase(t.assignee.name)}</span></span>
               : <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />}
           </div>
           {/* deadline (inline date) */}
@@ -428,7 +442,7 @@ function HrTasksView({ user, isAdmin }) {
             {(isAdmin || people.length > 1) && (
               <select value={viewerId} onChange={(e) => loadBoard(Number(e.target.value))} className="mt-0.5 text-[11px] text-slate-500 bg-transparent border border-slate-200 rounded-md px-1.5 py-0.5 focus:outline-none">
                 {myBoardId != null && <option value={myBoardId}>My board</option>}
-                {people.filter((p) => p.id !== myBoardId).map((p) => <option key={p.id} value={p.id}>{p.name}{p.taskCount ? ` (${p.taskCount})` : ''}</option>)}
+                {people.filter((p) => p.id !== myBoardId).map((p) => <option key={p.id} value={p.id}>{titleCase(p.name)}{p.taskCount ? ` (${p.taskCount})` : ''}</option>)}
               </select>
             )}
           </div>
@@ -1352,7 +1366,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                 {reviews.map((it) => {
                   if (it.kind === 'leave') return (
                     <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
-                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Leave</span> · {it.who}
+                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Leave</span> · {titleCase(it.who)}
                         <div className="text-[11px] text-slate-400">{it.type}{it.duration === 'half' ? ' · half day' : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
                       </div>
                       <button onClick={() => setDecideItem(it)} className="ml-auto text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: ORNG }}>Take Decision</button>
@@ -1420,7 +1434,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
             {whos && whos.people.slice(0, 6).map((p) => (
               <div key={p.id} className="flex items-center gap-2.5 py-1.5 border-t border-slate-50">
                 <div className="w-7 h-7 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-extrabold flex items-center justify-center">{initials(p.name)}</div>
-                <div><div className="text-[13px] font-bold text-[#050A1F]">{p.name}</div><div className="text-[11px] text-slate-400">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
+                <div><div className="text-[13px] font-bold text-[#050A1F]">{titleCase(p.name)}</div><div className="text-[11px] text-slate-400">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
                 <span className="ml-auto text-[10px] font-extrabold rounded px-1.5 py-0.5" style={p.status === 'late' ? { background: '#FEF3C7', color: '#B45309' } : p.status === 'leave' ? { background: '#EDE9FE', color: '#6D28D9' } : p.status === 'in' ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#64748b' }}>
                   {p.status === 'late' ? `LATE ${t12(p.at)}` : p.status === 'leave' ? 'LEAVE' : p.status === 'in' ? `IN ${t12(p.at)}` : 'NOT IN'}
                 </span>
@@ -1453,7 +1467,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
         </div>
       </div>
 
-      {applyOpen && <ApplyLeaveModal approverName={leave ? leave.approverName : ''} onClose={() => setApplyOpen(false)} onDone={() => { setApplyOpen(false); loadLeave(); }} />}
+      {applyOpen && <ApplyLeaveModal approverName={leave ? leave.approverName : ''} approverChain={leave ? leave.approverChain : []} onClose={() => setApplyOpen(false)} onDone={() => { setApplyOpen(false); loadLeave(); }} />}
       {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
@@ -1527,7 +1541,7 @@ function LeaveDecisionModal({ item, onClose, onDecide }) {
 
 // Apply for leave (self-service). Creates a pending request routed to the
 // employee's approver.
-function ApplyLeaveModal({ approverName, onClose, onDone }) {
+function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   const [type, setType] = useState('casual');
   const [duration, setDuration] = useState('full');
@@ -1578,8 +1592,24 @@ function ApplyLeaveModal({ approverName, onClose, onDone }) {
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
           <div className="flex items-center justify-between text-[12px]">
             <span className="text-slate-500">Applying for <b className="text-slate-700">{dayCount === 0.5 ? 'half a day' : `${dayCount} day${dayCount > 1 ? 's' : ''}`}</b></span>
-            {approverName && <span className="text-slate-400">Approver: <b className="text-slate-600">{approverName}</b></span>}
           </div>
+          {(Array.isArray(approverChain) && approverChain.length > 0) ? (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1">Goes to your approver{approverChain.length > 1 ? 's' : ''}</div>
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px]">
+                {approverChain.map((a, i) => (
+                  <span key={a.id} className="flex items-center gap-1.5">
+                    {i > 0 && <span className="text-slate-300">→</span>}
+                    <b className="text-slate-700">{titleCase(a.name)}</b>
+                    {i === 0 && <span className="text-[10px] text-slate-400">(immediate senior)</span>}
+                    {a.designation ? <span className="text-[10px] text-slate-400">· {a.designation}</span> : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : approverName ? (
+            <div className="text-[12px] text-slate-400">Approver: <b className="text-slate-600">{titleCase(approverName)}</b></div>
+          ) : null}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
@@ -1820,7 +1850,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {user.name}!</h1>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting()}, {titleCase(user.name)}!</h1>
           <p className="text-slate-500 text-sm mt-1">Here's your recruitment overview.</p>
         </div>
         {annCanPost && <button onClick={() => setShowAnnModal(true)} className="rounded-lg px-3 py-2 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: '#050A1F' }}>
@@ -2110,7 +2140,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
                     <tr key={r.id} className="border-b border-slate-50">
                       <td className="py-2"><span className={`text-xs font-extrabold ${r.rank === 1 ? 'text-[#FF4500]' : 'text-slate-300'}`}>{r.rank}</span></td>
                       <td className="py-2">
-                        <span className="font-bold text-slate-600">{r.name}</span>
+                        <span className="font-bold text-slate-600">{titleCase(r.name)}</span>
                         {r.rank === 1 && <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[#FF4500]">Leading</span>}
                       </td>
                       <td className="py-2 text-right"><span className="font-bold text-[#2563EB]">{r.added.month}</span> <span className="text-slate-300 font-normal">/ {r.added.today} today</span></td>
@@ -5340,7 +5370,7 @@ function HrOrgChartModal({ users, reporting, onClose }) {
         {p.avatar ? <img src={p.avatar} alt="" className="w-full h-full object-cover" /> : (p.name || '?')[0]}
       </div>
       <div className="min-w-0 overflow-hidden">
-        <div className="text-[13px] font-bold text-[#0A0E28] truncate">{p.name}{p.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</div>
+        <div className="text-[13px] font-bold text-[#0A0E28] truncate">{titleCase(p.name)}{p.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</div>
         <div className="text-[11px] font-semibold text-[#FF6A00] truncate" style={{ marginBottom: 3 }}>{p.designation || ROLE_LABELS[p.type] || p.type}</div>
         <div className="text-[11px] text-slate-500 truncate flex items-center"><PhoneIcon />{p.phone || '—'}</div>
         <div className="text-[11px] text-slate-500 truncate flex items-center"><MailIcon />{p.email || '—'}</div>
@@ -5689,7 +5719,7 @@ function UserMenu({ user, onNavigate, onLogout, isAdmin }) {
     <div className="relative" onClick={(e) => e.stopPropagation()}>
       <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-200 hover:border-slate-400">
         <span className="w-6 h-6 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[11px]">{(user.name || '?')[0]?.toUpperCase()}</span>
-        {user.name} <span className="text-slate-500">▾</span>
+        {titleCase(user.name)} <span className="text-slate-500">▾</span>
       </button>
       {open && (
         <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50">
