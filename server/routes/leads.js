@@ -632,16 +632,24 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     // entered — the team's output is the team's output.
     const presalesLeads = await Lead.findAll({
       where: { leadSource: { [Op.like]: '%re-%ales%' } },
-      attributes: ['generatedBy', 'createdAt'], limit: 5000,
+      attributes: ['generatedBy', 'createdAt', 'status'], limit: 5000,
     });
     const norm = (s) => String(s || '').trim();
+    // "Quality" = a generated lead that is NOT Not-Interested / Cold / Release.
+    // "Converted" = a generated lead that reached Converted (or Won).
+    const LOW_QUALITY = new Set(['ni', 'cold', 'release']);
+    const CONVERTED = new Set(['converted', 'won']);
     const teamStats = {};
-    for (const m of team) teamStats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0 };
+    for (const m of team) teamStats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0, convertedMonth: 0, qualityMonth: 0 };
     for (const l of presalesLeads) {
       const g = norm(l.generatedBy);
       if (!g || !(g in teamStats)) continue; // only attribute to configured members
       teamStats[g].total++;
-      if (isThisMonth(l.createdAt)) teamStats[g].month++;
+      if (isThisMonth(l.createdAt)) {
+        teamStats[g].month++;
+        if (CONVERTED.has(l.status)) teamStats[g].convertedMonth++;
+        if (!LOW_QUALITY.has(l.status)) teamStats[g].qualityMonth++;
+      }
       if (isToday(l.createdAt)) teamStats[g].today++;
     }
     // Attach the % of monthly target achieved for each member.
@@ -652,6 +660,8 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     const teamPerformance = Object.values(teamStats).sort((a, b) => b.month - a.month);
     const teamToday = teamPerformance.reduce((s, m) => s + m.today, 0);
     const teamMonth = teamPerformance.reduce((s, m) => s + m.month, 0);
+    const teamConvertedMonth = teamPerformance.reduce((s, m) => s + (m.convertedMonth || 0), 0);
+    const teamQualityMonth = teamPerformance.reduce((s, m) => s + (m.qualityMonth || 0), 0);
     const teamMonthlyTarget = teamPerformance.reduce((s, m) => s + (m.monthlyTarget || 0), 0);
     const teamLeaderboard = teamPerformance.filter((m) => m.month > 0).slice(0, 10);
 
@@ -673,6 +683,8 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
         draftsReceived: withDraft.length,
         teamToday,
         teamMonth,
+        teamConvertedMonth,
+        teamQualityMonth,
         teamMonthlyTarget,
       },
       recentLeads,
@@ -1629,8 +1641,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       const team = normalisePresalesTeam(settings && settings.crmConfig && settings.crmConfig.presalesTeam);
       if (team.length) {
         const normG = (s) => String(s || '').trim();
+        const LOW_QUALITY = new Set(['ni', 'cold', 'release']);
+        const CONVERTED = new Set(['converted', 'won']);
         const stats = {};
-        for (const m of team) stats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0 };
+        for (const m of team) stats[m.name] = { name: m.name, monthlyTarget: m.monthlyTarget || 0, today: 0, month: 0, total: 0, convertedMonth: 0, qualityMonth: 0 };
         for (const l of leads) {
           if (!isPresales(l.leadSource)) continue;
           const g = normG(l.generatedBy);
@@ -1638,7 +1652,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           const genAt = l.generatedAt ? new Date(l.generatedAt) : (l.createdAt ? new Date(l.createdAt) : null);
           if (!genAt) continue;
           stats[g].total++;
-          if (genAt >= startOfMonth) stats[g].month++;
+          if (genAt >= startOfMonth) {
+            stats[g].month++;
+            if (CONVERTED.has(l.status)) stats[g].convertedMonth++;
+            if (!LOW_QUALITY.has(l.status)) stats[g].qualityMonth++;
+          }
           if (genAt >= startOfDay) stats[g].today++;
         }
         const members = Object.values(stats)
@@ -1648,6 +1666,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           members,
           teamMonth: members.reduce((s, m) => s + m.month, 0),
           teamToday: members.reduce((s, m) => s + m.today, 0),
+          teamConvertedMonth: members.reduce((s, m) => s + (m.convertedMonth || 0), 0),
+          teamQualityMonth: members.reduce((s, m) => s + (m.qualityMonth || 0), 0),
           teamMonthlyTarget: members.reduce((s, m) => s + (m.monthlyTarget || 0), 0),
         };
       }

@@ -3802,10 +3802,34 @@ function MyInterviews() {
         ) : (
           <div className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden divide-y divide-slate-50">
             {upcoming.map((iv) => (
-              <div key={iv.interviewId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60">
+              <div key={iv.interviewId} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60 gap-3">
                 <div className="min-w-0">
                   <div className="font-semibold text-slate-700">{iv.candidateName} <span className="text-xs font-normal text-slate-400">· {iv.jobTitle}</span></div>
-                  <div className="text-xs text-slate-400">{iv.roundLabel || 'Interview'} · {new Date(iv.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{iv.panelists.length ? ` · ${iv.panelists.length} panelist${iv.panelists.length === 1 ? '' : 's'}` : ''}</div>
+                  <div className="text-xs text-slate-400">{iv.roundLabel || 'Interview'} · {new Date(iv.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                  <div className="flex items-center gap-4 mt-1.5 flex-wrap">
+                    {/* Who scheduled it — circle photo + HR name */}
+                    {iv.scheduledBy && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Scheduled by</span>
+                        <Avatar name={iv.scheduledBy} src={iv.scheduledByAvatar} size={20} />
+                        <span className="text-[11px] font-semibold text-slate-500">{titleCase(iv.scheduledBy)}</span>
+                      </div>
+                    )}
+                    {/* Attendees — first name + circle photo (or initials) */}
+                    {(iv.panelists || []).length > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Attendees</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {iv.panelists.map((p) => (
+                            <span key={p.id} className="inline-flex items-center gap-1 rounded-full bg-slate-50 border border-slate-100 pl-0.5 pr-2 py-0.5">
+                              <Avatar name={p.name} src={p.avatar} size={18} />
+                              <span className="text-[11px] font-semibold text-slate-500">{titleCase(String(p.name || '').split(' ')[0])}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button onClick={() => setPartModal(iv)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Participants</button>

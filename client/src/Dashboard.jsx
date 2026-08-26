@@ -1279,7 +1279,8 @@ function PresalesTeamBlocks({ pt }) {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-        <div className="text-sm font-bold text-[#050A1F] mb-3">Pre-sales Team member breakdown</div>
+        <div className="text-sm font-bold text-[#050A1F] mb-1">Pre-sales Team member breakdown</div>
+        <div className="text-[11px] text-slate-400 mb-3">Quality = leads this month that are not Not-interested, Cold or Released. Converted = leads this month that became clients.</div>
         <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -1287,6 +1288,8 @@ function PresalesTeamBlocks({ pt }) {
               <th className="text-left py-2">Member</th>
               <th className="text-right py-2">Today</th>
               <th className="text-right py-2">This month</th>
+              <th className="text-right py-2">Quality</th>
+              <th className="text-right py-2">Converted</th>
               <th className="text-right py-2">Monthly target</th>
               <th className="text-right py-2">% achieved</th>
               <th className="text-right py-2">All time</th>
@@ -1302,6 +1305,8 @@ function PresalesTeamBlocks({ pt }) {
                   <td className="py-2 font-bold text-slate-600">{t.name}</td>
                   <td className="py-2 text-right text-slate-500">{t.today}</td>
                   <td className="py-2 text-right font-bold text-[#050A1F]">{t.month}</td>
+                  <td className="py-2 text-right font-bold text-sky-600">{t.qualityMonth || 0}</td>
+                  <td className="py-2 text-right font-bold text-green-600">{t.convertedMonth || 0}</td>
                   <td className="py-2 text-right text-slate-500">{t.monthlyTarget > 0 ? t.monthlyTarget : <span className="text-slate-300">—</span>}</td>
                   <td className="py-2 text-right">
                     {pct != null
@@ -1321,6 +1326,19 @@ function PresalesTeamBlocks({ pt }) {
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-slate-100 font-bold">
+              <td className="py-2 text-slate-600">Team total</td>
+              <td className="py-2 text-right text-slate-500">{pt.teamToday || 0}</td>
+              <td className="py-2 text-right text-[#050A1F]">{pt.teamMonth || 0}</td>
+              <td className="py-2 text-right text-sky-600">{pt.teamQualityMonth || 0}</td>
+              <td className="py-2 text-right text-green-600">{pt.teamConvertedMonth || 0}</td>
+              <td className="py-2 text-right text-slate-500">{pt.teamMonthlyTarget > 0 ? pt.teamMonthlyTarget : <span className="text-slate-300">—</span>}</td>
+              <td className="py-2 text-right text-slate-400">{pt.teamMonthlyTarget > 0 ? `${Math.round((pt.teamMonth / pt.teamMonthlyTarget) * 100)}%` : '—'}</td>
+              <td className="py-2"></td>
+              <td className="py-2"></td>
+            </tr>
+          </tfoot>
         </table>
         </div>
       </div>

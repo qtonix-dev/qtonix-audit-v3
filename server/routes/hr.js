@@ -3597,6 +3597,15 @@ router.get('/all-interviews', requireHrAccess, async (req, res, next) => {
     const isAdmin = actor.kind === 'admin';
     const myId = actor.id;
     const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
+    // Avatar lookups: HR users by id + name, and admin users by id, so the
+    // interview list can show a circle photo (or initials) for the scheduler
+    // and each attendee.
+    const hrUsers = await HrUser.findAll({ attributes: ['id', 'name', 'avatar'] });
+    const adminUsers = await User.findAll({ attributes: ['id', 'name', 'avatar'] });
+    const avatarById = {};
+    const avatarByName = {};
+    hrUsers.forEach((u) => { avatarById[String(u.id)] = u.avatar || ''; if (u.name) avatarByName[u.name.toLowerCase()] = u.avatar || ''; });
+    adminUsers.forEach((u) => { avatarById[`admin:${u.id}`] = u.avatar || ''; if (u.name) avatarByName[u.name.toLowerCase()] = u.avatar || ''; });
     const jobCache = {};
     const getJob = async (id) => { if (!id) return null; if (!(id in jobCache)) jobCache[id] = await HrJobPost.findByPk(id); return jobCache[id]; };
     const out = [];
@@ -3613,13 +3622,15 @@ router.get('/all-interviews', requireHrAccess, async (req, res, next) => {
         else visible = onPanel; // plain employees / pure panelists
         if (!visible) continue;
         const job = await getJob(r.jobPostId);
+        const schedAvatar = (iv.scheduledById != null && avatarById[String(iv.scheduledById)]) || (iv.by && avatarByName[String(iv.by).toLowerCase()]) || '';
         out.push({
           interviewId: iv.id, candidateId: r.id, candidateName: r.name, candidateEmail: r.email,
           jobId: r.jobPostId, jobTitle: job ? job.title : 'General',
           at: iv.at, end: iv.end, mode: iv.mode, round: iv.round, roundLabel: iv.roundLabel,
           meetLink: iv.meetLink || '', eventLink: iv.eventLink || '', notes: iv.notes || '',
-          scheduledBy: iv.by || '', stage: r.stage,
-          panelists: (iv.panelists || []).map((p) => ({ id: p.id, name: p.name, email: p.email })),
+          scheduledBy: iv.by || '', scheduledById: iv.scheduledById || null, scheduledByAvatar: schedAvatar,
+          stage: r.stage,
+          panelists: (iv.panelists || []).map((p) => ({ id: p.id, name: p.name, email: p.email, avatar: avatarById[String(p.id)] || avatarByName[String(p.name || '').toLowerCase()] || '' })),
           amPanelist: onPanel, scheduledByMe,
         });
       }
