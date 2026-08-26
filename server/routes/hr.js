@@ -780,6 +780,148 @@ router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== Core HR → Leave console (Admin / HR Manager) =====
+// Company-wide leave overview: every employee (in scope) with their leave
+// credit, plus a feed of recent requests with approver info, and quick pulse
+// counts. Scope follows the branch model (all-branch/admin → everyone).
+router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view the leave console.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const policy = getHrPolicy(s);
+    const all = await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] });
+    // Scope: admins & all-branch managers see everyone; scoped managers see their branch.
+    const inScope = (u) => req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope
+      || String(u.branch || '').toLowerCase() === String(req.hrManagerScope || req.hrBranch || '').toLowerCase();
+    const emps = all.filter(inScope);
+    const empIds = emps.map((e) => e.id);
+    const leaves = empIds.length ? await HrLeave.findAll({ where: { employeeId: empIds }, order: [['date', 'DESC']] }) : [];
+
+    // Per-employee used totals + balances.
+    const usedByEmp = {};
+    leaves.forEach((r) => {
+      if (r.status === 'rejected') return; // declined leave doesn't consume credit
+      const d = r.duration === 'half' ? 0.5 : 1;
+      const u = usedByEmp[r.employeeId] || (usedByEmp[r.employeeId] = { casual: 0, medical: 0, privilege: 0, wfh: 0 });
+      if (r.paid && r.status === 'approved') u[r.type] = (u[r.type] || 0) + d;
+    });
+    const nameById = Object.fromEntries(emps.map((e) => [e.id, e]));
+    const employees = emps.map((e) => {
+      const alloc = allocationFor(policy, e);
+      const used = usedByEmp[e.id] || { casual: 0, medical: 0, privilege: 0, wfh: 0 };
+      const balance = Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (used[k] || 0)).toFixed(1)]));
+      return { id: e.id, name: e.name, avatar: e.avatar, branch: e.branch || '', department: e.department || '', designation: e.designation || '', allocation: alloc, used, balance };
+    });
+
+    // Requests feed. Multi-day requests share a groupId — collapse to one card
+    // with a date range. Newest first.
+    const byGroup = {};
+    leaves.forEach((r) => {
+      const key = r.groupId || `single:${r.id}`;
+      (byGroup[key] || (byGroup[key] = [])).push(r);
+    });
+    const requests = Object.values(byGroup).map((grp) => {
+      grp.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const first = grp[0];
+      const emp = nameById[first.employeeId] || {};
+      const days = grp.reduce((n, r) => n + (r.duration === 'half' ? 0.5 : 1), 0);
+      // Stage: rejected→declined, approved→approved, pending+viewed→pending, pending→applied.
+      let stage = first.status === 'rejected' ? 'declined' : first.status === 'approved' ? 'approved'
+        : (grp.some((r) => r.viewedByApprover) ? 'pending' : 'applied');
+      const decidedAt = grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || null;
+      return {
+        groupId: first.groupId || null,
+        ids: grp.map((r) => r.id),
+        employeeId: first.employeeId,
+        employeeName: emp.name || 'Employee', avatar: emp.avatar, branch: emp.branch || '', department: emp.department || '',
+        type: first.type, paid: first.paid,
+        from: grp[0].date, to: grp[grp.length - 1].date, days,
+        duration: grp.length === 1 ? first.duration : 'full',
+        reason: first.reason || '',
+        appliedAt: first.createdAt,
+        status: stage,
+        approverId: first.approverId, approverName: first.approverName,
+        decidedByName: first.approvedBy || null, decidedAt,
+        documentUrl: first.documentUrl || null,
+        canDecide: first.status === 'pending' && (
+          (first.decidedByKind === 'admin' && req.hrActor.kind === 'admin' && first.approverId === req.adminUser?.id) ||
+          (first.decidedByKind !== 'admin' && req.hrActor.kind === 'hr' && first.approverId === req.hrUser?.id) ||
+          canManagePeople(req) // admins / HR managers can act on any request in scope
+        ),
+      };
+    }).sort((a, b) => new Date(b.appliedAt || b.from) - new Date(a.appliedAt || a.from));
+
+    // Pulse counts.
+    const today = istDateStr();
+    const weekEnd = new Date(Date.now() + 330 * 60000); weekEnd.setDate(weekEnd.getDate() + 7);
+    const weekEndStr = weekEnd.toISOString().slice(0, 10);
+    const onLeaveToday = leaves.filter((r) => r.status === 'approved' && r.date === today && r.type !== 'wfh')
+      .map((r) => ({ id: r.employeeId, name: (nameById[r.employeeId] || {}).name, type: r.type, duration: r.duration }));
+    const onLeaveWeek = new Set(leaves.filter((r) => r.status === 'approved' && r.date >= today && r.date <= weekEndStr && r.type !== 'wfh').map((r) => r.employeeId));
+    const counts = {
+      pendingApprovals: requests.filter((r) => r.status === 'applied' || r.status === 'pending').length,
+      onLeaveToday: onLeaveToday.length,
+      onLeaveWeek: onLeaveWeek.size,
+      employees: employees.length,
+    };
+
+    res.json({ employees, requests, onLeaveToday, counts, categories: policy.categories });
+  } catch (e) { next(e); }
+});
+
+// Mark a pending request as seen by the approver → moves "Applied" to "Pending".
+router.post('/leave/:groupOrId/seen', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const key = req.params.groupOrId;
+    const where = key.startsWith('g:') ? { groupId: key.slice(2) } : { id: Number(key) };
+    const rows = await HrLeave.findAll({ where });
+    for (const r of rows) { if (r.status === 'pending' && !r.viewedByApprover) { r.viewedByApprover = true; await r.save(); } }
+    res.json({ ok: true, updated: rows.length });
+  } catch (e) { next(e); }
+});
+
+// Approve / decline a leave request (by groupId or single id) from the console.
+router.post('/leave/:groupOrId/decide', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can decide leave.' });
+    const decision = req.body && req.body.decision; // 'approve' | 'decline'
+    if (!['approve', 'decline'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
+    const key = req.params.groupOrId;
+    const where = key.startsWith('g:') ? { groupId: key.slice(2) } : { id: Number(key) };
+    const rows = await HrLeave.findAll({ where });
+    if (!rows.length) return res.status(404).json({ error: 'Request not found.' });
+    const actorName = req.hrActor.name;
+    const now = new Date();
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;
+      r.status = decision === 'approve' ? 'approved' : 'rejected';
+      r.approvedBy = actorName;
+      r.decidedById = req.hrActor.id;
+      r.decidedAt = now;
+      r.decidedByKind = req.hrActor.kind;
+      r.viewedByApprover = true;
+      // Reflect an approved full-day leave onto the attendance calendar.
+      if (decision === 'approve') {
+        try {
+          const [att] = await HrAttendance.findOrCreate({ where: { employeeId: r.employeeId, date: r.date }, defaults: { employeeId: r.employeeId, date: r.date } });
+          att.status = r.duration === 'half' ? 'half_day' : (r.type === 'wfh' ? 'wfh' : 'leave');
+          att.note = `leave:${r.type}`; att.approvedBy = actorName; await att.save();
+        } catch {}
+      }
+      await r.save();
+    }
+    const emp = await HrUser.findByPk(rows[0].employeeId);
+    hrLog(req, `leave.${decision}`, emp ? emp.name : String(rows[0].employeeId));
+    // Notify the employee.
+    try {
+      await HrNotification.create({ userId: rows[0].employeeId, actorKind: 'hr', type: 'info',
+        text: `Your ${rows[0].type} leave (${rows[0].date}${rows.length > 1 ? ` +${rows.length - 1}` : ''}) was ${decision === 'approve' ? 'approved' : 'declined'} by ${actorName}.` });
+    } catch {}
+    res.json({ ok: true, status: decision === 'approve' ? 'approved' : 'rejected', updated: rows.length });
+  } catch (e) { next(e); }
+});
+
 // Set an employee's paid-leave allocation (Admin / HR Manager) — usually at joining.
 router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, next) => {
   try {
@@ -1527,6 +1669,21 @@ router.patch('/feedback/:id', requireHrAccess, requireHrAdmin, async (req, res, 
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
+});
+
+// GET /me/quote-of-the-day → today's motivational quote for the dashboard hero.
+router.get('/me/quote-of-the-day', requireHrAccess, async (req, res, next) => {
+  try {
+    const { getDailyQuote } = require('../services/dailyQuote');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = s && s.getKey ? s.getKey('openai') : null;
+    const q = await getDailyQuote({ settings: s, apiKey });
+    res.json(q);
+  } catch (e) {
+    // Never break the dashboard over a quote — return a safe fallback.
+    try { const { fallbackFor } = require('../services/dailyQuote'); const d = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); res.json({ ...fallbackFor(d), date: d }); }
+    catch { res.json({ quote: 'The best way to predict the future is to create it.', author: 'Peter Drucker' }); }
+  }
 });
 
 // GET /me/celebrations → company-wide birthdays / work anniversaries / new joinees.

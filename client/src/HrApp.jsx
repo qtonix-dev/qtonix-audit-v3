@@ -8,6 +8,7 @@ import { AppSwitcher } from './AppSwitcher.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
+import LeaveConsole from './HrLeaveConsole.jsx';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -1194,6 +1195,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const [ann, setAnn] = useState([]);
   const [interviews, setInterviews] = useState([]);
   const [holidays, setHolidays] = useState([]);
+  const [dailyQuote, setDailyQuote] = useState(null);
   const [now, setNow] = useState(new Date());
   const [busy, setBusy] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
@@ -1216,6 +1218,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
     hrApi('/me/celebrations').then(setCel).catch(() => {});
     hrApi('/announcements').then((r) => setAnn(Array.isArray(r) ? r : (r.announcements || []))).catch(() => {});
     hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
+    hrApi('/me/quote-of-the-day').then(setDailyQuote).catch(() => {});
   }, []);
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
@@ -1226,7 +1229,8 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const t12 = (hhmm) => { if (!hhmm) return ''; let [h, m] = hhmm.split(':').map(Number); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${pad(h)}:${pad(m)} ${ap}`; };
   const clockAction = async (action) => { setBusy(true); try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action }) }); await loadClock(); } catch (e) { alert(e.message); } finally { setBusy(false); } };
 
-  const quote = 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
+  const quote = dailyQuote ? dailyQuote.quote : 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
+  const quoteAuthor = dailyQuote ? dailyQuote.author : 'Oliver Wendell Holmes';
   const st = clock ? clock.state : 'out';
   const breakMin = clock ? (clock.breakMin || 0) : 0;
 
@@ -1254,7 +1258,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       <div className="rounded-2xl p-8 mb-4 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
         <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
         <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
-        <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— Oliver Wendell Holmes</span></p>
+        <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
       </div>
 
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
@@ -5800,7 +5804,7 @@ export default function HrApp() {
         ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
-        {effectiveView === 'corehr_leave' && <CoreHrPlaceholder title="Leave" />}
+        {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
         {effectiveView === 'corehr_expenses' && <CoreHrPlaceholder title="Expenses" />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}

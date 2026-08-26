@@ -490,6 +490,9 @@ const Settings = sequelize.define(
     hrAutoScore: { type: DataTypes.BOOLEAN, defaultValue: true },
     ogBackfillDone: { type: DataTypes.BOOLEAN, defaultValue: false },
     holidayEmojiCache: { type: DataTypes.JSON, defaultValue: {} },
+    // Quote-of-the-day cache for the employee dashboard: { date, quote, author,
+    // recentAuthors[] } — refreshed once per day, shared by everyone.
+    dailyQuoteCache: { type: DataTypes.JSON, defaultValue: {} },
     // Public careers page branding.
     hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
 
@@ -1645,6 +1648,9 @@ const HrLeave = sequelize.define('HrLeave', {
   groupId: { type: DataTypes.STRING(40), allowNull: true }, // links per-day rows of one multi-day request
   documentUrl: { type: DataTypes.STRING(500), allowNull: true }, // medical certificate etc.
   status: { type: DataTypes.STRING(20), defaultValue: 'approved' }, // approved|pending|rejected
+  // Two-stage pending: false = "Applied" (just submitted), true = "Pending for
+  // approval" (the approver has opened/seen it in the Leave console).
+  viewedByApprover: { type: DataTypes.BOOLEAN, defaultValue: false },
   appliedById: { type: DataTypes.INTEGER, allowNull: true },
 }, { tableName: 'hr_leaves', indexes: [{ name: 'idx_hr_leave_emp', fields: ['employeeId'] }] });
 HrLeave.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
