@@ -1363,6 +1363,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
             {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
               <>
                 <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
+                <div className="max-h-80 overflow-y-auto -mr-1 pr-1">
                 {reviews.map((it) => {
                   if (it.kind === 'leave') return (
                     <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
@@ -1392,6 +1393,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                     </div>
                   );
                 })}
+                </div>
               </>
             )}
           </div>
@@ -1424,22 +1426,36 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
         <div className="flex flex-col gap-4">
           {/* WHO IS IN */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Who is in <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· my team &amp; dept</span></h3>
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Who is in <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· today</span></h3>
             <div className="flex gap-2 mb-3">
               {[['not_in', 'Not in', '#EF4444'], ['late', 'Late', '#F59E0B'], ['in', 'On time', '#16A34A'], ['leave', 'Leave', '#64748b']].map(([k, lbl, c]) => (
                 <div key={k} className="flex-1 text-center rounded-lg py-2 border border-slate-100"><span className="block text-lg font-extrabold" style={{ color: c }}>{whos ? (whos.counts[k] || 0) : 0}</span><span className="text-[11px] font-bold text-slate-500">{lbl}</span></div>
               ))}
             </div>
             {whos && whos.people.length === 0 && <div className="text-sm text-slate-400 py-2">No team members to show.</div>}
-            {whos && whos.people.slice(0, 6).map((p) => (
-              <div key={p.id} className="flex items-center gap-2.5 py-1.5 border-t border-slate-50">
-                <div className="w-7 h-7 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-extrabold flex items-center justify-center">{initials(p.name)}</div>
-                <div><div className="text-[13px] font-bold text-[#050A1F]">{titleCase(p.name)}</div><div className="text-[11px] text-slate-400">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
-                <span className="ml-auto text-[10px] font-extrabold rounded px-1.5 py-0.5" style={p.status === 'late' ? { background: '#FEF3C7', color: '#B45309' } : p.status === 'leave' ? { background: '#EDE9FE', color: '#6D28D9' } : p.status === 'in' ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#64748b' }}>
-                  {p.status === 'late' ? `LATE ${t12(p.at)}` : p.status === 'leave' ? 'LEAVE' : p.status === 'in' ? `IN ${t12(p.at)}` : 'NOT IN'}
-                </span>
-              </div>
-            ))}
+            <div className="max-h-72 overflow-y-auto -mr-1 pr-1">
+              {(() => {
+                const ppl = (whos && whos.people) || [];
+                const hasGroups = ppl.some((p) => p.group === 'others') && ppl.some((p) => p.group === 'team');
+                let lastGroup = null;
+                return ppl.map((p) => {
+                  const showHeader = hasGroups && p.group !== lastGroup;
+                  lastGroup = p.group;
+                  return (
+                    <div key={p.id}>
+                      {showHeader && <div className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400 mt-2 mb-1 pt-1">{p.group === 'team' ? 'Your team' : 'All employees'}</div>}
+                      <div className="flex items-center gap-2.5 py-1.5 border-t border-slate-50">
+                        <div className="w-7 h-7 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-extrabold flex items-center justify-center">{initials(p.name)}</div>
+                        <div className="min-w-0"><div className="text-[13px] font-bold text-[#050A1F] truncate">{titleCase(p.name)}</div><div className="text-[11px] text-slate-400 truncate">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
+                        <span className="ml-auto shrink-0 text-[10px] font-extrabold rounded px-1.5 py-0.5" style={p.status === 'late' ? { background: '#FEF3C7', color: '#B45309' } : p.status === 'leave' ? { background: '#EDE9FE', color: '#6D28D9' } : p.status === 'in' ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#64748b' }}>
+                          {p.status === 'late' ? `LATE ${t12(p.at)}` : p.status === 'leave' ? 'LEAVE' : p.status === 'in' ? `IN ${t12(p.at)}` : 'NOT IN'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
 
           {/* HOLIDAYS */}
@@ -4712,6 +4728,73 @@ function HrSettingsTab({ isAdmin, setErr }) {
   );
 }
 
+// Error Report tab — admin view of bug reports & feedback raised from the
+// fixed side button across the HRMS. Filter by status; mark seen/resolved.
+function ErrorReportTab({ setErr }) {
+  const [data, setData] = useState({ items: [], counts: { new: 0, seen: 0, resolved: 0 } });
+  const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    hrApi(`/feedback${filter ? `?status=${filter}` : ''}`).then((r) => setData(r || { items: [], counts: {} })).catch((e) => setErr && setErr(e.message)).finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+  const setStatus = async (id, status) => {
+    try { await hrApi(`/feedback/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }); load(); }
+    catch (e) { setErr && setErr(e.message); }
+  };
+  const fmt = (d) => { try { return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return d; } };
+  const kindBadge = (k) => k === 'bug' ? { t: '🐞 Bug', c: '#DC2626', bg: '#FEF2F2' } : k === 'suggestion' ? { t: '💡 Suggestion', c: '#B45309', bg: '#FEF3C7' } : { t: '💬 Other', c: '#0369A1', bg: '#E0F2FE' };
+  const statusBadge = (s) => s === 'resolved' ? { t: 'Resolved', c: '#15803D', bg: '#DCFCE7' } : s === 'seen' ? { t: 'Seen', c: '#6D28D9', bg: '#EDE9FE' } : { t: 'New', c: '#B45309', bg: '#FEF3C7' };
+  const c = data.counts || {};
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-extrabold text-[#050A1F]">Error Report &amp; Feedback</h3>
+          <div className="text-xs text-slate-400">Bugs and feedback raised by users from anywhere in the HRMS.</div>
+        </div>
+        <div className="flex gap-1.5 bg-slate-100 p-1 rounded-xl">
+          {[['', 'All'], ['new', `New${c.new ? ` · ${c.new}` : ''}`], ['seen', 'Seen'], ['resolved', 'Resolved']].map(([id, lbl]) => (
+            <button key={id} onClick={() => setFilter(id)} className={`px-3 py-1.5 rounded-lg text-[12px] font-extrabold ${filter === id ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500'}`}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+      {loading ? <div className="text-sm text-slate-400 py-8 text-center">Loading…</div>
+        : data.items.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-10 text-center text-sm text-slate-400">No reports{filter ? ` with status "${filter}"` : ' yet'}. 🎉</div>
+        : (
+          <div className="space-y-3">
+            {data.items.map((f) => {
+              const kb = kindBadge(f.kind); const sb = statusBadge(f.status);
+              return (
+                <div key={f._id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: kb.bg, color: kb.c }}>{kb.t}</span>
+                        <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: sb.bg, color: sb.c }}>{sb.t}</span>
+                        <span className="text-[11px] text-slate-400">{fmt(f.createdAt)}</span>
+                      </div>
+                      <div className="text-sm text-slate-700 whitespace-pre-wrap">{f.message}</div>
+                      <div className="text-[11px] text-slate-400 mt-1.5">
+                        {titleCase(f.reporterName || 'Someone')}{f.reporterEmail ? ` · ${f.reporterEmail}` : ''}{f.pageUrl ? ` · on ${f.pageUrl}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      {f.status !== 'seen' && f.status !== 'resolved' && <button onClick={() => setStatus(f._id, 'seen')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Mark seen</button>}
+                      {f.status !== 'resolved' && <button onClick={() => setStatus(f._id, 'resolved')} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: '#0F9D58' }}>Resolve</button>}
+                      {f.status === 'resolved' && <button onClick={() => setStatus(f._id, 'new')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Reopen</button>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+    </div>
+  );
+}
+
 // Logs tab — full activity audit across all users, filterable by user.
 function HrLogsTab() {
   const [data, setData] = useState(null);
@@ -4890,7 +4973,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['settings', 'Settings'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
 
   return (
     <div className="max-w-5xl">
@@ -5058,6 +5141,7 @@ function HrAdmin({ user, onOpenCandidate }) {
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'emails' && <HrEmailsTab onOpenCandidate={onOpenCandidate} />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
+      {tab === 'errors' && <ErrorReportTab setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
       {tab === 'careers' && <HrCareersTab />}
 
@@ -5464,6 +5548,84 @@ function HrOrgChartModal({ users, reporting, onClose }) {
 }
 
 
+// Fixed left-edge "Report a bug / feedback" button, available on every HRMS
+// page for any signed-in user. Opens a small form that posts to /feedback;
+// submissions appear in Admin → Settings → Error Report.
+function FeedbackWidget() {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState('bug');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+  const submit = async () => {
+    if (!message.trim()) { setErr('Please describe the issue.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await hrApi('/feedback', { method: 'POST', body: JSON.stringify({
+        kind, message: message.trim(),
+        pageUrl: (typeof window !== 'undefined' ? window.location.pathname + window.location.search : ''),
+        userAgent: (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+      }) });
+      setDone(true); setMessage('');
+      setTimeout(() => { setOpen(false); setDone(false); }, 1600);
+    } catch (e) { setErr(e.message || 'Could not send. Try again.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <>
+      {/* Fixed tab on the left edge */}
+      <button onClick={() => { setOpen(true); setDone(false); setErr(''); }}
+        title="Report a bug or share feedback"
+        className="fixed left-0 top-1/2 -translate-y-1/2 z-[90] flex items-center gap-1.5 rounded-r-xl px-2 py-3 text-white text-[11px] font-extrabold shadow-lg hover:pl-3 transition-all"
+        style={{ background: 'linear-gradient(180deg,#FF6A00,#FF4500)', writingMode: 'vertical-rl', transform: 'translateY(-50%) rotate(180deg)' }}>
+        <span style={{ transform: 'rotate(180deg)' }}>🐞 Report a bug</span>
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[140] p-4" onClick={() => !busy && setOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="text-lg font-extrabold text-[#050A1F]">Report a bug / feedback</div>
+              <button onClick={() => !busy && setOpen(false)} className="text-slate-400 text-xl leading-none">×</button>
+            </div>
+            {done ? (
+              <div className="p-8 text-center">
+                <div className="text-4xl mb-2">✅</div>
+                <div className="font-extrabold text-[#050A1F]">Thanks — sent to the team.</div>
+                <div className="text-sm text-slate-400 mt-1">We'll take a look. You can close this.</div>
+              </div>
+            ) : (
+              <div className="p-6 space-y-4">
+                <div className="text-xs text-slate-500">Found something broken or have a suggestion? Tell us — this goes straight to the admin's Error Report.</div>
+                <div>
+                  <div className="text-xs font-bold text-slate-500 mb-1.5">Type</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[['bug', '🐞 Bug'], ['suggestion', '💡 Suggestion'], ['other', '💬 Other']].map(([k, lbl]) => (
+                      <button key={k} onClick={() => setKind(k)} className={`rounded-lg border px-2 py-2 text-xs font-bold ${kind === k ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-500 mb-1.5">What happened?</div>
+                  <textarea autoFocus rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Describe the bug or feedback. Include what you clicked and what you expected."
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                  <div className="text-[10px] text-slate-400 mt-1">We'll automatically include the page you're on.</div>
+                </div>
+                {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2">{err}</div>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setOpen(false)} disabled={busy} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+                  <button onClick={submit} disabled={busy || !message.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Sending…' : 'Send report'}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function HrApp() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5655,6 +5817,7 @@ export default function HrApp() {
         {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'survey' && (isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') && <HrSurveyAdmin isAdmin={isAdmin} />}
       </main>
+      <FeedbackWidget />
     </div>
   );
 }

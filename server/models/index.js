@@ -1554,6 +1554,28 @@ const HrAnnouncement = sequelize.define('HrAnnouncement', {
 }, { tableName: 'hr_announcements', indexes: [{ name: 'idx_hr_ann_active', fields: ['active'] }] });
 HrAnnouncement.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Bug reports & feedback raised from anywhere in the HRMS via the fixed side
+// button. Visible to admins under Settings → Error Report for triage.
+const HrFeedback = sequelize.define('HrFeedback', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  reporterId: { type: DataTypes.INTEGER, allowNull: true },   // HrUser.id or admin User.id
+  reporterKind: { type: DataTypes.STRING(10), defaultValue: 'hr' }, // 'hr' | 'admin'
+  reporterName: { type: DataTypes.STRING(120), allowNull: true },
+  reporterEmail: { type: DataTypes.STRING(160), allowNull: true },
+  kind: { type: DataTypes.STRING(20), defaultValue: 'bug' },  // 'bug' | 'suggestion' | 'other'
+  message: { type: DataTypes.TEXT, allowNull: false },
+  pageUrl: { type: DataTypes.STRING(400), allowNull: true },  // where they were when reporting
+  screenshotUrl: { type: DataTypes.STRING(600), allowNull: true }, // optional ImageKit URL
+  userAgent: { type: DataTypes.STRING(400), allowNull: true },
+  status: { type: DataTypes.STRING(20), defaultValue: 'new' }, // 'new' | 'seen' | 'resolved'
+  adminNote: { type: DataTypes.TEXT, allowNull: true },
+}, {
+  tableName: 'hr_feedback',
+  indexes: [{ name: 'idx_hr_feedback_status', fields: ['status'] }],
+});
+HrFeedback.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 // Per-employee onboarding checklist. Each row is one task for one employee,
 // seeded from the admin-configured template (Settings.hrOnboardingTasks).
 const HrOnboarding = sequelize.define('HrOnboarding', {
@@ -1863,7 +1885,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -1420,33 +1420,112 @@ router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /me/whos-in → today's status for the employee's department + direct reports.
+// GET /me/whos-in → today's attendance status, scoped to the viewer:
+//   • Admin        → their immediate reporting employees (reportsToAdminId).
+//   • HR manager   → their own team first, then all other employees in scope
+//                    (branch for a scoped manager, everyone for an all-branch one).
+//   • Employee/HR  → their team (direct reports) + same department.
+// Each person carries group:'team'|'others' so the UI can section them.
 router.get('/me/whos-in', requireHrAccess, async (req, res, next) => {
   try {
-    if (req.hrActor.kind !== 'hr') return res.json({ people: [], counts: {} });
-    const me = await HrUser.findByPk(req.hrActor.id);
     const date = istDateStr();
     const all = await HrUser.findAll({ where: { active: true } });
-    // Scope: same department OR reports to me.
-    const peers = all.filter((u) => u.id !== me.id && (
-      (u.department && me.department && u.department.toLowerCase() === me.department.toLowerCase()) ||
-      u.reportsToId === me.id));
-    const att = await HrAttendance.findAll({ where: { employeeId: peers.map((p) => p.id), date } });
+
+    let scoped; // [{ user, group }]
+    if (req.hrActor.kind === 'admin') {
+      // Admin: their direct reports (employees who report to this admin).
+      const adminId = req.adminUser.id;
+      scoped = all.filter((u) => u.reportsToAdminId === adminId).map((u) => ({ user: u, group: 'team' }));
+    } else {
+      const me = await HrUser.findByPk(req.hrActor.id);
+      if (!me) return res.json({ people: [], counts: {} });
+      const isTeam = (u) => u.reportsToId === me.id
+        || (u.department && me.department && u.department.toLowerCase() === me.department.toLowerCase());
+      if (req.isHrManager) {
+        // Manager: team first, then everyone else in scope. All-branch managers
+        // see every branch; scoped managers see only their own branch.
+        const inScope = (u) => req.hrManagerAll || !req.hrManagerScope
+          || String(u.branch || '').toLowerCase() === String(req.hrManagerScope || req.hrBranch || '').toLowerCase();
+        scoped = all.filter((u) => u.id !== me.id && inScope(u))
+          .map((u) => ({ user: u, group: isTeam(u) ? 'team' : 'others' }));
+      } else {
+        // Plain employee / HR staff: team + same department only.
+        scoped = all.filter((u) => u.id !== me.id && isTeam(u)).map((u) => ({ user: u, group: 'team' }));
+      }
+    }
+
+    const ids = scoped.map((x) => x.user.id);
+    const att = ids.length ? await HrAttendance.findAll({ where: { employeeId: ids, date } }) : [];
     const byEmp = Object.fromEntries(att.map((a) => [a.employeeId, a]));
-    const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const grace = Number(getHrPolicy(s).lateRule.graceMinutes) || 30;
-    const people = peers.map((p) => {
+    const meId = req.hrActor.kind === 'hr' ? req.hrActor.id : null;
+    const statusOf = (p) => {
       const a = byEmp[p.id];
       let status = 'not_in', at = null;
       if (a) {
         if (a.status === 'leave' || a.status === 'half_day') status = 'leave';
         else if (a.loginTime) { status = a.late ? 'late' : 'in'; at = a.loginTime; }
       }
-      return { id: p.id, name: p.name, department: p.department, reportsToMe: p.reportsToId === me.id, status, at };
-    }).sort((x, y) => x.name.localeCompare(y.name));
+      return { status, at };
+    };
+    const people = scoped.map(({ user: p, group }) => {
+      const { status, at } = statusOf(p);
+      return { id: p.id, name: p.name, department: p.department, branch: p.branch, group, reportsToMe: meId ? p.reportsToId === meId : false, status, at };
+    }).sort((x, y) => {
+      // Team first, then others; within each, by name.
+      if (x.group !== y.group) return x.group === 'team' ? -1 : 1;
+      return x.name.localeCompare(y.name);
+    });
     const counts = { not_in: 0, late: 0, in: 0, leave: 0 };
     people.forEach((p) => { counts[p.status === 'in' ? 'in' : p.status] = (counts[p.status === 'in' ? 'in' : p.status] || 0) + 1; });
     res.json({ people, counts });
+  } catch (e) { next(e); }
+});
+
+// ---- Feedback & Error Reports (raised from the fixed side button) ----
+
+// POST /feedback → anyone signed into the HRMS can raise a bug/suggestion.
+router.post('/feedback', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const message = String(b.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'Please describe the issue or feedback.' });
+    const kind = ['bug', 'suggestion', 'other'].includes(b.kind) ? b.kind : 'bug';
+    const actor = req.hrActor;
+    const email = actor.kind === 'hr' ? (req.hrUser && req.hrUser.email) : (req.adminUser && req.adminUser.email);
+    const row = await HrFeedback.create({
+      reporterId: actor.id, reporterKind: actor.kind, reporterName: actor.name, reporterEmail: email || null,
+      kind, message: message.slice(0, 5000),
+      pageUrl: String(b.pageUrl || '').slice(0, 400) || null,
+      screenshotUrl: String(b.screenshotUrl || '').slice(0, 600) || null,
+      userAgent: String(b.userAgent || '').slice(0, 400) || null,
+      status: 'new',
+    });
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// GET /feedback → admin-only list of reports, newest first (optional ?status=).
+router.get('/feedback', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.status && ['new', 'seen', 'resolved'].includes(req.query.status)) where.status = req.query.status;
+    const rows = await HrFeedback.findAll({ where, order: [['createdAt', 'DESC']], limit: 300 });
+    const counts = { new: 0, seen: 0, resolved: 0 };
+    (await HrFeedback.findAll({ attributes: ['status'] })).forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    res.json({ items: rows.map((r) => r.toJSON()), counts });
+  } catch (e) { next(e); }
+});
+
+// PATCH /feedback/:id → admin updates status / adds an internal note.
+router.patch('/feedback/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const row = await HrFeedback.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Report not found.' });
+    const b = req.body || {};
+    if (b.status !== undefined && ['new', 'seen', 'resolved'].includes(b.status)) row.status = b.status;
+    if (b.adminNote !== undefined) row.adminNote = String(b.adminNote || '').slice(0, 2000);
+    await row.save();
+    res.json(row.toJSON());
   } catch (e) { next(e); }
 });
 
