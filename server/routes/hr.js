@@ -1811,6 +1811,11 @@ function validateVendor(b) {
       hasGst, gstin, category: String(b.category || '').trim() || null,
       branch: EXPENSE_BRANCHES.includes(b.branch) ? b.branch : null,
       paymentModes: modes,
+      // Recurring monthly bill reminder.
+      recurringPayment: !!b.recurringPayment,
+      recurringDay: b.recurringPayment && Number(b.recurringDay) >= 1 && Number(b.recurringDay) <= 31 ? Number(b.recurringDay) : null,
+      recurringAmount: b.recurringPayment && Number(b.recurringAmount) > 0 ? Number(b.recurringAmount) : null,
+      recurringLabel: b.recurringPayment ? (String(b.recurringLabel || '').trim() || null) : null,
       notes: String(b.notes || '').trim() || null,
     },
   };
@@ -1970,6 +1975,10 @@ router.post('/expenses/:id/decide', requireHrAccess, requireHrAdmin, async (req,
     if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
     if (decision === 'approve') {
       row.status = 'approved'; row.approvedById = req.hrActor.id; row.approvedByName = req.hrActor.name; row.approvedAt = new Date();
+      // Optional payment-due date (when the vendor should be paid by). A daily
+      // job reminds admins + HR 3 days before this date if not yet paid.
+      const due = String((req.body && req.body.payDueDate) || '').trim();
+      if (due && /^\d{4}-\d{2}-\d{2}$/.test(due)) { row.payDueDate = due; row.payDueReminderSent = null; }
     } else {
       row.status = 'rejected'; row.rejectionReason = String((req.body && req.body.reason) || '').slice(0, 500) || null;
       row.approvedById = req.hrActor.id; row.approvedByName = req.hrActor.name; row.approvedAt = new Date();

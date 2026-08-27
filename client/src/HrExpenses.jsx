@@ -60,6 +60,7 @@ export default function HrExpenses({ user, isAdmin }) {
   const [claims, setClaims] = useState(null);
   const [reviewFor, setReviewFor] = useState(null);   // claim being HR-reviewed
   const [settleFor, setSettleFor] = useState(null);   // approved claim being settled
+  const [approveFor, setApproveFor] = useState(null); // expense being approved (with pay-due date)
 
   const loadClaims = () => hrApi('/claims').then((r) => setClaims(r)).catch(() => {});
   const load = () => {
@@ -88,8 +89,8 @@ export default function HrExpenses({ user, isAdmin }) {
   const pages = Math.max(1, Math.ceil(filtered.length / PER));
   const pageRows = filtered.slice((page - 1) * PER, page * PER);
 
-  const decide = async (e, decision, reason) => {
-    try { await hrApi(`/expenses/${e._id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: reason || '' }) }); setRejectFor(null); load(); }
+  const decide = async (e, decision, reason, payDueDate) => {
+    try { await hrApi(`/expenses/${e._id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: reason || '', payDueDate: payDueDate || '' }) }); setRejectFor(null); setApproveFor(null); load(); }
     catch (er) { setErr(er.message); }
   };
   const decideClaim = async (c, decision) => {
@@ -173,7 +174,7 @@ export default function HrExpenses({ user, isAdmin }) {
                     <td className="px-4 py-3">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} className="text-[11px] font-bold text-sky-600">📎 {e.invoiceName || 'view'}</a> : <span className="text-[11px] text-slate-300">—</span>}</td>
                     <td className="px-4 py-3"><StatusBadge s={e.status} />{e.status === 'paid' && e.paymentMethod && <span className="text-[10px] text-slate-400 ml-1">{methodLabel(e.paymentMethod)}</span>}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
-                      {e.status === 'submitted' && isAdmin && <span className="inline-flex gap-1"><button onClick={() => decide(e, 'approve')} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#0F9D58' }}>Approve</button><button onClick={() => setRejectFor(e)} className="text-[11px] font-bold text-red-500 border border-red-200 px-2.5 py-1 rounded">Reject</button></span>}
+                      {e.status === 'submitted' && isAdmin && <span className="inline-flex gap-1"><button onClick={() => setApproveFor(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#0F9D58' }}>Approve</button><button onClick={() => setRejectFor(e)} className="text-[11px] font-bold text-red-500 border border-red-200 px-2.5 py-1 rounded">Reject</button></span>}
                       {e.status === 'submitted' && !isAdmin && <span className="text-[11px] text-slate-400">Awaiting admin</span>}
                       {e.status === 'approved' && <button onClick={() => setPayFor(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#050A1F' }}>Mark paid</button>}
                       {e.status === 'paid' && <span className="text-[11px] text-slate-300">Done</span>}
@@ -220,6 +221,7 @@ export default function HrExpenses({ user, isAdmin }) {
       {reviewFor && <ClaimReviewModal claim={reviewFor} onClose={() => setReviewFor(null)} onSaved={() => { setReviewFor(null); load(); }} />}
       {settleFor && <ClaimSettleModal claim={settleFor} onClose={() => setSettleFor(null)} onSalary={() => { setSettleFor(null); load(); }} onPayNow={(c) => { setSettleFor(null); setPayFor(c); }} />}
       {rejectFor && <RejectModal expense={rejectFor} onClose={() => setRejectFor(null)} onConfirm={(reason) => decide(rejectFor, 'reject', reason)} />}
+      {approveFor && <ApproveExpenseModal expense={approveFor} onClose={() => setApproveFor(null)} onConfirm={(payDueDate) => decide(approveFor, 'approve', '', payDueDate)} />}
       {detail && <ExpenseDrawer expense={detail} onClose={() => setDetail(null)} />}
       {vendorEdit && <VendorModal vendor={vendorEdit} cats={cats} onClose={() => setVendorEdit(null)} onSaved={() => { setVendorEdit(null); load(); }} setErr={setErr} />}
       {vendorHistory && <VendorHistoryDrawer vendor={vendorHistory} onClose={() => setVendorHistory(null)} />}
@@ -248,7 +250,7 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
             <tbody>
               {vendors.map((v) => (
                 <tr key={v._id} className="border-t border-slate-50 hover:bg-slate-50/50">
-                  <td className="px-4 py-3"><div className="flex items-center gap-2"><PayeeIcon type="vendor" name={v.name} /><div><div className="font-bold text-[#050A1F]">{v.name}{!v.active && <span className="text-[10px] text-slate-400 ml-1">(inactive)</span>}</div>{v.city && <div className="text-[11px] text-slate-400">{v.city}{v.state ? `, ${v.state}` : ''}</div>}</div></div></td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2"><PayeeIcon type="vendor" name={v.name} /><div><div className="font-bold text-[#050A1F]">{v.name}{!v.active && <span className="text-[10px] text-slate-400 ml-1">(inactive)</span>}{v.recurringPayment && v.recurringDay && <span className="text-[9px] font-extrabold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 ml-1.5">↻ {v.recurringDay}{['st', 'nd', 'rd'][((v.recurringDay % 10) - 1)] && ![11, 12, 13].includes(v.recurringDay) ? ['st', 'nd', 'rd'][((v.recurringDay % 10) - 1)] : 'th'}</span>}</div>{v.city && <div className="text-[11px] text-slate-400">{v.city}{v.state ? `, ${v.state}` : ''}</div>}</div></div></td>
                   <td className="px-4 py-3 text-xs text-slate-500">{v.contactPerson || '—'}{v.phone && <div className="text-slate-400">{v.phone}</div>}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{v.category || '—'}</td>
                   <td className="px-4 py-3 text-xs">{v.hasGst ? <span className="font-mono text-[11px] text-slate-600">{v.gstin}</span> : <span className="text-slate-300">No</span>}</td>
@@ -593,6 +595,28 @@ function PayModal({ expense, onClose, onSaved }) {
   );
 }
 
+// Admin approves an expense and optionally sets the date the vendor should be
+// paid by. If set, admins + HR get a reminder 3 days before that date.
+function ApproveExpenseModal({ expense, onClose, onConfirm }) {
+  const [payDueDate, setPayDueDate] = useState('');
+  const [busy, setBusy] = useState(false);
+  const go = async () => { setBusy(true); await onConfirm(payDueDate); setBusy(false); };
+  const minDate = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  return (
+    <ModalShell title="Approve expense" onClose={onClose}>
+      <div className="rounded-xl bg-slate-50 p-3 mb-4">
+        <div className="font-bold text-[#050A1F]">{expense.title}</div>
+        <div className="text-[11px] text-slate-500 mt-0.5">{expense.payeeName} · {inr(expense.amount)} · {expense.branch}</div>
+      </div>
+      <Field label="Payment due date (optional)" full>
+        <input type="date" min={minDate} value={payDueDate} onChange={(e) => setPayDueDate(e.target.value)} className="inp" />
+      </Field>
+      <div className="text-[11px] text-slate-400 mt-1.5">Set when this vendor should be paid by. Admins and HR will get a reminder 3 days before the due date if it isn't paid yet. Leave blank if not needed.</div>
+      <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={go} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#0F9D58' }}>{busy ? 'Approving…' : 'Approve expense'}</button></div>
+    </ModalShell>
+  );
+}
+
 function RejectModal({ expense, onClose, onConfirm }) {
   const [reason, setReason] = useState('');
   return (
@@ -606,15 +630,16 @@ function RejectModal({ expense, onClose, onConfirm }) {
 
 function VendorModal({ vendor, cats, onClose, onSaved, setErr }) {
   const editing = vendor && vendor._id;
-  const [f, setF] = useState({ name: vendor.name || '', contactPerson: vendor.contactPerson || '', phone: vendor.phone || '', email: vendor.email || '', address: vendor.address || '', city: vendor.city || '', state: vendor.state || '', zip: vendor.zip || '', hasGst: !!vendor.hasGst, gstin: vendor.gstin || '', category: vendor.category || '', branch: vendor.branch || '' });
+  const [f, setF] = useState({ name: vendor.name || '', contactPerson: vendor.contactPerson || '', phone: vendor.phone || '', email: vendor.email || '', address: vendor.address || '', city: vendor.city || '', state: vendor.state || '', zip: vendor.zip || '', hasGst: !!vendor.hasGst, gstin: vendor.gstin || '', category: vendor.category || '', branch: vendor.branch || '', recurringPayment: !!vendor.recurringPayment, recurringDay: vendor.recurringDay || '', recurringAmount: vendor.recurringAmount || '', recurringLabel: vendor.recurringLabel || '' });
   const [modes, setModes] = useState(Array.isArray(vendor.paymentModes) ? vendor.paymentModes : []);
   const [busy, setBusy] = useState(false); const [er, setEr] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const save = async () => {
     if (!f.name.trim()) { setEr('Vendor / company name is required.'); return; }
     if (f.hasGst && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(String(f.gstin).toUpperCase())) { setEr('Enter a valid 15-character GSTIN.'); return; }
+    if (f.recurringPayment && !(Number(f.recurringDay) >= 1 && Number(f.recurringDay) <= 31)) { setEr('Enter a valid recurring payment day (1–31).'); return; }
     setBusy(true); setEr('');
-    try { await hrApi(editing ? `/vendors/${vendor._id}` : '/vendors', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ ...f, gstin: f.hasGst ? String(f.gstin).toUpperCase() : '', paymentModes: modes }) }); onSaved(); }
+    try { await hrApi(editing ? `/vendors/${vendor._id}` : '/vendors', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ ...f, gstin: f.hasGst ? String(f.gstin).toUpperCase() : '', paymentModes: modes, recurringDay: f.recurringDay ? Number(f.recurringDay) : null, recurringAmount: f.recurringAmount ? Number(f.recurringAmount) : null }) }); onSaved(); }
     catch (e) { setEr(e.message); } finally { setBusy(false); }
   };
   return (
@@ -637,6 +662,22 @@ function VendorModal({ vendor, cats, onClose, onSaved, setErr }) {
       </div>
       <div className="mt-5 pt-4 border-t border-slate-100">
         <PaymentModesEditor modes={modes} setModes={setModes} />
+      </div>
+      <div className="mt-5 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-sm font-bold text-[#050A1F]">Recurring monthly bill</div>
+            <div className="text-[11px] text-slate-400">For rent, electricity, internet, etc. Admins + HR get a reminder 3 days before the due day each month.</div>
+          </div>
+          <button type="button" onClick={() => set('recurringPayment', !f.recurringPayment)} className={`rounded-full w-11 h-6 transition-colors ${f.recurringPayment ? 'bg-[#0F9D58]' : 'bg-slate-300'}`}><span className={`block w-5 h-5 bg-white rounded-full transition-transform ${f.recurringPayment ? 'translate-x-5' : 'translate-x-0.5'}`} /></button>
+        </div>
+        {f.recurringPayment && (
+          <div className="grid gap-3 mt-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <Field label="Pay by day of month"><select value={f.recurringDay} onChange={(e) => set('recurringDay', e.target.value)} className="inp"><option value="">Select day…</option>{Array.from({ length: 31 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}{['st', 'nd', 'rd'][((d % 10) - 1)] && ![11, 12, 13].includes(d) ? ['st', 'nd', 'rd'][((d % 10) - 1)] : 'th'}</option>)}</select></Field>
+            <Field label="Typical amount (₹, optional)"><input value={f.recurringAmount} onChange={(e) => set('recurringAmount', e.target.value)} className="inp" placeholder="0" /></Field>
+            <Field label="Label (optional)" full><input value={f.recurringLabel} onChange={(e) => set('recurringLabel', e.target.value)} className="inp" placeholder="e.g. Office rent, Electricity bill" /></Field>
+          </div>
+        )}
       </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editing ? 'Save changes' : 'Add vendor')}</button></div>
     </ModalShell>
@@ -772,6 +813,7 @@ function ExpenseDrawer({ expense: e, onClose }) {
       <Row label="Invoice">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">📎 {e.invoiceName || 'View invoice'}</a> : '—'}</Row>
       <Row label="Raised by">{titleCase(e.raisedByName || '—')}</Row>
       {e.status === 'rejected' ? <><Row label="Rejected by">{titleCase(e.approvedByName || '—')}{e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}</Row><Row label="Reason">{e.rejectionReason || '—'}</Row></> : <Row label="Approved by">{e.approvedByName ? `${titleCase(e.approvedByName)}${e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}` : '—'}</Row>}
+      {e.status === 'approved' && e.payDueDate && <Row label="Payment due">{fmtDate(e.payDueDate)} <span className="text-[10px] text-amber-600 font-bold">· reminder 3 days prior</span></Row>}
       {e.status === 'paid' && <><Row label="Payment method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row>
         {e.paymentMethod === 'upi' && <><Row label="UPI ID">{e.paymentUpiId || '—'}</Row>{e.paymentMobile ? <Row label="Payee mobile">{e.paymentMobile}</Row> : null}<Row label="UPI txn / ref ID">{e.paymentRef || '—'}</Row></>}
         {e.paymentMethod === 'cheque' && <><Row label="Cheque number">{e.chequeNumber || e.paymentRef || '—'}</Row>{e.chequeBank ? <Row label="Bank drawn on">{e.chequeBank}</Row> : null}{e.chequeDate ? <Row label="Cheque date">{fmtDate(e.chequeDate)}</Row> : null}</>}

@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v317';
+const APP_VERSION = 'v318';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -632,6 +632,10 @@ connectWithRetry()
       // founder-signed, sent from adam@qtonix.com.
       try { require('./jobs/hrCelebrations').start(require('./models')); }
       catch (e) { console.error('[hr-celebration] not started:', e.message); }
+      // Expense & recurring-vendor payment reminders (3 days before due) to
+      // admins + HR (branch-scoped).
+      try { require('./jobs/paymentReminders').start(require('./models')); }
+      catch (e) { console.error('[payment-reminder] not started:', e.message); }
     });
   })
   .catch((e) => {

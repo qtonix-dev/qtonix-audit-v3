@@ -1603,6 +1603,14 @@ const HrVendor = sequelize.define('HrVendor', {
   //   { type:'cheque' }
   // When raising an expense for this vendor the HR picks one of these modes.
   paymentModes: { type: DataTypes.JSON, defaultValue: [] },
+  // Recurring monthly bill (rent, electricity, internet…). When set, a daily job
+  // reminds admins + HR 3 days before this day-of-month to pay the bill. Day is
+  // clamped to the month's last day for short months.
+  recurringPayment: { type: DataTypes.BOOLEAN, defaultValue: false },
+  recurringDay: { type: DataTypes.INTEGER, allowNull: true },       // 1..31
+  recurringAmount: { type: DataTypes.FLOAT, allowNull: true },      // typical monthly amount (optional)
+  recurringLabel: { type: DataTypes.STRING(120), allowNull: true }, // e.g. "Office rent" (optional)
+  recurringReminderSent: { type: DataTypes.STRING(7), allowNull: true }, // dedupe: 'YYYY-MM' the reminder went out
   notes: { type: DataTypes.TEXT, allowNull: true },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
   createdById: { type: DataTypes.INTEGER, allowNull: true },
@@ -1669,6 +1677,10 @@ const HrExpense = sequelize.define('HrExpense', {
   chequeBank: { type: DataTypes.STRING(120), allowNull: true },   // bank the cheque is drawn on
   chequeDate: { type: DataTypes.STRING(10), allowNull: true },    // YYYY-MM-DD on the cheque
   paymentDate: { type: DataTypes.STRING(10), allowNull: true },   // YYYY-MM-DD (date paid)
+  // When (by) the vendor should be paid — set by admin at approval. A daily job
+  // reminds admins + HR 3 days before this date if the expense isn't paid yet.
+  payDueDate: { type: DataTypes.STRING(10), allowNull: true },    // YYYY-MM-DD
+  payDueReminderSent: { type: DataTypes.STRING(10), allowNull: true }, // dedupe: date the 3-day reminder went out
   paidById: { type: DataTypes.INTEGER, allowNull: true },
   paidByName: { type: DataTypes.STRING(120), allowNull: true },
   paidAt: { type: DataTypes.DATE, allowNull: true },
