@@ -23,7 +23,7 @@ const {
   Op, sequelize, HrUser, User, Task, TaskComment, TaskAttachment, TaskActivity, HrNotification,
 } = require('../models');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
-const { canAssign } = require('../services/taskPermissions');
+const { canAssign, canViewBoard, viewableBoardIds } = require('../services/taskPermissions');
 
 // Open to all HR users (and admins). Every person lands on their own board;
 // per-user permission logic (canAssign, creator/admin delete) governs actions.
@@ -44,9 +44,15 @@ async function actingContext(req) {
   // assignee/assigner in the same integer columns.
   const rawId = req.hrActor && req.hrActor.id;
   const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
+  // IMPORTANT: "isHr" means the actor holds an actual HR role (HR / recruiter /
+  // HR-manager) or is an admin — NOT merely that they signed in through the HR
+  // app. Every employee's hrActor.kind is 'hr', so keying off kind alone would
+  // grant everyone HR-wide assign/view powers. Use the role on the HrUser row.
+  const HR_ROLE_TYPES = new Set(['hr', 'recruiter']);
+  const isHr = isAdmin || !!(actorUser && (HR_ROLE_TYPES.has(actorUser.type) || actorUser.isHrManager));
   return {
     isAdmin,
-    isHr: isAdmin || (req.hrActor && req.hrActor.kind === 'hr'),
+    isHr,
     actorUser,
     actorId: req.hrActor && req.hrActor.id,
     boardId,
@@ -174,7 +180,18 @@ router.get('/my-board', guard, async (req, res, next) => {
 router.get('/board/:viewerId', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
-    const out = await buildBoard(Number(req.params.viewerId), ctx);
+    const targetId = Number(req.params.viewerId);
+    // Authorize: own board always; otherwise only if the hierarchy permits it.
+    if (targetId !== ctx.boardId) {
+      const people = await roster();
+      const target = people.find((u) => u.id === targetId);
+      // Negative id = an admin's own board; only that admin may open it.
+      if (targetId < 0) { if (targetId !== ctx.boardId) return res.status(403).json({ error: 'You can’t view this board.' }); }
+      else if (!target || !canViewBoard(ctx.actorUser, target, people, ctx)) {
+        return res.status(403).json({ error: 'You can’t view this board.' });
+      }
+    }
+    const out = await buildBoard(targetId, ctx);
     if (out.error) return res.status(404).json(out);
     res.json(out);
   } catch (e) { next(e); }
@@ -200,10 +217,14 @@ router.get('/assignable', guard, async (req, res, next) => {
 
 router.get('/boards', guard, async (req, res, next) => {
   try {
+    const ctx = await actingContext(req);
     const people = await roster();
+    // Only list boards this actor is allowed to view (own + downline; everyone
+    // for HR/admin). This is what feeds the top "view another board" switcher.
+    const viewable = people.filter((u) => canViewBoard(ctx.actorUser, u, people, ctx));
     const counts = await Task.findAll({ attributes: ['assigneeId', [sequelize.fn('COUNT', sequelize.col('id')), 'n']], where: { parentTaskId: null, stage: { [Op.ne]: 'completed' } }, group: ['assigneeId'], raw: true });
     const countBy = Object.fromEntries(counts.map((c) => [c.assigneeId, Number(c.n)]));
-    res.json(people.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type, taskCount: countBy[u.id] || 0 })));
+    res.json(viewable.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type, taskCount: countBy[u.id] || 0 })));
   } catch (e) { next(e); }
 });
 

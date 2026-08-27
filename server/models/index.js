@@ -1596,6 +1596,13 @@ const HrVendor = sequelize.define('HrVendor', {
   gstin: { type: DataTypes.STRING(15), allowNull: true },         // 15-char GSTIN when hasGst
   category: { type: DataTypes.STRING(80), allowNull: true },
   branch: { type: DataTypes.STRING(80), allowNull: true },
+  // Saved payment modes for this vendor. Array of objects, one per mode:
+  //   { type:'cash' }
+  //   { type:'bank', accountName, accountNumber, bankName, ifsc, accountType }
+  //   { type:'upi',  upiId, mobile }
+  //   { type:'cheque' }
+  // When raising an expense for this vendor the HR picks one of these modes.
+  paymentModes: { type: DataTypes.JSON, defaultValue: [] },
   notes: { type: DataTypes.TEXT, allowNull: true },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
   createdById: { type: DataTypes.INTEGER, allowNull: true },
@@ -1620,6 +1627,9 @@ const HrExpense = sequelize.define('HrExpense', {
   description: { type: DataTypes.TEXT, allowNull: true },
   invoiceUrl: { type: DataTypes.STRING(600), allowNull: true },
   invoiceName: { type: DataTypes.STRING(200), allowNull: true },
+  // The vendor payment mode the HR selected when raising (snapshot of the chosen
+  // entry from HrVendor.paymentModes) — used to pre-fill the payment step.
+  selectedPaymentMode: { type: DataTypes.JSON, defaultValue: null },
   // Lifecycle: submitted → approved → paid, or rejected (terminal).
   status: { type: DataTypes.STRING(20), defaultValue: 'submitted' },
   raisedById: { type: DataTypes.INTEGER, allowNull: true },

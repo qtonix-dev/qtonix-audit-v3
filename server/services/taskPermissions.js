@@ -94,4 +94,36 @@ function assignableIds(actorUser, roster, ctx = {}) {
   return roster.filter((u) => canAssign(actorUser, u, ctx)).map((u) => u.id);
 }
 
-module.exports = { canAssign, assignableIds, sameTeam, isLead, isHrActor, isAdminActor, LEAD_TYPES, HR_TYPES };
+// Whether an actor may VIEW another person's task board (the top switcher +
+// GET /board/:id). Rules mirror the org chart:
+//   • Admin / HR            → every board
+//   • Lead (manager/tl/sr)  → own board ＋ anyone in their downline (their direct
+//                             reports, and transitively those reports' reports)
+//   • Member                → only their own board
+// Viewing is intentionally NARROWER than assigning: a member can assign to a
+// team-mate but must not browse that team-mate's whole board.
+function isDownline(actorUser, targetUser, roster) {
+  if (!actorUser || !targetUser) return false;
+  const byId = new Map(roster.map((u) => [u.id, u]));
+  let cur = targetUser;
+  const seen = new Set();
+  while (cur && cur.reportsToId && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.reportsToId === actorUser.id) return true;
+    cur = byId.get(cur.reportsToId);
+  }
+  return false;
+}
+function canViewBoard(actorUser, targetUser, roster, ctx = {}) {
+  if (!targetUser) return false;
+  if (ctx.isAdmin || ctx.isHr) return true;
+  if (!actorUser) return false;
+  if (actorUser.id === targetUser.id) return true;   // own board
+  if (isLead(actorUser)) return isDownline(actorUser, targetUser, roster);
+  return false;                                       // members: self only
+}
+function viewableBoardIds(actorUser, roster, ctx = {}) {
+  return roster.filter((u) => canViewBoard(actorUser, u, roster, ctx)).map((u) => u.id);
+}
+
+module.exports = { canAssign, assignableIds, canViewBoard, viewableBoardIds, isDownline, sameTeam, isLead, isHrActor, isAdminActor, LEAD_TYPES, HR_TYPES };

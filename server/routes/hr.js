@@ -1714,6 +1714,26 @@ function validateVendor(b) {
     gstin = String(b.gstin || '').trim().toUpperCase();
     if (gstin.length !== 15 || !GSTIN_RE.test(gstin)) return { error: 'Enter a valid 15-character GSTIN.' };
   }
+  // Normalise + validate saved payment modes.
+  const modesIn = Array.isArray(b.paymentModes) ? b.paymentModes : [];
+  const modes = [];
+  for (const m of modesIn) {
+    const t = String(m && m.type || '').toLowerCase();
+    if (!PAYMENT_METHODS.includes(t)) continue;
+    if (t === 'cash' || t === 'cheque') { modes.push({ type: t }); }
+    else if (t === 'bank') {
+      const bankName = String(m.bankName || '').trim();
+      const accountNumber = String(m.accountNumber || '').trim();
+      const ifsc = String(m.ifsc || '').trim().toUpperCase();
+      if (!accountNumber || !ifsc || !bankName) return { error: 'Bank transfer needs account number, bank name and IFSC.' };
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return { error: 'Enter a valid 11-character IFSC code.' };
+      modes.push({ type: 'bank', accountName: String(m.accountName || '').trim(), accountNumber, bankName, ifsc, accountType: String(m.accountType || '').trim() });
+    } else if (t === 'upi') {
+      const upiId = String(m.upiId || '').trim();
+      if (!upiId) return { error: 'UPI needs a UPI ID.' };
+      modes.push({ type: 'upi', upiId, mobile: String(m.mobile || '').trim() });
+    }
+  }
   return {
     data: {
       name, contactPerson: String(b.contactPerson || '').trim() || null,
@@ -1722,6 +1742,7 @@ function validateVendor(b) {
       state: String(b.state || '').trim() || null, zip: String(b.zip || '').trim() || null,
       hasGst, gstin, category: String(b.category || '').trim() || null,
       branch: EXPENSE_BRANCHES.includes(b.branch) ? b.branch : null,
+      paymentModes: modes,
       notes: String(b.notes || '').trim() || null,
     },
   };
@@ -1821,6 +1842,7 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
       expenseDate: b.expenseDate || istDateStr(), branch: b.branch, ...payee, payeeName: payeeName || null,
       description: String(b.description || '').trim() || null,
       invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      selectedPaymentMode: (b.selectedPaymentMode && typeof b.selectedPaymentMode === 'object') ? b.selectedPaymentMode : null,
       status: 'submitted', raisedById: req.hrActor.id, raisedByKind: req.hrActor.kind, raisedByName: req.hrActor.name,
     });
     hrLog(req, 'expense.raise', title);

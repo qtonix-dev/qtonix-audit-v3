@@ -17,6 +17,13 @@ const fmtDate = (d) => { if (!d) return '—'; try { return new Date(d + 'T00:00
 const fmtWhen = (iso) => { if (!iso) return '—'; try { return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 const methodLabel = (m) => (METHODS.find((x) => x[0] === m) || [null, ''])[1];
 const bankLabel = (b) => (BANKS.find((x) => x[0] === b) || [null, ''])[1];
+const modeSummary = (m) => {
+  if (!m) return '';
+  if (m.type === 'bank') return `Bank Transfer · ${m.bankName || ''} ${m.accountNumber ? '· ' + m.accountNumber : ''}`.trim();
+  if (m.type === 'upi') return `UPI · ${m.upiId || ''}`;
+  if (m.type === 'cheque') return 'Cheque';
+  return 'Cash';
+};
 
 function StatusBadge({ s }) { const m = STATUS_META[s] || STATUS_META.submitted; return <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: m.bg, color: m.color }}>{m.label}</span>; }
 function BranchBadge({ b }) { return <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EEF2FF', color: '#4338CA' }}>{b || '—'}</span>; }
@@ -247,7 +254,7 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
 function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, onSaved, onAddVendor }) {
   const allBranch = isAdmin || user.hrManagerAll || user.hrManagerScope === 'all' || !user.hrManagerScope;
   const lockedBranch = !allBranch ? (user.hrManagerScope || user.branch || '') : '';
-  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', description: '' });
+  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', description: '', modeIdx: '' });
   const [invoice, setInvoice] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -266,7 +273,10 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
     if (f.payeeType === 'vendor' && !f.vendorId) { setErr('Select a vendor.'); return; }
     if (f.payeeType === 'employee' && !f.employeeId) { setErr('Select an employee.'); return; }
     setBusy(true); setErr('');
-    try { await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: Number(f.amount), vendorId: f.vendorId || null, employeeId: f.employeeId || null, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
+    try {
+      const selVendor = vendors.find((v) => String(v._id) === String(f.vendorId));
+      const selectedPaymentMode = (f.payeeType === 'vendor' && selVendor && Array.isArray(selVendor.paymentModes) && f.modeIdx !== '') ? selVendor.paymentModes[Number(f.modeIdx)] : null;
+      await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: Number(f.amount), vendorId: f.vendorId || null, employeeId: f.employeeId || null, selectedPaymentMode, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   return (
@@ -281,7 +291,15 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
         <Field label="Pay to" full>
           <div className="flex gap-2 mb-2">{[['vendor', 'Vendor'], ['employee', 'Employee']].map(([id, lbl]) => <button key={id} type="button" onClick={() => set('payeeType', id)} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${f.payeeType === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}</div>
           {f.payeeType === 'vendor' ? (
-            <div className="flex gap-2"><select value={f.vendorId} onChange={(e) => set('vendorId', e.target.value)} className="inp"><option value="">Select vendor…</option>{vendors.map((v) => <option key={v._id} value={v._id}>{v.name}</option>)}</select><button type="button" onClick={onAddVendor} className="rounded-lg border border-slate-300 px-3 text-xs font-bold text-slate-600 whitespace-nowrap">+ New</button></div>
+            <>
+              <div className="flex gap-2"><select value={f.vendorId} onChange={(e) => { set('vendorId', e.target.value); set('modeIdx', ''); }} className="inp"><option value="">Select vendor…</option>{vendors.map((v) => <option key={v._id} value={v._id}>{v.name}</option>)}</select><button type="button" onClick={onAddVendor} className="rounded-lg border border-slate-300 px-3 text-xs font-bold text-slate-600 whitespace-nowrap">+ New</button></div>
+              {(() => { const sv = vendors.find((v) => String(v._id) === String(f.vendorId)); const pm = (sv && Array.isArray(sv.paymentModes)) ? sv.paymentModes : []; if (!sv) return null; return (
+                <div className="mt-2">
+                  {pm.length === 0 ? <div className="text-[11px] text-amber-600">This vendor has no saved payment mode. Add one via Edit vendor.</div>
+                    : <select value={f.modeIdx} onChange={(e) => set('modeIdx', e.target.value)} className="inp"><option value="">Payment mode (optional)…</option>{pm.map((m, i) => <option key={i} value={i}>{modeSummary(m)}</option>)}</select>}
+                </div>
+              ); })()}
+            </>
           ) : (
             <select value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} className="inp"><option value="">Select employee…</option>{employees.map((em) => <option key={em._id || em.id} value={em._id || em.id}>{titleCase(em.name)}</option>)}</select>
           )}
@@ -297,8 +315,10 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
 }
 
 function PayModal({ expense, onClose, onSaved }) {
-  const [method, setMethod] = useState('cash');
-  const [f, setF] = useState({ paymentDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), paymentRef: '', bankName: 'kotak' });
+  const sel = expense.selectedPaymentMode || null;
+  const preMethod = sel && ['cash', 'bank', 'upi', 'cheque'].includes(sel.type) ? sel.type : 'cash';
+  const [method, setMethod] = useState(preMethod);
+  const [f, setF] = useState({ paymentDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), paymentRef: sel && sel.type === 'upi' ? (sel.upiId || '') : '', bankName: 'kotak' });
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const save = async () => {
@@ -311,6 +331,7 @@ function PayModal({ expense, onClose, onSaved }) {
     <ModalShell title={`Record payment · ${inr(expense.amount)}`} onClose={onClose}>
       {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
       <div className="text-xs text-slate-500 mb-3">Paying <b>{expense.payeeName}</b> for “{expense.title}”.</div>
+      {sel && <div className="text-[11px] rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-2 mb-3">Vendor's saved mode: <b>{modeSummary(sel)}</b>{sel.type === 'bank' && sel.ifsc ? ` · IFSC ${sel.ifsc}` : ''}{sel.type === 'bank' && sel.accountName ? ` · ${sel.accountName}` : ''}{sel.type === 'upi' && sel.mobile ? ` · ${sel.mobile}` : ''}</div>}
       <Field label="Payment method" full><div className="grid grid-cols-4 gap-2">{METHODS.map(([id, lbl]) => <button key={id} type="button" onClick={() => setMethod(id)} className={`rounded-lg border px-2 py-2 text-xs font-bold ${method === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}</div></Field>
       <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <Field label="Date of payment"><input type="date" value={f.paymentDate} onChange={(e) => set('paymentDate', e.target.value)} className="inp" /></Field>
@@ -336,13 +357,14 @@ function RejectModal({ expense, onClose, onConfirm }) {
 function VendorModal({ vendor, cats, onClose, onSaved, setErr }) {
   const editing = vendor && vendor._id;
   const [f, setF] = useState({ name: vendor.name || '', contactPerson: vendor.contactPerson || '', phone: vendor.phone || '', email: vendor.email || '', address: vendor.address || '', city: vendor.city || '', state: vendor.state || '', zip: vendor.zip || '', hasGst: !!vendor.hasGst, gstin: vendor.gstin || '', category: vendor.category || '', branch: vendor.branch || '' });
+  const [modes, setModes] = useState(Array.isArray(vendor.paymentModes) ? vendor.paymentModes : []);
   const [busy, setBusy] = useState(false); const [er, setEr] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const save = async () => {
     if (!f.name.trim()) { setEr('Vendor / company name is required.'); return; }
     if (f.hasGst && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(String(f.gstin).toUpperCase())) { setEr('Enter a valid 15-character GSTIN.'); return; }
     setBusy(true); setEr('');
-    try { await hrApi(editing ? `/vendors/${vendor._id}` : '/vendors', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ ...f, gstin: f.hasGst ? String(f.gstin).toUpperCase() : '' }) }); onSaved(); }
+    try { await hrApi(editing ? `/vendors/${vendor._id}` : '/vendors', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ ...f, gstin: f.hasGst ? String(f.gstin).toUpperCase() : '', paymentModes: modes }) }); onSaved(); }
     catch (e) { setEr(e.message); } finally { setBusy(false); }
   };
   return (
@@ -363,8 +385,60 @@ function VendorModal({ vendor, cats, onClose, onSaved, setErr }) {
           <div className="flex gap-2 items-center">{[['yes', 'Yes'], ['no', 'No']].map(([id, lbl]) => <button key={id} type="button" onClick={() => set('hasGst', id === 'yes')} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${(f.hasGst ? 'yes' : 'no') === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}{f.hasGst && <input value={f.gstin} onChange={(e) => set('gstin', e.target.value.toUpperCase())} maxLength={15} className="inp font-mono" placeholder="15-character GSTIN" style={{ flex: 1 }} />}</div>
         </Field>
       </div>
+      <div className="mt-5 pt-4 border-t border-slate-100">
+        <PaymentModesEditor modes={modes} setModes={setModes} />
+      </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (editing ? 'Save changes' : 'Add vendor')}</button></div>
     </ModalShell>
+  );
+}
+
+// Editor for a vendor's saved payment modes. Each mode carries its own fields.
+function PaymentModesEditor({ modes, setModes }) {
+  const [adding, setAdding] = useState('');
+  const upd = (i, k, v) => setModes(modes.map((m, j) => j === i ? { ...m, [k]: v } : m));
+  const remove = (i) => setModes(modes.filter((_, j) => j !== i));
+  const add = (t) => {
+    if (!t) return;
+    if ((t === 'cash' || t === 'cheque') && modes.some((m) => m.type === t)) { setAdding(''); return; }
+    setModes([...modes, t === 'bank' ? { type: 'bank', accountName: '', accountNumber: '', bankName: '', ifsc: '', accountType: 'Savings' } : t === 'upi' ? { type: 'upi', upiId: '', mobile: '' } : { type: t }]);
+    setAdding('');
+  };
+  const LABEL = { cash: 'Cash', bank: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque' };
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-bold text-slate-500">Payment modes <span className="font-normal text-slate-400">— how this vendor is paid</span></div>
+        <select value={adding} onChange={(e) => add(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600">
+          <option value="">+ Add mode…</option>
+          {['cash', 'bank', 'upi', 'cheque'].map((t) => <option key={t} value={t}>{LABEL[t]}</option>)}
+        </select>
+      </div>
+      {modes.length === 0 ? <div className="text-xs text-slate-400 rounded-lg border border-dashed border-slate-200 p-3 text-center">No payment modes yet. Add at least one so HR can pay this vendor.</div>
+        : <div className="space-y-2">
+          {modes.map((m, i) => (
+            <div key={i} className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
+              <div className="flex items-center justify-between mb-2"><span className="text-[11px] font-extrabold uppercase tracking-wide text-[#4338CA]">{LABEL[m.type]}</span><button type="button" onClick={() => remove(i)} className="text-red-400 text-lg leading-none">×</button></div>
+              {m.type === 'bank' && (
+                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <input value={m.accountName || ''} onChange={(e) => upd(i, 'accountName', e.target.value)} className="inp" placeholder="Account name" />
+                  <input value={m.accountNumber || ''} onChange={(e) => upd(i, 'accountNumber', e.target.value)} className="inp" placeholder="Account number" />
+                  <input value={m.bankName || ''} onChange={(e) => upd(i, 'bankName', e.target.value)} className="inp" placeholder="Bank name" />
+                  <input value={m.ifsc || ''} onChange={(e) => upd(i, 'ifsc', e.target.value.toUpperCase())} maxLength={11} className="inp font-mono" placeholder="IFSC code" />
+                  <select value={m.accountType || ''} onChange={(e) => upd(i, 'accountType', e.target.value)} className="inp"><option value="">Account type…</option><option>Savings</option><option>Current</option></select>
+                </div>
+              )}
+              {m.type === 'upi' && (
+                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <input value={m.upiId || ''} onChange={(e) => upd(i, 'upiId', e.target.value)} className="inp" placeholder="UPI ID (name@bank)" />
+                  <input value={m.mobile || ''} onChange={(e) => upd(i, 'mobile', e.target.value)} className="inp" placeholder="Mobile number" />
+                </div>
+              )}
+              {(m.type === 'cash' || m.type === 'cheque') && <div className="text-[11px] text-slate-400">No extra details needed.</div>}
+            </div>
+          ))}
+        </div>}
+    </div>
   );
 }
 
@@ -434,6 +508,7 @@ function ExpenseDrawer({ expense: e, onClose }) {
       <div className="flex items-center gap-2 mb-3"><StatusBadge s={e.status} /><span className="text-lg font-extrabold text-[#050A1F] ml-auto">{inr(e.amount)}</span></div>
       <Row label="Payee"><span className="inline-flex items-center gap-2"><PayeeIcon type={e.payeeType} name={e.payeeName} />{e.payeeName} <span className="text-[10px] text-slate-400 uppercase">({e.payeeType})</span></span></Row>
       <Row label="Expense date">{fmtDate(e.expenseDate)}</Row>
+      {e.selectedPaymentMode && <Row label="Chosen mode">{modeSummary(e.selectedPaymentMode)}</Row>}
       <Row label="Description">{e.description || '—'}</Row>
       <Row label="Invoice">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">📎 {e.invoiceName || 'View invoice'}</a> : '—'}</Row>
       <Row label="Raised by">{titleCase(e.raisedByName || '—')}</Row>
