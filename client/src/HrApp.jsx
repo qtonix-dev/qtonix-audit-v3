@@ -441,7 +441,7 @@ function HrTasksView({ user, isAdmin }) {
           <TAvatar person={board.viewer} size={36} />
           <div>
             <h1 className="text-xl font-extrabold text-[#050A1F]">{viewingOwn ? 'My tasks' : `${board.viewer.name}’s tasks`}</h1>
-            {(isAdmin || people.length > 1) && (
+            {isAdmin && (
               <select value={viewerId} onChange={(e) => loadBoard(Number(e.target.value))} className="mt-0.5 text-[11px] text-slate-500 bg-transparent border border-slate-200 rounded-md px-1.5 py-0.5 focus:outline-none">
                 {myBoardId != null && <option value={myBoardId}>My board</option>}
                 {people.filter((p) => p.id !== myBoardId).map((p) => <option key={p.id} value={p.id}>{titleCase(p.name)}{p.taskCount ? ` (${p.taskCount})` : ''}</option>)}
@@ -551,12 +551,13 @@ function HrTasksView({ user, isAdmin }) {
 // Rich-text editor (TipTap) for task/subtask descriptions. Emits sanitized-ish
 // HTML on blur. A compact toolbar covers the Asana basics.
 function RichText({ value, onSave, placeholder }) {
+  const lastSaved = useRef(value || '');
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: { levels: [2, 3] } }), Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } })],
     content: value || '',
     editorProps: { attributes: { class: 'prose prose-sm max-w-none focus:outline-none min-h-[70px] px-3 py-2' } },
   });
-  useEffect(() => { if (editor && value !== editor.getHTML()) editor.commands.setContent(value || '', false); /* eslint-disable-next-line */ }, [editor]);
+  useEffect(() => { if (editor && value !== editor.getHTML()) { editor.commands.setContent(value || '', false); lastSaved.current = value || ''; } /* eslint-disable-next-line */ }, [editor]);
   if (!editor) return null;
   const Btn = ({ on, active, children, title }) => (
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); on(); }} className={`w-7 h-7 rounded text-xs font-bold flex items-center justify-center ${active ? 'bg-slate-200 text-[#050A1F]' : 'text-slate-500 hover:bg-slate-100'}`}>{children}</button>
@@ -575,7 +576,7 @@ function RichText({ value, onSave, placeholder }) {
         <Btn title="Code" on={() => editor.chain().focus().toggleCode().run()} active={editor.isActive('code')}>{'</>'}</Btn>
         <Btn title="Link" on={setLink} active={editor.isActive('link')}>🔗</Btn>
       </div>
-      <div onBlur={() => onSave && onSave(editor.getHTML())}>
+      <div onBlur={() => { const html = editor.getHTML(); if (onSave && html !== lastSaved.current) { lastSaved.current = html; onSave(html); } }}>
         <EditorContent editor={editor} />
         {editor.isEmpty && placeholder && <div className="px-3 -mt-[60px] text-sm text-slate-400 pointer-events-none">{placeholder}</div>}
       </div>

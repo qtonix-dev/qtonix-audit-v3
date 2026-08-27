@@ -1949,6 +1949,7 @@ const TaskAttachment = sequelize.define('TaskAttachment', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   taskId: { type: DataTypes.INTEGER, allowNull: false },
   url: { type: DataTypes.STRING(600), allowNull: false },
+  fileId: { type: DataTypes.STRING(120), allowNull: true }, // ImageKit fileId, for deletion
   name: { type: DataTypes.STRING(300), defaultValue: '' },
   mime: { type: DataTypes.STRING(120), defaultValue: '' },
   size: { type: DataTypes.INTEGER, defaultValue: 0 },

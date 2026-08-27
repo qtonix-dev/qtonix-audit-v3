@@ -106,4 +106,19 @@ async function uploadFile({ base64, fileName, folder }) {
   return { url: data.url, fileId: data.fileId, name: data.name, thumbnailUrl: data.thumbnailUrl, size: data.size };
 }
 
-module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder, emailFolder, uploadFile };
+// Delete a file from ImageKit by its fileId. Best-effort: never throws (a failed
+// remote delete shouldn't block deleting our own record).
+async function deleteFile(fileId) {
+  if (!fileId) return false;
+  try {
+    const { Settings } = require('../models');
+    const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = getConfig(settings);
+    if (!cfg.privateKey) return false;
+    const auth = 'Basic ' + Buffer.from(cfg.privateKey + ':').toString('base64');
+    const res = await fetch(`https://api.imagekit.io/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE', headers: { Authorization: auth } });
+    return res.ok || res.status === 404; // 404 = already gone
+  } catch { return false; }
+}
+
+module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder, emailFolder, uploadFile, deleteFile };

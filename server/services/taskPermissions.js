@@ -52,46 +52,64 @@ function sameTeam(a, b) {
 }
 
 // Core decision. `actorUser` is the acting HrUser row (or null for a pure CRM
-// admin). `targetUser` is the HrUser the task would be assigned to. `ctx.isAdmin`
-// / `ctx.isHr` let the caller pass through CRM-admin / HR-access context that
-// isn't on the HrUser row itself.
+// admin). `targetUser` is the HrUser the task would be assigned to.
 //
-// Returns true if the actor may assign a task to the target.
-function canAssign(actorUser, targetUser, ctx = {}) {
+// Visibility / assign rules (the assignee dropdown shows exactly this set):
+//   • Admin / HR-manager / HR  → everyone
+//   • Lead (manager|tl|senior)  → their whole downline (people under them, at any
+//                                 depth) ＋ every other lead (seniors who have
+//                                 reports or head a department) ＋ their own
+//                                 reporting chain upward ＋ self
+//   • Member (everyone else)    → everyone in their OWN DEPARTMENT (same branch)
+//                                 ＋ their reporting chain upward ＋ self
+//
+// `roster` (all active HrUsers) is needed to walk the hierarchy; callers that
+// don't pass it fall back to the direct-relationship checks only.
+function canAssign(actorUser, targetUser, ctx = {}, roster = null) {
   if (!targetUser || !targetUser.active) return false;
 
-  // Admins and HR can assign to everyone.
+  // Admins and HR (role, not merely HR-side login) can assign to everyone.
   if (ctx.isAdmin || ctx.isHr) return true;
-  if (!actorUser) return false; // no HrUser identity and not admin/HR → nothing
+  if (!actorUser) return false;
   if (isHrActor(actorUser)) return true;
-  if (isAdminActor(actorUser)) return true;
 
   // Self is always allowed.
   if (actorUser.id === targetUser.id) return true;
 
-  // Leads: own team (down) ＋ own manager (up) ＋ other-department leads ＋ HR.
+  const byId = roster ? new Map(roster.map((u) => [u.id, u])) : null;
+  // Walk the actor's reporting chain upward — they can always reach their own
+  // managers (reporting authority), including a lead's manager.
+  const inMyReportingChain = (tid) => {
+    if (!byId) return actorUser.reportsToId === tid; // shallow fallback
+    let cur = actorUser; const seen = new Set();
+    while (cur && cur.reportsToId && !seen.has(cur.id)) { seen.add(cur.id); if (cur.reportsToId === tid) return true; cur = byId.get(cur.reportsToId); }
+    return false;
+  };
+
   if (isLead(actorUser)) {
-    // down: target reports to me
-    if (targetUser.reportsToId && targetUser.reportsToId === actorUser.id) return true;
-    // same team (shared manager)
-    if (sameTeam(actorUser, targetUser)) return true;
-    // up: my own manager
-    if (actorUser.reportsToId && actorUser.reportsToId === targetUser.id) return true;
-    // sideways: any other-department lead
-    if (isLead(targetUser) && (targetUser.department || '') !== (actorUser.department || '')) return true;
-    // HR is reachable by leads
-    if (HR_TYPES.has(targetUser.type) || targetUser.isHrManager) return true;
+    // Downline: target is under the actor at any depth.
+    if (byId && isDownline(actorUser, targetUser, roster)) return true;
+    if (targetUser.reportsToId === actorUser.id) return true; // direct report
+    // Reporting chain upward.
+    if (inMyReportingChain(targetUser.id)) return true;
+    // Any other lead (has reports, or heads a department) — seniors who lead.
+    if (isLead(targetUser)) return true;
     return false;
   }
 
-  // Regular members: self ＋ own team-mates only.
-  return sameTeam(actorUser, targetUser);
+  // Member: everyone in their own department (same branch) ＋ reporting chain.
+  const sameDept = (actorUser.department || '') && (targetUser.department || '') &&
+    (actorUser.department || '').toLowerCase() === (targetUser.department || '').toLowerCase() &&
+    (actorUser.branch || '').toLowerCase() === (targetUser.branch || '').toLowerCase();
+  if (sameDept) return true;
+  if (inMyReportingChain(targetUser.id)) return true;
+  return false;
 }
 
 // Build the list of HrUser ids an actor may assign to, from a roster of all
 // active HrUsers. Used to scope the assignee picker + validate the API.
 function assignableIds(actorUser, roster, ctx = {}) {
-  return roster.filter((u) => canAssign(actorUser, u, ctx)).map((u) => u.id);
+  return roster.filter((u) => canAssign(actorUser, u, ctx, roster)).map((u) => u.id);
 }
 
 // Whether an actor may VIEW another person's task board (the top switcher +
@@ -116,11 +134,12 @@ function isDownline(actorUser, targetUser, roster) {
 }
 function canViewBoard(actorUser, targetUser, roster, ctx = {}) {
   if (!targetUser) return false;
-  if (ctx.isAdmin || ctx.isHr) return true;
+  // Only admins may view someone else's task board. Everyone else (including
+  // HR and leads) sees only their own board — viewing another person's whole
+  // board is an admin-only capability.
+  if (ctx.isAdmin) return true;
   if (!actorUser) return false;
-  if (actorUser.id === targetUser.id) return true;   // own board
-  if (isLead(actorUser)) return isDownline(actorUser, targetUser, roster);
-  return false;                                       // members: self only
+  return actorUser.id === targetUser.id;
 }
 function viewableBoardIds(actorUser, roster, ctx = {}) {
   return roster.filter((u) => canViewBoard(actorUser, u, roster, ctx)).map((u) => u.id);

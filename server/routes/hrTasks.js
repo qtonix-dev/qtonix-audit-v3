@@ -201,7 +201,7 @@ router.get('/assignable', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
     const people = await roster();
-    const allowed = people.filter((u) => canAssign(ctx.actorUser, u, ctx));
+    const allowed = people.filter((u) => canAssign(ctx.actorUser, u, ctx, people));
     const q = String(req.query.q || '').trim().toLowerCase();
     const filtered = q ? allowed.filter((u) => u.name.toLowerCase().includes(q) || (u.designation || '').toLowerCase().includes(q)) : allowed;
     const list = filtered.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type }));
@@ -250,7 +250,7 @@ router.post('/tasks', guard, async (req, res, next) => {
     } else {
       const target = people.find((u) => u.id === assigneeId);
       if (!target) return res.status(404).json({ error: 'Assignee not found.' });
-      if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+      if (!canAssign(ctx.actorUser, target, ctx, people)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
       targetName = target.name;
     }
 
@@ -322,7 +322,7 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
         const people = await roster();
         const target = people.find((u) => u.id === newId);
         if (!target) return res.status(404).json({ error: 'Assignee not found.' });
-        if (!canAssign(ctx.actorUser, target, ctx)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
+        if (!canAssign(ctx.actorUser, target, ctx, people)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
         newName = target.name;
       }
       row.assigneeId = newId;
@@ -350,6 +350,12 @@ router.delete('/tasks/:id', guard, async (req, res, next) => {
     const subs = await Task.findAll({ where: { parentTaskId: row.id }, attributes: ['id'] });
     const allIds = [row.id, ...subs.map((s) => s.id)];
     await TaskComment.destroy({ where: { taskId: { [Op.in]: allIds } } });
+    // Remove attached files from ImageKit before dropping the DB rows.
+    const attachs = await TaskAttachment.findAll({ where: { taskId: { [Op.in]: allIds } } });
+    if (attachs.length) {
+      const ik = require('../services/imagekit');
+      for (const at of attachs) { if (at.fileId) { try { await ik.deleteFile(at.fileId); } catch {} } }
+    }
     await TaskAttachment.destroy({ where: { taskId: { [Op.in]: allIds } } });
     await TaskActivity.destroy({ where: { taskId: { [Op.in]: allIds } } });
     await Task.destroy({ where: { id: { [Op.in]: allIds } } });
@@ -445,7 +451,7 @@ router.post('/tasks/:id/upload', guard, async (req, res, next) => {
     let up;
     try { up = await imagekit.uploadFile({ base64, fileName: name, folder: '/tasks/' + row.id }); }
     catch (e) { return res.status(400).json({ error: e.message || 'Upload failed.' }); }
-    const a = await TaskAttachment.create({ taskId: row.id, url: up.url, name: up.name || name, mime, size: up.size || approxBytes, uploadedById: ctx.actorId || null });
+    const a = await TaskAttachment.create({ taskId: row.id, url: up.url, fileId: up.fileId || null, name: up.name || name, mime, size: up.size || approxBytes, uploadedById: ctx.actorId || null });
     await logActivity(row.id, ctx, 'created', 'attached ' + (up.name || name));
     res.status(201).json(a.toJSON());
   } catch (e) { next(e); }
@@ -455,6 +461,7 @@ router.delete('/attachments/:id', guard, async (req, res, next) => {
   try {
     const a = await TaskAttachment.findByPk(req.params.id);
     if (!a) return res.status(404).json({ error: 'Attachment not found.' });
+    if (a.fileId) { try { await require('../services/imagekit').deleteFile(a.fileId); } catch {} }
     await a.destroy();
     res.json({ ok: true });
   } catch (e) { next(e); }
