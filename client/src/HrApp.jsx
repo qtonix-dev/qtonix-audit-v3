@@ -1217,10 +1217,13 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const [calOpen, setCalOpen] = useState(false);
   const [decideItem, setDecideItem] = useState(null); // leave review item open in the decision popup
   const [orgOpen, setOrgOpen] = useState(false);      // organization chart modal
+  const [claims, setClaims] = useState([]);
+  const [claimOpen, setClaimOpen] = useState(false);
 
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
   const loadReviews = () => hrApi('/me/reviews').then((r) => setReviews(r.reviews || [])).catch(() => {});
+  const loadClaims = () => hrApi('/me/claims').then((r) => setClaims(r.claims || [])).catch(() => {});
   const loadInterviews = () => hrApi('/my-interviews').then((r) => {
     const jobs = (r && r.jobs) || []; const flat = [];
     jobs.forEach((j) => (j.candidates || []).forEach((c) => flat.push({ ...c, jobTitle: j.jobTitle })));
@@ -1234,6 +1237,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
     hrApi('/announcements').then((r) => setAnn(Array.isArray(r) ? r : (r.announcements || []))).catch(() => {});
     hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
     hrApi('/me/quote-of-the-day').then(setDailyQuote).catch(() => {});
+    hrApi('/me/claims').then((r) => setClaims(r.claims || [])).catch(() => {});
   }, []);
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
@@ -1273,15 +1277,15 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {/* greeting hero */}
       <div className="rounded-2xl p-8 mb-4 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
         <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
-        <div className="relative flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
-            <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
+        <div className="relative">
+          <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
+          <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
+          <div className="flex justify-end mt-4">
+            <button onClick={() => setOrgOpen(true)} className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-2 text-xs font-bold text-white transition-colors">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="8.5" y="14" width="7" height="7" rx="1" /><path d="M6.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10 M12 13.5V14" /></svg>
+              Organization chart
+            </button>
           </div>
-          <button onClick={() => setOrgOpen(true)} className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-2 text-xs font-bold text-white transition-colors">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="8.5" y="14" width="7" height="7" rx="1" /><path d="M6.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10 M12 13.5V14" /></svg>
-            Organization chart
-          </button>
         </div>
       </div>
 
@@ -1363,6 +1367,30 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
               <button onClick={() => setApplyOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-white" style={{ background: ORNG }}>+ Apply Leave</button>
               <button onClick={() => setHistOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-slate-700 bg-slate-100">Leave History</button>
             </div>
+          </div>
+
+          {/* EXPENSE CLAIMS */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Expense claims</h3>
+              <button onClick={() => setClaimOpen(true)} className="rounded-lg px-3 py-1.5 text-xs font-extrabold text-white" style={{ background: ORNG }}>+ New claim</button>
+            </div>
+            {claims.length === 0 ? (
+              <div className="text-sm text-slate-400 py-1">No claims yet. Raise one to get a work expense reimbursed.</div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {claims.slice(0, 5).map((c) => (
+                  <div key={c._id} className="flex items-center gap-2.5 py-2 border-t border-slate-50 first:border-t-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-bold text-[#050A1F] truncate">{c.title}</div>
+                      <div className="text-[11px] text-slate-400">{claimStatusLabel(c.status)}{c.status !== 'submitted' && c.approvedAmount != null && Number(c.approvedAmount) !== Number(c.claimedAmount) ? ` · ₹${Number(c.approvedAmount).toLocaleString('en-IN')} of ₹${Number(c.claimedAmount).toLocaleString('en-IN')}` : ''}{c.hrReviewNotes ? ` · ${c.hrReviewNotes}` : ''}</div>
+                    </div>
+                    <span className="text-[13px] font-extrabold text-[#050A1F]">₹{Number(c.approvedAmount ?? c.amount ?? 0).toLocaleString('en-IN')}</span>
+                    <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={claimStatusStyle(c.status)}>{claimStatusShort(c.status)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* CELEBRATIONS */}
@@ -1526,6 +1554,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
       {orgOpen && <EmployeeOrgChartModal onClose={() => setOrgOpen(false)} />}
+      {claimOpen && <EmployeeClaimModal onClose={() => setClaimOpen(false)} onSaved={() => { setClaimOpen(false); loadClaims(); }} />}
     </div>
   );
 }
@@ -1535,6 +1564,90 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 // Leave decision popup — opened from the Review box. Shows the employee, the
 // leave breakdown (half/full/multi with per-day weekday), the last leave they
 // took, a notes box, and Approve / Decline.
+// ===== Employee expense claims =============================================
+const CLAIM_PAY_TYPES = [['ta', 'TA (Travel Allowance)'], ['da', 'DA (Daily Allowance)'], ['other', 'Other expenses'], ['advance', 'Advance']];
+function claimStatusLabel(s) {
+  return ({ submitted: 'Awaiting HR review', hr_approved: 'Awaiting admin approval', approved: 'Approved · awaiting settlement', queued_for_payroll: 'Added to next salary', paid: 'Paid', rejected: 'Rejected' })[s] || s;
+}
+function claimStatusShort(s) {
+  return ({ submitted: 'HR REVIEW', hr_approved: 'ADMIN', approved: 'APPROVED', queued_for_payroll: 'IN SALARY', paid: 'PAID', rejected: 'REJECTED' })[s] || String(s).toUpperCase();
+}
+function claimStatusStyle(s) {
+  const m = { submitted: ['#FEF3C7', '#B45309'], hr_approved: ['#E0E7FF', '#4338CA'], approved: ['#DBEAFE', '#1D4ED8'], queued_for_payroll: ['#EDE9FE', '#6D28D9'], paid: ['#DCFCE7', '#15803D'], rejected: ['#FEE2E2', '#B91C1C'] }[s] || ['#F1F5F9', '#475569'];
+  return { background: m[0], color: m[1] };
+}
+
+// Employee raises a reimbursement claim (uploads invoice, AI auto-fills, HR then
+// reviews and admin approves). Reuses the invoice upload + AI parse we built.
+function EmployeeClaimModal({ onClose, onSaved }) {
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const [f, setF] = useState({ title: '', amount: '', employeePayType: '', expenseDate: today, description: '' });
+  const [invoice, setInvoice] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [aiState, setAiState] = useState(''); const [aiNote, setAiNote] = useState('');
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const readAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('Could not read file.')); r.readAsDataURL(file); });
+  const pickInvoice = async (e) => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    setUploading(true); setErr(''); setAiState(''); setAiNote('');
+    let dataUrl = ''; try { dataUrl = await readAsDataURL(file); } catch {}
+    try { const safe = (f.title || 'claim').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30); const { url } = await uploadToImageKit(file, `/qtonix-hr/claims/${safe}-${Date.now()}`, file.name); setInvoice({ url, name: file.name }); }
+    catch (er) { setErr('Invoice upload failed. ' + (er.message || '')); setUploading(false); return; }
+    setUploading(false);
+    if (!dataUrl) return;
+    setAiState('reading');
+    try {
+      const r = await hrApi('/expenses/parse-invoice', { method: 'POST', body: JSON.stringify({ base64: dataUrl, fileName: file.name }) });
+      if (r && r.ok && r.fields) {
+        const fld = r.fields;
+        setF((s) => ({ ...s, title: s.title || fld.description || fld.vendorName || s.title, amount: s.amount || (fld.amount ? String(fld.amount) : s.amount), expenseDate: fld.invoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(fld.invoiceDate) ? fld.invoiceDate : s.expenseDate, description: s.description || fld.description || '' }));
+        setAiState('done'); setAiNote('Details filled from the invoice. Please review.');
+      } else { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
+    } catch { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
+  };
+  const save = async () => {
+    if (!f.title.trim()) { setErr('What is the claim for?'); return; }
+    if (!(Number(f.amount) > 0)) { setErr('Enter a valid amount.'); return; }
+    if (!f.employeePayType) { setErr('Choose the claim type.'); return; }
+    if (f.employeePayType === 'other' && !f.description.trim()) { setErr('Please add details for an "Other expenses" claim.'); return; }
+    setBusy(true); setErr('');
+    try { await hrApi('/me/claims', { method: 'POST', body: JSON.stringify({ ...f, amount: Number(f.amount), invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
+    catch (er) { setErr(er.message); } finally { setBusy(false); }
+  };
+  const inpCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300';
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[140] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4"><div className="text-lg font-extrabold text-[#050A1F]">New expense claim</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
+
+        <div className="rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 p-4 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-indigo-500 text-white flex items-center justify-center text-lg shrink-0">✨</div>
+            <div className="flex-1 min-w-0"><div className="text-sm font-bold text-[#050A1F]">Upload the invoice to auto-fill</div><div className="text-[11px] text-slate-500">We’ll read the amount and date. The file is attached to your claim.</div></div>
+            <label className={`inline-block rounded-lg px-3 py-2 text-xs font-bold cursor-pointer text-white shrink-0 ${uploading || aiState === 'reading' ? 'opacity-60 pointer-events-none' : ''}`} style={{ background: 'linear-gradient(90deg,#6366F1,#4338CA)' }}>
+              {uploading ? 'Uploading…' : aiState === 'reading' ? 'Reading…' : (invoice ? 'Replace' : 'Upload')}
+              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={pickInvoice} disabled={uploading || aiState === 'reading'} />
+            </label>
+          </div>
+          {invoice && <div className="mt-2 flex items-center gap-2 text-[11px]"><span className="text-green-600 font-bold">✓ {invoice.name}</span>{aiState === 'reading' && <span className="text-indigo-500">· reading…</span>}{aiState === 'done' && <span className="text-indigo-600 font-semibold">· {aiNote}</span>}{aiState === 'failed' && <span className="text-amber-600">· {aiNote}</span>}</div>}
+        </div>
+
+        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">What is this claim for?</label><input value={f.title} onChange={(e) => set('title', e.target.value)} className={inpCls} placeholder="e.g. Cab to client meeting" /></div>
+          <div><label className="text-xs font-bold text-slate-500">Amount (₹)</label><input value={f.amount} onChange={(e) => set('amount', e.target.value)} className={inpCls} placeholder="0" /></div>
+          <div><label className="text-xs font-bold text-slate-500">Date</label><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className={inpCls} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">Claim type</label><select value={f.employeePayType} onChange={(e) => set('employeePayType', e.target.value)} className={inpCls}><option value="">Select type…</option>{CLAIM_PAY_TYPES.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}</select></div>
+          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">Details {f.employeePayType === 'other' && <span className="text-amber-600">(required)</span>}</label><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className={inpCls} placeholder="Add any notes to help HR review your claim" /></div>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-400">Your claim goes to HR for review, then to admin for approval. HR may adjust the reimbursable amount.</div>
+        <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORNG }}>{busy ? 'Submitting…' : 'Submit claim'}</button></div>
+      </div>
+    </div>
+  );
+}
+
 function EmployeeOrgChartModal({ onClose }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');

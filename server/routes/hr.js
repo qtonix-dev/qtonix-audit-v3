@@ -1870,6 +1870,11 @@ router.get('/expenses', requireHrAccess, async (req, res, next) => {
     // Branch scoping for single-branch managers.
     if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
     const rows = await HrExpense.findAll({ where, order: [['expenseDate', 'DESC'], ['createdAt', 'DESC']], limit: 2000 });
+    // Attach each vendor's saved payment modes so the Pay window can show full
+    // bank-account / cheque-payee details without a second lookup.
+    const vendorIds = [...new Set(rows.map((r) => r.vendorId).filter(Boolean))];
+    const vendors = vendorIds.length ? await HrVendor.findAll({ where: { id: vendorIds }, attributes: ['id', 'name', 'paymentModes'] }) : [];
+    const vendorById = Object.fromEntries(vendors.map((v) => [v.id, v]));
     // Summary counts (INR amounts).
     const monthStr = istDateStr().slice(0, 7);
     let paidThisMonth = 0, totalThisMonth = 0;
@@ -1880,15 +1885,26 @@ router.get('/expenses', requireHrAccess, async (req, res, next) => {
       if (r.status === 'paid' && (r.paymentDate || r.expenseDate || '').slice(0, 7) === monthStr) paidThisMonth += Number(r.amount || 0);
     });
     res.json({
-      expenses: rows.map((r) => r.toJSON()),
+      expenses: rows.map((r) => { const o = r.toJSON(); const v = r.vendorId ? vendorById[r.vendorId] : null; o.vendorPaymentModes = v && Array.isArray(v.paymentModes) ? v.paymentModes : []; return o; }),
       counts: { pending: counts.submitted, approved: counts.approved, paid: counts.paid, rejected: counts.rejected },
       paidThisMonth, totalThisMonth,
     });
   } catch (e) { next(e); }
 });
+// Employee payment types. HR may use all five; employee self-claims may use all
+// EXCEPT 'incentive'. 'other' requires a description.
+const EMPLOYEE_PAY_TYPES = ['ta', 'da', 'other', 'advance', 'incentive'];
+const EMPLOYEE_CLAIM_PAY_TYPES = ['ta', 'da', 'other', 'advance']; // no incentive
 function buildExpensePayee(b) {
   const payeeType = b.payeeType === 'employee' ? 'employee' : 'vendor';
-  return { payeeType, vendorId: payeeType === 'vendor' ? (b.vendorId || null) : null, employeeId: payeeType === 'employee' ? (b.employeeId || null) : null };
+  const employeePayType = payeeType === 'employee' && EMPLOYEE_PAY_TYPES.includes(String(b.employeePayType || '').toLowerCase())
+    ? String(b.employeePayType).toLowerCase() : null;
+  return {
+    payeeType,
+    vendorId: payeeType === 'vendor' ? (b.vendorId || null) : null,
+    employeeId: payeeType === 'employee' ? (b.employeeId || null) : null,
+    employeePayType,
+  };
 }
 router.post('/expenses', requireHrAccess, async (req, res, next) => {
   try {
@@ -1901,6 +1917,11 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
     if (!EXPENSE_BRANCHES.includes(b.branch)) return res.status(400).json({ error: 'Choose a branch.' });
     if (!expenseScopeOk(req, b.branch)) return res.status(403).json({ error: 'You can only raise expenses for your branch.' });
     const payee = buildExpensePayee(b);
+    // Employee payments must carry a pay type; 'other' requires a description.
+    if (payee.payeeType === 'employee') {
+      if (!payee.employeePayType) return res.status(400).json({ error: 'Choose the type of employee payment (TA, DA, Other, Advance or Incentive).' });
+      if (payee.employeePayType === 'other' && !String(b.description || '').trim()) return res.status(400).json({ error: 'Please add details for an "Other expenses" payment.' });
+    }
     // Resolve payee name.
     let payeeName = String(b.payeeName || '').trim();
     if (!payeeName && payee.payeeType === 'vendor' && payee.vendorId) { const v = await HrVendor.findByPk(payee.vendorId); payeeName = v ? v.name : ''; }
@@ -1941,7 +1962,10 @@ router.post('/expenses/:id/decide', requireHrAccess, requireHrAdmin, async (req,
   try {
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
-    if (row.status !== 'submitted') return res.status(400).json({ error: 'Only a submitted expense can be approved or rejected.' });
+    // A regular expense is approved from 'submitted'. An employee CLAIM is
+    // approved by admin from 'hr_approved' (after HR has set the amount).
+    const okFrom = row.isClaim ? 'hr_approved' : 'submitted';
+    if (row.status !== okFrom) return res.status(400).json({ error: row.isClaim ? 'Only an HR-reviewed claim can be approved or rejected by admin.' : 'Only a submitted expense can be approved or rejected.' });
     const decision = req.body && req.body.decision;
     if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
     if (decision === 'approve') {
@@ -1952,11 +1976,170 @@ router.post('/expenses/:id/decide', requireHrAccess, requireHrAdmin, async (req,
     }
     await row.save();
     hrLog(req, `expense.${decision}`, row.title);
-    try { if (row.raisedById) await HrNotification.create({ userId: row.raisedById, actorKind: 'hr', type: 'info', text: `Expense "${row.title}" (₹${Number(row.amount).toLocaleString('en-IN')}) was ${decision === 'approve' ? 'approved' : 'rejected'} by ${req.hrActor.name}.` }); } catch {}
+    try { if (row.raisedById) await HrNotification.create({ userId: row.raisedById, actorKind: 'hr', type: 'info', text: `${row.isClaim ? 'Your claim' : 'Expense'} "${row.title}" (₹${Number(row.amount).toLocaleString('en-IN')}) was ${decision === 'approve' ? 'approved' : 'rejected'} by ${req.hrActor.name}.${decision === 'approve' && row.isClaim ? ' It will be settled shortly.' : ''}` }); } catch {}
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });
-// Per-month expense totals (for the "Total this month" drill-down popup).
+// ===== Employee expense-claim flow (self-service reimbursement) =============
+// Lifecycle: submitted → hr_approved (HR sets reimbursable amount + notes) →
+// approved (admin) → settle (cheque|cash → paid, or salary → queued_for_payroll
+// → paid when a payslip picks it up).
+//
+// Any active employee may raise a claim for themselves. Pay type excludes
+// 'incentive'. HR reviews & can only reduce/keep the amount, then admin approves.
+
+// POST /me/claims — employee raises a reimbursement claim for themselves.
+router.post('/me/claims', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only employees can raise a claim.' });
+    const me = req.hrUser;
+    const b = req.body || {};
+    const title = String(b.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Title is required.' });
+    const amount = Number(b.amount || 0);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
+    const payType = EMPLOYEE_CLAIM_PAY_TYPES.includes(String(b.employeePayType || '').toLowerCase()) ? String(b.employeePayType).toLowerCase() : null;
+    if (!payType) return res.status(400).json({ error: 'Choose the claim type (TA, DA, Other or Advance).' });
+    const description = String(b.description || '').trim();
+    if (payType === 'other' && !description) return res.status(400).json({ error: 'Please add details for an "Other expenses" claim.' });
+    const row = await HrExpense.create({
+      title, category: 'Reimbursement', amount, currency: 'INR',
+      expenseDate: b.expenseDate || istDateStr(), branch: me.branch || 'Bhubaneswar',
+      payeeType: 'employee', employeeId: me.id, payeeName: me.name, employeePayType: payType,
+      description: description || null,
+      invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      status: 'submitted', isClaim: true, claimedAmount: amount,
+      raisedById: me.id, raisedByKind: 'hr', raisedByName: me.name,
+    });
+    hrLog(req, 'claim.raise', title);
+    res.status(201).json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// GET /me/claims — the caller's own claims.
+router.get('/me/claims', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ claims: [] });
+    const rows = await HrExpense.findAll({ where: { isClaim: true, employeeId: req.hrActor.id }, order: [['createdAt', 'DESC']], limit: 500 });
+    res.json({ claims: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// GET /claims — claims for HR/admin to review, branch-scoped. Optional ?status=.
+router.get('/claims', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view claims.' });
+    const where = { isClaim: true };
+    if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
+    if (req.query.status) where.status = String(req.query.status);
+    const rows = await HrExpense.findAll({ where, order: [['createdAt', 'DESC']], limit: 1000 });
+    const counts = { submitted: 0, hr_approved: 0, approved: 0, queued_for_payroll: 0, paid: 0, rejected: 0 };
+    (await HrExpense.findAll({ where: { isClaim: true, ...(where.branch ? { branch: where.branch } : {}) }, attributes: ['status'] }))
+      .forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+    res.json({ claims: rows.map((r) => r.toJSON()), counts });
+  } catch (e) { next(e); }
+});
+
+// POST /expenses/:id/hr-review — HR sets the reimbursable amount + notes.
+// Moves a claim submitted → hr_approved, or rejects it. HR may only reduce or
+// keep the claimed amount, never increase it.
+router.post('/expenses/:id/hr-review', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can review claims.' });
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row || !row.isClaim) return res.status(404).json({ error: 'Claim not found.' });
+    if (row.status !== 'submitted') return res.status(400).json({ error: 'Only a submitted claim can be reviewed.' });
+    const b = req.body || {};
+    const decision = b.decision;
+    if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
+    if (decision === 'reject') {
+      row.status = 'rejected';
+      row.hrReviewNotes = String(b.notes || '').slice(0, 1000) || null;
+      row.hrReviewedById = req.hrActor.id; row.hrReviewedByName = req.hrActor.name; row.hrReviewedAt = new Date();
+      row.rejectionReason = String(b.notes || 'Rejected by HR').slice(0, 500);
+      await row.save();
+      hrLog(req, 'claim.hr_reject', row.title);
+      try { await HrNotification.create({ userId: row.employeeId, actorKind: 'hr', type: 'info', text: `Your claim "${row.title}" was rejected by ${req.hrActor.name}.` }); } catch {}
+      return res.json(row.toJSON());
+    }
+    // approve → set reimbursable amount (≤ claimed) + notes.
+    const approvedAmount = Number(b.approvedAmount);
+    const claimed = Number(row.claimedAmount || row.amount || 0);
+    if (!(approvedAmount > 0)) return res.status(400).json({ error: 'Enter the reimbursable amount.' });
+    if (approvedAmount > claimed) return res.status(400).json({ error: `The reimbursable amount cannot exceed the claimed amount (₹${claimed.toLocaleString('en-IN')}).` });
+    row.approvedAmount = approvedAmount;
+    row.amount = approvedAmount; // the amount that will actually be paid
+    row.hrReviewNotes = String(b.notes || '').slice(0, 1000) || null;
+    row.hrReviewedById = req.hrActor.id; row.hrReviewedByName = req.hrActor.name; row.hrReviewedAt = new Date();
+    row.status = 'hr_approved';
+    await row.save();
+    hrLog(req, 'claim.hr_approve', row.title);
+    try {
+      const note = approvedAmount < claimed ? ` (adjusted from ₹${claimed.toLocaleString('en-IN')})` : '';
+      await HrNotification.create({ userId: row.employeeId, actorKind: 'hr', type: 'info', text: `Your claim "${row.title}" was reviewed by ${req.hrActor.name}. Reimbursable: ₹${approvedAmount.toLocaleString('en-IN')}${note}. Awaiting final approval.` });
+    } catch {}
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// POST /expenses/:id/settle — after admin approval, choose how a claim is paid.
+//   settlementMethod: 'cheque' | 'cash' → stays 'approved', settle via pay window.
+//   settlementMethod: 'salary' → status 'queued_for_payroll' (picked up by payslip).
+router.post('/expenses/:id/settle', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const row = await HrExpense.findByPk(req.params.id);
+    if (!row || !row.isClaim) return res.status(404).json({ error: 'Claim not found.' });
+    if (row.status !== 'approved') return res.status(400).json({ error: 'Only an approved claim can be settled.' });
+    const method = String((req.body && req.body.settlementMethod) || '').toLowerCase();
+    if (!['cheque', 'cash', 'salary'].includes(method)) return res.status(400).json({ error: 'Choose how to settle: cheque, cash or next salary.' });
+    row.settlementMethod = method;
+    if (method === 'salary') {
+      row.status = 'queued_for_payroll';
+      await row.save();
+      hrLog(req, 'claim.queue_salary', row.title);
+      try { await HrNotification.create({ userId: row.employeeId, actorKind: 'hr', type: 'info', text: `Your claim "${row.title}" (₹${Number(row.amount).toLocaleString('en-IN')}) will be added to your next salary.` }); } catch {}
+    } else {
+      // cheque / cash → leave as 'approved' so the existing Pay window settles it.
+      await row.save();
+      hrLog(req, 'claim.settle_' + method, row.title);
+    }
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+
+// --- Payslip integration (ready for the future payroll module) --------------
+// Returns approved claims queued to be paid via salary and not yet on a payslip.
+// The payslip module calls this to add a "Reimbursements" line, then calls
+// markReimbursementsPaid() with the payslip id.
+async function getPendingSalaryReimbursements(employeeId /*, month */) {
+  const where = { isClaim: true, status: 'queued_for_payroll', settlementMethod: 'salary', payslipId: null };
+  if (employeeId) where.employeeId = employeeId;
+  const rows = await HrExpense.findAll({ where, order: [['approvedAt', 'ASC']] });
+  return rows.map((r) => ({ id: r.id, employeeId: r.employeeId, title: r.title, amount: Number(r.amount || 0), payType: r.employeePayType, approvedAt: r.approvedAt }));
+}
+// Mark queued claims as paid and stamp the payslip they were included in.
+async function markReimbursementsPaid(claimIds, payslipId, actor) {
+  if (!Array.isArray(claimIds) || !claimIds.length) return 0;
+  const rows = await HrExpense.findAll({ where: { id: claimIds, isClaim: true, status: 'queued_for_payroll' } });
+  for (const r of rows) {
+    r.status = 'paid'; r.paymentMethod = 'salary'; r.payslipId = payslipId || null;
+    r.paymentDate = istDateStr(); r.paidById = actor ? actor.id : null; r.paidByName = actor ? actor.name : 'Payroll'; r.paidAt = new Date();
+    await r.save();
+  }
+  return rows.length;
+}
+// Expose the queue now (admin/HR); the payslip UI comes later.
+router.get('/reimbursements/pending-salary', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const employeeId = req.query.employeeId ? Number(req.query.employeeId) : null;
+    const items = await getPendingSalaryReimbursements(employeeId);
+    res.json({ items, total: items.reduce((s, x) => s + x.amount, 0) });
+  } catch (e) { next(e); }
+});
+
 router.get('/expenses/monthly', requireHrAccess, async (req, res, next) => {
   try {
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
@@ -2041,11 +2224,26 @@ router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
     row.paymentMethod = method;
     row.paymentDate = b.paymentDate || istDateStr();
     row.paymentRef = String(b.paymentRef || '').trim() || null;
+    // Reset method-specific fields, then set the ones relevant to this method.
+    row.bankName = null; row.paymentUpiId = null; row.paymentMobile = null;
+    row.chequeNumber = null; row.chequeBank = null; row.chequeDate = null;
     if (method === 'bank') {
       if (!BANK_NAMES.includes(String(b.bankName || ''))) return res.status(400).json({ error: 'Choose the bank for the transfer.' });
       row.bankName = b.bankName;
       if (!row.paymentRef) return res.status(400).json({ error: 'Transaction ID is required for a bank transfer.' });
-    } else { row.bankName = null; }
+    } else if (method === 'upi') {
+      row.paymentUpiId = String(b.paymentUpiId || '').trim() || null;
+      row.paymentMobile = String(b.paymentMobile || '').trim() || null;
+      if (!row.paymentUpiId) return res.status(400).json({ error: 'UPI ID is required for a UPI payment.' });
+      if (!row.paymentRef) return res.status(400).json({ error: 'UPI transaction / reference ID is required.' });
+    } else if (method === 'cheque') {
+      row.chequeNumber = String(b.chequeNumber || b.paymentRef || '').trim() || null;
+      row.chequeBank = String(b.chequeBank || '').trim() || null;
+      row.chequeDate = String(b.chequeDate || '').trim() || null;
+      if (!row.chequeNumber) return res.status(400).json({ error: 'Cheque number is required.' });
+      // Keep paymentRef mirrored to the cheque number for backward compatibility.
+      row.paymentRef = row.chequeNumber;
+    }
     row.status = 'paid'; row.paidById = req.hrActor.id; row.paidByName = req.hrActor.name; row.paidAt = new Date();
     await row.save();
     hrLog(req, 'expense.pay', row.title);
@@ -5599,3 +5797,6 @@ router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;
 module.exports.notify = notify;
+// For the future payroll/payslip module:
+module.exports.getPendingSalaryReimbursements = getPendingSalaryReimbursements;
+module.exports.markReimbursementsPaid = markReimbursementsPaid;

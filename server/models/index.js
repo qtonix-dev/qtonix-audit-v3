@@ -1624,6 +1624,10 @@ const HrExpense = sequelize.define('HrExpense', {
   vendorId: { type: DataTypes.INTEGER, allowNull: true },
   employeeId: { type: DataTypes.INTEGER, allowNull: true },
   payeeName: { type: DataTypes.STRING(200), allowNull: true },
+  // For employee payments: the kind of payment. HR-raised payments may use any
+  // of these; employee self-claims may use all EXCEPT 'incentive'.
+  //   ta | da | other | advance | incentive
+  employeePayType: { type: DataTypes.STRING(20), allowNull: true },
   description: { type: DataTypes.TEXT, allowNull: true },
   invoiceUrl: { type: DataTypes.STRING(600), allowNull: true },
   invoiceName: { type: DataTypes.STRING(200), allowNull: true },
@@ -1631,7 +1635,21 @@ const HrExpense = sequelize.define('HrExpense', {
   // entry from HrVendor.paymentModes) — used to pre-fill the payment step.
   selectedPaymentMode: { type: DataTypes.JSON, defaultValue: null },
   // Lifecycle: submitted → approved → paid, or rejected (terminal).
+  // Employee claims add an extra HR-review step (see isClaim below):
+  //   submitted → hr_approved → approved → (paid | queued_for_payroll → paid)
   status: { type: DataTypes.STRING(20), defaultValue: 'submitted' },
+  // Employee self-service reimbursement claim fields (v316).
+  isClaim: { type: DataTypes.BOOLEAN, defaultValue: false },
+  claimedAmount: { type: DataTypes.FLOAT, allowNull: true },   // what the employee asked for
+  approvedAmount: { type: DataTypes.FLOAT, allowNull: true },  // HR-corrected reimbursable amount (≤ claimed)
+  hrReviewNotes: { type: DataTypes.TEXT, allowNull: true },    // HR note explaining any correction
+  hrReviewedById: { type: DataTypes.INTEGER, allowNull: true },
+  hrReviewedByName: { type: DataTypes.STRING(120), allowNull: true },
+  hrReviewedAt: { type: DataTypes.DATE, allowNull: true },
+  // How an approved claim is settled: cheque | cash | salary. When 'salary',
+  // the claim waits in queued_for_payroll until picked up by a payslip.
+  settlementMethod: { type: DataTypes.STRING(20), allowNull: true },
+  payslipId: { type: DataTypes.INTEGER, allowNull: true },     // set when included in a payslip
   raisedById: { type: DataTypes.INTEGER, allowNull: true },
   raisedByKind: { type: DataTypes.STRING(10), defaultValue: 'hr' },
   raisedByName: { type: DataTypes.STRING(120), allowNull: true },
@@ -1641,9 +1659,16 @@ const HrExpense = sequelize.define('HrExpense', {
   rejectionReason: { type: DataTypes.STRING(500), allowNull: true },
   // Payment record. For bank transfer we also capture bank + txn id + date.
   paymentMethod: { type: DataTypes.STRING(20), allowNull: true }, // cash|bank|upi|cheque
-  paymentRef: { type: DataTypes.STRING(120), allowNull: true },   // upi ref / cheque no. / txn id
+  paymentRef: { type: DataTypes.STRING(120), allowNull: true },   // bank txn id / upi txn ref / cheque no.
   bankName: { type: DataTypes.STRING(40), allowNull: true },      // kotak|indian|indian_cc (bank transfer)
-  paymentDate: { type: DataTypes.STRING(10), allowNull: true },   // YYYY-MM-DD
+  // UPI-specific payment details.
+  paymentUpiId: { type: DataTypes.STRING(120), allowNull: true }, // UPI ID the money was sent to
+  paymentMobile: { type: DataTypes.STRING(40), allowNull: true }, // payee mobile (optional)
+  // Cheque-specific payment details.
+  chequeNumber: { type: DataTypes.STRING(40), allowNull: true },
+  chequeBank: { type: DataTypes.STRING(120), allowNull: true },   // bank the cheque is drawn on
+  chequeDate: { type: DataTypes.STRING(10), allowNull: true },    // YYYY-MM-DD on the cheque
+  paymentDate: { type: DataTypes.STRING(10), allowNull: true },   // YYYY-MM-DD (date paid)
   paidById: { type: DataTypes.INTEGER, allowNull: true },
   paidByName: { type: DataTypes.STRING(120), allowNull: true },
   paidAt: { type: DataTypes.DATE, allowNull: true },

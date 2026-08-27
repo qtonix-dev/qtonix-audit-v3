@@ -12,6 +12,10 @@ const STATUS_META = {
 };
 const METHODS = [['cash', 'Cash'], ['bank', 'Bank Transfer'], ['upi', 'UPI'], ['cheque', 'Cheque']];
 const BANKS = [['kotak', 'Kotak'], ['indian', 'Indian'], ['indian_cc', 'Indian CC']];
+// Employee payment types. HR sees all five; employee self-claims exclude Incentive.
+const EMP_PAY_TYPES = [['ta', 'TA (Travel Allowance)'], ['da', 'DA (Daily Allowance)'], ['other', 'Other expenses'], ['advance', 'Advance'], ['incentive', 'Incentive']];
+const EMP_PAY_TYPES_CLAIM = EMP_PAY_TYPES.filter(([id]) => id !== 'incentive');
+const empPayTypeLabel = (t) => (EMP_PAY_TYPES.find((x) => x[0] === t) || [null, ''])[1];
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fmtDate = (d) => { if (!d) return '—'; try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
 const fmtWhen = (iso) => { if (!iso) return '—'; try { return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
@@ -53,13 +57,18 @@ export default function HrExpenses({ user, isAdmin }) {
   const [vendorHistory, setVendorHistory] = useState(null);
   const [catOpen, setCatOpen] = useState(false);
   const [monthlyOpen, setMonthlyOpen] = useState(false);
+  const [claims, setClaims] = useState(null);
+  const [reviewFor, setReviewFor] = useState(null);   // claim being HR-reviewed
+  const [settleFor, setSettleFor] = useState(null);   // approved claim being settled
 
+  const loadClaims = () => hrApi('/claims').then((r) => setClaims(r)).catch(() => {});
   const load = () => {
     Promise.all([
       hrApi('/expenses').then((r) => setData(r)).catch((e) => setErr(e.message)),
       hrApi('/vendors').then((r) => setVendors(r.vendors || [])).catch(() => {}),
       hrApi('/expense-categories').then((r) => setCats(r.categories || [])).catch(() => {}),
       hrApi('/employees').then((r) => setEmployees(Array.isArray(r) ? r : (r.employees || []))).catch(() => {}),
+      hrApi('/claims').then((r) => setClaims(r)).catch(() => {}),
     ]).finally(() => { setLoading(false); setDidLoad(true); });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
@@ -83,6 +92,10 @@ export default function HrExpenses({ user, isAdmin }) {
     try { await hrApi(`/expenses/${e._id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: reason || '' }) }); setRejectFor(null); load(); }
     catch (er) { setErr(er.message); }
   };
+  const decideClaim = async (c, decision) => {
+    try { await hrApi(`/expenses/${c._id}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); load(); }
+    catch (er) { setErr(er.message); }
+  };
 
   const rollup = useMemo(() => {
     const monthRows = expenses.filter((e) => (e.expenseDate || '').slice(0, 7) === monthF);
@@ -96,8 +109,8 @@ export default function HrExpenses({ user, isAdmin }) {
   }, [expenses, monthF]);
 
   const exportCsv = () => {
-    const rows = [['Date', 'Title', 'Category', 'Branch', 'Payee', 'Payee type', 'Amount (INR)', 'Status', 'Method', 'Bank', 'Reference', 'Payment date', 'Approved by', 'Paid by']];
-    filtered.forEach((e) => rows.push([e.expenseDate, e.title, e.category, e.branch, e.payeeName, e.payeeType, e.amount, STATUS_META[e.status].label, methodLabel(e.paymentMethod), bankLabel(e.bankName), e.paymentRef || '', e.paymentDate || '', e.approvedByName || '', e.paidByName || '']));
+    const rows = [['Date', 'Title', 'Category', 'Branch', 'Payee', 'Payee type', 'Pay type', 'Amount (INR)', 'Status', 'Method', 'Bank', 'Reference / Txn ID', 'UPI ID', 'Payee mobile', 'Cheque no.', 'Cheque bank', 'Cheque date', 'Payment date', 'Approved by', 'Paid by']];
+    filtered.forEach((e) => rows.push([e.expenseDate, e.title, e.category, e.branch, e.payeeName, e.payeeType, empPayTypeLabel(e.employeePayType), e.amount, STATUS_META[e.status].label, methodLabel(e.paymentMethod), bankLabel(e.bankName), e.paymentRef || '', e.paymentUpiId || '', e.paymentMobile || '', e.chequeNumber || '', e.chequeBank || '', e.chequeDate || '', e.paymentDate || '', e.approvedByName || '', e.paidByName || '']));
     const csv = rows.map((r) => r.map((c) => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `expenses-${monthF}.csv`; a.click();
   };
@@ -127,7 +140,7 @@ export default function HrExpenses({ user, isAdmin }) {
       </div>
 
       <div className="flex gap-1.5 mb-4 bg-slate-100 p-1 rounded-xl w-fit items-center">
-        {[['expenses', `Expenses · ${expenses.length}`], ['vendors', `Vendors · ${vendors.length}`], ['rollup', 'Monthly rollup']].map(([id, label]) => (
+        {[['expenses', `Expenses · ${expenses.length}`], ['claims', `Claims${claims && claims.counts ? ` · ${(claims.counts.submitted || 0) + (claims.counts.hr_approved || 0) + (claims.counts.approved || 0)}` : ''}`], ['vendors', `Vendors · ${vendors.length}`], ['rollup', 'Monthly rollup']].map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} className={`px-3.5 py-1.5 rounded-lg text-[12px] font-extrabold ${tab === id ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
         ))}
         {tab === 'expenses' && <button onClick={() => setCatOpen(true)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-400 hover:text-slate-600">⚙ Categories</button>}
@@ -183,6 +196,8 @@ export default function HrExpenses({ user, isAdmin }) {
 
       {tab === 'vendors' && <VendorsTab vendors={vendors} onAdd={() => setVendorEdit({})} onEdit={(v) => setVendorEdit(v)} onHistory={(v) => setVendorHistory(v)} reload={load} setErr={setErr} />}
 
+      {tab === 'claims' && <ClaimsTab claims={claims} isAdmin={isAdmin} onReview={setReviewFor} onDecide={decideClaim} onSettle={setSettleFor} onPay={setPayFor} onDetail={setDetail} />}
+
       {tab === 'rollup' && (
         <div>
           <div className="flex items-center gap-2 mb-4"><span className="text-sm font-bold text-slate-500">Month</span><input type="month" value={monthF} onChange={(e) => setMonthF(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm" /></div>
@@ -202,6 +217,8 @@ export default function HrExpenses({ user, isAdmin }) {
 
       {raiseOpen && <RaiseExpenseModal user={user} isAdmin={isAdmin} cats={cats} vendors={vendors.filter((v) => v.active)} employees={employees} onClose={() => setRaiseOpen(false)} onSaved={() => { setRaiseOpen(false); load(); }} onAddVendor={() => setVendorEdit({})} />}
       {payFor && <PayModal expense={payFor} onClose={() => setPayFor(null)} onSaved={() => { setPayFor(null); load(); }} />}
+      {reviewFor && <ClaimReviewModal claim={reviewFor} onClose={() => setReviewFor(null)} onSaved={() => { setReviewFor(null); load(); }} />}
+      {settleFor && <ClaimSettleModal claim={settleFor} onClose={() => setSettleFor(null)} onSalary={() => { setSettleFor(null); load(); }} onPayNow={(c) => { setSettleFor(null); setPayFor(c); }} />}
       {rejectFor && <RejectModal expense={rejectFor} onClose={() => setRejectFor(null)} onConfirm={(reason) => decide(rejectFor, 'reject', reason)} />}
       {detail && <ExpenseDrawer expense={detail} onClose={() => setDetail(null)} />}
       {vendorEdit && <VendorModal vendor={vendorEdit} cats={cats} onClose={() => setVendorEdit(null)} onSaved={() => { setVendorEdit(null); load(); }} setErr={setErr} />}
@@ -254,7 +271,7 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
 function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, onSaved, onAddVendor }) {
   const allBranch = isAdmin || user.hrManagerAll || user.hrManagerScope === 'all' || !user.hrManagerScope;
   const lockedBranch = !allBranch ? (user.hrManagerScope || user.branch || '') : '';
-  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', description: '', modeIdx: '' });
+  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', employeePayType: '', description: '', modeIdx: '' });
   const [invoice, setInvoice] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -300,6 +317,8 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
     if (!(Number(f.amount) > 0)) { setErr('Enter a valid amount.'); return; }
     if (f.payeeType === 'vendor' && !f.vendorId) { setErr('Select a vendor.'); return; }
     if (f.payeeType === 'employee' && !f.employeeId) { setErr('Select an employee.'); return; }
+    if (f.payeeType === 'employee' && !f.employeePayType) { setErr('Choose the payment type (TA, DA, Other, Advance or Incentive).'); return; }
+    if (f.payeeType === 'employee' && f.employeePayType === 'other' && !f.description.trim()) { setErr('Please add details for an "Other expenses" payment.'); return; }
     setBusy(true); setErr('');
     try {
       const selVendor = vendors.find((v) => String(v._id) === String(f.vendorId));
@@ -329,7 +348,11 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
               ); })()}
             </>
           ) : (
-            <select value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} className="inp"><option value="">Select employee…</option>{employees.map((em) => <option key={em._id || em.id} value={em._id || em.id}>{titleCase(em.name)}</option>)}</select>
+            <>
+              <select value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} className="inp"><option value="">Select employee…</option>{employees.map((em) => <option key={em._id || em.id} value={em._id || em.id}>{titleCase(em.name)}</option>)}</select>
+              <div className="mt-2"><select value={f.employeePayType} onChange={(e) => set('employeePayType', e.target.value)} className="inp"><option value="">Payment type…</option>{EMP_PAY_TYPES.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}</select></div>
+              {f.employeePayType === 'other' && <div className="mt-1 text-[11px] text-amber-600">Please add details below for an "Other expenses" payment.</div>}
+            </>
           )}
         </Field>
         <Field label="Description" full><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className="inp" placeholder="Optional notes" /></Field>
@@ -342,15 +365,174 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
   );
 }
 
+// ===== Employee expense claims (HR/Admin review side) ======================
+const CLAIM_STATUS = {
+  submitted: { label: 'HR review', bg: '#FEF3C7', color: '#B45309' },
+  hr_approved: { label: 'Admin approval', bg: '#E0E7FF', color: '#4338CA' },
+  approved: { label: 'To settle', bg: '#DBEAFE', color: '#1D4ED8' },
+  queued_for_payroll: { label: 'In next salary', bg: '#EDE9FE', color: '#6D28D9' },
+  paid: { label: 'Paid', bg: '#DCFCE7', color: '#15803D' },
+  rejected: { label: 'Rejected', bg: '#FEE2E2', color: '#B91C1C' },
+};
+function ClaimStatusBadge({ s }) { const m = CLAIM_STATUS[s] || { label: s, bg: '#F1F5F9', color: '#475569' }; return <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: m.bg, color: m.color }}>{m.label}</span>; }
+
+function ClaimsTab({ claims, isAdmin, onReview, onDecide, onSettle, onPay, onDetail }) {
+  const [statusF, setStatusF] = useState('');
+  if (!claims) return <div className="text-sm text-slate-400 py-10 text-center">Loading claims…</div>;
+  const rows = (claims.claims || []).filter((c) => !statusF || c.status === statusF);
+  const c = claims.counts || {};
+  const kpis = [['submitted', 'Awaiting HR', c.submitted || 0, '#B45309'], ['hr_approved', 'Awaiting admin', c.hr_approved || 0, '#4338CA'], ['approved', 'To settle', c.approved || 0, '#1D4ED8'], ['queued_for_payroll', 'In salary', c.queued_for_payroll || 0, '#6D28D9'], ['paid', 'Paid', c.paid || 0, '#15803D']];
+  return (
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        {kpis.map(([id, label, n, color]) => (
+          <button key={id} onClick={() => setStatusF(statusF === id ? '' : id)} className={`text-left rounded-2xl border p-3 bg-white ${statusF === id ? 'border-orange-300 ring-1 ring-orange-200' : 'border-slate-100'}`}>
+            <div className="text-2xl font-extrabold" style={{ color }}>{n}</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+          </button>
+        ))}
+      </div>
+      {statusF && <button onClick={() => setStatusF('')} className="text-[11px] font-bold text-slate-400 mb-2 hover:text-slate-600">Clear filter ✕</button>}
+      {rows.length === 0 ? (
+        <div className="text-sm text-slate-400 py-10 text-center bg-white rounded-2xl border border-slate-100">No claims{statusF ? ' in this state' : ''}.</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
+              <th className="text-left px-4 py-2.5">Employee</th><th className="text-left px-4 py-2.5">Claim</th><th className="text-left px-4 py-2.5">Type</th><th className="text-right px-4 py-2.5">Claimed</th><th className="text-right px-4 py-2.5">Reimbursable</th><th className="text-left px-4 py-2.5">Status</th><th className="text-right px-4 py-2.5">Action</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((c) => (
+                <tr key={c._id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <td className="px-4 py-3"><div className="font-bold text-[#050A1F]">{titleCase(c.payeeName || '')}</div><div className="text-[11px] text-slate-400">{fmtDate(c.expenseDate)}{c.branch ? ` · ${c.branch}` : ''}</div></td>
+                  <td className="px-4 py-3"><button onClick={() => onDetail(c)} className="text-left"><div className="font-semibold text-[#050A1F] hover:text-[#FF4500]">{c.title}</div>{c.invoiceUrl && <div className="text-[10px] text-sky-500">📎 invoice</div>}</button></td>
+                  <td className="px-4 py-3 text-slate-500">{empPayTypeLabel(c.employeePayType) || '—'}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-slate-500">{inr(c.claimedAmount)}</td>
+                  <td className="px-4 py-3 text-right font-extrabold text-[#050A1F]">{c.approvedAmount != null ? inr(c.approvedAmount) : '—'}{c.approvedAmount != null && Number(c.approvedAmount) < Number(c.claimedAmount) && <div className="text-[9px] text-amber-600 font-bold">reduced</div>}</td>
+                  <td className="px-4 py-3"><ClaimStatusBadge s={c.status} />{c.status === 'queued_for_payroll' && <div className="text-[9px] text-slate-400 mt-0.5">via payslip</div>}{c.status === 'paid' && c.paymentMethod === 'salary' && <div className="text-[9px] text-slate-400 mt-0.5">in salary</div>}</td>
+                  <td className="px-4 py-3 text-right">
+                    {c.status === 'submitted' && <button onClick={() => onReview(c)} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white" style={{ background: ORANGE }}>Review</button>}
+                    {c.status === 'hr_approved' && (isAdmin
+                      ? <div className="flex gap-1.5 justify-end"><button onClick={() => onDecide(c, 'approve')} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white" style={{ background: '#0F9D58' }}>Approve</button><button onClick={() => onDecide(c, 'reject')} className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-red-600 border border-red-200">Reject</button></div>
+                      : <span className="text-[11px] text-slate-400">Awaiting admin</span>)}
+                    {c.status === 'approved' && <button onClick={() => onSettle(c)} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white" style={{ background: '#0EA5E9' }}>Settle</button>}
+                    {c.status === 'queued_for_payroll' && <span className="text-[11px] text-violet-600 font-semibold">Next salary</span>}
+                    {c.status === 'paid' && <span className="text-[11px] text-green-600 font-semibold">Paid</span>}
+                    {c.status === 'rejected' && <span className="text-[11px] text-slate-400">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// HR reviews a submitted claim: set the reimbursable amount (≤ claimed) + notes.
+function ClaimReviewModal({ claim, onClose, onSaved }) {
+  const claimed = Number(claim.claimedAmount || claim.amount || 0);
+  const [amount, setAmount] = useState(String(claimed));
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const submit = async (decision) => {
+    if (decision === 'approve') {
+      const a = Number(amount);
+      if (!(a > 0)) { setErr('Enter the reimbursable amount.'); return; }
+      if (a > claimed) { setErr(`Cannot exceed the claimed amount (${inr(claimed)}).`); return; }
+    }
+    setBusy(true); setErr('');
+    try { await hrApi(`/expenses/${claim._id}/hr-review`, { method: 'POST', body: JSON.stringify({ decision, approvedAmount: Number(amount), notes }) }); onSaved(); }
+    catch (er) { setErr(er.message); } finally { setBusy(false); }
+  };
+  const reduced = Number(amount) > 0 && Number(amount) < claimed;
+  return (
+    <ModalShell title="Review claim" onClose={onClose}>
+      {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
+      <div className="rounded-xl bg-slate-50 p-3 mb-3">
+        <div className="font-bold text-[#050A1F]">{claim.title}</div>
+        <div className="text-[11px] text-slate-500 mt-0.5">{titleCase(claim.payeeName || '')} · {empPayTypeLabel(claim.employeePayType)} · claimed <b>{inr(claimed)}</b></div>
+        {claim.description && <div className="text-[12px] text-slate-600 mt-1.5">{claim.description}</div>}
+        {claim.invoiceUrl && <a href={claim.invoiceUrl} target="_blank" rel="noreferrer" className="inline-block text-[11px] font-bold text-sky-600 mt-1.5">📎 View invoice</a>}
+      </div>
+      <Field label="Reimbursable amount (₹)"><input value={amount} onChange={(e) => setAmount(e.target.value)} className="inp" placeholder="0" /></Field>
+      {reduced && <div className="text-[11px] text-amber-600 mt-1">Reducing from {inr(claimed)} to {inr(Number(amount))}. Add a note explaining why.</div>}
+      <div className="mt-3"><Field label="Notes to employee (optional)" full><textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className="inp" placeholder="e.g. DA capped at policy limit; meal receipt not eligible." /></Field></div>
+      <div className="flex justify-between gap-2 mt-5">
+        <button onClick={() => submit('reject')} disabled={busy} className="rounded-lg px-4 py-2 text-sm font-bold text-red-600 border border-red-200 disabled:opacity-50">Reject claim</button>
+        <div className="flex gap-2"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={() => submit('approve')} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Approve amount'}</button></div>
+      </div>
+      <div className="text-[11px] text-slate-400 mt-3">After you approve the amount, an admin gives final sign-off before it is settled.</div>
+    </ModalShell>
+  );
+}
+
+// After admin approval, choose how an approved claim is settled.
+function ClaimSettleModal({ claim, onClose, onSalary, onPayNow }) {
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const settle = async (method) => {
+    setBusy(true); setErr('');
+    try {
+      await hrApi(`/expenses/${claim._id}/settle`, { method: 'POST', body: JSON.stringify({ settlementMethod: method }) });
+      if (method === 'salary') onSalary();
+      else onPayNow({ ...claim, status: 'approved' }); // open the pay window for cheque/cash
+    } catch (er) { setErr(er.message); setBusy(false); }
+  };
+  return (
+    <ModalShell title="Settle claim" onClose={onClose}>
+      {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
+      <div className="rounded-xl bg-slate-50 p-3 mb-4">
+        <div className="font-bold text-[#050A1F]">{claim.title}</div>
+        <div className="text-[11px] text-slate-500 mt-0.5">Reimburse <b>{titleCase(claim.payeeName || '')}</b> · <b>{inr(claim.approvedAmount ?? claim.amount)}</b></div>
+      </div>
+      <div className="text-xs font-bold text-slate-500 mb-2">How would you like to settle this?</div>
+      <div className="grid gap-2">
+        <button onClick={() => settle('cheque')} disabled={busy} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-orange-300 text-left disabled:opacity-50">
+          <span className="w-9 h-9 rounded-lg bg-violet-100 text-violet-600 flex items-center justify-center text-lg">🧾</span>
+          <span><span className="block text-sm font-bold text-[#050A1F]">Cheque</span><span className="block text-[11px] text-slate-400">Record cheque details on the next screen.</span></span>
+        </button>
+        <button onClick={() => settle('cash')} disabled={busy} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-orange-300 text-left disabled:opacity-50">
+          <span className="w-9 h-9 rounded-lg bg-green-100 text-green-600 flex items-center justify-center text-lg">💵</span>
+          <span><span className="block text-sm font-bold text-[#050A1F]">Cash</span><span className="block text-[11px] text-slate-400">Mark as paid in cash on the next screen.</span></span>
+        </button>
+        <button onClick={() => settle('salary')} disabled={busy} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-orange-300 text-left disabled:opacity-50">
+          <span className="w-9 h-9 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg">📅</span>
+          <span><span className="block text-sm font-bold text-[#050A1F]">Add to next salary</span><span className="block text-[11px] text-slate-400">Included as a reimbursement line in the next payslip.</span></span>
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function PayModal({ expense, onClose, onSaved }) {
   const sel = expense.selectedPaymentMode || null;
+  // The vendor's saved bank account, for the full-details panel. Prefer the mode
+  // chosen at raise time; fall back to any bank mode snapshotted on the expense.
+  const bankMode = (sel && sel.type === 'bank') ? sel
+    : (Array.isArray(expense.vendorPaymentModes) ? expense.vendorPaymentModes.find((m) => m && m.type === 'bank') : null) || null;
   const preMethod = sel && ['cash', 'bank', 'upi', 'cheque'].includes(sel.type) ? sel.type : 'cash';
   const [method, setMethod] = useState(preMethod);
-  const [f, setF] = useState({ paymentDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), paymentRef: sel && sel.type === 'upi' ? (sel.upiId || '') : '', bankName: 'kotak' });
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const [f, setF] = useState({
+    paymentDate: today,
+    paymentRef: '',
+    bankName: 'kotak',
+    paymentUpiId: sel && sel.type === 'upi' ? (sel.upiId || '') : '',
+    paymentMobile: sel && sel.type === 'upi' ? (sel.mobile || '') : '',
+    chequeNumber: '',
+    chequeBank: '',
+    chequeDate: today,
+  });
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const save = async () => {
     if (method === 'bank' && !f.paymentRef.trim()) { setErr('Transaction ID is required for a bank transfer.'); return; }
+    if (method === 'upi') {
+      if (!f.paymentUpiId.trim()) { setErr('UPI ID is required for a UPI payment.'); return; }
+      if (!f.paymentRef.trim()) { setErr('UPI transaction / reference ID is required.'); return; }
+    }
+    if (method === 'cheque' && !f.chequeNumber.trim()) { setErr('Cheque number is required.'); return; }
     setBusy(true); setErr('');
     try { await hrApi(`/expenses/${expense._id}/pay`, { method: 'POST', body: JSON.stringify({ paymentMethod: method, ...f }) }); onSaved(); }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
@@ -360,11 +542,51 @@ function PayModal({ expense, onClose, onSaved }) {
       {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
       <div className="text-xs text-slate-500 mb-3">Paying <b>{expense.payeeName}</b> for “{expense.title}”.</div>
       {sel && <div className="text-[11px] rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-2 mb-3">Vendor's saved mode: <b>{modeSummary(sel)}</b>{sel.type === 'bank' && sel.ifsc ? ` · IFSC ${sel.ifsc}` : ''}{sel.type === 'bank' && sel.accountName ? ` · ${sel.accountName}` : ''}{sel.type === 'upi' && sel.mobile ? ` · ${sel.mobile}` : ''}</div>}
+
+      {/* Full vendor bank-account details, so the transfer can be made without
+          leaving this window. Pulled from the vendor's saved bank mode. */}
+      {method === 'bank' && bankMode && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3 mb-3">
+          <div className="text-[10px] font-extrabold uppercase tracking-wide text-sky-700 mb-2 flex items-center gap-1.5">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18 M3 10h18 M5 6l7-3 7 3 M4 10v11 M20 10v11 M8 14v3 M12 14v3 M16 14v3" /></svg>
+            Vendor bank account
+          </div>
+          <div className="grid gap-x-4 gap-y-1.5 text-[12px]" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div><span className="text-slate-400">Account name</span><div className="font-bold text-[#050A1F]">{bankMode.accountName || '—'}</div></div>
+            <div><span className="text-slate-400">Account number</span><div className="font-bold text-[#050A1F] font-mono">{bankMode.accountNumber || '—'}</div></div>
+            <div><span className="text-slate-400">Bank</span><div className="font-bold text-[#050A1F]">{bankMode.bankName || '—'}</div></div>
+            <div><span className="text-slate-400">IFSC</span><div className="font-bold text-[#050A1F] font-mono">{bankMode.ifsc || '—'}</div></div>
+            {bankMode.accountType && <div><span className="text-slate-400">Account type</span><div className="font-bold text-[#050A1F] capitalize">{bankMode.accountType}</div></div>}
+          </div>
+        </div>
+      )}
+      {method === 'bank' && !bankMode && <div className="text-[11px] rounded-lg bg-amber-50 border border-amber-200 text-amber-700 px-3 py-2 mb-3">No saved bank account for this vendor — confirm the account details before transferring.</div>}
+
+      {/* Who the cheque should be written to. */}
+      {method === 'cheque' && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 mb-3">
+          <div className="text-[10px] font-extrabold uppercase tracking-wide text-violet-700 mb-1">Cheque to be issued to</div>
+          <div className="text-[15px] font-extrabold text-[#050A1F]">{(bankMode && bankMode.accountName) || expense.payeeName || '—'}</div>
+          {expense.payeeType === 'vendor' && bankMode && bankMode.accountName && bankMode.accountName !== expense.payeeName && <div className="text-[11px] text-slate-500 mt-0.5">Vendor: {expense.payeeName}</div>}
+        </div>
+      )}
+
       <Field label="Payment method" full><div className="grid grid-cols-4 gap-2">{METHODS.map(([id, lbl]) => <button key={id} type="button" onClick={() => setMethod(id)} className={`rounded-lg border px-2 py-2 text-xs font-bold ${method === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}</div></Field>
       <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <Field label="Date of payment"><input type="date" value={f.paymentDate} onChange={(e) => set('paymentDate', e.target.value)} className="inp" /></Field>
+
         {method === 'bank' && <Field label="Bank name"><select value={f.bankName} onChange={(e) => set('bankName', e.target.value)} className="inp">{BANKS.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}</select></Field>}
-        <Field label={method === 'bank' ? 'Transaction ID' : method === 'upi' ? 'UPI reference' : method === 'cheque' ? 'Cheque number' : 'Reference (optional)'} full={method !== 'bank'}><input value={f.paymentRef} onChange={(e) => set('paymentRef', e.target.value)} className="inp" placeholder={method === 'cash' ? 'Optional' : 'Enter reference'} /></Field>
+        {method === 'bank' && <Field label="Transaction ID" full><input value={f.paymentRef} onChange={(e) => set('paymentRef', e.target.value)} className="inp" placeholder="Enter bank transaction ID" /></Field>}
+
+        {method === 'upi' && <Field label="UPI ID"><input value={f.paymentUpiId} onChange={(e) => set('paymentUpiId', e.target.value)} className="inp" placeholder="name@bank" /></Field>}
+        {method === 'upi' && <Field label="Payee mobile (optional)"><input value={f.paymentMobile} onChange={(e) => set('paymentMobile', e.target.value)} className="inp" placeholder="Optional" /></Field>}
+        {method === 'upi' && <Field label="UPI transaction / reference ID" full><input value={f.paymentRef} onChange={(e) => set('paymentRef', e.target.value)} className="inp" placeholder="Enter UPI txn / reference ID" /></Field>}
+
+        {method === 'cheque' && <Field label="Cheque number"><input value={f.chequeNumber} onChange={(e) => set('chequeNumber', e.target.value)} className="inp" placeholder="Enter cheque number" /></Field>}
+        {method === 'cheque' && <Field label="Bank drawn on"><input value={f.chequeBank} onChange={(e) => set('chequeBank', e.target.value)} className="inp" placeholder="e.g. HDFC Bank" /></Field>}
+        {method === 'cheque' && <Field label="Cheque date"><input type="date" value={f.chequeDate} onChange={(e) => set('chequeDate', e.target.value)} className="inp" /></Field>}
+
+        {method === 'cash' && <Field label="Reference (optional)" full><input value={f.paymentRef} onChange={(e) => set('paymentRef', e.target.value)} className="inp" placeholder="Optional" /></Field>}
       </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#0F9D58' }}>{busy ? 'Saving…' : 'Confirm payment'}</button></div>
     </ModalShell>
@@ -535,13 +757,26 @@ function ExpenseDrawer({ expense: e, onClose }) {
     <DrawerShell onClose={onClose} title={e.title} subtitle={`${e.category || ''} · ${e.branch || ''}`}>
       <div className="flex items-center gap-2 mb-3"><StatusBadge s={e.status} /><span className="text-lg font-extrabold text-[#050A1F] ml-auto">{inr(e.amount)}</span></div>
       <Row label="Payee"><span className="inline-flex items-center gap-2"><PayeeIcon type={e.payeeType} name={e.payeeName} />{e.payeeName} <span className="text-[10px] text-slate-400 uppercase">({e.payeeType})</span></span></Row>
+      {e.payeeType === 'employee' && e.employeePayType && <Row label="Payment type">{empPayTypeLabel(e.employeePayType)}</Row>}
+      {e.isClaim && <>
+        <Row label="Claim">Employee reimbursement</Row>
+        <Row label="Claimed">{inr(e.claimedAmount)}</Row>
+        {e.approvedAmount != null && <Row label="Reimbursable">{inr(e.approvedAmount)}{Number(e.approvedAmount) < Number(e.claimedAmount) ? <span className="text-[10px] text-amber-600 font-bold ml-1">(reduced)</span> : null}</Row>}
+        {e.hrReviewNotes && <Row label="HR notes">{e.hrReviewNotes}</Row>}
+        {e.hrReviewedByName && <Row label="HR reviewed by">{titleCase(e.hrReviewedByName)}{e.hrReviewedAt ? ` · ${fmtWhen(e.hrReviewedAt)}` : ''}</Row>}
+        {e.settlementMethod && <Row label="Settlement">{({ cheque: 'Cheque', cash: 'Cash', salary: 'Added to salary' })[e.settlementMethod] || e.settlementMethod}</Row>}
+      </>}
       <Row label="Expense date">{fmtDate(e.expenseDate)}</Row>
       {e.selectedPaymentMode && <Row label="Chosen mode">{modeSummary(e.selectedPaymentMode)}</Row>}
       <Row label="Description">{e.description || '—'}</Row>
       <Row label="Invoice">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">📎 {e.invoiceName || 'View invoice'}</a> : '—'}</Row>
       <Row label="Raised by">{titleCase(e.raisedByName || '—')}</Row>
       {e.status === 'rejected' ? <><Row label="Rejected by">{titleCase(e.approvedByName || '—')}{e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}</Row><Row label="Reason">{e.rejectionReason || '—'}</Row></> : <Row label="Approved by">{e.approvedByName ? `${titleCase(e.approvedByName)}${e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}` : '—'}</Row>}
-      {e.status === 'paid' && <><Row label="Payment method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row><Row label="Reference">{e.paymentRef || '—'}</Row><Row label="Date of payment">{fmtDate(e.paymentDate)}</Row><Row label="Paid by">{titleCase(e.paidByName || '—')}</Row></>}
+      {e.status === 'paid' && <><Row label="Payment method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row>
+        {e.paymentMethod === 'upi' && <><Row label="UPI ID">{e.paymentUpiId || '—'}</Row>{e.paymentMobile ? <Row label="Payee mobile">{e.paymentMobile}</Row> : null}<Row label="UPI txn / ref ID">{e.paymentRef || '—'}</Row></>}
+        {e.paymentMethod === 'cheque' && <><Row label="Cheque number">{e.chequeNumber || e.paymentRef || '—'}</Row>{e.chequeBank ? <Row label="Bank drawn on">{e.chequeBank}</Row> : null}{e.chequeDate ? <Row label="Cheque date">{fmtDate(e.chequeDate)}</Row> : null}</>}
+        {(e.paymentMethod === 'bank' || e.paymentMethod === 'cash') && <Row label={e.paymentMethod === 'bank' ? 'Transaction ID' : 'Reference'}>{e.paymentRef || '—'}</Row>}
+        <Row label="Date of payment">{fmtDate(e.paymentDate)}</Row><Row label="Paid by">{titleCase(e.paidByName || '—')}</Row></>}
     </DrawerShell>
   );
 }
@@ -579,7 +814,11 @@ function ExpenseDetailInline({ e }) {
       <Row label="Expense date">{fmtDate(e.expenseDate)}</Row><Row label="Description">{e.description || '—'}</Row>
       <Row label="Invoice">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">📎 {e.invoiceName || 'View'}</a> : '—'}</Row>
       <Row label="Approved by">{e.approvedByName ? titleCase(e.approvedByName) : '—'}</Row>
-      {e.status === 'paid' && <><Row label="Method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row><Row label="Reference">{e.paymentRef || '—'}</Row><Row label="Paid on">{fmtDate(e.paymentDate)}</Row><Row label="Paid by">{titleCase(e.paidByName || '—')}</Row></>}
+      {e.status === 'paid' && <><Row label="Method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row>
+        {e.paymentMethod === 'upi' && <><Row label="UPI ID">{e.paymentUpiId || '—'}</Row>{e.paymentMobile ? <Row label="Payee mobile">{e.paymentMobile}</Row> : null}<Row label="UPI txn / ref ID">{e.paymentRef || '—'}</Row></>}
+        {e.paymentMethod === 'cheque' && <><Row label="Cheque number">{e.chequeNumber || e.paymentRef || '—'}</Row>{e.chequeBank ? <Row label="Bank drawn on">{e.chequeBank}</Row> : null}{e.chequeDate ? <Row label="Cheque date">{fmtDate(e.chequeDate)}</Row> : null}</>}
+        {(e.paymentMethod === 'bank' || e.paymentMethod === 'cash') && <Row label={e.paymentMethod === 'bank' ? 'Transaction ID' : 'Reference'}>{e.paymentRef || '—'}</Row>}
+        <Row label="Paid on">{fmtDate(e.paymentDate)}</Row><Row label="Paid by">{titleCase(e.paidByName || '—')}</Row></>}
     </div>
   );
 }
