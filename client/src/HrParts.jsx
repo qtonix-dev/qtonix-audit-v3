@@ -1313,7 +1313,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
           </tbody>
         </table>
       </div>
-      {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} isAdmin={isAdmin} lockBranch={!isAdmin && isHrManager ? myBranch : ''} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
+      {show && <AddUserModal branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} imagekitReady={imagekitReady} isAdmin={isAdmin} lockBranch={!isAdmin && isHrManager && !managerAll ? myBranch : ''} onClose={() => setShow(false)} onCreated={(n) => { setMsg(`Employee added: ${n}`); load(); }} />}
       {editing && <EditEmployeeModal user={editing} branches={branches} departments={departments} reportingOptions={reportingOptions} shifts={shifts} isAdmin={isAdmin} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setMsg('Employee updated.'); load(); }} />}
       {resetting && <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onDone={() => { setResetting(null); setMsg('Password reset.'); }} />}
       {editingDirector && <DirectorEditModal director={editingDirector} onClose={() => setEditingDirector(null)} onSaved={() => { setEditingDirector(null); setMsg('Director details updated.'); load(); }} />}

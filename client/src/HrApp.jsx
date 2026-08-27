@@ -1216,6 +1216,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const [histOpen, setHistOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const [decideItem, setDecideItem] = useState(null); // leave review item open in the decision popup
+  const [orgOpen, setOrgOpen] = useState(false);      // organization chart modal
 
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
@@ -1272,8 +1273,16 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {/* greeting hero */}
       <div className="rounded-2xl p-8 mb-4 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
         <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
-        <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
-        <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
+        <div className="relative flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
+            <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
+          </div>
+          <button onClick={() => setOrgOpen(true)} className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-2 text-xs font-bold text-white transition-colors">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="8.5" y="14" width="7" height="7" rx="1" /><path d="M6.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10 M12 13.5V14" /></svg>
+            Organization chart
+          </button>
+        </div>
       </div>
 
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
@@ -1516,6 +1525,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
+      {orgOpen && <EmployeeOrgChartModal onClose={() => setOrgOpen(false)} />}
     </div>
   );
 }
@@ -1525,6 +1535,91 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 // Leave decision popup — opened from the Review box. Shows the employee, the
 // leave breakdown (half/full/multi with per-day weekday), the last leave they
 // took, a notes box, and Approve / Decline.
+function EmployeeOrgChartModal({ onClose }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { hrApi('/me/org-chart').then(setData).catch((e) => setErr(e.message)); }, []);
+
+  const ringFor = (type) => {
+    if (type === 'director' || type === 'admin') return '#0A1F44';
+    if (type === 'manager') return '#1CA0E8';
+    if (type === 'tl') return '#7C3AED';
+    if (type === 'hr' || type === 'recruiter') return '#0EA5E9';
+    if (type === 'senior') return '#F59E0B';
+    return '#A4C639';
+  };
+  const PhoneIcon = () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 5, flexShrink: 0 }}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>;
+  const MailIcon = () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -1, marginRight: 5, flexShrink: 0 }}><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></svg>;
+
+  const PersonCard = ({ p }) => (
+    <div className="inline-flex items-center gap-3 bg-white border border-slate-200 rounded-xl" style={{ padding: '13px 15px', boxShadow: '0 2px 6px rgba(10,20,60,.07)', width: 268, margin: '0 18px', textAlign: 'left' }}>
+      <div className="shrink-0 rounded-full overflow-hidden flex items-center justify-center text-white font-bold" style={{ width: 46, height: 46, fontSize: 18, background: ringFor(p.type) }}>
+        {p.avatar ? <img src={p.avatar} alt="" className="w-full h-full object-cover" /> : (p.name || '?')[0]}
+      </div>
+      <div className="min-w-0 overflow-hidden">
+        <div className="text-[13px] font-bold text-[#0A0E28] truncate">{titleCase(p.name)}{p.branchIncharge && <span className="ml-1.5 text-[9px] font-bold text-[#FF4500]">IN-CHARGE</span>}</div>
+        <div className="text-[11px] font-semibold text-[#FF6A00] truncate" style={{ marginBottom: p.masked ? 0 : 3 }}>{p.designation || ROLE_LABELS[p.type] || p.type}</div>
+        {!p.masked && <>
+          <div className="text-[11px] text-slate-500 truncate flex items-center"><PhoneIcon />{p.phone || '—'}</div>
+          <div className="text-[11px] text-slate-500 truncate flex items-center"><MailIcon />{p.email || '—'}</div>
+        </>}
+      </div>
+    </div>
+  );
+  const VConn = ({ h = 16 }) => <div style={{ width: 1, height: h, background: '#cbd5e1', margin: '0 auto' }} />;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[140] flex flex-col" onClick={onClose}>
+      <div className="bg-white w-full h-full flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div>
+            <div className="text-lg font-extrabold text-[#050A1F]">Organization chart</div>
+            {data && !data.fullAccess && <div className="text-[11px] text-slate-400">Your team is shown in full. Other departments show their lead only.</div>}
+          </div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="flex-1 overflow-auto p-8">
+          {err ? <div className="text-center text-red-500 text-sm py-20">{err}</div>
+            : !data ? <div className="text-center text-slate-400 text-sm py-20">Loading chart…</div>
+              : (
+                <div className="min-w-max mx-auto text-center">
+                  {/* Admins / leadership row */}
+                  {data.admins.length > 0 && (
+                    <div className="inline-flex flex-col items-center mb-2">
+                      <div className="flex items-start justify-center flex-wrap gap-y-4">
+                        {data.admins.map((a) => <PersonCard key={`a${a._id}`} p={a} />)}
+                      </div>
+                      <VConn h={22} />
+                      <div style={{ height: 1, background: '#cbd5e1', width: '60%', margin: '0 auto' }} />
+                    </div>
+                  )}
+                  {/* Department columns */}
+                  <div className="flex items-start justify-center flex-wrap gap-y-8 mt-2">
+                    {data.departments.map((d) => (
+                      <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+                        <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
+                          {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
+                        </div>
+                        <VConn />
+                        <div>
+                          {d.people.map((u, i) => (
+                            <div key={u._id} className="flex flex-col items-center">
+                              <PersonCard p={u} />
+                              {i < d.people.length - 1 && <VConn />}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LeaveDecisionModal({ item, onClose, onDecide }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);

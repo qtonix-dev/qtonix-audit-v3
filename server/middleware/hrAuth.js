@@ -39,15 +39,20 @@ async function requireHrAccess(req, res, next) {
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
-    // Branch scope for HR-manager privileges. Prefer the explicit hrManagerScope
-    // field; fall back to legacy isHrManager/type==='manager' (scoped to own
-    // branch) so existing managers keep working until re-saved.
+    // Branch scope for HR-manager privileges. "HR Manager" is someone explicitly
+    // granted the privilege (isHrManager flag or an hrManagerScope set by an
+    // admin), OR — legacy fallback — a manager WITHIN the HR department. A plain
+    // job-type of 'manager' in a non-HR department (e.g. a Sales manager) must
+    // NOT confer HR-manager privileges.
+    const deptIsHr = /^(hr|human resource|human resources)$/i.test(String(hr.department || '').trim());
+    const hrRole = deptIsHr || ['hr', 'recruiter'].includes(hr.type);
     let scope = (hr.hrManagerScope || '').trim();
-    if (!scope && (hr.isHrManager || hr.type === 'manager')) scope = hr.branch || '';
+    if (!scope && (hr.isHrManager || (hr.type === 'manager' && deptIsHr))) scope = hr.branch || '';
     req.hrManagerScope = scope;                     // '' | 'all' | '<branch>'
     req.isHrManager = !!scope;                      // any scope = manager
     req.hrManagerAll = scope.toLowerCase() === 'all';
     req.hrBranch = hr.branch || '';
+    req.isHrRole = hrRole;                           // HR-department / hr / recruiter
     return next();
   }
 

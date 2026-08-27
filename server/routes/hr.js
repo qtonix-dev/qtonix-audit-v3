@@ -233,6 +233,12 @@ router.get('/recent-candidates', requireHrAccess, async (req, res, next) => {
 
 router.get('/dashboard', requireHrAccess, async (req, res, next) => {
   try {
+    // The HR dashboard (recruitment/people overview) is for HR staff + admins
+    // only. A non-HR employee (e.g. a Sales manager) gets the employee
+    // dashboard instead and must not read HR-wide figures.
+    if (!(req.hrActor.kind === 'admin' || req.isHrRole || req.isHrManager)) {
+      return res.status(403).json({ error: 'The HR dashboard is only available to HR staff.' });
+    }
     const [staff, openJobs, candidates, allCands] = await Promise.all([
       HrUser.count({ where: { active: true } }),
       HrJobPost.count({ where: { status: 'open' } }),
@@ -1600,6 +1606,68 @@ router.post('/me/leave/:id/decide', requireHrAccess, async (req, res, next) => {
       }
     }
     res.json({ ok: true, status: approve ? 'approved' : 'rejected', days: rows.length });
+  } catch (e) { next(e); }
+});
+
+// GET /me/org-chart → the organization chart, scoped & masked for the viewer.
+//   • Admin / HR staff (or all-branch HR manager) → the FULL chart: every
+//     department, every person, with phone + email, plus admins with contact.
+//   • Everyone else → their OWN department in full (name, designation, phone,
+//     email); every OTHER department shows only its TOP lead with name +
+//     designation (no phone/email); admins show name + designation only.
+// Contact details for out-of-scope people are never sent to the browser.
+router.get('/me/org-chart', requireHrAccess, async (req, res, next) => {
+  try {
+    const ORDER = { director: 0, admin: 0, manager: 1, tl: 2, senior: 3, hr: 3, recruiter: 3, junior: 4, employee: 5, trainee: 6, intern: 7 };
+    const all = (await HrUser.findAll({ where: { active: true } }))
+      .sort((a, b) => (ORDER[a.type] ?? 9) - (ORDER[b.type] ?? 9) || (a.name || '').localeCompare(b.name || ''));
+    const adminRows = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id', 'name', 'designation', 'phone', 'email'], order: [['name', 'ASC']] });
+    const hiddenIds = new Set((await HrDirectorProfile.findAll({ where: { hidden: true }, attributes: ['userId'] })).map((o) => o.userId));
+    const admins = adminRows.filter((a) => !hiddenIds.has(a.id));
+
+    // Full-access viewers: admins and HR staff (hr/recruiter/HR-dept), plus HR
+    // managers (they administer people).
+    const fullAccess = req.hrActor.kind === 'admin' || req.isHrRole || req.isHrManager;
+
+    const card = (u, full) => ({
+      _id: u.id, name: u.name, type: u.type,
+      designation: u.designation || '', department: u.department || '',
+      avatar: u.avatar || null, branchIncharge: !!u.branchIncharge, branch: u.branch || '',
+      phone: full ? (u.phone || '') : '', email: full ? (u.email || '') : '', masked: !full,
+    });
+
+    // Group by department.
+    const byDept = {};
+    all.forEach((u) => { const d = (u.department && String(u.department).trim()) || 'Unassigned'; (byDept[d] = byDept[d] || []).push(u); });
+
+    const myDept = String((req.hrUser && req.hrUser.department) || '').trim().toLowerCase();
+
+    // Is this HrUser the top lead of their department (doesn't report to another
+    // lead in the same department)?
+    const LEAD = new Set(['manager', 'tl', 'senior']);
+    const byId = new Map(all.map((u) => [u.id, u]));
+    const isTopLead = (u) => {
+      if (!LEAD.has(u.type)) return false;
+      const mgr = u.reportsToId ? byId.get(u.reportsToId) : null;
+      if (mgr && LEAD.has(mgr.type) && String(mgr.department || '').toLowerCase() === String(u.department || '').toLowerCase()) return false;
+      return true;
+    };
+
+    const departments = Object.keys(byDept).sort((a, b) => (a === 'Unassigned') - (b === 'Unassigned') || a.localeCompare(b)).map((dept) => {
+      const people = byDept[dept];
+      const isMine = fullAccess || (myDept && dept.toLowerCase() === myDept);
+      if (isMine) return { name: dept, mine: true, people: people.map((u) => card(u, true)) };
+      // other department → only the top lead(s), name + designation, masked.
+      const heads = people.filter(isTopLead);
+      const show = heads.length ? heads : people.slice(0, 1); // fallback: first person
+      return { name: dept, mine: false, people: show.map((u) => card(u, false)) };
+    });
+
+    res.json({
+      fullAccess,
+      admins: admins.map((a) => ({ _id: a.id, name: a.name, type: 'admin', designation: a.designation || 'Director', phone: fullAccess ? (a.phone || '') : '', email: fullAccess ? (a.email || '') : '', masked: !fullAccess })),
+      departments,
+    });
   } catch (e) { next(e); }
 });
 
