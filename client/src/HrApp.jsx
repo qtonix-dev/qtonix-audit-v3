@@ -1219,6 +1219,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const [orgOpen, setOrgOpen] = useState(false);      // organization chart modal
   const [claims, setClaims] = useState([]);
   const [claimOpen, setClaimOpen] = useState(false);
+  const [claimHistOpen, setClaimHistOpen] = useState(false);
 
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
@@ -1371,26 +1372,30 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
           {/* EXPENSE CLAIMS */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Expense claims</h3>
-              <button onClick={() => setClaimOpen(true)} className="rounded-lg px-3 py-1.5 text-xs font-extrabold text-white" style={{ background: ORNG }}>+ New claim</button>
-            </div>
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Expense claims</h3>
             {claims.length === 0 ? (
-              <div className="text-sm text-slate-400 py-1">No claims yet. Raise one to get a work expense reimbursed.</div>
+              <div className="text-sm text-slate-400">No claims yet. Raise one to get a work expense reimbursed.</div>
             ) : (
-              <div className="flex flex-col gap-2">
-                {claims.slice(0, 5).map((c) => (
-                  <div key={c._id} className="flex items-center gap-2.5 py-2 border-t border-slate-50 first:border-t-0">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-bold text-[#050A1F] truncate">{c.title}</div>
-                      <div className="text-[11px] text-slate-400">{claimStatusLabel(c.status)}{c.status !== 'submitted' && c.approvedAmount != null && Number(c.approvedAmount) !== Number(c.claimedAmount) ? ` · ₹${Number(c.approvedAmount).toLocaleString('en-IN')} of ₹${Number(c.claimedAmount).toLocaleString('en-IN')}` : ''}{c.hrReviewNotes ? ` · ${c.hrReviewNotes}` : ''}</div>
+              <div className="flex gap-3.5 flex-wrap">
+                {(() => {
+                  const inProgress = claims.filter((c) => ['submitted', 'hr_approved', 'approved', 'queued_for_payroll'].includes(c.status)).length;
+                  const paid = claims.filter((c) => c.status === 'paid').length;
+                  const stat = [['In progress', inProgress, '#0EA5E9'], ['Paid', paid, '#22C55E'], ['Total', claims.length, '#8B5CF6']];
+                  return stat.map(([label, n, color]) => (
+                    <div key={label} className="text-center" style={{ width: 74 }}>
+                      <div className="rounded-full flex flex-col items-center justify-center mx-auto mb-1.5" style={{ width: 64, height: 64, border: `6px solid ${color}` }}>
+                        <span className="text-[17px] font-extrabold text-[#050A1F]">{n}</span>
+                      </div>
+                      <div className="text-[11px] font-bold text-slate-500">{label}</div>
                     </div>
-                    <span className="text-[13px] font-extrabold text-[#050A1F]">₹{Number(c.approvedAmount ?? c.amount ?? 0).toLocaleString('en-IN')}</span>
-                    <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={claimStatusStyle(c.status)}>{claimStatusShort(c.status)}</span>
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             )}
+            <div className="flex gap-2.5 mt-4">
+              <button onClick={() => setClaimOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-white" style={{ background: ORNG }}>+ New Claim</button>
+              <button onClick={() => setClaimHistOpen(true)} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-slate-700 bg-slate-100">Claim History</button>
+            </div>
           </div>
 
           {/* CELEBRATIONS */}
@@ -1555,6 +1560,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
       {orgOpen && <EmployeeOrgChartModal onClose={() => setOrgOpen(false)} />}
       {claimOpen && <EmployeeClaimModal onClose={() => setClaimOpen(false)} onSaved={() => { setClaimOpen(false); loadClaims(); }} />}
+      {claimHistOpen && <ClaimHistoryModal claims={claims} onClose={() => setClaimHistOpen(false)} onNew={() => { setClaimHistOpen(false); setClaimOpen(true); }} />}
     </div>
   );
 }
@@ -1642,7 +1648,58 @@ function EmployeeClaimModal({ onClose, onSaved }) {
           <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">Details {f.employeePayType === 'other' && <span className="text-amber-600">(required)</span>}</label><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className={inpCls} placeholder="Add any notes to help HR review your claim" /></div>
         </div>
         <div className="mt-2 text-[11px] text-slate-400">Your claim goes to HR for review, then to admin for approval. HR may adjust the reimbursable amount.</div>
-        <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORNG }}>{busy ? 'Submitting…' : 'Submit claim'}</button></div>
+        <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : 'Submit claim'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+// Employee's full claim history — all past and current claims with date, amount,
+// status and HR notes.
+function ClaimHistoryModal({ claims, onClose, onNew }) {
+  const rows = [...(claims || [])].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const fmt = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return '—'; } };
+  const payTypeLbl = (t) => ({ ta: 'TA', da: 'DA', other: 'Other', advance: 'Advance', incentive: 'Incentive' })[t] || (t || '');
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[140] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="text-lg font-extrabold text-[#050A1F]">Claim history</div>
+          <div className="flex items-center gap-2">
+            <button onClick={onNew} className="rounded-lg px-3 py-1.5 text-xs font-extrabold text-white" style={{ background: ORANGE }}>+ New Claim</button>
+            <button onClick={onClose} className="text-slate-400 text-2xl leading-none ml-1">×</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {rows.length === 0 ? (
+            <div className="text-center text-slate-400 text-sm py-16">No claims yet. Raise your first claim to get a work expense reimbursed.</div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {rows.map((c) => {
+                const st = claimStatusStyle(c.status); const reduced = c.approvedAmount != null && Number(c.approvedAmount) < Number(c.claimedAmount);
+                return (
+                  <div key={c._id} className="rounded-xl border border-slate-100 p-3.5">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-[#050A1F] truncate">{c.title}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">{fmt(c.createdAt)} · {payTypeLbl(c.employeePayType)}{c.invoiceUrl ? ' · 📎 invoice' : ''}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-extrabold text-[#050A1F]">₹{Number(c.approvedAmount ?? c.claimedAmount ?? c.amount ?? 0).toLocaleString('en-IN')}</div>
+                        {reduced && <div className="text-[10px] text-slate-400">of ₹{Number(c.claimedAmount).toLocaleString('en-IN')} claimed</div>}
+                      </div>
+                      <span className="text-[10px] font-extrabold rounded px-1.5 py-1 shrink-0" style={st}>{claimStatusShort(c.status)}</span>
+                    </div>
+                    {(c.hrReviewNotes || c.rejectionReason) && (
+                      <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5"><b className="text-slate-600">{c.status === 'rejected' ? 'Reason: ' : 'HR note: '}</b>{c.hrReviewNotes || c.rejectionReason}</div>
+                    )}
+                    <div className="mt-1.5 text-[11px] font-semibold" style={{ color: st.color }}>{claimStatusLabel(c.status)}{c.settlementMethod ? ` · ${({ cheque: 'by cheque', cash: 'in cash', salary: 'in next salary' })[c.settlementMethod] || ''}` : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
