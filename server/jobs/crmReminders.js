@@ -405,18 +405,24 @@ async function runMonthlySummary(models, s, sender, nowParts) {
   const people = Object.values(byId);
   if (!people.length) return;
 
-  // Team totals (agents + managers' own targets count once via agents; use the
-  // sum of individual sales vs sum of individual targets as the team figure).
+  // Team totals — TEAM sales ONLY. Admins are excluded here: computeAgentStats
+  // tags each person with their role, and we filter to role === 'agent' (and
+  // managers via their own agent rows), never role === 'admin'. So admin/house/
+  // test sales never inflate the team %.
   const agents = people.filter((p) => p.role === 'agent');
   const teamAchieved = agents.reduce((sum, a) => sum + a.achievedUsd, 0);
   const teamTarget = agents.reduce((sum, a) => sum + a.targetUsd, 0);
   const teamPct = teamTarget > 0 ? Math.round((teamAchieved / teamTarget) * 100) : 0;
-  // Tone tiers: >=100 achieved (green) · 70-99 close (blue) · 50-69 focus
-  // (orange) · <50 low (red, honest but encouraging).
-  let tone = 'close';
-  if (teamPct >= 100) tone = 'achieved';
-  else if (teamPct >= 70) tone = 'close';
-  else if (teamPct >= 50) tone = 'focus';
+  // Tone tiers are admin-configurable via crmConfig.summaryThresholds. The team's
+  // % of target decides which tone/email goes out. Defaults: 100 / 70 / 50.
+  const th = (s && s.crmConfig && s.crmConfig.summaryThresholds) || {};
+  const tAchieved = Number.isFinite(th.achieved) ? th.achieved : 100;
+  const tClose = Number.isFinite(th.close) ? th.close : 70;
+  const tFocus = Number.isFinite(th.focus) ? th.focus : 50;
+  let tone = 'low';
+  if (teamPct >= tAchieved) tone = 'achieved';
+  else if (teamPct >= tClose) tone = 'close';
+  else if (teamPct >= tFocus) tone = 'focus';
   else tone = 'low';
 
   // Rankings by % of target (agents only for "highest % of sale").

@@ -538,6 +538,8 @@ function IncentiveSettings({ say }) {
     setSaving(false);
   };
   const numCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const th = { achieved: 100, close: 70, focus: 50, ...(cfg.summaryThresholds || {}) };
+  const setTh = (k, v) => setCfg({ ...cfg, summaryThresholds: { ...th, [k]: Number(v) || 0 } });
   return (
     <div>
       <h2 className="text-lg font-extrabold mb-1" style={{ color: C.navy }}>Incentive settings</h2>
@@ -567,6 +569,32 @@ function IncentiveSettings({ say }) {
         </div>
         <div className="flex justify-end mt-4">
           <Btn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save incentive settings'}</Btn>
+        </div>
+      </div>
+
+      <h2 className="text-lg font-extrabold mt-8 mb-1" style={{ color: C.navy }}>Monthly summary email tiers</h2>
+      <p className="text-sm text-slate-500 mb-4">The monthly team-summary email's tone depends on the team's % of target (team sales only — admin sales are never counted). Set the cut-offs that decide which message goes out.</p>
+      <div className="bg-white rounded-2xl border border-slate-100 p-5 max-w-2xl">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Field label="Achieved ≥ %" hint="Celebratory “we hit target” email">
+            <input type="number" min="0" step="1" className={numCls} value={th.achieved} onChange={(e) => setTh('achieved', e.target.value)} />
+          </Field>
+          <Field label="Close ≥ %" hint="Upbeat near-miss email">
+            <input type="number" min="0" step="1" className={numCls} value={th.close} onChange={(e) => setTh('close', e.target.value)} />
+          </Field>
+          <Field label="Focus ≥ %" hint="Focused-push email; below this → honest but encouraging">
+            <input type="number" min="0" step="1" className={numCls} value={th.focus} onChange={(e) => setTh('focus', e.target.value)} />
+          </Field>
+        </div>
+        <div className="mt-5 rounded-xl bg-slate-50 border border-slate-100 p-4 text-xs text-slate-500 leading-relaxed">
+          <b className="text-slate-600">Which email is sent</b><br />
+          Team reaches <b>≥ {th.achieved}%</b> → <span className="font-semibold" style={{ color: '#0F9D58' }}>Achieved</span> (celebratory).<br />
+          <b>{th.close}%–{th.achieved - 1}%</b> → <span className="font-semibold" style={{ color: '#0EA5E9' }}>Close</span> (near miss, upbeat).<br />
+          <b>{th.focus}%–{th.close - 1}%</b> → <span className="font-semibold" style={{ color: '#F59E0B' }}>Focus</span> (a focused push gets there).<br />
+          Below <b>{th.focus}%</b> → <span className="font-semibold" style={{ color: '#EF4444' }}>Low</span> (honest but encouraging).
+        </div>
+        <div className="flex justify-end mt-4">
+          <Btn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save summary tiers'}</Btn>
         </div>
       </div>
     </div>

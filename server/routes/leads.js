@@ -1470,25 +1470,53 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const mtAchievedByPeriod = {};
     mtRows.forEach((r) => { mtAchievedByPeriod[r.period] = (mtAchievedByPeriod[r.period] || 0) + Number(r.achievedUsd || 0); });
 
+    // Identify admins (for the per-admin trend segments) by name.
+    const adminOwners = owners.filter((u) => u.role === 'admin');
+    const adminIdSet = new Set(adminOwners.map((u) => u.id));
+
     const trend = [];
     for (let i = 5; i >= 0; i--) {
       const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
       const period = `${mStart.getFullYear()}-${String(mStart.getMonth() + 1).padStart(2, '0')}`;
+      // Break each month into: team new, team cross, and per-admin totals — the
+      // same classification the current-month figures use.
+      let teamNew = 0, teamCross = 0; const adminByOwner = {};
       let sum = 0;
       for (const l of leads) {
-        for (const d of (l.deals || [])) {
-          if (d.stage !== 'closed_won') continue;
+        let leadCountedNew = false;
+        (l.deals || []).forEach((d, di) => {
+          if (d.stage !== 'closed_won') return;
           for (const it of (d.installments || [])) {
-            if (it.paid && it.paidDate) { const pd = new Date(it.paidDate); if (pd >= mStart && pd < mEnd) sum += toUsd(it.amount, d.currency); }
+            if (!(it.paid && it.paidDate)) continue;
+            const pd = new Date(it.paidDate);
+            if (!(pd >= mStart && pd < mEnd)) continue;
+            // Recurring repeats (seq>1) are ongoing revenue, not fresh selling —
+            // excluded from every figure, same as elsewhere.
+            if (it.recurring && Number(it.seq || 0) > 1) continue;
+            const usd = toUsd(it.amount, d.currency);
+            sum += usd;
+            const isNew = di === 0 && it.seq === 1 && !leadCountedNew;
+            if (isNew) leadCountedNew = true;
+            if (adminIdSet.has(l.ownerId)) {
+              adminByOwner[l.ownerId] = (adminByOwner[l.ownerId] || 0) + usd;
+            } else if (isNew) { teamNew += usd; } else { teamCross += usd; }
           }
-        }
+        });
       }
-      // Manual entry for the month takes precedence when present (or when there
-      // is no computed sales at all for that month).
+      // Manual entry for the month takes precedence when present. Manual figures
+      // are the historical TEAM total (no breakdown), so attribute them to team
+      // new and zero out the computed split for that month.
       const manual = mtAchievedByPeriod[period] || 0;
+      let segTeamNew = Math.round(teamNew), segTeamCross = Math.round(teamCross);
+      const segAdmin = adminOwners.map((a) => ({ ownerId: a.id, name: a.name, amount: Math.round(adminByOwner[a.id] || 0) }));
+      if (manual > 0) { segTeamNew = Math.round(manual); segTeamCross = 0; segAdmin.forEach((a) => { a.amount = 0; }); }
       const salesUsd = manual > 0 ? manual : sum;
-      trend.push({ month: mStart.toLocaleString('en-US', { month: 'short' }), year: mStart.getFullYear(), salesUsd: Math.round(salesUsd), pct: companyTarget > 0 ? Math.round((salesUsd / companyTarget) * 100) : null });
+      trend.push({
+        month: mStart.toLocaleString('en-US', { month: 'short' }), year: mStart.getFullYear(),
+        salesUsd: Math.round(salesUsd), pct: companyTarget > 0 ? Math.round((salesUsd / companyTarget) * 100) : null,
+        teamNewUsd: segTeamNew, teamCrossUsd: segTeamCross, adminSegments: segAdmin,
+      });
     }
 
     // Sales funnel: value + count of deals per pipeline stage, plus the top-of-

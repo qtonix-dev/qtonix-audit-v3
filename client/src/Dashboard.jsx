@@ -331,29 +331,64 @@ function SalesFunnel({ funnel }) {
 function TrendChart({ trend }) {
   if (!trend || trend.length === 0) return null;
   const W = 520, H = 150, pad = 26;
-  const max = Math.max(1, ...trend.map((t) => t.salesUsd));
+  // Segment palette. Admin segments are colored from a fixed palette by order.
+  const TEAM_NEW = '#0EA5E9', TEAM_CROSS = '#7DC5E8';
+  const ADMIN_COLORS = ['#8B5CF6', '#F59E0B', '#EC4899', '#14B8A6', '#6366F1'];
+  // Collect the distinct admin names across the trend (stable order).
+  const adminNames = [];
+  trend.forEach((t) => (t.adminSegments || []).forEach((a) => { if (!adminNames.includes(a.name)) adminNames.push(a.name); }));
+  const adminColor = {};
+  adminNames.forEach((n, i) => { adminColor[n] = ADMIN_COLORS[i % ADMIN_COLORS.length]; });
+  // Stacked total per month (fallback to salesUsd if segments are absent).
+  const stackTotal = (t) => {
+    const segSum = (t.teamNewUsd || 0) + (t.teamCrossUsd || 0) + (t.adminSegments || []).reduce((s, a) => s + (a.amount || 0), 0);
+    return segSum > 0 ? segSum : (t.salesUsd || 0);
+  };
+  const max = Math.max(1, ...trend.map(stackTotal));
   const bw = (W - pad * 2) / trend.length;
+  const compact = (v) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${Math.round(v)}`;
   return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ minWidth: 420 }}>
-        {[0, 0.5, 1].map((g) => <line key={g} x1={pad} x2={W - pad} y1={pad + (H - pad) * (1 - g)} y2={pad + (H - pad) * (1 - g)} stroke="#e2e8f0" strokeWidth="1" />)}
-        {trend.map((t, i) => {
-          const h = (t.salesUsd / max) * (H - pad);
-          const x = pad + i * bw + bw * 0.2;
-          const y = H - h;
-          return (
-            <g key={i}>
-              <rect x={x} y={y} width={bw * 0.6} height={h} rx="4" fill="url(#g)" />
-              <text x={x + bw * 0.3} y={y - 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#050A1F">{t.salesUsd >= 1000 ? `$${(t.salesUsd / 1000).toFixed(t.salesUsd >= 10000 ? 0 : 1)}k` : `$${t.salesUsd}`}</text>
-              <text x={x + bw * 0.3} y={H + 12} textAnchor="middle" fontSize="9" fill="#94a3b8">{t.month}</text>
-              {t.pct != null && <text x={x + bw * 0.3} y={H + 23} textAnchor="middle" fontSize="8" fontWeight="bold" fill="#16A34A">{t.pct}%</text>}
-            </g>
-          );
-        })}
-        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF6A00" /><stop offset="100%" stopColor="#FF4500" /></linearGradient></defs>
-      </svg>
+    <div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ minWidth: 420 }}>
+          {[0, 0.5, 1].map((g) => <line key={g} x1={pad} x2={W - pad} y1={pad + (H - pad) * (1 - g)} y2={pad + (H - pad) * (1 - g)} stroke="#e2e8f0" strokeWidth="1" />)}
+          {trend.map((t, i) => {
+            const total = stackTotal(t);
+            const x = pad + i * bw + bw * 0.2;
+            const fullH = (total / max) * (H - pad);
+            // Build the stack: team new, team cross, then each admin.
+            const segs = [
+              { v: t.teamNewUsd || 0, c: TEAM_NEW },
+              { v: t.teamCrossUsd || 0, c: TEAM_CROSS },
+              ...(t.adminSegments || []).map((a) => ({ v: a.amount || 0, c: adminColor[a.name] })),
+            ].filter((s) => s.v > 0);
+            let yCursor = H; // bottom baseline
+            const rects = segs.map((s, si) => {
+              const h = (s.v / max) * (H - pad);
+              yCursor -= h;
+              return <rect key={si} x={x} y={yCursor} width={bw * 0.6} height={h} fill={s.c} rx={si === segs.length - 1 ? 3 : 0} />;
+            });
+            return (
+              <g key={i}>
+                {rects}
+                <text x={x + bw * 0.3} y={(H - fullH) - 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#050A1F">{compact(total)}</text>
+                <text x={x + bw * 0.3} y={H + 12} textAnchor="middle" fontSize="9" fill="#94a3b8">{t.month}</text>
+                {t.pct != null && <text x={x + bw * 0.3} y={H + 23} textAnchor="middle" fontSize="8" fontWeight="bold" fill="#16A34A">{t.pct}%</text>}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
+        <LegendDot color={TEAM_NEW} label="Team New sales" />
+        <LegendDot color={TEAM_CROSS} label="Team Cross sales" />
+        {adminNames.map((n) => <LegendDot key={n} color={adminColor[n]} label={`Admin — ${n}`} />)}
+      </div>
     </div>
   );
+}
+function LegendDot({ color, label }) {
+  return <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-slate-500"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />{label}</span>;
 }
 
 function Leaderboard({ board, user, maxSales }) {

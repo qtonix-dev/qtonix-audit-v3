@@ -558,6 +558,16 @@ const Settings = sequelize.define(
           managerOverPct: 5, // % of team's over-achievement
           usdToInr: 83, // conversion used to pay incentives in INR
         },
+        // Monthly-summary email tone tiers (admin-editable). The team's % of
+        // target (TEAM sales only — admin sales are excluded) decides which tone
+        // and email goes out: >= achieved → celebratory; >= close → upbeat
+        // near-miss; >= focus → focused push; below focus → honest but
+        // encouraging. Whole-number percentages.
+        summaryThresholds: {
+          achieved: 100, // >= this % → "achieved" (hit target)
+          close: 70,     // >= this % → "close" (near miss)
+          focus: 50,     // >= this % → "focus"; below → "low"
+        },
       },
     },
 
