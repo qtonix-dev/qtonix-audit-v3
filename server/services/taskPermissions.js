@@ -39,6 +39,18 @@ function isHrActor(actor) {
 }
 function isLead(u) { return !!u && LEAD_TYPES.has(u.type); }
 
+// The Sales department's rank-and-file are protected: nobody OUTSIDE the Sales
+// department may assign them a task. Sales leads remain reachable (leads can
+// reach other leads), and Sales people keep their own outbound reach. Pre-Sales
+// is a different department and is unaffected.
+function isSalesDept(u) { return !!u && String(u.department || '').trim().toLowerCase() === 'sales'; }
+function isProtectedSalesTarget(actorUser, targetUser) {
+  if (!isSalesDept(targetUser)) return false;      // only Sales dept is protected
+  if (isLead(targetUser)) return false;            // Sales leads stay reachable
+  if (isSalesDept(actorUser)) return false;        // insiders can still assign within Sales
+  return true;                                     // outsider → protected
+}
+
 // Same team = same manager (shared reportsToId), or one is the other's manager.
 function sameTeam(a, b) {
   if (!a || !b) return false;
@@ -76,6 +88,9 @@ function canAssign(actorUser, targetUser, ctx = {}, roster = null) {
   // Self is always allowed.
   if (actorUser.id === targetUser.id) return true;
 
+  // Sales employees are protected from outside-department assignment.
+  if (isProtectedSalesTarget(actorUser, targetUser)) return false;
+
   const byId = roster ? new Map(roster.map((u) => [u.id, u])) : null;
   // Walk the actor's reporting chain upward — they can always reach their own
   // managers (reporting authority), including a lead's manager.
@@ -97,12 +112,16 @@ function canAssign(actorUser, targetUser, ctx = {}, roster = null) {
     return false;
   }
 
-  // Member: everyone in their own department (same branch) ＋ reporting chain.
+  // Member: everyone in their own department (same branch) ＋ reporting chain
+  // ＋ other-department leads (seniors who head/lead a department). This mirrors
+  // the dropdown, which lists other-department seniors so a member knows who
+  // they can reach across departments.
   const sameDept = (actorUser.department || '') && (targetUser.department || '') &&
     (actorUser.department || '').toLowerCase() === (targetUser.department || '').toLowerCase() &&
     (actorUser.branch || '').toLowerCase() === (targetUser.branch || '').toLowerCase();
   if (sameDept) return true;
   if (inMyReportingChain(targetUser.id)) return true;
+  if (isLead(targetUser)) return true; // other-department leads are reachable
   return false;
 }
 
@@ -145,4 +164,31 @@ function viewableBoardIds(actorUser, roster, ctx = {}) {
   return roster.filter((u) => canViewBoard(actorUser, u, roster, ctx)).map((u) => u.id);
 }
 
-module.exports = { canAssign, assignableIds, canViewBoard, viewableBoardIds, isDownline, sameTeam, isLead, isHrActor, isAdminActor, LEAD_TYPES, HR_TYPES };
+// Is `u` the top-most lead of their department — i.e. a lead who does NOT report
+// to another lead in the SAME department? Used to collapse a department to a
+// single reachable lead (the Project Manager) in cross-department assignee lists,
+// hiding the TLs/sub-leads beneath them.
+function isTopLeadOfDept(u, roster) {
+  if (!isLead(u)) return false;
+  const byId = new Map(roster.map((x) => [x.id, x]));
+  const mgr = u.reportsToId ? byId.get(u.reportsToId) : null;
+  if (mgr && isLead(mgr) && String(mgr.department || '').toLowerCase() === String(u.department || '').toLowerCase()) return false;
+  return true;
+}
+// Everyone in the actor's own reach that belongs to their own team/downline (so
+// the UI can list "own" people before cross-department ones).
+function isOwnPerson(actorUser, targetUser, roster) {
+  if (!actorUser || !targetUser) return false;
+  if (actorUser.id === targetUser.id) return true;
+  if ((actorUser.department || '').toLowerCase() === (targetUser.department || '').toLowerCase()
+    && (actorUser.branch || '').toLowerCase() === (targetUser.branch || '').toLowerCase()
+    && (actorUser.department || '')) return true;
+  if (isDownline(actorUser, targetUser, roster)) return true;
+  // reporting chain upward
+  const byId = new Map(roster.map((x) => [x.id, x]));
+  let cur = actorUser; const seen = new Set();
+  while (cur && cur.reportsToId && !seen.has(cur.id)) { seen.add(cur.id); if (cur.reportsToId === targetUser.id) return true; cur = byId.get(cur.reportsToId); }
+  return false;
+}
+
+module.exports = { canAssign, assignableIds, canViewBoard, viewableBoardIds, isDownline, isTopLeadOfDept, isOwnPerson, isLead, isSalesDept, sameTeam, isHrActor, isAdminActor, LEAD_TYPES, HR_TYPES };

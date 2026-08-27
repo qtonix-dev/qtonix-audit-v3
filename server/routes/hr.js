@@ -1912,6 +1912,54 @@ router.get('/expenses/monthly', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// AI invoice reader: HR uploads an invoice, we extract vendor/amount/date and
+// pre-fill the New Expense form. Mirrors the candidate resume parser (Claude).
+// Accepts { base64, fileName }. Falls back gracefully — the caller still keeps
+// the file as the attachment even if parsing returns nothing.
+router.post('/expenses/parse-invoice', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    const b = req.body || {};
+    const base64 = String(b.base64 || '');
+    const fileName = String(b.fileName || '');
+    if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = s && s.getKey ? s.getKey('anthropic') : null;
+    if (!apiKey) return res.json({ ok: false, reason: 'ai_unavailable', fields: null });
+
+    const { parseInvoice, extractFileText } = require('../services/hrRecruitAI');
+    // Decide image vs text. Images go to Claude vision; PDFs/DOCX are extracted.
+    const m = base64.match(/^data:([^;]+);base64,(.*)$/s);
+    const mime = m ? m[1] : '';
+    const isImage = /image\//.test(mime) || /\.(png|jpe?g|webp|gif)$/i.test(fileName);
+    let fields = null;
+    try {
+      if (isImage) {
+        const data = m ? m[2] : base64;
+        fields = await parseInvoice(apiKey, { image: { base64: data, mediaType: mime || 'image/jpeg' } });
+      } else {
+        const text = await extractFileText({ base64, fileName });
+        if (!text || !text.trim()) return res.json({ ok: false, reason: 'no_text', fields: null });
+        fields = await parseInvoice(apiKey, { text });
+      }
+    } catch (e) {
+      return res.json({ ok: false, reason: 'parse_failed', error: e.message, fields: null });
+    }
+
+    // Try to match the extracted vendor name to an existing active vendor.
+    let matchedVendorId = null; let matchedVendorName = null;
+    const vn = String((fields && fields.vendorName) || '').trim().toLowerCase();
+    if (vn) {
+      const vendors = await HrVendor.findAll({ where: { active: true } });
+      // exact, then contains, then token overlap.
+      let hit = vendors.find((v) => v.name.toLowerCase() === vn)
+        || vendors.find((v) => v.name.toLowerCase().includes(vn) || vn.includes(v.name.toLowerCase()));
+      if (hit) { matchedVendorId = hit.id; matchedVendorName = hit.name; }
+    }
+    res.json({ ok: true, fields, matchedVendorId, matchedVendorName });
+  } catch (e) { next(e); }
+});
+
 // Mark an approved expense as paid (raising HR or admin).
 router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
   try {

@@ -201,14 +201,41 @@ router.get('/assignable', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
     const people = await roster();
-    const allowed = people.filter((u) => canAssign(ctx.actorUser, u, ctx, people));
+    const { isOwnPerson, isTopLeadOfDept } = require('../services/taskPermissions');
+    let allowed = people.filter((u) => canAssign(ctx.actorUser, u, ctx, people));
+
+    // Collapse cross-department reach to each department's TOP lead only: hide
+    // TLs/sub-leads under a Project Manager for OTHER departments. Own team stays
+    // fully visible. Admin/HR see everyone unchanged.
+    const actor = ctx.actorUser;
+    if (actor && !ctx.isAdmin && !ctx.isHr) {
+      allowed = allowed.filter((u) => {
+        if (isOwnPerson(actor, u, people)) return true;   // own team → keep all
+        // cross-department: keep only the department's top lead
+        return isTopLeadOfDept(u, people);
+      });
+    }
+
     const q = String(req.query.q || '').trim().toLowerCase();
     const filtered = q ? allowed.filter((u) => u.name.toLowerCase().includes(q) || (u.designation || '').toLowerCase().includes(q)) : allowed;
-    const list = filtered.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type }));
+
+    // Order: own team first (alphabetical), then cross-department seniors
+    // (alphabetical). Cross-department entries carry a deptLabel so the assigner
+    // sees which department they're reaching into.
+    const own = []; const cross = [];
+    for (const u of filtered) {
+      const entry = { id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type, own: actor ? isOwnPerson(actor, u, people) : true };
+      (entry.own ? own : cross).push(entry);
+    }
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    own.sort(byName); cross.sort(byName);
+    cross.forEach((e) => { e.deptLabel = e.department || 'Other'; });
+    const list = [...own, ...cross];
+
     // Admins have no HrUser row — add a "Me" entry (their negative board id) so
     // they can assign tasks to their own board.
     if (ctx.isAdmin && ctx.boardId < 0) {
-      const me = { id: ctx.boardId, name: ctx.actorName + ' (me)', designation: 'Admin', department: '', branch: '', avatar: null, type: 'admin' };
+      const me = { id: ctx.boardId, name: ctx.actorName + ' (me)', designation: 'Admin', department: '', branch: '', avatar: null, type: 'admin', own: true };
       if (!q || me.name.toLowerCase().includes(q)) list.unshift(me);
     }
     res.json(list);

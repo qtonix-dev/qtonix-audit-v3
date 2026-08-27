@@ -259,13 +259,41 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [aiState, setAiState] = useState('');   // '', 'reading', 'done', 'failed'
+  const [aiNote, setAiNote] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const readAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('Could not read file.')); r.readAsDataURL(file); });
   const pickInvoice = async (e) => {
     const file = e.target.files && e.target.files[0]; if (!file) return;
-    setUploading(true); setErr('');
+    setUploading(true); setErr(''); setAiState(''); setAiNote('');
+    let dataUrl = '';
+    try { dataUrl = await readAsDataURL(file); } catch {}
+    // 1) Upload to ImageKit so the file is attached to the expense.
     try { const safe = (f.title || 'expense').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30); const { url } = await uploadToImageKit(file, `/qtonix-hr/expenses/${safe}-${Date.now()}`, file.name); setInvoice({ url, name: file.name }); }
-    catch (er) { setErr('Invoice upload failed. ' + (er.message || '')); }
-    finally { setUploading(false); }
+    catch (er) { setErr('Invoice upload failed. ' + (er.message || '')); setUploading(false); return; }
+    setUploading(false);
+    // 2) Ask the server to read the invoice and auto-fill (best-effort).
+    if (!dataUrl) return;
+    setAiState('reading');
+    try {
+      const r = await hrApi('/expenses/parse-invoice', { method: 'POST', body: JSON.stringify({ base64: dataUrl, fileName: file.name }) });
+      if (r && r.ok && r.fields) {
+        const fld = r.fields;
+        setF((s) => ({
+          ...s,
+          title: s.title || fld.description || fld.vendorName || s.title,
+          amount: s.amount || (fld.amount ? String(fld.amount) : s.amount),
+          expenseDate: fld.invoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(fld.invoiceDate) ? fld.invoiceDate : s.expenseDate,
+          description: s.description || fld.description || '',
+          vendorId: (s.payeeType === 'vendor' && r.matchedVendorId) ? String(r.matchedVendorId) : s.vendorId,
+          category: (fld.category && cats.find((c) => c.toLowerCase() === String(fld.category).toLowerCase())) || s.category,
+        }));
+        setAiState('done');
+        if (r.matchedVendorName) setAiNote(`Matched vendor: ${r.matchedVendorName}. Review the details below.`);
+        else if (fld.vendorName) setAiNote(`Read "${fld.vendorName}". Pick or add the vendor below, then review.`);
+        else setAiNote('Details filled from the invoice. Please review below.');
+      } else { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
+    } catch { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
   };
   const save = async () => {
     if (!f.title.trim()) { setErr('Title is required.'); return; }
@@ -306,7 +334,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
         </Field>
         <Field label="Description" full><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className="inp" placeholder="Optional notes" /></Field>
         <Field label="Invoice" full>
-          <div className="flex items-center gap-2"><label className={`inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50 ${uploading ? 'opacity-50' : ''}`}>{uploading ? 'Uploading…' : (invoice ? 'Replace file' : '📎 Upload invoice')}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={pickInvoice} disabled={uploading} /></label>{invoice && <span className="text-xs text-green-600 font-bold">✓ {invoice.name}</span>}</div>
+          <div className="flex items-center gap-2">{invoice ? <span className="text-xs text-green-600 font-bold">✓ {invoice.name} <span className="text-slate-400 font-normal">(attached)</span></span> : <span className="text-xs text-slate-400">Upload above to attach an invoice — optional.</span>}</div>
         </Field>
       </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : 'Submit for approval'}</button></div>

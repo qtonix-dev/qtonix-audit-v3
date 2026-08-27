@@ -259,12 +259,24 @@ function AssigneePicker({ value, onChange, allowClear, compact }) {
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
             <div className="max-h-56 overflow-auto">
               {allowClear && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
-              {people.map((p) => (
-                <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
-                  <TAvatar person={p} size={24} />
-                  <div className="min-w-0"><div className="text-xs font-semibold text-[#050A1F] truncate">{titleCase(p.name)}</div><div className="text-[10px] text-slate-400 truncate">{p.designation || p.department}</div></div>
-                </button>
-              ))}
+              {people.map((p, i) => {
+                const prev = people[i - 1];
+                const showOwnHdr = i === 0 && p.own;
+                const showCrossHdr = !p.own && (i === 0 || (prev && prev.own));
+                return (
+                  <React.Fragment key={p.id}>
+                    {showOwnHdr && <div className="px-2 pt-1 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-300">My team</div>}
+                    {showCrossHdr && <div className="px-2 pt-2 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-300 border-t border-slate-100 mt-1">Other departments</div>}
+                    <button onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
+                      <TAvatar person={p} size={24} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-[#050A1F] truncate">{titleCase(p.name)}{!p.own && p.deptLabel && <span className="text-slate-400 font-normal"> · {p.deptLabel}</span>}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{p.designation || p.department}</div>
+                      </div>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
               {people.length === 0 && <div className="text-xs text-slate-400 px-2 py-3 text-center">No people found.</div>}
             </div>
           </div>

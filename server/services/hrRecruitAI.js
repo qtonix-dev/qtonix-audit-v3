@@ -363,4 +363,42 @@ ${feedback ? `Interview feedback: ${feedback}` : ''}`,
   return { level, score, reason: String(data.reason || '').slice(0, 200), scoredAt: new Date().toISOString() };
 }
 
-module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, extractFileText, screenCandidate, draftRecruitmentEmail, scoreResumeMatch };
+// Extract expense/invoice fields from an invoice's text. Returns ONLY the fields
+// present; never invents values. Pass `text` for text-based invoices (PDF/DOCX),
+// or `image` ({ base64, mediaType }) for photo/scan invoices (Claude vision).
+async function parseInvoice(apiKey, { text, image }) {
+  const schema = `{
+  "vendorName": "",
+  "amount": "",
+  "invoiceDate": "",
+  "invoiceNumber": "",
+  "gstin": "",
+  "description": "",
+  "category": ""
+}
+Rules:
+- vendorName = the seller / biller / company issuing the invoice (not the customer).
+- amount = the final total payable as a plain number (grand total incl. tax if shown).
+- invoiceDate = the invoice/bill date as YYYY-MM-DD if you can determine it.
+- gstin = the seller's 15-character GSTIN if present, else "".
+- description = a short (max 8 words) summary of what was billed.
+- category = a one or two word expense category guess (e.g. "Utilities", "Software", "Travel") or "".
+Return valid JSON only.`;
+  const system = 'You extract structured data from a vendor invoice or bill. Return ONLY JSON matching the requested schema, nothing else. Never invent data that is not present — use empty string or null instead. Amounts are numbers only (no currency symbols or commas). Dates as YYYY-MM-DD when determinable.';
+  let messages;
+  if (image && image.base64) {
+    messages = [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: image.mediaType || 'image/jpeg', data: image.base64 } },
+      { type: 'text', text: `From this invoice image, extract this JSON exactly:\n${schema}` },
+    ] }];
+  } else {
+    messages = [{ role: 'user', content: `From the invoice/bill below, extract this JSON exactly:\n${schema}\n\nINVOICE:\n${String(text || '').slice(0, 12000)}` }];
+  }
+  const out = await callClaude(apiKey, { system, maxTokens: 700, messages });
+  const data = parseJson(out);
+  if (data.amount != null) { const n = Number(String(data.amount).replace(/[^0-9.]/g, '')); data.amount = Number.isFinite(n) && n > 0 ? n : ''; }
+  ['vendorName', 'invoiceDate', 'invoiceNumber', 'gstin', 'description', 'category'].forEach((k) => { if (data[k] == null) data[k] = ''; });
+  return data;
+}
+
+module.exports = { rewriteJobDescription, suggestSkills, parseUploadedJD, parseResume, parseInvoice, extractFileText, screenCandidate, draftRecruitmentEmail, scoreResumeMatch };
