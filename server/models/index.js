@@ -1412,6 +1412,32 @@ const HrShift = sequelize.define('HrShift', {
 }, { tableName: 'hr_shifts' });
 HrShift.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Daily late-check records. One row per employee per day who was flagged late
+// (shift start + their shift's grace passed with no login). The employee's
+// reporting senior reviews it (coming / not coming / not picking + notes), then
+// the branch HR manager follows up — especially the "not picking" ones.
+const HrLateCheck = sequelize.define('HrLateCheck', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  date: { type: DataTypes.STRING(10), allowNull: false },       // YYYY-MM-DD (IST)
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  seniorId: { type: DataTypes.INTEGER, allowNull: true },        // reports-to lead who owns the review
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  shiftStart: { type: DataTypes.STRING(10), defaultValue: '' },  // snapshot for display
+  graceMinutes: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // Senior review.
+  seniorStatus: { type: DataTypes.STRING(20), defaultValue: 'pending' }, // pending|coming|not_coming|not_picking
+  seniorNotes: { type: DataTypes.STRING(500), defaultValue: '' },
+  seniorUpdatedAt: { type: DataTypes.DATE, allowNull: true },
+  // HR follow-up.
+  hrStatus: { type: DataTypes.STRING(20), defaultValue: 'pending' },     // pending|coming|not_coming|resolved
+  hrNotes: { type: DataTypes.STRING(500), defaultValue: '' },
+  hrById: { type: DataTypes.INTEGER, allowNull: true },
+  hrByName: { type: DataTypes.STRING(160), defaultValue: '' },
+  hrUpdatedAt: { type: DataTypes.DATE, allowNull: true },
+  notifiedHrAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'hr_late_checks', indexes: [{ fields: ['date'] }, { fields: ['employeeId', 'date'] }] });
+HrLateCheck.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 // Holiday list — per branch (branch '' means all branches / company-wide).
 const HrHoliday = sequelize.define('HrHoliday', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
@@ -2029,7 +2055,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

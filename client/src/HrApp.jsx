@@ -1216,6 +1216,8 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const [histOpen, setHistOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const [decideItem, setDecideItem] = useState(null); // leave review item open in the decision popup
+  const [lateItem, setLateItem] = useState(null);     // senior late-check popup
+  const [lateHrItem, setLateHrItem] = useState(null); // HR follow-up popup
   const [orgOpen, setOrgOpen] = useState(false);      // organization chart modal
   const [claims, setClaims] = useState([]);
   const [claimOpen, setClaimOpen] = useState(false);
@@ -1267,6 +1269,8 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
   const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { alert(e.message); } };
   const decideExpense = async (expenseId, decision) => { try { await hrApi(`/expenses/${expenseId}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); loadReviews(); } catch (e) { alert(e.message); } };
+  const saveLateCheck = async (date, updates) => { try { await hrApi(`/me/late-check/${date}`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateItem(null); loadReviews(); } catch (e) { alert(e.message); } };
+  const saveLateCheckHr = async (date, updates) => { try { await hrApi(`/late-check/${date}/hr`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateHrItem(null); loadReviews(); } catch (e) { alert(e.message); } };
 
   const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
   const ringColor = { casual: '#22C55E', medical: '#0EA5E9', privilege: '#F59E0B', wfh: '#8B5CF6' };
@@ -1454,6 +1458,20 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                       </div>
                     </div>
                   );
+                  if (it.kind === 'late_check') return (
+                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
+                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Attendance check</span> · <b>{it.count}</b> team member{it.count === 1 ? '' : 's'} not logged in</div>
+                      <div className="text-[11px] text-slate-400 mb-1.5">Past shift start + grace. Mark who’s coming and who isn’t.</div>
+                      <button onClick={() => setLateItem(it)} className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#F59E0B' }}>Review attendance ›</button>
+                    </div>
+                  );
+                  if (it.kind === 'late_check_hr') return (
+                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
+                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Late follow-up</span> · <b>{it.count}</b> update{it.count === 1 ? '' : 's'} from team leads</div>
+                      <div className="text-[11px] text-slate-400 mb-1.5">Review each lead’s status & notes. Call the “not picking” ones and update.</div>
+                      <button onClick={() => setLateHrItem(it)} className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#4338CA' }}>Review & update ›</button>
+                    </div>
+                  );
                   // interview_feedback
                   return (
                     <div key={it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 mt-2">
@@ -1558,6 +1576,8 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
+      {lateItem && <LateCheckModal item={lateItem} onClose={() => setLateItem(null)} onSave={(updates) => saveLateCheck(lateItem.date, updates)} />}
+      {lateHrItem && <LateCheckHrModal item={lateHrItem} onClose={() => setLateHrItem(null)} onSave={(updates) => saveLateCheckHr(lateHrItem.date, updates)} />}
       {orgOpen && <EmployeeOrgChartModal onClose={() => setOrgOpen(false)} />}
       {claimOpen && <EmployeeClaimModal onClose={() => setClaimOpen(false)} onSaved={() => { setClaimOpen(false); loadClaims(); }} />}
       {claimHistOpen && <ClaimHistoryModal claims={claims} onClose={() => setClaimHistOpen(false)} onNew={() => { setClaimHistOpen(false); setClaimOpen(true); }} />}
@@ -1845,6 +1865,104 @@ function EmployeeOrgChartModal({ onClose }) {
                   </div>
                 </div>
               )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Senior's daily late-check popup: for each team member not logged in, set
+// coming / not coming / not picking + optional notes.
+function LateCheckModal({ item, onClose, onSave }) {
+  const [rows, setRows] = useState(() => (item.people || []).map((p) => ({ ...p, status: p.status === 'pending' ? '' : p.status, notes: p.notes || '' })));
+  const [busy, setBusy] = useState(false);
+  const OPTS = [['coming', 'Coming', '#0F9D58'], ['not_coming', 'Not coming', '#EF4444'], ['not_picking', 'Not picking call', '#F59E0B']];
+  const setRow = (idx, patch) => setRows((a) => a.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  const save = async () => {
+    const updates = rows.filter((r) => r.status).map((r) => ({ id: r.id, status: r.status, notes: r.notes }));
+    if (!updates.length) { alert('Set a status for at least one person.'); return; }
+    setBusy(true); try { await onSave(updates); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">Attendance check</div><div className="text-[11px] text-slate-400">Team members not logged in after shift start + grace</div></div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-5 overflow-auto space-y-3">
+          {rows.map((r, idx) => (
+            <div key={r.id} className="rounded-xl border border-slate-100 p-3.5">
+              <div className="flex items-center gap-2.5 mb-2">
+                <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-sm font-extrabold overflow-hidden shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]?.toUpperCase()}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-extrabold text-[#050A1F] text-[14px] truncate">{titleCase(r.name)}</div>
+                  <div className="text-[11px] text-slate-400">{r.phone ? <a href={`tel:${r.phone}`} className="text-sky-600 font-bold">{r.phone}</a> : 'No phone on file'}{r.shiftStart ? ` · shift ${r.shiftStart}` : ''}</div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {OPTS.map(([val, lbl, col]) => (
+                  <button key={val} onClick={() => setRow(idx, { status: val })} className="text-[11px] font-extrabold rounded-md px-2.5 py-1 border" style={r.status === val ? { background: col, color: '#fff', borderColor: col } : { color: col, borderColor: '#e2e8f0' }}>{lbl}</button>
+                ))}
+              </div>
+              <input value={r.notes} onChange={(e) => setRow(idx, { notes: e.target.value })} placeholder="Notes (optional)" className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px]" />
+            </div>
+          ))}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save & notify HR'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// HR follow-up popup: review each lead's status + notes, and record the final
+// outcome (especially for "not picking" — HR calls and updates).
+function LateCheckHrModal({ item, onClose, onSave }) {
+  const [rows, setRows] = useState(() => (item.people || []).map((p) => ({ ...p, hrStatus: p.hrStatus === 'pending' ? '' : p.hrStatus, hrNotes: p.hrNotes || '' })));
+  const [busy, setBusy] = useState(false);
+  const OPTS = [['coming', 'Coming', '#0F9D58'], ['not_coming', 'Not coming', '#EF4444'], ['resolved', 'Resolved', '#4338CA']];
+  const seniorLabel = (s) => ({ coming: 'Coming', not_coming: 'Not coming', not_picking: 'Not picking call' }[s] || s);
+  const seniorColor = (s) => ({ coming: '#0F9D58', not_coming: '#EF4444', not_picking: '#F59E0B' }[s] || '#64748b');
+  const setRow = (idx, patch) => setRows((a) => a.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  const save = async () => {
+    const updates = rows.filter((r) => r.hrStatus).map((r) => ({ id: r.id, status: r.hrStatus, notes: r.hrNotes }));
+    if (!updates.length) { alert('Set a status for at least one person.'); return; }
+    setBusy(true); try { await onSave(updates); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div><div className="text-lg font-extrabold text-[#050A1F]">Late follow-up</div><div className="text-[11px] text-slate-400">Team-lead updates for today — call the “not picking” ones</div></div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-5 overflow-auto space-y-3">
+          {rows.map((r, idx) => (
+            <div key={r.id} className="rounded-xl border border-slate-100 p-3.5">
+              <div className="flex items-center gap-2.5 mb-2">
+                <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-sm font-extrabold overflow-hidden shrink-0">{r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" /> : (r.name || '?')[0]?.toUpperCase()}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-extrabold text-[#050A1F] text-[14px] truncate">{titleCase(r.name)}</div>
+                  <div className="text-[11px] text-slate-400">{r.phone ? <a href={`tel:${r.phone}`} className="text-sky-600 font-bold">{r.phone}</a> : 'No phone on file'}{r.branch ? ` · ${r.branch}` : ''}</div>
+                </div>
+                <span className="text-[10px] font-extrabold rounded px-2 py-0.5 shrink-0" style={{ background: '#f8fafc', color: seniorColor(r.seniorStatus) }}>{seniorLabel(r.seniorStatus)}</span>
+              </div>
+              {(r.seniorNotes || r.seniorName) && <div className="text-[11px] text-slate-500 mb-2 bg-slate-50 rounded-lg px-2.5 py-1.5"><b>{r.seniorName || 'Lead'}:</b> {r.seniorNotes || '—'}</div>}
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {OPTS.map(([val, lbl, col]) => (
+                  <button key={val} onClick={() => setRow(idx, { hrStatus: val })} className="text-[11px] font-extrabold rounded-md px-2.5 py-1 border" style={r.hrStatus === val ? { background: col, color: '#fff', borderColor: col } : { color: col, borderColor: '#e2e8f0' }}>{lbl}</button>
+                ))}
+              </div>
+              <input value={r.hrNotes} onChange={(e) => setRow(idx, { hrNotes: e.target.value })} placeholder="HR notes (e.g. spoke to them, on the way)" className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px]" />
+            </div>
+          ))}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Update records'}</button>
         </div>
       </div>
     </div>

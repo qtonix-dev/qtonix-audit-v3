@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -1481,6 +1481,53 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---------------------------------------------------------------------------
+// Daily late-check. For a given senior (a lead/department head/manager who has
+// direct reports), find today's team members who are "late": their shift start
+// + the shift's own grace has passed and they still have no login recorded, and
+// they aren't on approved leave / holiday / week-off. Upserts an HrLateCheck row
+// per late employee (idempotent) and returns the rows joined with the employee.
+async function computeLateForSenior(seniorId, dateStr) {
+  const team = await HrUser.findAll({ where: { reportsToId: seniorId, active: true } });
+  if (!team.length) return [];
+  const nowMin = hhmmToMin(istHHMM());
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  const policy = getHrPolicy(s);
+  const shiftCache = {};
+  const getShift = async (sid) => { if (!sid) return null; if (shiftCache[sid] === undefined) shiftCache[sid] = await HrShift.findByPk(sid); return shiftCache[sid]; };
+  const results = [];
+  for (const emp of team) {
+    if (!emp.shiftId) continue; // no shift → can't judge lateness
+    const shift = await getShift(emp.shiftId);
+    if (!shift || !shift.startTime) continue;
+    const startMin = hhmmToMin(shift.startTime);
+    const grace = Number.isFinite(Number(shift.graceMinutes)) ? Number(shift.graceMinutes) : 20;
+    if (startMin == null) continue;
+    // Only flag once the grace window has fully passed for today.
+    if (nowMin == null || nowMin < startMin + grace) continue;
+    // Skip anyone on approved leave / holiday / week-off today, or already logged in.
+    const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date: dateStr } });
+    if (att && att.loginTime) continue;                       // already clocked in
+    if (att && ['leave', 'holiday', 'week_off', 'half_day'].includes(att.status)) continue;
+    const onLeave = await HrLeave.findOne({ where: { employeeId: emp.id, date: dateStr, status: 'approved' } });
+    if (onLeave) continue;
+    if (isWeekOff(policy, emp.branch, dateStr)) continue;
+    const holiday = await HrHoliday.findOne({ where: { date: dateStr, branch: { [Op.in]: ['', emp.branch || ''] } } });
+    if (holiday) continue;
+
+    // Upsert the late-check record (idempotent for the day).
+    let row = await HrLateCheck.findOne({ where: { employeeId: emp.id, date: dateStr } });
+    if (!row) {
+      row = await HrLateCheck.create({
+        date: dateStr, employeeId: emp.id, seniorId, branch: emp.branch || '',
+        shiftStart: shift.startTime, graceMinutes: grace,
+      });
+    }
+    results.push({ row, emp });
+  }
+  return results;
+}
+
 // GET /me/reviews → items awaiting THIS person's action: juniors' pending leave
 // they can approve (as reports-to senior, or as branch HR manager/admin).
 router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
@@ -1573,7 +1620,146 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       }
     }
 
+    // Daily late-check. A senior (anyone with direct reports) sees a review item
+    // listing today's team members who are late (past shift start + grace with no
+    // login). They set coming / not coming / not picking + notes per person.
+    if (req.hrActor.kind === 'hr') {
+      const todayStr = istDateStr();
+      const late = await computeLateForSenior(actorId, todayStr);
+      // Only pending (not yet actioned by the senior) drive the review card.
+      const pendingLate = late.filter(({ row }) => row.seniorStatus === 'pending');
+      if (pendingLate.length) {
+        out.push({
+          id: `late-${todayStr}`, kind: 'late_check', date: todayStr,
+          count: pendingLate.length,
+          people: pendingLate.map(({ row, emp }) => ({
+            id: row.id, employeeId: emp.id, name: emp.name, phone: emp.phone || '',
+            avatar: emp.avatar || null, shiftStart: row.shiftStart, graceMinutes: row.graceMinutes,
+            status: row.seniorStatus, notes: row.seniorNotes || '',
+          })),
+        });
+      }
+    }
+
+    // HR follow-up on late-checks: branch HR managers / admins see employees a
+    // senior has actioned, so they can review the status + notes and handle the
+    // "not picking the call" ones.
+    if (canManagePeople(req)) {
+      const todayStr = istDateStr();
+      const actioned = await HrLateCheck.findAll({
+        where: { date: todayStr, seniorStatus: { [Op.ne]: 'pending' }, hrStatus: { [Op.in]: ['pending'] } },
+        order: [['seniorUpdatedAt', 'ASC']],
+      });
+      const inScope = actioned.filter((r) => canManageBranch(req, r.branch));
+      if (inScope.length) {
+        const empIds = [...new Set(inScope.map((r) => r.employeeId))];
+        const seniorIds = [...new Set(inScope.map((r) => r.seniorId).filter(Boolean))];
+        const emps = await HrUser.findAll({ where: { id: empIds } });
+        const seniors = await HrUser.findAll({ where: { id: seniorIds } });
+        const empById = Object.fromEntries(emps.map((e) => [e.id, e]));
+        const seniorById = Object.fromEntries(seniors.map((e) => [e.id, e]));
+        out.push({
+          id: `late-hr-${todayStr}`, kind: 'late_check_hr', date: todayStr,
+          count: inScope.length,
+          people: inScope.map((r) => {
+            const e = empById[r.employeeId] || {};
+            const sr = seniorById[r.seniorId] || {};
+            return {
+              id: r.id, employeeId: r.employeeId, name: e.name || 'Employee', phone: e.phone || '',
+              avatar: e.avatar || null, branch: r.branch,
+              seniorName: sr.name || '', seniorStatus: r.seniorStatus, seniorNotes: r.seniorNotes || '',
+              hrStatus: r.hrStatus, hrNotes: r.hrNotes || '',
+            };
+          }),
+        });
+      }
+    }
+
     res.json({ reviews: out, count: out.length });
+  } catch (e) { next(e); }
+});
+
+// POST /me/late-check/:date — the senior submits status + notes for their late
+// team members. body: { updates: [{ id, status, notes }] } where status is one
+// of coming | not_coming | not_picking. On save, notify the branch HR manager(s)
+// so they can follow up (especially "not picking").
+router.post('/me/late-check/:date', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only a team lead can update this.' });
+    const date = String(req.params.date || '');
+    const updates = Array.isArray(req.body && req.body.updates) ? req.body.updates : [];
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update.' });
+    const VALID = ['coming', 'not_coming', 'not_picking'];
+    const now = new Date();
+    const touched = [];
+    for (const u of updates) {
+      const row = await HrLateCheck.findOne({ where: { id: Number(u.id), date, seniorId: req.hrActor.id } });
+      if (!row) continue; // only the owning senior can update their rows
+      if (!VALID.includes(u.status)) continue;
+      row.seniorStatus = u.status;
+      row.seniorNotes = String(u.notes || '').slice(0, 500);
+      row.seniorUpdatedAt = now;
+      await row.save();
+      touched.push(row);
+    }
+    if (!touched.length) return res.status(400).json({ error: 'No matching records to update.' });
+
+    // Notify branch HR manager(s) + admins for each affected branch (deduped),
+    // and drop an in-app notification so they open the follow-up review.
+    try {
+      const byBranch = {};
+      touched.forEach((r) => { (byBranch[r.branch || ''] || (byBranch[r.branch || ''] = [])).push(r); });
+      for (const [branch, rows] of Object.entries(byBranch)) {
+        // Branch HR managers: HR users flagged as managers scoped to this branch
+        // or all branches; plus admins.
+        const hrMgrs = await HrUser.findAll({ where: { active: true, isHrManager: true } });
+        const scoped = hrMgrs.filter((m) => {
+          const sc = String(m.hrManagerScope || '').toLowerCase();
+          return sc === 'all' || sc === String(branch || '').toLowerCase();
+        });
+        const seniorName = req.hrActor.name;
+        for (const m of scoped) {
+          if (m.id === req.hrActor.id) continue;
+          await HrNotification.create({ userId: m.id, actorKind: 'hr', type: 'info',
+            text: `${seniorName} updated the daily late-check for ${branch || 'the team'} — ${rows.length} employee${rows.length === 1 ? '' : 's'} to review${rows.some((r) => r.seniorStatus === 'not_picking') ? ' (some not picking calls)' : ''}.` });
+          rows.forEach((r) => { r.notifiedHrAt = new Date(); });
+        }
+      }
+      await Promise.all(touched.map((r) => r.save()));
+    } catch {}
+
+    hrLog(req, 'latecheck.senior', `${date} · ${touched.length} updated`);
+    res.json({ ok: true, updated: touched.length });
+  } catch (e) { next(e); }
+});
+
+// POST /late-check/:date/hr — a branch HR manager / admin records the final
+// follow-up status + notes (e.g. after calling an employee the senior couldn't
+// reach). body: { updates: [{ id, status, notes }] } status: coming|not_coming|resolved.
+router.post('/late-check/:date/hr', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can update this.' });
+    const date = String(req.params.date || '');
+    const updates = Array.isArray(req.body && req.body.updates) ? req.body.updates : [];
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update.' });
+    const VALID = ['coming', 'not_coming', 'resolved'];
+    const now = new Date();
+    let n = 0;
+    for (const u of updates) {
+      const row = await HrLateCheck.findOne({ where: { id: Number(u.id), date } });
+      if (!row) continue;
+      if (!canManageBranch(req, row.branch)) continue;
+      if (!VALID.includes(u.status)) continue;
+      row.hrStatus = u.status;
+      row.hrNotes = String(u.notes || '').slice(0, 500);
+      row.hrById = req.hrActor.id;
+      row.hrByName = req.hrActor.name;
+      row.hrUpdatedAt = now;
+      await row.save();
+      n++;
+    }
+    hrLog(req, 'latecheck.hr', `${date} · ${n} updated`);
+    res.json({ ok: true, updated: n });
   } catch (e) { next(e); }
 });
 
