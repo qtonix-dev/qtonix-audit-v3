@@ -1844,24 +1844,33 @@ function EmployeeOrgChartModal({ onClose }) {
     roots.forEach(sortKids);
     return roots;
   };
+  // A subtree node. The person sits on top; below them a minimize/maximize
+  // toggle, and their reports stack in a SINGLE vertical column (each connected
+  // by a short vertical line). Only the department's senior row is side-by-side.
   const TreeNode = ({ node, keyPath }) => {
     const kids = node.children; const nk = `node:${keyPath}`;
+    const isCollapsed = collapsed[nk];
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
         <PersonCard p={node.p} />
-        {kids.length > 0 && <Toggle k={nk} />}
-        {kids.length > 0 && !collapsed[nk] && (
-          <div style={{ paddingTop: 14 }} className="relative">
-            {kids.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 18px)', right: 'calc(10% + 18px)', height: 1, background: '#cbd5e1' }} />}
-            <div className="flex items-start justify-center">
-              {kids.map((c) => (
-                <div key={c.p._id} className="relative flex flex-col items-center">
-                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
-                  <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
-                </div>
-              ))}
-            </div>
-          </div>
+        {kids.length > 0 && (
+          <>
+            {/* Minimize / maximize the reports under this senior. */}
+            <div style={{ width: 1, height: 12, background: '#cbd5e1' }} />
+            <button onClick={() => toggle(nk)} className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 hover:bg-slate-50 leading-none">
+              <span style={{ fontSize: 12, lineHeight: 1 }}>{isCollapsed ? '+' : '−'}</span>{isCollapsed ? `Show ${kids.length}` : 'Hide'}
+            </button>
+            {!isCollapsed && (
+              <div className="flex flex-col items-center">
+                {kids.map((c) => (
+                  <div key={c.p._id} className="flex flex-col items-center">
+                    <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
+                    <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     );
@@ -1892,28 +1901,37 @@ function EmployeeOrgChartModal({ onClose }) {
                       <div style={{ height: 1, background: '#cbd5e1', width: '60%', margin: '0 auto' }} />
                     </div>
                   )}
-                  {/* Department columns */}
-                  <div className="flex items-start justify-center flex-wrap gap-y-8 mt-2">
+                  {/* Department columns: seniors sit in one row under the dept
+                      pill; each senior's employees stack in a column below them. */}
+                  <div className="flex items-start justify-center flex-wrap gap-x-4 gap-y-8 mt-2">
                     {data.departments.map((d) => {
                       const roots = buildDeptTree(d.people || []);
+                      const multi = roots.length > 1;
                       return (
                         <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
                           <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
                             {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
                           </div>
-                          {roots.length > 0 && <VConn />}
                           {roots.length > 0 && (
-                            <div className="relative" style={{ paddingTop: 2 }}>
-                              {roots.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 18px)', right: 'calc(10% + 18px)', height: 1, background: '#cbd5e1' }} />}
-                              <div className="flex items-start justify-center">
-                                {roots.map((r) => (
-                                  <div key={r.p._id} className="relative flex flex-col items-center">
-                                    {roots.length > 1 && <div style={{ position: 'absolute', top: 0, width: 1, height: 14, background: '#cbd5e1' }} />}
-                                    <div style={{ paddingTop: roots.length > 1 ? 14 : 0 }}><TreeNode node={r} keyPath={`${d.name}/${r.p._id}`} /></div>
-                                  </div>
-                                ))}
+                            <>
+                              {/* Drop from the dept pill into the senior row. */}
+                              <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />
+                              <div className="relative">
+                                {/* Horizontal bar spanning the seniors (only when >1).
+                                    Inset to the outermost card centers (card 268 + 18px
+                                    margins → center at 152px) so it never overhangs. */}
+                                {multi && <div style={{ position: 'absolute', top: 0, left: 152, right: 152, height: 1, background: '#cbd5e1' }} />}
+                                <div className="flex items-start justify-center">
+                                  {roots.map((r) => (
+                                    <div key={r.p._id} className="flex flex-col items-center">
+                                      {/* Drop line from the bar into this senior. */}
+                                      {multi && <div style={{ width: 1, height: 16, background: '#cbd5e1' }} />}
+                                      <TreeNode node={r} keyPath={`${d.name}/${r.p._id}`} />
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
+                            </>
                           )}
                         </div>
                       );
@@ -6169,8 +6187,9 @@ function HrOrgChartModal({ users, reporting, onClose }) {
     return roots;
   };
 
-  // Recursive tree node: a card, and if it has children, a connector bar with the
-  // children laid out horizontally (branches). Each subtree is collapsible.
+  // A subtree node. The person on top; below, a minimize/maximize toggle and
+  // their reports stacked in a SINGLE vertical column. Only the department's
+  // senior/lead row is laid out side-by-side.
   const TreeNode = ({ node, keyPath }) => {
     const kids = node.children;
     const nk = `node:${keyPath}`;
@@ -6178,50 +6197,54 @@ function HrOrgChartModal({ users, reporting, onClose }) {
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
         <PersonCard p={node.p} />
-        {kids.length > 0 && <Toggle k={nk} />}
-        {kids.length > 0 && !isCollapsed && (
-          <div style={{ paddingTop: 14 }} className="relative">
-            {/* Horizontal bar spanning the children (only when >1 child). */}
-            {kids.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 20px)', right: 'calc(10% + 20px)', height: 1, background: '#cbd5e1' }} />}
-            <div className="flex items-start justify-center">
-              {kids.map((c, i) => (
-                <div key={c.p._id} className="relative flex flex-col items-center">
-                  {/* Drop line from the horizontal bar (or straight down for a
-                      single child) into each child. */}
-                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
-                  <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
-                </div>
-              ))}
-            </div>
-          </div>
+        {kids.length > 0 && (
+          <>
+            <div style={{ width: 1, height: 12, background: '#cbd5e1' }} />
+            <button onClick={() => toggle(nk)} className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 hover:bg-slate-50 leading-none">
+              <span style={{ fontSize: 12, lineHeight: 1 }}>{isCollapsed ? '+' : '−'}</span>{isCollapsed ? `Show ${kids.length}` : 'Hide'}
+            </button>
+            {!isCollapsed && (
+              <div className="flex flex-col items-center">
+                {kids.map((c) => (
+                  <div key={c.p._id} className="flex flex-col items-center">
+                    <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
+                    <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     );
   };
 
-  // A department block: navy pill header, then its reporting tree branching below.
+  // A department block: navy pill header, a clean connector down to the senior
+  // row, then each senior's reports stacked in a column below them.
   const DeptColumn = ({ name }) => {
     const people = byDept[name] || [];
-    const dk = `dept:${name}`;
     const roots = buildDeptTree(people);
+    const multi = roots.length > 1;
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
         <div className="inline-block text-white font-extrabold uppercase" style={{ background: '#0A1F44', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>{name}</div>
-        {roots.length > 0 && <Toggle k={dk} />}
-        {!collapsed[dk] && roots.length > 0 && (
-          <div style={{ paddingTop: 14 }} className="relative">
-            {/* Bar across the department's top-level branches (e.g. a manager and
-                a senior who reports to the Director). */}
-            {roots.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 20px)', right: 'calc(10% + 20px)', height: 1, background: '#cbd5e1' }} />}
-            <div className="flex items-start justify-center">
-              {roots.map((r) => (
-                <div key={r.p._id} className="relative flex flex-col items-center">
-                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
-                  <TreeNode node={r} keyPath={`${name}/${r.p._id}`} />
-                </div>
-              ))}
+        {roots.length > 0 && (
+          <>
+            <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />
+            <div className="relative">
+              {/* Bar inset to the outermost card centers (card 270 + 20px margins
+                  → center at 155px) so it never overhangs the seniors. */}
+              {multi && <div style={{ position: 'absolute', top: 0, left: 155, right: 155, height: 1, background: '#cbd5e1' }} />}
+              <div className="flex items-start justify-center">
+                {roots.map((r) => (
+                  <div key={r.p._id} className="flex flex-col items-center">
+                    {multi && <div style={{ width: 1, height: 16, background: '#cbd5e1' }} />}
+                    <TreeNode node={r} keyPath={`${name}/${r.p._id}`} />
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
     );
@@ -6255,7 +6278,7 @@ function HrOrgChartModal({ users, reporting, onClose }) {
                 {!collapsed['__depts__'] && (
                   <div style={{ paddingTop: 14 }} className="relative">
                     {deptNames.length > 1 && <div style={{ position: 'absolute', top: 0, left: '10%', right: '10%', height: 1, background: '#cbd5e1' }} />}
-                    <div className="flex items-start justify-center">
+                    <div className="flex items-start justify-center gap-x-6">
                       {deptNames.map((d) => (
                         <div key={d} className="relative flex flex-col items-center">
                           <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
