@@ -1587,68 +1587,129 @@ function claimStatusStyle(s) {
 // reviews and admin approves). Reuses the invoice upload + AI parse we built.
 function EmployeeClaimModal({ onClose, onSaved }) {
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-  const [f, setF] = useState({ title: '', amount: '', employeePayType: '', expenseDate: today, description: '' });
-  const [invoice, setInvoice] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [aiState, setAiState] = useState(''); const [aiNote, setAiNote] = useState('');
+  const [f, setF] = useState({ title: '', employeePayType: '', expenseDate: today, description: '' });
+  // Uploaded invoice files [{ url, name }]. Line items [{ particular, amount, date }].
+  const [attachments, setAttachments] = useState([]);
+  const [rows, setRows] = useState([]); // editable table
+  const [reading, setReading] = useState(false);
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const readAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('Could not read file.')); r.readAsDataURL(file); });
-  const pickInvoice = async (e) => {
-    const file = e.target.files && e.target.files[0]; if (!file) return;
-    setUploading(true); setErr(''); setAiState(''); setAiNote('');
-    let dataUrl = ''; try { dataUrl = await readAsDataURL(file); } catch {}
-    try { const safe = (f.title || 'claim').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30); const { url } = await uploadToImageKit(file, `/qtonix-hr/claims/${safe}-${Date.now()}`, file.name); setInvoice({ url, name: file.name }); }
-    catch (er) { setErr('Invoice upload failed. ' + (er.message || '')); setUploading(false); return; }
-    setUploading(false);
-    if (!dataUrl) return;
-    setAiState('reading');
-    try {
-      const r = await hrApi('/expenses/parse-invoice', { method: 'POST', body: JSON.stringify({ base64: dataUrl, fileName: file.name }) });
-      if (r && r.ok && r.fields) {
-        const fld = r.fields;
-        setF((s) => ({ ...s, title: s.title || fld.description || fld.vendorName || s.title, amount: s.amount || (fld.amount ? String(fld.amount) : s.amount), expenseDate: fld.invoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(fld.invoiceDate) ? fld.invoiceDate : s.expenseDate, description: s.description || fld.description || '' }));
-        setAiState('done'); setAiNote('Details filled from the invoice. Please review.');
-      } else { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
-    } catch { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
+
+  // Handle one or more files: upload each, run AI, and add a row per particular
+  // (or a single row if the invoice has one item).
+  const pickFiles = async (e) => {
+    const files = Array.from(e.target.files || []); if (!files.length) return;
+    e.target.value = ''; // allow re-selecting the same file
+    setReading(true); setErr(''); setNote('');
+    let added = 0, filesDone = 0;
+    for (const file of files) {
+      let dataUrl = ''; try { dataUrl = await readAsDataURL(file); } catch {}
+      // Upload for attachment.
+      let url = '', name = file.name;
+      try { const safe = (f.title || 'claim').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24); const up = await uploadToImageKit(file, `/qtonix-hr/claims/${safe}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, file.name); url = up.url; }
+      catch (er) { setErr(`Upload failed for ${file.name}. ${er.message || ''}`); continue; }
+      let fileDate = '';
+      // AI extract.
+      if (dataUrl) {
+        try {
+          const r = await hrApi('/expenses/parse-invoice', { method: 'POST', body: JSON.stringify({ base64: dataUrl, fileName: file.name }) });
+          if (r && r.ok && r.fields) {
+            const fld = r.fields;
+            fileDate = /^\d{4}-\d{2}-\d{2}$/.test(fld.invoiceDate || '') ? fld.invoiceDate : '';
+            const items = Array.isArray(fld.lineItems) ? fld.lineItems.filter((li) => li && (li.particular || Number(li.amount) > 0)) : [];
+            if (items.length >= 1) {
+              items.forEach((li) => { setRows((arr) => [...arr, { particular: li.particular || '', amount: li.amount ? String(li.amount) : '', date: fileDate || today, file: name }]); added++; });
+            } else {
+              // Single amount, no itemization → one row from the invoice total.
+              setRows((arr) => [...arr, { particular: fld.description || fld.vendorName || file.name, amount: fld.amount ? String(fld.amount) : '', date: fileDate || today, file: name }]); added++;
+            }
+            if (!f.title && (fld.description || fld.vendorName)) set('title', fld.description || fld.vendorName);
+          } else {
+            setRows((arr) => [...arr, { particular: file.name, amount: '', date: today, file: name }]); added++;
+          }
+        } catch { setRows((arr) => [...arr, { particular: file.name, amount: '', date: today, file: name }]); added++; }
+      }
+      setAttachments((arr) => [...arr, { url, name, date: fileDate }]);
+      filesDone++;
+    }
+    setReading(false);
+    setNote(`Read ${filesDone} file${filesDone === 1 ? '' : 's'} → ${added} item${added === 1 ? '' : 's'}. Review below.`);
   };
+
   const save = async () => {
-    if (!f.title.trim()) { setErr('What is the claim for?'); return; }
-    if (!(Number(f.amount) > 0)) { setErr('Enter a valid amount.'); return; }
+    if (!f.title.trim()) { setErr('What is this claim for?'); return; }
     if (!f.employeePayType) { setErr('Choose the claim type.'); return; }
     if (f.employeePayType === 'other' && !f.description.trim()) { setErr('Please add details for an "Other expenses" claim.'); return; }
+    const cleanItems = rows.map((r) => ({ particular: r.particular.trim(), amount: Number(r.amount) || 0, date: r.date })).filter((r) => r.particular || r.amount > 0);
+    if (!(cleanItems.reduce((s, r) => s + r.amount, 0) > 0)) { setErr('Add at least one item with a cost (upload an invoice or enter manually).'); return; }
     setBusy(true); setErr('');
-    try { await hrApi('/me/claims', { method: 'POST', body: JSON.stringify({ ...f, amount: Number(f.amount), invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
-    catch (er) { setErr(er.message); } finally { setBusy(false); }
+    try {
+      await hrApi('/me/claims', { method: 'POST', body: JSON.stringify({
+        title: f.title, employeePayType: f.employeePayType, expenseDate: f.expenseDate, description: f.description,
+        lineItems: cleanItems, attachments,
+      }) });
+      onSaved();
+    } catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   const inpCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300';
   return (
     <div className="fixed inset-0 bg-black/50 z-[140] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4"><div className="text-lg font-extrabold text-[#050A1F]">New expense claim</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
         {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
 
         <div className="rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 p-4 mb-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-indigo-500 text-white flex items-center justify-center text-lg shrink-0">✨</div>
-            <div className="flex-1 min-w-0"><div className="text-sm font-bold text-[#050A1F]">Upload the invoice to auto-fill</div><div className="text-[11px] text-slate-500">We’ll read the amount and date. The file is attached to your claim.</div></div>
-            <label className={`inline-block rounded-lg px-3 py-2 text-xs font-bold cursor-pointer text-white shrink-0 ${uploading || aiState === 'reading' ? 'opacity-60 pointer-events-none' : ''}`} style={{ background: 'linear-gradient(90deg,#6366F1,#4338CA)' }}>
-              {uploading ? 'Uploading…' : aiState === 'reading' ? 'Reading…' : (invoice ? 'Replace' : 'Upload')}
-              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={pickInvoice} disabled={uploading || aiState === 'reading'} />
+            <div className="flex-1 min-w-0"><div className="text-sm font-bold text-[#050A1F]">Upload invoices to auto-fill</div><div className="text-[11px] text-slate-500">Add one or more bills — we read the date, item and amount from each into the table below.</div></div>
+            <label className={`inline-block rounded-lg px-3 py-2 text-xs font-bold cursor-pointer text-white shrink-0 ${reading ? 'opacity-60 pointer-events-none' : ''}`} style={{ background: 'linear-gradient(90deg,#6366F1,#4338CA)' }}>
+              {reading ? 'Reading…' : 'Upload files'}
+              <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={pickFiles} disabled={reading} />
             </label>
           </div>
-          {invoice && <div className="mt-2 flex items-center gap-2 text-[11px]"><span className="text-green-600 font-bold">✓ {invoice.name}</span>{aiState === 'reading' && <span className="text-indigo-500">· reading…</span>}{aiState === 'done' && <span className="text-indigo-600 font-semibold">· {aiNote}</span>}{aiState === 'failed' && <span className="text-amber-600">· {aiNote}</span>}</div>}
+          {(attachments.length > 0 || note) && <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">{attachments.map((a, i) => <span key={i} className="text-green-600 font-bold">✓ {a.name}</span>)}{note && <span className="text-indigo-600 font-semibold">{note}</span>}</div>}
+        </div>
+
+        {/* Itemized table (auto-summed) */}
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1.5"><label className="text-xs font-bold text-slate-500">Items claimed</label><span className="text-[11px] text-slate-400">Total auto-adds below</span></div>
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold"><th className="text-left px-2 py-2">Date</th><th className="text-left px-2 py-2">Particular</th><th className="text-right px-2 py-2 w-24">Amount</th><th className="w-7" /></tr></thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={4} className="px-3 py-4 text-center text-[12px] text-slate-400">Upload an invoice above, or add a row manually.</td></tr>
+                ) : rows.map((r, idx) => (
+                  <tr key={idx} className="border-t border-slate-100">
+                    <td className="px-1 py-1"><input type="date" value={r.date || ''} onChange={(e) => setRows((a) => a.map((x, i) => i === idx ? { ...x, date: e.target.value } : x))} className="w-full border-0 focus:ring-0 text-[12px] px-1 py-1" /></td>
+                    <td className="px-1 py-1"><input value={r.particular} onChange={(e) => setRows((a) => a.map((x, i) => i === idx ? { ...x, particular: e.target.value } : x))} className="w-full border-0 focus:ring-0 text-[13px] px-1 py-1" placeholder="Item" /></td>
+                    <td className="px-1 py-1"><input type="number" value={r.amount} onChange={(e) => setRows((a) => a.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} className="w-full border-0 focus:ring-0 text-[13px] px-1 py-1 text-right" placeholder="0" /></td>
+                    <td className="px-1 text-center"><button type="button" onClick={() => setRows((a) => a.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 text-lg leading-none">×</button></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-200 bg-slate-50/50">
+                  <td className="px-2 py-2" colSpan={2}><button type="button" onClick={() => setRows((a) => [...a, { particular: '', amount: '', date: today }])} className="text-[12px] font-bold text-slate-500 hover:text-[#FF4500]">+ Add item</button></td>
+                  <td className="px-2 py-2 text-right font-extrabold text-[#050A1F]">₹{total.toLocaleString('en-IN')}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
 
         <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">What is this claim for?</label><input value={f.title} onChange={(e) => set('title', e.target.value)} className={inpCls} placeholder="e.g. Cab to client meeting" /></div>
-          <div><label className="text-xs font-bold text-slate-500">Amount (₹)</label><input value={f.amount} onChange={(e) => set('amount', e.target.value)} className={inpCls} placeholder="0" /></div>
-          <div><label className="text-xs font-bold text-slate-500">Date</label><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className={inpCls} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">Claim type</label><select value={f.employeePayType} onChange={(e) => set('employeePayType', e.target.value)} className={inpCls}><option value="">Select type…</option>{CLAIM_PAY_TYPES.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}</select></div>
+          <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">What is this claim for?</label><input value={f.title} onChange={(e) => set('title', e.target.value)} className={inpCls} placeholder="e.g. Client visit expenses" /></div>
+          <div><label className="text-xs font-bold text-slate-500">Claim type</label><select value={f.employeePayType} onChange={(e) => set('employeePayType', e.target.value)} className={inpCls}><option value="">Select type…</option>{CLAIM_PAY_TYPES.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}</select></div>
+          <div><label className="text-xs font-bold text-slate-500">Claim date</label><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className={inpCls} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label className="text-xs font-bold text-slate-500">Details {f.employeePayType === 'other' && <span className="text-amber-600">(required)</span>}</label><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className={inpCls} placeholder="Add any notes to help HR review your claim" /></div>
         </div>
         <div className="mt-2 text-[11px] text-slate-400">Your claim goes to HR for review, then to admin for approval. HR may adjust the reimbursable amount.</div>
-        <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : 'Submit claim'}</button></div>
+        <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || reading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : `Submit claim · ₹${total.toLocaleString('en-IN')}`}</button></div>
       </div>
     </div>
   );
@@ -5786,7 +5847,7 @@ function HrOrgChartModal({ users, reporting, onClose }) {
   const Toggle = ({ k }) => (
     <div className="flex flex-col items-center">
       <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
-      <button onClick={() => toggle(k)} className="rounded-full border border-slate-300 bg-white text-slate-500 flex items-center justify-center hover:bg-slate-50 leading-none" style={{ width: 18, height: 18, fontSize: 12 }}>{collapsed[k] ? '+' : '\u2212'}</button>
+      <button onClick={() => toggle(k)} className="rounded-full border border-slate-300 bg-white text-slate-500 flex items-center justify-center hover:bg-slate-50 leading-none" style={{ width: 18, height: 18, fontSize: 12 }}>{collapsed[k] ? '+' : '−'}</button>
     </div>
   );
 
@@ -5836,7 +5897,7 @@ function HrOrgChartModal({ users, reporting, onClose }) {
             {/* Management row (admins) */}
             {admins.length > 0 && (
               <div className="flex items-start justify-center gap-8">
-                {admins.map((a) => <PersonCard key={`admin:${a.id}`} p={{ name: a.name, designation: 'Director \u00B7 Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />)}
+                {admins.map((a) => <PersonCard key={`admin:${a.id}`} p={{ name: a.name, designation: 'Director · Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />)}
               </div>
             )}
             {/* Toggle + horizontal branch into departments */}

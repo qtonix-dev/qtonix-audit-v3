@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v319';
+const APP_VERSION = 'v320';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -490,6 +490,25 @@ connectWithRetry()
       if (stamped) console.log(`[migrate] backfilled convertedAt on ${stamped} converted lead(s)`);
     } catch (e) {
       console.error('[migrate] convertedAt backfill skipped:', e.message);
+    }
+
+    // One-time backfill: leave rows approved/declined under an older version may
+    // have null approvedBy / decidedAt, which made the Leave console show blank
+    // "Approved By" / "Date". Stamp them from the intended approver + updatedAt so
+    // decided requests always show who acted and when.
+    try {
+      const { HrLeave, Op } = require('./models');
+      const legacy = await HrLeave.findAll({ where: { status: { [Op.in]: ['approved', 'rejected'] }, [Op.or]: [{ approvedBy: null }, { decidedAt: null }] } });
+      let fixed = 0;
+      for (const r of legacy) {
+        let touched = false;
+        if (!r.approvedBy && r.status === 'approved' && r.approverName) { r.approvedBy = r.approverName; touched = true; }
+        if (!r.decidedAt) { r.decidedAt = r.updatedAt || r.createdAt || new Date(); touched = true; }
+        if (touched) { await r.save(); fixed++; }
+      }
+      if (fixed) console.log(`[migrate] backfilled decided fields on ${fixed} leave row(s)`);
+    } catch (e) {
+      console.error('[migrate] leave decided-field backfill skipped:', e.message);
     }
 
     // One-time migration: "callback" is reserved for the Call Backs section

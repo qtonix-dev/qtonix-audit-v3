@@ -812,6 +812,13 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
       if (r.paid && r.status === 'approved') u[r.type] = (u[r.type] || 0) + d;
     });
     const nameById = Object.fromEntries(emps.map((e) => [e.id, e]));
+    // Also resolve names for any leave owners not in the active in-scope set (e.g.
+    // deactivated employees) so their historical requests never render nameless.
+    const missingIds = [...new Set(leaves.map((l) => l.employeeId).filter((id) => !nameById[id]))];
+    if (missingIds.length) {
+      const extra = await HrUser.findAll({ where: { id: missingIds } });
+      extra.forEach((e) => { nameById[e.id] = e; });
+    }
     // Per-employee leave history (grouped so a multi-day request is one entry).
     const historyByEmp = {};
     leaves.forEach((r) => {
@@ -830,7 +837,11 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
         duration: grp.length === 1 ? first.duration : 'full',
         reason: first.reason || '', status: stage,
         appliedAt: first.createdAt,
-        decidedByName: first.approvedBy || null, decidedAt: grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || null,
+        // Legacy rows approved before these fields were written may lack approvedBy/
+        // decidedAt — fall back to the intended approver and the row's updatedAt so
+        // the console never shows blanks for a decided request.
+        decidedByName: first.approvedBy || (stage === 'approved' || stage === 'declined' ? (first.approverName || null) : null),
+        decidedAt: grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || (stage === 'approved' || stage === 'declined' ? (grp.map((r) => r.updatedAt).filter(Boolean).sort().pop() || null) : null),
         remark: first.remark || null,
       });
     });
@@ -858,7 +869,9 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
       // Stage: rejected→declined, approved→approved, pending+viewed→pending, pending→applied.
       let stage = first.status === 'rejected' ? 'declined' : first.status === 'approved' ? 'approved'
         : (grp.some((r) => r.viewedByApprover) ? 'pending' : 'applied');
-      const decidedAt = grp.map((r) => r.decidedAt).filter(Boolean).sort().pop() || null;
+      const decided = stage === 'approved' || stage === 'declined';
+      const decidedAt = grp.map((r) => r.decidedAt).filter(Boolean).sort().pop()
+        || (decided ? (grp.map((r) => r.updatedAt).filter(Boolean).sort().pop() || null) : null);
       return {
         groupId: first.groupId || null,
         ids: grp.map((r) => r.id),
@@ -871,7 +884,9 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
         appliedAt: first.createdAt,
         status: stage,
         approverId: first.approverId, approverName: first.approverName,
-        decidedByName: first.approvedBy || null, decidedAt,
+        // Legacy approved/declined rows may lack approvedBy — fall back to the
+        // intended approver so the console never shows a blank decider.
+        decidedByName: first.approvedBy || (decided ? (first.approverName || null) : null), decidedAt,
         remark: first.remark || null,
         documentUrl: first.documentUrl || null,
         canDecide: first.status === 'pending' && (
@@ -1900,6 +1915,23 @@ router.get('/expenses', requireHrAccess, async (req, res, next) => {
 // EXCEPT 'incentive'. 'other' requires a description.
 const EMPLOYEE_PAY_TYPES = ['ta', 'da', 'other', 'advance', 'incentive'];
 const EMPLOYEE_CLAIM_PAY_TYPES = ['ta', 'da', 'other', 'advance']; // no incentive
+// Normalize a line-items array [{ particular, amount, date? }] → cleaned array
+// with positive numeric amounts and trimmed particulars. Returns [] if none.
+function sanitizeLineItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const li of raw) {
+    if (!li) continue;
+    const particular = String(li.particular || li.description || '').trim();
+    const amount = Number(String(li.amount != null ? li.amount : '').toString().replace(/[^0-9.]/g, ''));
+    if (!particular && !(amount > 0)) continue;
+    const item = { particular: particular || 'Item', amount: Number.isFinite(amount) && amount > 0 ? amount : 0 };
+    const date = String(li.date || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) item.date = date;
+    out.push(item);
+  }
+  return out;
+}
 function buildExpensePayee(b) {
   const payeeType = b.payeeType === 'employee' ? 'employee' : 'vendor';
   const employeePayType = payeeType === 'employee' && EMPLOYEE_PAY_TYPES.includes(String(b.employeePayType || '').toLowerCase())
@@ -1917,11 +1949,15 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
     const b = req.body || {};
     const title = String(b.title || '').trim();
     if (!title) return res.status(400).json({ error: 'Title is required.' });
-    const amount = Number(b.amount || 0);
-    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
     if (!EXPENSE_BRANCHES.includes(b.branch)) return res.status(400).json({ error: 'Choose a branch.' });
     if (!expenseScopeOk(req, b.branch)) return res.status(403).json({ error: 'You can only raise expenses for your branch.' });
     const payee = buildExpensePayee(b);
+    // Optional itemization: normalize line items and, when present, derive the
+    // amount from their sum (the UI locks the amount field in that case).
+    const lineItems = sanitizeLineItems(b.lineItems);
+    let amount = Number(b.amount || 0);
+    if (lineItems && lineItems.length) amount = lineItems.reduce((s, li) => s + li.amount, 0);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
     // Employee payments must carry a pay type; 'other' requires a description.
     if (payee.payeeType === 'employee') {
       if (!payee.employeePayType) return res.status(400).json({ error: 'Choose the type of employee payment (TA, DA, Other, Advance or Incentive).' });
@@ -1936,6 +1972,7 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
       expenseDate: b.expenseDate || istDateStr(), branch: b.branch, ...payee, payeeName: payeeName || null,
       description: String(b.description || '').trim() || null,
       invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      lineItems: lineItems && lineItems.length ? lineItems : null,
       selectedPaymentMode: (b.selectedPaymentMode && typeof b.selectedPaymentMode === 'object') ? b.selectedPaymentMode : null,
       status: 'submitted', raisedById: req.hrActor.id, raisedByKind: req.hrActor.kind, raisedByName: req.hrActor.name,
     });
@@ -2005,18 +2042,32 @@ router.post('/me/claims', requireHrAccess, async (req, res, next) => {
     const b = req.body || {};
     const title = String(b.title || '').trim();
     if (!title) return res.status(400).json({ error: 'Title is required.' });
-    const amount = Number(b.amount || 0);
-    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
     const payType = EMPLOYEE_CLAIM_PAY_TYPES.includes(String(b.employeePayType || '').toLowerCase()) ? String(b.employeePayType).toLowerCase() : null;
     if (!payType) return res.status(400).json({ error: 'Choose the claim type (TA, DA, Other or Advance).' });
     const description = String(b.description || '').trim();
     if (payType === 'other' && !description) return res.status(400).json({ error: 'Please add details for an "Other expenses" claim.' });
+    // Itemized claim: when line items are supplied (one per invoice particular,
+    // possibly across several uploaded files), the claimed amount is their sum.
+    const lineItems = sanitizeLineItems(b.lineItems);
+    let amount = Number(b.amount || 0);
+    if (lineItems && lineItems.length) amount = lineItems.reduce((s, li) => s + li.amount, 0);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount, or add at least one invoice item.' });
+    // Multiple invoice attachments [{ url, name, date }].
+    const attachments = Array.isArray(b.attachments) ? b.attachments
+      .filter((a) => a && a.url).map((a) => ({ url: String(a.url), name: String(a.name || 'invoice'), ...(/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || '')) ? { date: a.date } : {}) }))
+      .slice(0, 20) : [];
+    const firstAtt = attachments[0] || null;
     const row = await HrExpense.create({
       title, category: 'Reimbursement', amount, currency: 'INR',
-      expenseDate: b.expenseDate || istDateStr(), branch: me.branch || 'Bhubaneswar',
+      expenseDate: b.expenseDate || (firstAtt && firstAtt.date) || istDateStr(), branch: me.branch || 'Bhubaneswar',
       payeeType: 'employee', employeeId: me.id, payeeName: me.name, employeePayType: payType,
       description: description || null,
-      invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      // Keep the first file in the single-invoice fields for back-compat, and the
+      // full set in attachments.
+      invoiceUrl: (firstAtt && firstAtt.url) || String(b.invoiceUrl || '').trim() || null,
+      invoiceName: (firstAtt && firstAtt.name) || String(b.invoiceName || '').trim() || null,
+      attachments: attachments.length ? attachments : null,
+      lineItems: lineItems && lineItems.length ? lineItems : null,
       status: 'submitted', isClaim: true, claimedAmount: amount,
       raisedById: me.id, raisedByKind: 'hr', raisedByName: me.name,
     });

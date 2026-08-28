@@ -374,7 +374,8 @@ async function parseInvoice(apiKey, { text, image }) {
   "invoiceNumber": "",
   "gstin": "",
   "description": "",
-  "category": ""
+  "category": "",
+  "lineItems": [ { "particular": "", "amount": 0 } ]
 }
 Rules:
 - vendorName = the seller / biller / company issuing the invoice (not the customer).
@@ -383,8 +384,9 @@ Rules:
 - gstin = the seller's 15-character GSTIN if present, else "".
 - description = a short (max 8 words) summary of what was billed.
 - category = a one or two word expense category guess (e.g. "Utilities", "Software", "Travel") or "".
+- lineItems = the individual purchased items / particulars on the invoice, each with its own particular (short name) and amount (line total as a number). If the invoice clearly has just ONE item, return a single line item. If you cannot identify distinct line items, return an empty array []. Do NOT include tax/subtotal/total rows as line items.
 Return valid JSON only.`;
-  const system = 'You extract structured data from a vendor invoice or bill. Return ONLY JSON matching the requested schema, nothing else. Never invent data that is not present — use empty string or null instead. Amounts are numbers only (no currency symbols or commas). Dates as YYYY-MM-DD when determinable.';
+  const system = 'You extract structured data from a vendor invoice or bill. Return ONLY JSON matching the requested schema, nothing else. Never invent data that is not present — use empty string, 0, or [] instead. Amounts are numbers only (no currency symbols or commas). Dates as YYYY-MM-DD when determinable.';
   let messages;
   if (image && image.base64) {
     messages = [{ role: 'user', content: [
@@ -394,10 +396,18 @@ Return valid JSON only.`;
   } else {
     messages = [{ role: 'user', content: `From the invoice/bill below, extract this JSON exactly:\n${schema}\n\nINVOICE:\n${String(text || '').slice(0, 12000)}` }];
   }
-  const out = await callClaude(apiKey, { system, maxTokens: 700, messages });
+  const out = await callClaude(apiKey, { system, maxTokens: 1200, messages });
   const data = parseJson(out);
   if (data.amount != null) { const n = Number(String(data.amount).replace(/[^0-9.]/g, '')); data.amount = Number.isFinite(n) && n > 0 ? n : ''; }
   ['vendorName', 'invoiceDate', 'invoiceNumber', 'gstin', 'description', 'category'].forEach((k) => { if (data[k] == null) data[k] = ''; });
+  // Normalize line items to [{ particular, amount }] with positive amounts.
+  if (Array.isArray(data.lineItems)) {
+    data.lineItems = data.lineItems.map((li) => {
+      const particular = String((li && (li.particular || li.description || li.name)) || '').trim();
+      const amt = Number(String((li && li.amount) != null ? li.amount : '').toString().replace(/[^0-9.]/g, ''));
+      return { particular, amount: Number.isFinite(amt) && amt > 0 ? amt : 0 };
+    }).filter((li) => li.particular || li.amount > 0);
+  } else { data.lineItems = []; }
   return data;
 }
 

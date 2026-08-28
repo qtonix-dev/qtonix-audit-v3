@@ -1649,6 +1649,13 @@ const HrExpense = sequelize.define('HrExpense', {
   description: { type: DataTypes.TEXT, allowNull: true },
   invoiceUrl: { type: DataTypes.STRING(600), allowNull: true },
   invoiceName: { type: DataTypes.STRING(200), allowNull: true },
+  // Optional itemization: an invoice broken into particulars. When present, the
+  // amount equals the sum of these line items. Array of { particular, amount }.
+  lineItems: { type: DataTypes.JSON, defaultValue: null },
+  // Multiple invoice attachments (used by employee claims that upload several
+  // files). Array of { url, name, date }. The single invoiceUrl/invoiceName above
+  // stays for regular one-file expenses and back-compat.
+  attachments: { type: DataTypes.JSON, defaultValue: null },
   // The vendor payment mode the HR selected when raising (snapshot of the chosen
   // entry from HrVendor.paymentModes) — used to pre-fill the payment step.
   selectedPaymentMode: { type: DataTypes.JSON, defaultValue: null },

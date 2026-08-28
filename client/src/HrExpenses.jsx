@@ -280,6 +280,9 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
   const [err, setErr] = useState('');
   const [aiState, setAiState] = useState('');   // '', 'reading', 'done', 'failed'
   const [aiNote, setAiNote] = useState('');
+  const [itemized, setItemized] = useState(false);
+  const [lineItems, setLineItems] = useState([]); // [{ particular, amount }]
+  const liTotal = lineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const readAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('Could not read file.')); r.readAsDataURL(file); });
   const pickInvoice = async (e) => {
@@ -308,7 +311,14 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
           category: (fld.category && cats.find((c) => c.toLowerCase() === String(fld.category).toLowerCase())) || s.category,
         }));
         setAiState('done');
-        if (r.matchedVendorName) setAiNote(`Matched vendor: ${r.matchedVendorName}. Review the details below.`);
+        // If the invoice yielded multiple particulars, switch to itemized mode
+        // and fill the table. A single item just fills the amount as before.
+        const items = Array.isArray(fld.lineItems) ? fld.lineItems.filter((li) => li && (li.particular || Number(li.amount) > 0)) : [];
+        if (items.length > 1) {
+          setItemized(true);
+          setLineItems(items.map((li) => ({ particular: li.particular || '', amount: li.amount ? String(li.amount) : '' })));
+          setAiNote(`Read ${items.length} items from the invoice. Review the particulars below.`);
+        } else if (r.matchedVendorName) setAiNote(`Matched vendor: ${r.matchedVendorName}. Review the details below.`);
         else if (fld.vendorName) setAiNote(`Read "${fld.vendorName}". Pick or add the vendor below, then review.`);
         else setAiNote('Details filled from the invoice. Please review below.');
       } else { setAiState('failed'); setAiNote('Could not auto-read this file. Enter the details manually.'); }
@@ -316,7 +326,9 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
   };
   const save = async () => {
     if (!f.title.trim()) { setErr('Title is required.'); return; }
-    if (!(Number(f.amount) > 0)) { setErr('Enter a valid amount.'); return; }
+    const cleanItems = itemized ? lineItems.map((li) => ({ particular: li.particular.trim(), amount: Number(li.amount) || 0 })).filter((li) => li.particular || li.amount > 0) : [];
+    const effAmount = itemized && cleanItems.length ? cleanItems.reduce((s, li) => s + li.amount, 0) : Number(f.amount);
+    if (!(effAmount > 0)) { setErr(itemized ? 'Add at least one particular with a cost.' : 'Enter a valid amount.'); return; }
     if (f.payeeType === 'vendor' && !f.vendorId) { setErr('Select a vendor.'); return; }
     if (f.payeeType === 'employee' && !f.employeeId) { setErr('Select an employee.'); return; }
     if (f.payeeType === 'employee' && !f.employeePayType) { setErr('Choose the payment type (TA, DA, Other, Advance or Incentive).'); return; }
@@ -325,7 +337,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
     try {
       const selVendor = vendors.find((v) => String(v._id) === String(f.vendorId));
       const selectedPaymentMode = (f.payeeType === 'vendor' && selVendor && Array.isArray(selVendor.paymentModes) && f.modeIdx !== '') ? selVendor.paymentModes[Number(f.modeIdx)] : null;
-      await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: Number(f.amount), vendorId: f.vendorId || null, employeeId: f.employeeId || null, selectedPaymentMode, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
+      await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: effAmount, lineItems: cleanItems, vendorId: f.vendorId || null, employeeId: f.employeeId || null, selectedPaymentMode, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   return (
@@ -334,8 +346,43 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
       <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <Field label="Title" full><input value={f.title} onChange={(e) => set('title', e.target.value)} className="inp" placeholder="e.g. Office WiFi — August" /></Field>
         <Field label="Category"><select value={f.category} onChange={(e) => set('category', e.target.value)} className="inp">{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-        <Field label="Amount (₹)"><input type="number" value={f.amount} onChange={(e) => set('amount', e.target.value)} className="inp" placeholder="0" /></Field>
+        <Field label="Amount (₹)">
+          {itemized ? (
+            <input value={`₹${liTotal.toLocaleString('en-IN')}`} disabled className="inp" style={{ background: '#f8fafc', color: '#0F9D58', fontWeight: 800 }} />
+          ) : (
+            <input type="number" value={f.amount} onChange={(e) => set('amount', e.target.value)} className="inp" placeholder="0" />
+          )}
+        </Field>
         <Field label="Expense date"><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className="inp" /></Field>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={() => { setItemized((v) => !v); if (!itemized && lineItems.length === 0) setLineItems([{ particular: '', amount: '' }]); }} className="text-[12px] font-bold text-[#FF4500]">{itemized ? '− Remove particulars' : '+ Add particulars (itemize invoice)'}</button>
+            {itemized && <span className="text-[11px] text-slate-400">Total auto-calculated from items</span>}
+          </div>
+          {itemized && (
+            <div className="mt-2 rounded-xl border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400 font-bold"><th className="text-left px-3 py-2">Particular</th><th className="text-right px-3 py-2 w-32">Cost (₹)</th><th className="w-8" /></tr></thead>
+                <tbody>
+                  {lineItems.map((li, idx) => (
+                    <tr key={idx} className="border-t border-slate-100">
+                      <td className="px-2 py-1.5"><input value={li.particular} onChange={(e) => setLineItems((arr) => arr.map((x, i) => i === idx ? { ...x, particular: e.target.value } : x))} className="w-full border-0 focus:ring-0 text-sm px-1 py-1" placeholder="Item description" /></td>
+                      <td className="px-2 py-1.5"><input type="number" value={li.amount} onChange={(e) => setLineItems((arr) => arr.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} className="w-full border-0 focus:ring-0 text-sm px-1 py-1 text-right" placeholder="0" /></td>
+                      <td className="px-1 text-center"><button type="button" onClick={() => setLineItems((arr) => arr.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 text-lg leading-none">×</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-slate-200 bg-slate-50/50">
+                    <td className="px-3 py-2"><button type="button" onClick={() => setLineItems((arr) => [...arr, { particular: '', amount: '' }])} className="text-[12px] font-bold text-slate-500 hover:text-[#FF4500]">+ Add item</button></td>
+                    <td className="px-3 py-2 text-right font-extrabold text-[#050A1F]">₹{liTotal.toLocaleString('en-IN')}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
         <Field label="Branch">{lockedBranch ? <input value={lockedBranch} disabled className="inp" style={{ background: '#f8fafc', color: '#64748b' }} /> : <select value={f.branch} onChange={(e) => set('branch', e.target.value)} className="inp">{BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}</select>}</Field>
         <Field label="Pay to" full>
           <div className="flex gap-2 mb-2">{[['vendor', 'Vendor'], ['employee', 'Employee']].map(([id, lbl]) => <button key={id} type="button" onClick={() => set('payeeType', id)} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${f.payeeType === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}</div>
@@ -456,7 +503,21 @@ function ClaimReviewModal({ claim, onClose, onSaved }) {
         <div className="font-bold text-[#050A1F]">{claim.title}</div>
         <div className="text-[11px] text-slate-500 mt-0.5">{titleCase(claim.payeeName || '')} · {empPayTypeLabel(claim.employeePayType)} · claimed <b>{inr(claimed)}</b></div>
         {claim.description && <div className="text-[12px] text-slate-600 mt-1.5">{claim.description}</div>}
-        {claim.invoiceUrl && <a href={claim.invoiceUrl} target="_blank" rel="noreferrer" className="inline-block text-[11px] font-bold text-sky-600 mt-1.5">📎 View invoice</a>}
+        {Array.isArray(claim.lineItems) && claim.lineItems.length > 0 && (
+          <div className="mt-2 rounded-lg border border-slate-200 bg-white overflow-hidden">
+            <table className="w-full text-[12px]">
+              <tbody>
+                {claim.lineItems.map((li, i) => (
+                  <tr key={i} className="border-b border-slate-50 last:border-0"><td className="px-2.5 py-1 text-slate-400 whitespace-nowrap w-20">{li.date ? fmtDate(li.date) : ''}</td><td className="px-2.5 py-1 text-slate-600">{li.particular}</td><td className="px-2.5 py-1 text-right font-semibold text-[#050A1F]">{inr(li.amount)}</td></tr>
+                ))}
+                <tr className="bg-slate-50/60"><td /><td className="px-2.5 py-1 font-bold text-slate-500">Total</td><td className="px-2.5 py-1 text-right font-extrabold text-[#050A1F]">{inr(claimed)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        {Array.isArray(claim.attachments) && claim.attachments.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{claim.attachments.map((a, i) => <a key={i} href={a.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-sky-600">📎 {a.name}</a>)}</div>
+        ) : claim.invoiceUrl && <a href={claim.invoiceUrl} target="_blank" rel="noreferrer" className="inline-block text-[11px] font-bold text-sky-600 mt-1.5">📎 View invoice</a>}
       </div>
       <Field label="Reimbursable amount (₹)"><input value={amount} onChange={(e) => setAmount(e.target.value)} className="inp" placeholder="0" /></Field>
       {reduced && <div className="text-[11px] text-amber-600 mt-1">Reducing from {inr(claimed)} to {inr(Number(amount))}. Add a note explaining why.</div>}
@@ -814,6 +875,32 @@ function ExpenseDrawer({ expense: e, onClose }) {
       <Row label="Raised by">{titleCase(e.raisedByName || '—')}</Row>
       {e.status === 'rejected' ? <><Row label="Rejected by">{titleCase(e.approvedByName || '—')}{e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}</Row><Row label="Reason">{e.rejectionReason || '—'}</Row></> : <Row label="Approved by">{e.approvedByName ? `${titleCase(e.approvedByName)}${e.approvedAt ? ` · ${fmtWhen(e.approvedAt)}` : ''}` : '—'}</Row>}
       {e.status === 'approved' && e.payDueDate && <Row label="Payment due">{fmtDate(e.payDueDate)} <span className="text-[10px] text-amber-600 font-bold">· reminder 3 days prior</span></Row>}
+      {Array.isArray(e.lineItems) && e.lineItems.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Particulars</div>
+          <div className="rounded-xl border border-slate-100 overflow-hidden">
+            <table className="w-full text-[13px]">
+              <tbody>
+                {e.lineItems.map((li, i) => (
+                  <tr key={i} className="border-b border-slate-50 last:border-0">
+                    <td className="px-3 py-1.5 text-slate-600">{li.particular}{li.date ? <span className="text-slate-400 text-[11px]"> · {fmtDate(li.date)}</span> : ''}</td>
+                    <td className="px-3 py-1.5 text-right font-semibold text-[#050A1F]">{inr(li.amount)}</td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-50/60"><td className="px-3 py-1.5 font-bold text-slate-500">Total</td><td className="px-3 py-1.5 text-right font-extrabold text-[#050A1F]">{inr(e.amount)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {Array.isArray(e.attachments) && e.attachments.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Invoices ({e.attachments.length})</div>
+          <div className="flex flex-col gap-1">
+            {e.attachments.map((a, i) => <a key={i} href={a.url} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-sky-600 hover:underline">📎 {a.name}{a.date ? ` · ${fmtDate(a.date)}` : ''}</a>)}
+          </div>
+        </div>
+      )}
       {e.status === 'paid' && <><Row label="Payment method">{methodLabel(e.paymentMethod)}{e.bankName ? ` · ${bankLabel(e.bankName)}` : ''}</Row>
         {e.paymentMethod === 'upi' && <><Row label="UPI ID">{e.paymentUpiId || '—'}</Row>{e.paymentMobile ? <Row label="Payee mobile">{e.paymentMobile}</Row> : null}<Row label="UPI txn / ref ID">{e.paymentRef || '—'}</Row></>}
         {e.paymentMethod === 'cheque' && <><Row label="Cheque number">{e.chequeNumber || e.paymentRef || '—'}</Row>{e.chequeBank ? <Row label="Bank drawn on">{e.chequeBank}</Row> : null}{e.chequeDate ? <Row label="Cheque date">{fmtDate(e.chequeDate)}</Row> : null}</>}

@@ -329,6 +329,7 @@ function SalesFunnel({ funnel }) {
 }
 
 function TrendChart({ trend }) {
+  const [hover, setHover] = useState(null); // { x, y, label, color, amount, month }
   if (!trend || trend.length === 0) return null;
   const W = 520, H = 150, pad = 26;
   // Segment palette. Admin segments are colored from a fixed palette by order.
@@ -347,26 +348,37 @@ function TrendChart({ trend }) {
   const max = Math.max(1, ...trend.map(stackTotal));
   const bw = (W - pad * 2) / trend.length;
   const compact = (v) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${Math.round(v)}`;
+  const usdFull = (v) => `$${Math.round(v).toLocaleString('en-US')}`;
   return (
-    <div>
+    <div className="relative">
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ minWidth: 420 }}>
+        <svg viewBox={`0 0 ${W} ${H + 28}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
           {[0, 0.5, 1].map((g) => <line key={g} x1={pad} x2={W - pad} y1={pad + (H - pad) * (1 - g)} y2={pad + (H - pad) * (1 - g)} stroke="#e2e8f0" strokeWidth="1" />)}
           {trend.map((t, i) => {
             const total = stackTotal(t);
             const x = pad + i * bw + bw * 0.2;
             const fullH = (total / max) * (H - pad);
-            // Build the stack: team new, team cross, then each admin.
+            // Build the stack: team new, team cross, then each admin. Each seg
+            // carries a label + amount for the hover tooltip.
             const segs = [
-              { v: t.teamNewUsd || 0, c: TEAM_NEW },
-              { v: t.teamCrossUsd || 0, c: TEAM_CROSS },
-              ...(t.adminSegments || []).map((a) => ({ v: a.amount || 0, c: adminColor[a.name] })),
+              { v: t.teamNewUsd || 0, c: TEAM_NEW, label: 'Team New sales' },
+              { v: t.teamCrossUsd || 0, c: TEAM_CROSS, label: 'Team Cross sales' },
+              ...(t.adminSegments || []).map((a) => ({ v: a.amount || 0, c: adminColor[a.name], label: `Admin — ${a.name}` })),
             ].filter((s) => s.v > 0);
             let yCursor = H; // bottom baseline
             const rects = segs.map((s, si) => {
               const h = (s.v / max) * (H - pad);
               yCursor -= h;
-              return <rect key={si} x={x} y={yCursor} width={bw * 0.6} height={h} fill={s.c} rx={si === segs.length - 1 ? 3 : 0} />;
+              const segY = yCursor;
+              const isHot = hover && hover.month === t.month && hover.label === s.label;
+              return (
+                <rect key={si} x={x} y={segY} width={bw * 0.6} height={h} fill={s.c}
+                  rx={si === segs.length - 1 ? 3 : 0}
+                  opacity={hover && !isHot ? 0.55 : 1}
+                  style={{ cursor: 'pointer', transition: 'opacity .12s' }}
+                  onMouseEnter={() => setHover({ xPct: ((x + bw * 0.3) / W) * 100, yPct: (segY + h / 2) / (H + 28) * 100, label: s.label, color: s.c, amount: s.v, month: `${t.month} ${t.year}` })}
+                />
+              );
             });
             return (
               <g key={i}>
@@ -378,6 +390,15 @@ function TrendChart({ trend }) {
             );
           })}
         </svg>
+        {hover && (
+          <div className="absolute pointer-events-none z-20" style={{ left: `${hover.xPct}%`, top: `${hover.yPct}%`, transform: 'translate(-50%, -115%)' }}>
+            <div className="rounded-lg bg-[#0A0E28] text-white px-2.5 py-1.5 shadow-lg whitespace-nowrap">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold"><span className="w-2 h-2 rounded-sm" style={{ background: hover.color }} />{hover.label}</div>
+              <div className="text-[13px] font-extrabold">{usdFull(hover.amount)}</div>
+              <div className="text-[9px] text-slate-300">{hover.month}</div>
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
         <LegendDot color={TEAM_NEW} label="Team New sales" />
