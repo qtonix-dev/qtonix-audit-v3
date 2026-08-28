@@ -855,9 +855,12 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
     });
 
     // Requests feed. Multi-day requests share a groupId — collapse to one card
-    // with a date range. Newest first.
+    // with a date range. Newest first. HR-recorded (back-dated) leaves are NOT
+    // employee applications, so they're excluded from this inbox — they still
+    // appear in balances, history and attendance.
     const byGroup = {};
     leaves.forEach((r) => {
+      if (r.recordedByHr) return; // hide HR-recorded entries from the requests inbox
       const key = r.groupId || `single:${r.id}`;
       (byGroup[key] || (byGroup[key] = [])).push(r);
     });
@@ -2689,26 +2692,46 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
     const b = req.body || {};
-    const type = ['casual', 'medical', 'privilege', 'wfh'].includes(b.type) ? b.type : null;
+    // LOP (loss of pay) is a valid recorded type; it is always unpaid.
+    const type = ['casual', 'medical', 'privilege', 'wfh', 'lop'].includes(b.type) ? b.type : null;
     if (!type) return res.status(400).json({ error: 'Invalid leave type.' });
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date || '')) return res.status(400).json({ error: 'Invalid date.' });
+    const duration = b.duration === 'half' ? 'half' : 'full';
+    const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+
+    // Build the date list. Half day → one date. Full day → an inclusive From/To
+    // range (every calendar day counts). A single date is from === to.
+    let dates = [];
+    if (duration === 'half') {
+      const date = valid(b.date) ? b.date : (valid(b.from) ? b.from : null);
+      if (!date) return res.status(400).json({ error: 'Choose a valid date.' });
+      dates = [date];
+    } else {
+      const from = valid(b.from) ? b.from : (valid(b.date) ? b.date : null);
+      const to = valid(b.to) ? b.to : from;
+      if (!from) return res.status(400).json({ error: 'Choose a valid start date.' });
+      if (to < from) return res.status(400).json({ error: 'The end date can’t be before the start date.' });
+      let cur = new Date(from + 'T00:00:00'); const end = new Date(to + 'T00:00:00'); let guard = 0;
+      while (cur <= end && guard < 120) { dates.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); guard += 1; }
+    }
 
     // Policy checks (unless the caller explicitly overrides with force:true).
+    // LOP is exempt (it's already unpaid and usually recorded after the fact).
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const policy = getHrPolicy(s);
     const rules = policy.leaveRules || {};
     const force = b.force === true;
-    if (!force) {
-      // Sandwich rule: leave can't be immediately before/after a week-off or
-      // holiday (applies to casual by default; medical is exempt).
-      if (rules[type] && rules[type].sandwichBlock) {
-        const day = new Date(b.date + 'T00:00:00');
-        const adj = [new Date(day.getTime() - 86400000), new Date(day.getTime() + 86400000)].map((d) => d.toISOString().slice(0, 10));
-        const holidays = await HrHoliday.findAll({ where: { date: adj } });
-        const hset = new Set(holidays.map((h) => h.date));
-        for (const ad of adj) {
-          if (isWeekOff(policy, emp.branch, ad) || hset.has(ad)) {
-            return res.status(400).json({ error: `Casual leave can't be taken immediately before or after a week-off or holiday. Use medical leave, or override if this is an exception.`, policyBlock: 'sandwich' });
+    if (!force && type !== 'lop') {
+      for (const d of dates) {
+        // Sandwich rule (casual by default; medical exempt).
+        if (rules[type] && rules[type].sandwichBlock) {
+          const day = new Date(d + 'T00:00:00');
+          const adj = [new Date(day.getTime() - 86400000), new Date(day.getTime() + 86400000)].map((x) => x.toISOString().slice(0, 10));
+          const holidays = await HrHoliday.findAll({ where: { date: adj } });
+          const hset = new Set(holidays.map((h) => h.date));
+          for (const ad of adj) {
+            if (isWeekOff(policy, emp.branch, ad) || hset.has(ad)) {
+              return res.status(400).json({ error: `Casual leave can't be taken immediately before or after a week-off or holiday. Use medical leave, or override if this is an exception.`, policyBlock: 'sandwich' });
+            }
           }
         }
       }
@@ -2716,10 +2739,10 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
       if (type === 'medical' && rules.medical && rules.medical.requireDocument && !b.documentUrl) {
         return res.status(400).json({ error: 'Medical leave requires a supporting document. Please attach the medical certificate.', policyBlock: 'medical_doc' });
       }
-      // Privilege leave requires N days advance notice.
+      // Privilege leave requires N days advance notice (based on the first date).
       if (type === 'privilege' && rules.privilege && rules.privilege.noticeDays) {
         const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00');
-        const leaveDay = new Date(b.date + 'T00:00:00');
+        const leaveDay = new Date(dates[0] + 'T00:00:00');
         const daysAhead = Math.round((leaveDay - today) / 86400000);
         if (daysAhead < rules.privilege.noticeDays) {
           return res.status(400).json({ error: `Privilege leave must be applied at least ${rules.privilege.noticeDays} days in advance (this is ${daysAhead} day${daysAhead === 1 ? '' : 's'} ahead). Override if this is an exception.`, policyBlock: 'notice' });
@@ -2727,24 +2750,34 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
       }
     }
 
-    const elig = leavePaidEligibility(emp, b.date);
-    // If the caller asked for paid but it's not allowed, force unpaid (allowed but unpaid).
-    let paid = b.paid !== false;
-    let forcedUnpaid = false;
-    if (paid && !elig.paidAllowed) { paid = false; forcedUnpaid = true; }
-    const row = await HrLeave.create({
-      employeeId: id, type, date: b.date, duration: b.duration === 'half' ? 'half' : 'full',
-      paid, reason: String(b.reason || '').slice(0, 300), status: 'approved', appliedById: req.hrActor.id,
-      documentUrl: b.documentUrl || null,
-    });
-    // Reflect leave on the attendance calendar for that day.
-    try {
-      const [att] = await HrAttendance.findOrCreate({ where: { employeeId: id, date: b.date }, defaults: { employeeId: id, date: b.date } });
-      att.status = type === 'wfh' ? 'present' : (b.duration === 'half' ? 'half_day' : 'leave');
-      att.note = `${type}${paid ? '' : ' (unpaid)'}`; att.markedById = req.hrActor.id; await att.save();
-    } catch {}
-    hrLog(req, 'leave.add', `${emp.name} ${type} ${b.date}${forcedUnpaid ? ' (unpaid — probation/notice)' : ''}`);
-    res.json({ ...row.toJSON(), forcedUnpaid, forcedReason: forcedUnpaid ? elig.reason : null });
+    const groupId = dates.length > 1 ? `rg${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` : null;
+    const reason = String(b.reason || '').slice(0, 300);
+    const actorName = req.hrActor.name;
+    const now = new Date();
+    let anyForcedUnpaid = false; let forcedReason = null;
+    const created = [];
+    for (const date of dates) {
+      // LOP and WFH are never "paid leave"; others honor paid unless probation/notice.
+      let paid = type === 'lop' || type === 'wfh' ? false : (b.paid !== false);
+      if (paid) { const elig = leavePaidEligibility(emp, date); if (!elig.paidAllowed) { paid = false; anyForcedUnpaid = true; forcedReason = elig.reason; } }
+      const row = await HrLeave.create({
+        employeeId: id, type, date, duration,
+        paid, reason, status: 'approved',
+        appliedById: req.hrActor.id, recordedByHr: true,
+        approvedBy: actorName, approverId: req.hrActor.id, approverName: actorName,
+        decidedById: req.hrActor.id, decidedAt: now, decidedByKind: req.hrActor.kind,
+        groupId, documentUrl: b.documentUrl || null,
+      });
+      created.push(row);
+      // Reflect on the attendance calendar for that day.
+      try {
+        const [att] = await HrAttendance.findOrCreate({ where: { employeeId: id, date }, defaults: { employeeId: id, date } });
+        att.status = type === 'wfh' ? 'present' : (duration === 'half' ? 'half_day' : 'leave');
+        att.note = `${type}${paid ? '' : ' (unpaid)'}`; att.markedById = req.hrActor.id; await att.save();
+      } catch {}
+    }
+    hrLog(req, 'leave.add', `${emp.name} ${type} ${dates[0]}${dates.length > 1 ? `→${dates[dates.length - 1]}` : ''}${anyForcedUnpaid ? ' (unpaid — probation/notice)' : ''}`);
+    res.json({ ...created[0].toJSON(), days: dates.length, groupId, forcedUnpaid: anyForcedUnpaid, forcedReason: anyForcedUnpaid ? forcedReason : null });
   } catch (e) { next(e); }
 });
 

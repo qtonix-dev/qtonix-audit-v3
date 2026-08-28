@@ -937,7 +937,7 @@ function AttendanceDayModal({ employeeId, day, onClose, onSaved }) {
 }
 
 // ---- Leave tab: allocation, balances, records; probation/notice → unpaid ----
-const LEAVE_TYPES = [['casual', 'Casual leave'], ['medical', 'Medical leave'], ['privilege', 'Privilege leave'], ['wfh', 'Work from home']];
+const LEAVE_TYPES = [['casual', 'Casual leave'], ['medical', 'Medical leave'], ['privilege', 'Privilege leave'], ['wfh', 'Work from home'], ['lop', 'LOP (Loss of Pay)']];
 function LeaveTab({ employeeId, canManage }) {
   const [data, setData] = useState(null);
   const [addModal, setAddModal] = useState(false);
@@ -1007,19 +1007,38 @@ function LeaveTab({ employeeId, canManage }) {
 }
 
 function LeaveAddModal({ employeeId, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState('casual');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [duration, setDuration] = useState('full');
+  const [from, setFrom] = useState(today);  // full-day range start (also half-day date)
+  const [to, setTo] = useState(today);      // full-day range end
   const [reason, setReason] = useState('');
   const [documentUrl, setDocumentUrl] = useState('');
   const [uploading, setUploading] = useState(false);
   const [elig, setElig] = useState(null);
   const [busy, setBusy] = useState(false);
   const [blockErr, setBlockErr] = useState('');
-  useEffect(() => { hrApi(`/employees/${employeeId}/leave-eligibility?date=${date}`).then(setElig).catch(() => setElig(null)); }, [date, employeeId]);
+  // The single date we check eligibility against (half → the one date; full → start).
+  const eligDate = from;
+  // Inclusive day count for a full-day range (half day = 0.5).
+  const dayCount = (() => {
+    if (duration === 'half') return 0.5;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return 0;
+    const a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00');
+    if (b < a) return 0;
+    return Math.round((b - a) / 86400000) + 1;
+  })();
+  useEffect(() => { hrApi(`/employees/${employeeId}/leave-eligibility?date=${eligDate}`).then(setElig).catch(() => setElig(null)); }, [eligDate, employeeId]);
+  // Keep `to` in sync when `from` moves past it.
+  useEffect(() => { if (duration === 'full' && to < from) setTo(from); }, [from, duration]);
   const doSave = async (force) => {
+    if (duration === 'full' && to < from) { setBlockErr('The end date can’t be before the start date.'); return; }
     setBusy(true); setBlockErr('');
-    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify({ type, date, duration, reason, paid: true, documentUrl, force }) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
+    // Half day → single date. Full day → from/to range.
+    const payload = duration === 'half'
+      ? { type, date: from, duration: 'half', reason, paid: type !== 'lop', documentUrl, force }
+      : { type, from, to, duration: 'full', reason, paid: type !== 'lop', documentUrl, force };
+    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify(payload) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
     catch (e) {
       // Policy blocks come back with a message; offer an override.
       if (e.status === 400 && /week-off|advance|medical/i.test(e.message)) { setBlockErr(e.message); setBusy(false); }
@@ -1031,20 +1050,30 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
     try { const { url } = await uploadToImageKit(file, `/qtonix-hr/employees/id${employeeId}/medical`, file.name); setDocumentUrl(url); }
     catch (e) { alert('Upload failed: ' + e.message); } finally { setUploading(false); }
   };
-  const unpaidWarn = elig && !elig.paidAllowed && type !== 'wfh';
+  // LOP is loss-of-pay (unpaid) — no paid/unpaid warning. WFH isn't leave credit.
+  const unpaidWarn = elig && !elig.paidAllowed && type !== 'wfh' && type !== 'lop';
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Record leave</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
         <div className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Type"><select className={inputCls} value={type} onChange={(e) => { setType(e.target.value); setBlockErr(''); }}>{LEAVE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
-            <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => { setDate(e.target.value); setBlockErr(''); }} /></Field>
-          </div>
+          <Field label="Type"><select className={inputCls} value={type} onChange={(e) => { setType(e.target.value); setBlockErr(''); }}>{LEAVE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
           {type !== 'wfh' && (
             <div>
               <div className="text-xs font-bold text-slate-500 mb-2">Duration</div>
               <div className="flex gap-2">{[['full', 'Full day'], ['half', 'Half day']].map(([k, l]) => <button key={k} onClick={() => setDuration(k)} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${duration === k ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-slate-200 text-slate-500'}`}>{l}</button>)}</div>
+            </div>
+          )}
+          {/* Full day → From/To range; half day (or WFH single day) → one date. */}
+          {duration === 'half' ? (
+            <Field label="Date"><input type="date" className={inputCls} value={from} onChange={(e) => { setFrom(e.target.value); setBlockErr(''); }} /></Field>
+          ) : (
+            <div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="From date"><input type="date" className={inputCls} value={from} onChange={(e) => { setFrom(e.target.value); setBlockErr(''); }} /></Field>
+                <Field label="To date"><input type="date" className={inputCls} min={from} value={to} onChange={(e) => { setTo(e.target.value); setBlockErr(''); }} /></Field>
+              </div>
+              {dayCount > 0 && <div className="mt-2 text-[12px] font-semibold text-slate-500">Total: <span className="text-[#050A1F] font-extrabold">{dayCount} day{dayCount === 1 ? '' : 's'}</span>{to > from ? ` (${from} → ${to}, inclusive)` : ''}</div>}
             </div>
           )}
           {type === 'medical' && (

@@ -7,6 +7,7 @@ const TYPES = [
   { id: 'medical', label: 'Medical', color: '#0EA5E9' },
   { id: 'privilege', label: 'Privilege', color: '#F59E0B' },
   { id: 'wfh', label: 'WFH', color: '#8B5CF6' },
+  { id: 'lop', label: 'LOP', color: '#EF4444' },
 ];
 const STATUS_META = {
   applied: { label: 'Applied', color: '#0369A1', bg: '#E0F2FE' },

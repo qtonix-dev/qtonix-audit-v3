@@ -1762,7 +1762,7 @@ HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.g
 const HrLeave = sequelize.define('HrLeave', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   employeeId: { type: DataTypes.INTEGER, allowNull: false },
-  type: { type: DataTypes.STRING(20), allowNull: false },     // casual|medical|privilege|wfh
+  type: { type: DataTypes.STRING(20), allowNull: false },     // casual|medical|privilege|wfh|lop
   date: { type: DataTypes.STRING(10), allowNull: false },     // YYYY-MM-DD (single-day entries)
   duration: { type: DataTypes.STRING(10), defaultValue: 'full' }, // full|half
   paid: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -1784,6 +1784,11 @@ const HrLeave = sequelize.define('HrLeave', {
   // Optional remark the approver adds when approving or declining.
   remark: { type: DataTypes.STRING(500), allowNull: true },
   appliedById: { type: DataTypes.INTEGER, allowNull: true },
+  // True when HR/admin recorded this leave directly from an employee's profile
+  // (often back-dated). These are already-approved and must NOT appear in the
+  // "Recent leave requests" inbox, but still count toward balances, history and
+  // attendance.
+  recordedByHr: { type: DataTypes.BOOLEAN, defaultValue: false },
 }, { tableName: 'hr_leaves', indexes: [{ name: 'idx_hr_leave_emp', fields: ['employeeId'] }] });
 HrLeave.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 

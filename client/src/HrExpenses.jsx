@@ -343,6 +343,21 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
   return (
     <ModalShell title="New expense" onClose={onClose} wide>
       {err && <div className="rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 mb-3">{err}</div>}
+
+      {/* Invoice upload + AI auto-fill. The uploaded file is attached to the
+          expense, and its details (amount, date, particulars) pre-fill the form. */}
+      <div className="rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 p-4 mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-indigo-500 text-white flex items-center justify-center text-lg shrink-0">✨</div>
+          <div className="flex-1 min-w-0"><div className="text-sm font-bold text-[#050A1F]">Upload the invoice to auto-fill</div><div className="text-[11px] text-slate-500">We’ll read the amount, date and particulars. The file is attached to this expense.</div></div>
+          <label className={`inline-block rounded-lg px-3 py-2 text-xs font-bold cursor-pointer text-white shrink-0 ${uploading || aiState === 'reading' ? 'opacity-60 pointer-events-none' : ''}`} style={{ background: 'linear-gradient(90deg,#6366F1,#4338CA)' }}>
+            {uploading ? 'Uploading…' : aiState === 'reading' ? 'Reading…' : (invoice ? 'Replace' : 'Upload')}
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={pickInvoice} disabled={uploading || aiState === 'reading'} />
+          </label>
+        </div>
+        {invoice && <div className="mt-2 flex items-center gap-2 text-[11px] flex-wrap"><span className="text-green-600 font-bold">✓ {invoice.name}</span>{aiState === 'reading' && <span className="text-indigo-500">· reading…</span>}{aiState === 'done' && <span className="text-indigo-600 font-semibold">· {aiNote}</span>}{aiState === 'failed' && <span className="text-amber-600">· {aiNote}</span>}</div>}
+      </div>
+
       <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <Field label="Title" full><input value={f.title} onChange={(e) => set('title', e.target.value)} className="inp" placeholder="e.g. Office WiFi — August" /></Field>
         <Field label="Category"><select value={f.category} onChange={(e) => set('category', e.target.value)} className="inp">{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
@@ -406,7 +421,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
         </Field>
         <Field label="Description" full><textarea rows={2} value={f.description} onChange={(e) => set('description', e.target.value)} className="inp" placeholder="Optional notes" /></Field>
         <Field label="Invoice" full>
-          <div className="flex items-center gap-2">{invoice ? <span className="text-xs text-green-600 font-bold">✓ {invoice.name} <span className="text-slate-400 font-normal">(attached)</span></span> : <span className="text-xs text-slate-400">Upload above to attach an invoice — optional.</span>}</div>
+          <div className="flex items-center gap-2">{invoice ? <span className="text-xs text-green-600 font-bold">✓ {invoice.name} <span className="text-slate-400 font-normal">(attached)</span></span> : <span className="text-xs text-slate-400">Upload an invoice using the box at the top — optional.</span>}</div>
         </Field>
       </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy || uploading} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Submitting…' : 'Submit for approval'}</button></div>
