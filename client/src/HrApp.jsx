@@ -1891,24 +1891,44 @@ function EmployeeOrgChartModal({ onClose }) {
             : !data ? <div className="text-center text-slate-400 text-sm py-20">Loading chart…</div>
               : (
                 <div className="min-w-max mx-auto text-center">
-                  {/* Admins / leadership row */}
+                  {/* Leadership (director/admins) row */}
                   {data.admins.length > 0 && (
-                    <div className="inline-flex flex-col items-center mb-2">
-                      <div className="flex items-start justify-center flex-wrap gap-y-4">
+                    <div className="inline-flex flex-col items-center">
+                      <div className="flex items-start justify-center flex-wrap gap-x-4 gap-y-4">
                         {data.admins.map((a) => <PersonCard key={`a${a._id}`} p={a} />)}
                       </div>
-                      <VConn h={22} />
-                      <div style={{ height: 1, background: '#cbd5e1', width: '60%', margin: '0 auto' }} />
+                      {/* Single vertical drop from leadership into the dept bar. */}
+                      {data.departments.length > 0 && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
                     </div>
                   )}
-                  {/* Department columns: seniors sit in one row under the dept
-                      pill; each senior's employees stack in a column below them. */}
-                  <div className="flex items-start justify-center flex-wrap gap-x-4 gap-y-8 mt-2">
-                    {data.departments.map((d) => {
+                  {/* Department row. Each department is a column with a top
+                      connector strip: a horizontal bar that spans exactly from the
+                      first dept's center to the last dept's center (outer halves
+                      suppressed so it never overhangs), and a centered drop line
+                      into each department pill. */}
+                  <div className="flex items-start justify-center">
+                    {data.departments.map((d, di) => {
                       const roots = buildDeptTree(d.people || []);
                       const multi = roots.length > 1;
+                      const many = data.departments.length > 1;
+                      const isFirst = di === 0;
+                      const isLast = di === data.departments.length - 1;
                       return (
-                        <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+                        <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 18px' }}>
+                          {/* Connector strip above the pill (only when there's a
+                              leadership row and >1 department). */}
+                          {data.admins.length > 0 && many && (
+                            <div className="relative w-full" style={{ height: 18 }}>
+                              {/* Horizontal half-bars: first dept only draws its
+                                  right half, last only its left half, middle draws
+                                  full width — together an unbroken center-to-center bar. */}
+                              <div style={{ position: 'absolute', top: 0, left: isFirst ? '50%' : 0, right: isLast ? '50%' : 0, height: 1, background: '#cbd5e1' }} />
+                              {/* Drop line into this pill. */}
+                              <div style={{ position: 'absolute', top: 0, left: '50%', width: 1, height: 18, background: '#cbd5e1', transform: 'translateX(-0.5px)' }} />
+                            </div>
+                          )}
+                          {/* Single department under a single admin: straight drop. */}
+                          {data.admins.length > 0 && !many && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
                           <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
                             {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
                           </div>
@@ -1917,14 +1937,12 @@ function EmployeeOrgChartModal({ onClose }) {
                               {/* Drop from the dept pill into the senior row. */}
                               <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />
                               <div className="relative">
-                                {/* Horizontal bar spanning the seniors (only when >1).
-                                    Inset to the outermost card centers (card 268 + 18px
-                                    margins → center at 152px) so it never overhangs. */}
+                                {/* Bar spanning the seniors (only when >1), inset to
+                                    the outermost card centers (268 + 18px margins). */}
                                 {multi && <div style={{ position: 'absolute', top: 0, left: 152, right: 152, height: 1, background: '#cbd5e1' }} />}
                                 <div className="flex items-start justify-center">
                                   {roots.map((r) => (
                                     <div key={r.p._id} className="flex flex-col items-center">
-                                      {/* Drop line from the bar into this senior. */}
                                       {multi && <div style={{ width: 1, height: 16, background: '#cbd5e1' }} />}
                                       <TreeNode node={r} keyPath={`${d.name}/${r.p._id}`} />
                                     </div>
@@ -6271,21 +6289,32 @@ function HrOrgChartModal({ users, reporting, onClose }) {
                 {admins.map((a) => <PersonCard key={`admin:${a.id}`} p={{ name: a.name, designation: 'Director · Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />)}
               </div>
             )}
-            {/* Toggle + horizontal branch into departments */}
+            {/* Collapse-all toggle, then a clean bar connecting management to every
+                department: each department has a connector strip whose half-bar
+                spans exactly center-to-center (outer halves suppressed) with a
+                centered drop line into each pill. */}
             {deptNames.length > 0 && (
               <>
-                <Toggle k="__depts__" />
+                {admins.length > 0 && <Toggle k="__depts__" />}
                 {!collapsed['__depts__'] && (
-                  <div style={{ paddingTop: 14 }} className="relative">
-                    {deptNames.length > 1 && <div style={{ position: 'absolute', top: 0, left: '10%', right: '10%', height: 1, background: '#cbd5e1' }} />}
-                    <div className="flex items-start justify-center gap-x-6">
-                      {deptNames.map((d) => (
-                        <div key={d} className="relative flex flex-col items-center">
-                          <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                  <div className="flex items-start justify-center">
+                    {deptNames.map((d, di) => {
+                      const many = deptNames.length > 1;
+                      const isFirst = di === 0;
+                      const isLast = di === deptNames.length - 1;
+                      return (
+                        <div key={d} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 18px' }}>
+                          {admins.length > 0 && many && (
+                            <div className="relative w-full" style={{ height: 18 }}>
+                              <div style={{ position: 'absolute', top: 0, left: isFirst ? '50%' : 0, right: isLast ? '50%' : 0, height: 1, background: '#cbd5e1' }} />
+                              <div style={{ position: 'absolute', top: 0, left: '50%', width: 1, height: 18, background: '#cbd5e1', transform: 'translateX(-0.5px)' }} />
+                            </div>
+                          )}
+                          {admins.length > 0 && !many && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
                           <DeptColumn name={d} />
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
                 )}
               </>
