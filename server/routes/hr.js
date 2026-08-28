@@ -898,7 +898,12 @@ router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
           canManagePeople(req) // admins / HR managers can act on any request in scope
         ),
       };
-    }).sort((a, b) => new Date(b.appliedAt || b.from) - new Date(a.appliedAt || a.from));
+    }).sort((a, b) => {
+      // Newest leave DATE first (the leave's start date), applied date as tiebreak.
+      const d = String(b.from || '').localeCompare(String(a.from || ''));
+      if (d !== 0) return d;
+      return new Date(b.appliedAt || b.from) - new Date(a.appliedAt || a.from);
+    });
 
     // Pulse counts.
     const today = istDateStr();
@@ -4820,6 +4825,14 @@ router.post('/profile-me/avatar', requireHrAccess, async (req, res, next) => {
     if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'ImageKit is not configured. Add ImageKit keys in admin settings.' });
     next(e);
   }
+});
+
+// Remove the signed-in employee's profile photo.
+router.delete('/profile-me/avatar', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind === 'hr' && req.hrUser) { req.hrUser.avatar = null; await req.hrUser.save(); }
+    res.json({ ok: true, avatar: '' });
+  } catch (e) { next(e); }
 });
 
 // ---- Signature templates (named, like the CRM) ----

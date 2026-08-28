@@ -4513,10 +4513,93 @@ function SignatureEditor({ sig, onClose, onSaved }) {
 }
 
 // My Profile — self-service (avatar, phone, birthday, marital status, password).
+// A 1:1 crop dialog for HRMS profile photos. Drag/zoom the image inside a square
+// frame; on confirm it renders the visible square to a canvas and returns a PNG.
+// Mirrors the Sales CRM cropper so both apps behave the same.
+function HrImageCropModal({ file, onCancel, onCropped }) {
+  const [src, setSrc] = useState('');
+  const [nat, setNat] = useState(null);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+  const BOX = 260;
+  useEffect(() => {
+    const r = new FileReader();
+    r.onload = () => setSrc(String(r.result));
+    r.onerror = () => onCancel();
+    r.readAsDataURL(file);
+  }, [file]);
+  const baseFit = nat ? Math.max(BOX / nat.w, BOX / nat.h) : 1;
+  const dispScale = baseFit * scale;
+  const dw = nat ? nat.w * dispScale : BOX;
+  const dh = nat ? nat.h * dispScale : BOX;
+  const pt = (e) => (e.touches && e.touches[0]) ? e.touches[0] : e;
+  const onDown = (e) => { const p = pt(e); dragRef.current = { x: p.clientX - offset.x, y: p.clientY - offset.y }; };
+  const onMove = (e) => { if (!dragRef.current) return; const p = pt(e); setOffset({ x: p.clientX - dragRef.current.x, y: p.clientY - dragRef.current.y }); };
+  const onUp = () => { dragRef.current = null; };
+  const confirm = () => {
+    if (!nat) { onCancel(); return; }
+    const out = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = out; canvas.height = out;
+    const ctx = canvas.getContext('2d');
+    const left = (BOX - dw) / 2 + offset.x;
+    const top = (BOX - dh) / 2 + offset.y;
+    const sx = (-left) / dispScale;
+    const sy = (-top) / dispScale;
+    const sSize = BOX / dispScale;
+    const im = new Image();
+    im.onload = () => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(out / 2, out / 2, out / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      try { ctx.drawImage(im, sx, sy, sSize, sSize, 0, 0, out, out); } catch { /* */ }
+      ctx.restore();
+      canvas.toBlob((blob) => {
+        if (!blob) { onCancel(); return; }
+        onCropped(new File([blob], 'avatar.png', { type: 'image/png' }));
+      }, 'image/png', 0.92);
+    };
+    im.onerror = () => onCancel();
+    im.src = src;
+  };
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[150] p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-extrabold text-[#050A1F] mb-1">Crop your photo</h3>
+        <p className="text-xs text-slate-500 mb-4">Drag to reposition, use the slider to zoom.</p>
+        <div className="flex justify-center mb-4">
+          <div className="relative overflow-hidden rounded-full bg-slate-100 select-none"
+            style={{ width: BOX, height: BOX, touchAction: 'none', cursor: dragRef.current ? 'grabbing' : 'grab' }}
+            onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+            onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
+            {src && (
+              // eslint-disable-next-line jsx-a11y/alt-text
+              <img src={src} draggable={false}
+                onLoad={(e) => setNat({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
+                style={{ position: 'absolute', width: dw, height: dh, left: (BOX - dw) / 2 + offset.x, top: (BOX - dh) / 2 + offset.y, maxWidth: 'none', pointerEvents: 'none' }} />
+            )}
+            <div className="absolute inset-0 rounded-full ring-2 ring-white/80 pointer-events-none" />
+          </div>
+        </div>
+        <input type="range" min="1" max="3" step="0.01" value={scale} onChange={(e) => setScale(Number(e.target.value))} className="w-full mb-4" />
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={confirm} disabled={!nat} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Crop &amp; upload</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MyProfilePage({ user, onUpdated }) {
   const [p, setP] = useState(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cropFile, setCropFile] = useState(null); // non-square image awaiting crop
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarRef = useRef(null);
   const load = () => hrApi('/profile-me').then(setP).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -4524,10 +4607,36 @@ function MyProfilePage({ user, onUpdated }) {
   if (!p) return <div className="text-slate-400 text-sm">Loading…</div>;
   if (p.isAdmin) return <div className="max-w-2xl"><h1 className="text-2xl font-extrabold text-[#050A1F] mb-2">My Profile</h1><div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Admins manage their profile in the Sales CRM.</div></div>;
 
-  const uploadAvatar = async (file) => {
+  // Upload a (already square/cropped) file to ImageKit and persist immediately.
+  const persistAvatar = async (file) => {
+    setAvatarBusy(true);
+    try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); set({ avatar: r.url }); onUpdated && onUpdated(); }
+    catch (e) { alert(e.message); } finally { setAvatarBusy(false); }
+  };
+  // Pick → if the image isn't square, open the crop dialog; a square image
+  // uploads directly. Matches the Sales CRM behavior.
+  const pickAvatar = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) { alert('Image too large (max 5MB).'); return; }
-    try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); set({ avatar: r.url }); onUpdated && onUpdated(); } catch (e) { alert(e.message); }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      if (img.naturalWidth === img.naturalHeight) persistAvatar(file); // already square
+      else setCropFile(file); // needs cropping
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); persistAvatar(file); };
+    img.src = url;
+  };
+  const onCropped = async (cropped) => { setCropFile(null); await persistAvatar(cropped); };
+  const removeAvatar = async () => {
+    if (!p.avatar) return;
+    if (!window.confirm('Remove your profile photo?')) return;
+    setAvatarBusy(true);
+    try { await hrApi('/profile-me/avatar', { method: 'DELETE' }); set({ avatar: '' }); onUpdated && onUpdated(); }
+    catch (e) { alert(e.message); } finally { setAvatarBusy(false); }
   };
   const save = async () => {
     setBusy(true); setSaved(false);
@@ -4548,10 +4657,14 @@ function MyProfilePage({ user, onUpdated }) {
           <div>
             <div className="font-bold text-slate-700">{p.name}</div>
             <div className="text-xs text-slate-400 mb-2">{p.email}{p.designation ? ` · ${p.designation}` : ''}</div>
-            <button onClick={() => avatarRef.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Upload photo</button>
-            <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files?.[0])} />
+            <div className="flex items-center gap-2">
+              <button onClick={() => avatarRef.current?.click()} disabled={avatarBusy} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-50">{avatarBusy ? 'Uploading…' : (p.avatar ? 'Change photo' : 'Upload photo')}</button>
+              {p.avatar && <button onClick={removeAvatar} disabled={avatarBusy} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-500 disabled:opacity-50">Remove</button>}
+              <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={pickAvatar} />
+            </div>
           </div>
         </div>
+        {cropFile && <HrImageCropModal file={cropFile} onCancel={() => setCropFile(null)} onCropped={onCropped} />}
 
         <div className="grid grid-cols-2 gap-4">
           <div><div className={L}>Phone number</div><input className={inp2} value={p.phone || ''} onChange={(e) => set({ phone: e.target.value })} /></div>
