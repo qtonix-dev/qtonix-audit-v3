@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase } from './HrParts.jsx';
@@ -1793,6 +1793,41 @@ function EmployeeOrgChartModal({ onClose }) {
   const toggle = (k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
   useEffect(() => { hrApi('/me/org-chart').then(setData).catch((e) => setErr(e.message)); }, []);
 
+  // Measured connector geometry between the leadership row and the department
+  // pills. We measure each pill's centre-x (relative to a wrapper) so the
+  // horizontal bar starts/ends exactly at the first/last pill centre and each
+  // drop line lands dead-centre — regardless of how wide each department's
+  // subtree is. Recomputed on data load, collapse/expand, and resize.
+  const connWrapRef = useRef(null);
+  const trunkRef = useRef(null);
+  const pillRefs = useRef({});
+  const [geo, setGeo] = useState(null); // { barLeft, barRight, trunkX, drops:[x], top }
+  useLayoutEffect(() => {
+    const measure = () => {
+      const wrap = connWrapRef.current;
+      if (!wrap || !data) { setGeo(null); return; }
+      const base = wrap.getBoundingClientRect();
+      const names = (data.departments || []).map((d) => d.name);
+      const xs = names.map((n) => {
+        const el = pillRefs.current[n];
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return r.left - base.left + r.width / 2;
+      }).filter((x) => x != null);
+      if (xs.length < 2) { setGeo(null); return; }
+      let trunkX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      if (trunkRef.current) {
+        const tr = trunkRef.current.getBoundingClientRect();
+        trunkX = tr.left - base.left + tr.width / 2;
+      }
+      setGeo({ barLeft: Math.min(...xs), barRight: Math.max(...xs), drops: xs, trunkX });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const t = setTimeout(measure, 60); // after fonts/layout settle
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [data, collapsed]);
+
   const ringFor = (type) => {
     if (type === 'director' || type === 'admin') return '#0A1F44';
     if (type === 'manager') return '#1CA0E8';
@@ -1890,46 +1925,58 @@ function EmployeeOrgChartModal({ onClose }) {
           {err ? <div className="text-center text-red-500 text-sm py-20">{err}</div>
             : !data ? <div className="text-center text-slate-400 text-sm py-20">Loading chart…</div>
               : (
-                <div className="min-w-max mx-auto text-center">
-                  {/* Leadership (director/admins) row */}
-                  {data.admins.length > 0 && (
-                    <div className="inline-flex flex-col items-center">
-                      <div className="flex items-start justify-center flex-wrap gap-x-4 gap-y-4">
-                        {data.admins.map((a) => <PersonCard key={`a${a._id}`} p={a} />)}
+                <div className="min-w-max mx-auto flex flex-col items-center">
+                  {/* Leadership row: director/admin cards joined by a bar (when >1).
+                      Director cards are fixed-width so a CSS bar is exact here. A
+                      hidden marker centres the trunk that the SVG layer draws. */}
+                  {data.admins.length > 0 && (() => {
+                    const nAdmin = data.admins.length;
+                    return (
+                      <div className="inline-flex flex-col items-center">
+                        <div className="relative">
+                          {nAdmin > 1 && <div style={{ position: 'absolute', bottom: 0, left: 152, right: 152, height: 1, background: '#cbd5e1' }} />}
+                          <div className="flex items-start justify-center">
+                            {data.admins.map((a) => (
+                              <div key={`a${a._id}`} className="flex flex-col items-center">
+                                <PersonCard p={a} />
+                                {nAdmin > 1 && <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Trunk marker (its centre-x is measured for the SVG). */}
+                        {data.departments.length > 0 && <div ref={trunkRef} style={{ width: 1, height: 0 }} />}
                       </div>
-                      {/* Single vertical drop from leadership into the dept bar. */}
-                      {data.departments.length > 0 && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
+                    );
+                  })()}
+                  {/* Measured connector layer: an SVG whose horizontal bar runs from
+                      the first pill centre to the last, a trunk up to the directors,
+                      and a vertical drop into each pill. Pixel-measured so it never
+                      overshoots and never breaks, whatever the subtree widths. */}
+                  {data.admins.length > 0 && data.departments.length > 0 && (
+                    <div ref={connWrapRef} className="relative" style={{ width: '100%', height: 34 }}>
+                      {geo && (
+                        <svg width="100%" height="34" style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+                          {/* trunk from directors down to the bar */}
+                          <line x1={geo.trunkX} y1={0} x2={geo.trunkX} y2={17} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />
+                          {/* horizontal bar, first→last pill centre */}
+                          {data.departments.length > 1 && <line x1={geo.barLeft} y1={17} x2={geo.barRight} y2={17} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />}
+                          {/* drop into each pill */}
+                          {geo.drops.map((x, i) => <line key={i} x1={x} y1={17} x2={x} y2={34} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />)}
+                        </svg>
+                      )}
                     </div>
                   )}
-                  {/* Department row. Each department is a column with a top
-                      connector strip: a horizontal bar that spans exactly from the
-                      first dept's center to the last dept's center (outer halves
-                      suppressed so it never overhangs), and a centered drop line
-                      into each department pill. */}
+                  {/* Department row: each department shrink-wraps to its pill so the
+                      pill centre is the column centre; each senior's employees stack
+                      in a column below. */}
                   <div className="flex items-start justify-center">
-                    {data.departments.map((d, di) => {
+                    {data.departments.map((d) => {
                       const roots = buildDeptTree(d.people || []);
                       const multi = roots.length > 1;
-                      const many = data.departments.length > 1;
-                      const isFirst = di === 0;
-                      const isLast = di === data.departments.length - 1;
                       return (
-                        <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 18px' }}>
-                          {/* Connector strip above the pill (only when there's a
-                              leadership row and >1 department). */}
-                          {data.admins.length > 0 && many && (
-                            <div className="relative w-full" style={{ height: 18 }}>
-                              {/* Horizontal half-bars: first dept only draws its
-                                  right half, last only its left half, middle draws
-                                  full width — together an unbroken center-to-center bar. */}
-                              <div style={{ position: 'absolute', top: 0, left: isFirst ? '50%' : 0, right: isLast ? '50%' : 0, height: 1, background: '#cbd5e1' }} />
-                              {/* Drop line into this pill. */}
-                              <div style={{ position: 'absolute', top: 0, left: '50%', width: 1, height: 18, background: '#cbd5e1', transform: 'translateX(-0.5px)' }} />
-                            </div>
-                          )}
-                          {/* Single department under a single admin: straight drop. */}
-                          {data.admins.length > 0 && !many && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
-                          <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
+                        <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 22px' }}>
+                          <div ref={(el) => { pillRefs.current[d.name] = el; }} className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
                             {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
                           </div>
                           {roots.length > 0 && (
@@ -1938,7 +1985,7 @@ function EmployeeOrgChartModal({ onClose }) {
                               <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />
                               <div className="relative">
                                 {/* Bar spanning the seniors (only when >1), inset to
-                                    the outermost card centers (268 + 18px margins). */}
+                                    the outermost card centres (268 + 18px margins). */}
                                 {multi && <div style={{ position: 'absolute', top: 0, left: 152, right: 152, height: 1, background: '#cbd5e1' }} />}
                                 <div className="flex items-start justify-center">
                                   {roots.map((r) => (
@@ -1962,6 +2009,7 @@ function EmployeeOrgChartModal({ onClose }) {
     </div>
   );
 }
+
 
 // Senior's daily late-check popup: for each team member not logged in, set
 // coming / not coming / not picking + optional notes.
@@ -6139,6 +6187,33 @@ function HrOrgChartModal({ users, reporting, onClose }) {
   const [collapsed, setCollapsed] = useState({});
   const toggle = (k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
+  // Measured management→department connectors (see EmployeeOrgChartModal). Pixel
+  // measurement keeps the bar exact regardless of subtree widths.
+  const connWrapRef = useRef(null);
+  const trunkRef = useRef(null);
+  const pillRefs = useRef({});
+  const [geo, setGeo] = useState(null);
+  const deptSig = active.map((u) => u.department).join('|') + '::' + Object.keys(collapsed).filter((k) => collapsed[k]).join(',');
+  useLayoutEffect(() => {
+    const measure = () => {
+      const wrap = connWrapRef.current;
+      if (!wrap) { setGeo(null); return; }
+      const base = wrap.getBoundingClientRect();
+      const xs = Object.values(pillRefs.current).filter(Boolean).map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left - base.left + r.width / 2;
+      });
+      if (xs.length < 1) { setGeo(null); return; }
+      let trunkX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      if (trunkRef.current) { const tr = trunkRef.current.getBoundingClientRect(); trunkX = tr.left - base.left + tr.width / 2; }
+      setGeo({ barLeft: Math.min(...xs), barRight: Math.max(...xs), drops: xs, trunkX });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const t = setTimeout(measure, 60);
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [deptSig]);
+
   const ringFor = (type) => {
     if (type === 'director' || type === 'admin') return '#0A1F44';
     if (type === 'manager') return '#1CA0E8';
@@ -6245,7 +6320,7 @@ function HrOrgChartModal({ users, reporting, onClose }) {
     const multi = roots.length > 1;
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
-        <div className="inline-block text-white font-extrabold uppercase" style={{ background: '#0A1F44', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>{name}</div>
+        <div ref={(el) => { pillRefs.current[name] = el; }} className="inline-block text-white font-extrabold uppercase" style={{ background: '#0A1F44', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>{name}</div>
         {roots.length > 0 && (
           <>
             <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />
@@ -6283,40 +6358,49 @@ function HrOrgChartModal({ users, reporting, onClose }) {
       <div className="flex-1 overflow-auto bg-white p-10" onClick={(e) => e.stopPropagation()}>
         {!hasAny ? <div className="text-slate-400 text-sm text-center py-20">No active employees to chart yet.</div> : (
           <div className="min-w-max mx-auto flex flex-col items-center">
-            {/* Management row (admins) */}
+            {/* Management row (admins), joined by a bar when >1. A trunk marker
+                centres the SVG trunk; the collapse-all toggle sits on it. */}
             {admins.length > 0 && (
-              <div className="flex items-start justify-center gap-8">
-                {admins.map((a) => <PersonCard key={`admin:${a.id}`} p={{ name: a.name, designation: 'Director · Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />)}
-              </div>
-            )}
-            {/* Collapse-all toggle, then a clean bar connecting management to every
-                department: each department has a connector strip whose half-bar
-                spans exactly center-to-center (outer halves suppressed) with a
-                centered drop line into each pill. */}
-            {deptNames.length > 0 && (
-              <>
-                {admins.length > 0 && <Toggle k="__depts__" />}
-                {!collapsed['__depts__'] && (
+              <div className="inline-flex flex-col items-center">
+                <div className="relative">
+                  {admins.length > 1 && <div style={{ position: 'absolute', bottom: 0, left: 155, right: 155, height: 1, background: '#cbd5e1' }} />}
                   <div className="flex items-start justify-center">
-                    {deptNames.map((d, di) => {
-                      const many = deptNames.length > 1;
-                      const isFirst = di === 0;
-                      const isLast = di === deptNames.length - 1;
-                      return (
-                        <div key={d} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 18px' }}>
-                          {admins.length > 0 && many && (
-                            <div className="relative w-full" style={{ height: 18 }}>
-                              <div style={{ position: 'absolute', top: 0, left: isFirst ? '50%' : 0, right: isLast ? '50%' : 0, height: 1, background: '#cbd5e1' }} />
-                              <div style={{ position: 'absolute', top: 0, left: '50%', width: 1, height: 18, background: '#cbd5e1', transform: 'translateX(-0.5px)' }} />
-                            </div>
-                          )}
-                          {admins.length > 0 && !many && <div style={{ width: 1, height: 18, background: '#cbd5e1' }} />}
-                          <DeptColumn name={d} />
-                        </div>
-                      );
-                    })}
+                    {admins.map((a) => (
+                      <div key={`admin:${a.id}`} className="flex flex-col items-center">
+                        <PersonCard p={{ name: a.name, designation: 'Director · Admin', type: 'director', avatar: a.avatar, phone: a.phone, email: a.email }} w={280} />
+                        {admins.length > 1 && <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {deptNames.length > 0 && (
+                  <div className="flex flex-col items-center" ref={trunkRef}>
+                    <Toggle k="__depts__" />
                   </div>
                 )}
+              </div>
+            )}
+            {/* Measured connector layer + department row. */}
+            {deptNames.length > 0 && !collapsed['__depts__'] && (
+              <>
+                {admins.length > 0 && (
+                  <div ref={connWrapRef} className="relative" style={{ width: '100%', height: 30 }}>
+                    {geo && (
+                      <svg width="100%" height="30" style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+                        <line x1={geo.trunkX} y1={0} x2={geo.trunkX} y2={15} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />
+                        {deptNames.length > 1 && <line x1={geo.barLeft} y1={15} x2={geo.barRight} y2={15} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />}
+                        {geo.drops.map((x, i) => <line key={i} x1={x} y1={15} x2={x} y2={30} stroke="#cbd5e1" strokeWidth="1" shapeRendering="crispEdges" />)}
+                      </svg>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-start justify-center">
+                  {deptNames.map((d) => (
+                    <div key={d} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top', padding: '0 22px' }}>
+                      <DeptColumn name={d} />
+                    </div>
+                  ))}
+                </div>
               </>
             )}
           </div>
