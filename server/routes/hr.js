@@ -1842,6 +1842,7 @@ router.get('/me/org-chart', requireHrAccess, async (req, res, next) => {
       _id: u.id, name: u.name, type: u.type,
       designation: u.designation || '', department: u.department || '',
       avatar: u.avatar || null, branchIncharge: !!u.branchIncharge, branch: u.branch || '',
+      reportsToId: u.reportsToId || null, reportsToAdminId: u.reportsToAdminId || null,
       phone: full ? (u.phone || '') : '', email: full ? (u.email || '') : '', masked: !full,
     });
 

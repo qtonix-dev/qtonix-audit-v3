@@ -1789,6 +1789,8 @@ function ClaimHistoryModal({ claims, onClose, onNew }) {
 function EmployeeOrgChartModal({ onClose }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = (k) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
   useEffect(() => { hrApi('/me/org-chart').then(setData).catch((e) => setErr(e.message)); }, []);
 
   const ringFor = (type) => {
@@ -1818,6 +1820,52 @@ function EmployeeOrgChartModal({ onClose }) {
     </div>
   );
   const VConn = ({ h = 16 }) => <div style={{ width: 1, height: h, background: '#cbd5e1', margin: '0 auto' }} />;
+  const Toggle = ({ k }) => (
+    <div className="flex flex-col items-center">
+      <div style={{ width: 1, height: 14, background: '#cbd5e1' }} />
+      <button onClick={() => toggle(k)} className="rounded-full border border-slate-300 bg-white text-slate-500 flex items-center justify-center hover:bg-slate-50 leading-none" style={{ width: 18, height: 18, fontSize: 12 }}>{collapsed[k] ? '+' : '−'}</button>
+    </div>
+  );
+  // Build a department's reporting tree from reportsToId. Someone is a top-level
+  // branch when they don't report to another person shown in the same department
+  // (e.g. they report to the Director) — so 2 team leads under a manager become 2
+  // branches, and a senior who reports to the Director sits beside them.
+  const buildDeptTree = (people) => {
+    const idSet = new Set(people.map((u) => u._id));
+    const nodeById = {};
+    people.forEach((u) => { nodeById[u._id] = { p: u, children: [] }; });
+    const roots = [];
+    people.forEach((u) => {
+      if (u.reportsToId && idSet.has(u.reportsToId) && u.reportsToId !== u._id) nodeById[u.reportsToId].children.push(nodeById[u._id]);
+      else roots.push(nodeById[u._id]);
+    });
+    const sortKids = (n) => { n.children.sort((a, b) => (ROLE_LEVEL[a.p.type] ?? 9) - (ROLE_LEVEL[b.p.type] ?? 9) || (a.p.name || '').localeCompare(b.p.name || '')); n.children.forEach(sortKids); };
+    roots.sort((a, b) => (ROLE_LEVEL[a.p.type] ?? 9) - (ROLE_LEVEL[b.p.type] ?? 9) || (a.p.name || '').localeCompare(b.p.name || ''));
+    roots.forEach(sortKids);
+    return roots;
+  };
+  const TreeNode = ({ node, keyPath }) => {
+    const kids = node.children; const nk = `node:${keyPath}`;
+    return (
+      <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+        <PersonCard p={node.p} />
+        {kids.length > 0 && <Toggle k={nk} />}
+        {kids.length > 0 && !collapsed[nk] && (
+          <div style={{ paddingTop: 14 }} className="relative">
+            {kids.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 18px)', right: 'calc(10% + 18px)', height: 1, background: '#cbd5e1' }} />}
+            <div className="flex items-start justify-center">
+              {kids.map((c) => (
+                <div key={c.p._id} className="relative flex flex-col items-center">
+                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                  <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[140] flex flex-col" onClick={onClose}>
@@ -1846,22 +1894,30 @@ function EmployeeOrgChartModal({ onClose }) {
                   )}
                   {/* Department columns */}
                   <div className="flex items-start justify-center flex-wrap gap-y-8 mt-2">
-                    {data.departments.map((d) => (
-                      <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
-                        <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
-                          {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
-                        </div>
-                        <VConn />
-                        <div>
-                          {d.people.map((u, i) => (
-                            <div key={u._id} className="flex flex-col items-center">
-                              <PersonCard p={u} />
-                              {i < d.people.length - 1 && <VConn />}
+                    {data.departments.map((d) => {
+                      const roots = buildDeptTree(d.people || []);
+                      return (
+                        <div key={d.name} className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+                          <div className="inline-block text-white font-extrabold uppercase" style={{ background: d.mine ? '#0A1F44' : '#334155', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>
+                            {d.name}{d.mine && <span className="ml-2 text-[9px] font-bold text-[#FF8A3D]">YOUR TEAM</span>}
+                          </div>
+                          {roots.length > 0 && <VConn />}
+                          {roots.length > 0 && (
+                            <div className="relative" style={{ paddingTop: 2 }}>
+                              {roots.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 18px)', right: 'calc(10% + 18px)', height: 1, background: '#cbd5e1' }} />}
+                              <div className="flex items-start justify-center">
+                                {roots.map((r) => (
+                                  <div key={r.p._id} className="relative flex flex-col items-center">
+                                    {roots.length > 1 && <div style={{ position: 'absolute', top: 0, width: 1, height: 14, background: '#cbd5e1' }} />}
+                                    <div style={{ paddingTop: roots.length > 1 ? 14 : 0 }}><TreeNode node={r} keyPath={`${d.name}/${r.p._id}`} /></div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          ))}
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -6082,28 +6138,89 @@ function HrOrgChartModal({ users, reporting, onClose }) {
     </div>
   );
 
-  // Group employees by department, ordered by role level within each.
+  // Group employees by department.
   const byDept = {};
   active.forEach((u) => { const d = (u.department && String(u.department).trim()) || 'Unassigned'; (byDept[d] = byDept[d] || []).push(u); });
   const deptNames = Object.keys(byDept).sort((a, b) => (a === 'Unassigned') - (b === 'Unassigned') || a.localeCompare(b));
-  deptNames.forEach((d) => byDept[d].sort((a, b) => (ROLE_LEVEL[a.type] ?? 9) - (ROLE_LEVEL[b.type] ?? 9) || (a.name || '').localeCompare(b.name || '')));
 
-  // A department column: navy pill + toggle + vertical chain of people.
+  // Build the reporting tree for a department from reportsToId. A person is a
+  // top-level branch of the department when they don't report to someone else in
+  // the SAME department (e.g. they report to the Director, or to a lead in
+  // another dept, or to nobody). Children hang under their manager, so 2 team
+  // leads under a manager render as 2 branches, and a senior who reports to the
+  // Director sits as their own branch beside them.
+  const buildDeptTree = (people) => {
+    const idSet = new Set(people.map((u) => u._id));
+    const nodeById = {};
+    people.forEach((u) => { nodeById[u._id] = { p: u, children: [] }; });
+    const roots = [];
+    people.forEach((u) => {
+      const parentInDept = u.reportsToId && idSet.has(u.reportsToId) && u.reportsToId !== u._id;
+      if (parentInDept) nodeById[u.reportsToId].children.push(nodeById[u._id]);
+      else roots.push(nodeById[u._id]);
+    });
+    // Sort siblings by role level then name, top-down.
+    const sortKids = (n) => {
+      n.children.sort((a, b) => (ROLE_LEVEL[a.p.type] ?? 9) - (ROLE_LEVEL[b.p.type] ?? 9) || (a.p.name || '').localeCompare(b.p.name || ''));
+      n.children.forEach(sortKids);
+    };
+    roots.sort((a, b) => (ROLE_LEVEL[a.p.type] ?? 9) - (ROLE_LEVEL[b.p.type] ?? 9) || (a.p.name || '').localeCompare(b.p.name || ''));
+    roots.forEach(sortKids);
+    return roots;
+  };
+
+  // Recursive tree node: a card, and if it has children, a connector bar with the
+  // children laid out horizontally (branches). Each subtree is collapsible.
+  const TreeNode = ({ node, keyPath }) => {
+    const kids = node.children;
+    const nk = `node:${keyPath}`;
+    const isCollapsed = collapsed[nk];
+    return (
+      <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
+        <PersonCard p={node.p} />
+        {kids.length > 0 && <Toggle k={nk} />}
+        {kids.length > 0 && !isCollapsed && (
+          <div style={{ paddingTop: 14 }} className="relative">
+            {/* Horizontal bar spanning the children (only when >1 child). */}
+            {kids.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 20px)', right: 'calc(10% + 20px)', height: 1, background: '#cbd5e1' }} />}
+            <div className="flex items-start justify-center">
+              {kids.map((c, i) => (
+                <div key={c.p._id} className="relative flex flex-col items-center">
+                  {/* Drop line from the horizontal bar (or straight down for a
+                      single child) into each child. */}
+                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                  <TreeNode node={c} keyPath={`${keyPath}/${c.p._id}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // A department block: navy pill header, then its reporting tree branching below.
   const DeptColumn = ({ name }) => {
     const people = byDept[name] || [];
     const dk = `dept:${name}`;
+    const roots = buildDeptTree(people);
     return (
       <div className="inline-flex flex-col items-center align-top" style={{ verticalAlign: 'top' }}>
         <div className="inline-block text-white font-extrabold uppercase" style={{ background: '#0A1F44', fontSize: 12, letterSpacing: '.06em', padding: '9px 20px', borderRadius: 8 }}>{name}</div>
-        {people.length > 0 && <Toggle k={dk} />}
-        {!collapsed[dk] && people.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            {people.map((u, i) => (
-              <div key={u._id} className="flex flex-col items-center">
-                <PersonCard p={u} />
-                {i < people.length - 1 && <VConn />}
-              </div>
-            ))}
+        {roots.length > 0 && <Toggle k={dk} />}
+        {!collapsed[dk] && roots.length > 0 && (
+          <div style={{ paddingTop: 14 }} className="relative">
+            {/* Bar across the department's top-level branches (e.g. a manager and
+                a senior who reports to the Director). */}
+            {roots.length > 1 && <div style={{ position: 'absolute', top: 0, left: 'calc(10% + 20px)', right: 'calc(10% + 20px)', height: 1, background: '#cbd5e1' }} />}
+            <div className="flex items-start justify-center">
+              {roots.map((r) => (
+                <div key={r.p._id} className="relative flex flex-col items-center">
+                  <div style={{ position: 'absolute', top: -14, width: 1, height: 14, background: '#cbd5e1' }} />
+                  <TreeNode node={r} keyPath={`${name}/${r.p._id}`} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
