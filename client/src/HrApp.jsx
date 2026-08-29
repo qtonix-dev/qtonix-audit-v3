@@ -1207,6 +1207,7 @@ function ReviewIcon({ kind }) {
     expense_approval:['#DBEAFE', '#2563EB', <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>],
     interview_attendance:['#E0F2FE', '#0284C7', <><rect x="2" y="4" width="16" height="16" rx="2" /><path d="m22 8-4 4 4 4V8z" /></>],
     interview_feedback:['#E0E7FF', '#4F46E5', <><path d="M20 6 9 17l-5-5" /></>],
+    onboarding_task:['#DCFCE7', '#15803D', <><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 12l2 2 4-4" /></>],
   };
   const [bg, stroke, path] = map[kind] || ['#F1F5F9', '#64748b', <circle cx="12" cy="12" r="9" />];
   return (
@@ -1288,6 +1289,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
   const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { alert(e.message); } };
   const decideExpense = async (expenseId, decision) => { try { await hrApi(`/expenses/${expenseId}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); loadReviews(); } catch (e) { alert(e.message); } };
+  const markOnbTaskDone = async (taskId) => { try { await hrApi(`/onboarding-task/${taskId}/done`, { method: 'POST', body: '{}' }); loadReviews(); } catch (e) { alert(e.message); } };
   const saveLateCheck = async (date, updates) => { try { await hrApi(`/me/late-check/${date}`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateItem(null); loadReviews(); } catch (e) { alert(e.message); } };
   const saveLateCheckHr = async (date, updates) => { try { await hrApi(`/late-check/${date}/hr`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateHrItem(null); loadReviews(); } catch (e) { alert(e.message); } };
 
@@ -1510,6 +1512,16 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                         <div className={NAME}>Late follow-up</div>
                         <div className={`${SUBT} mb-1.5`}>{it.count} update{it.count === 1 ? '' : 's'} from team leads · call the “not picking” ones</div>
                         <button onClick={() => setLateHrItem(it)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#4338CA' }}>Review & update ›</button>
+                      </div>
+                    </div>
+                  );
+                  if (it.kind === 'onboarding_task') return (
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="onboarding_task" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>New joiner setup <span className="text-slate-500">· {titleCase(it.candidateName || '')}</span></div>
+                        <div className={`${SUBT} mb-1.5`}>{it.title}{it.sub ? ` · ${it.sub}` : ''}</div>
+                        <button onClick={() => markOnbTaskDone(it.taskId)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#16A34A' }}>Mark done ✓</button>
                       </div>
                     </div>
                   );
@@ -3774,10 +3786,12 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
                 )}
               </div>
 
-              {/* HR checklist (read-only in v330; interactive automations land in v331) */}
+              {/* HR checklist — interactive with per-task automations. */}
               <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded" style={{ background: '#FF6A00' }} />HR onboarding checklist</div>
-                <div className="text-[11px] text-slate-400 mb-2">Interactive automations arrive in the next update. This is the standard checklist.</div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-3 h-3 rounded" style={{ background: '#FF6A00' }} />HR onboarding checklist</div>
+                  {(() => { const all = (onb.hrTasks || []).filter((t) => !t.salesOnly || data.isSales); const done = all.filter((t) => t.done).length; return <span className="text-[12px] font-extrabold" style={{ color: '#0435AC' }}>{done} / {all.length} done</span>; })()}
+                </div>
                 {PHASES.map(([pid, plabel, pwhen]) => {
                   const items = (onb.hrTasks || []).filter((t) => t.phase === pid && (!t.salesOnly || data.isSales));
                   if (!items.length) return null;
@@ -3785,11 +3799,7 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
                     <div key={pid} className="mt-3">
                       <div className="text-[11px] font-extrabold uppercase tracking-wide text-[#0A0E28]">{plabel} <span className="text-slate-400 font-semibold normal-case">· {pwhen}</span></div>
                       {items.map((t) => (
-                        <div key={t.id} className="flex items-center gap-2.5 py-1.5 border-t border-slate-50 text-[13px]">
-                          <span className={`w-4 h-4 rounded border-2 shrink-0 ${t.done ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
-                          <span className={t.done ? 'text-slate-400 line-through' : 'text-[#0A0E28]'}>{t.label}</span>
-                          {t.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
-                        </div>
+                        <OnbTaskRow key={t.id} task={t} candidateId={candidate._id} created={!!created} onChanged={(nt) => { setData((d) => ({ ...d, onboarding: { ...d.onboarding, hrTasks: d.onboarding.hrTasks.map((x) => x.id === nt.id ? nt : x) } })); onChanged && onChanged(); }} onCreateEmployee={() => setShowCreate(true)} />
                       ))}
                     </div>
                   );
@@ -3863,6 +3873,56 @@ function CreateEmployeeFromCandidate({ data, candidateId, onClose, onCreated }) 
 }
 const inpCE = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
 function LCE({ label, children }) { return <div><div className="text-[12px] font-bold text-slate-600 mb-1">{label}</div>{children}</div>; }
+
+// A single interactive HR checklist row, with the per-task automation controls:
+// route-to-IT, vendor delivery date, activate-HRMS (create employee), and the
+// welcome-meeting time picker.
+function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee }) {
+  const [busy, setBusy] = useState(false);
+  const [showDate, setShowDate] = useState(false);
+  const [showMeet, setShowMeet] = useState(false);
+  const [dateVal, setDateVal] = useState((task.meta && task.meta.deliveryDate) || '');
+  const [meetTime, setMeetTime] = useState((task.meta && task.meta.meetingTime) || '10:00');
+  const [meetDate, setMeetDate] = useState((task.meta && task.meta.meetingDate) || '');
+
+  const call = async (body) => { setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/onboarding/task/${task.id}`, { method: 'POST', body: JSON.stringify(body) }); onChanged(r.task); } catch (e) { alert(e.message); } setBusy(false); };
+  const toggle = () => { if (task.createsEmployee && !task.done && !created) { onCreateEmployee(); return; } call({ done: !task.done }); };
+
+  const routed = task.meta && task.meta.routedTo;
+  return (
+    <div className="py-1.5 border-t border-slate-50">
+      <div className="flex items-center gap-2.5 text-[13px]">
+        <button onClick={toggle} disabled={busy} className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${task.done ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>{task.done && <span className="text-white text-[10px] font-bold leading-none">✓</span>}</button>
+        <span className={task.done ? 'text-slate-400 line-through' : 'text-[#0A0E28]'}>{task.label}</span>
+        {task.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+        {/* per-task action buttons */}
+        {!task.done && task.route && !routed && <button onClick={() => call({ action: 'route_it' })} disabled={busy} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#0EA5E9' }}>Send to IT ›</button>}
+        {!task.done && task.wantsDate && !showDate && <button onClick={() => setShowDate(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#F59E0B' }}>Set delivery date ›</button>}
+        {!task.done && task.createsEmployee && !created && <button onClick={onCreateEmployee} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#16A34A' }}>Create employee ›</button>}
+        {!task.done && task.meeting && !showMeet && <button onClick={() => setShowMeet(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#7C3AED' }}>Schedule ›</button>}
+      </div>
+      {routed && <div className="ml-6 mt-1 text-[11px] text-sky-600 font-semibold">✓ Sent to {routed} — they’ll mark it done from their dashboard.</div>}
+      {task.meta && task.meta.deliveryDate && task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">ID card expected by {new Date(task.meta.deliveryDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}.</div>}
+      {task.meta && task.meta.meetingTime && task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">Announcement posted · {task.meta.meetingDate ? new Date(task.meta.meetingDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''} {task.meta.meetingTime} · Conference Room.</div>}
+      {showDate && !task.done && (
+        <div className="ml-6 mt-2 flex items-center gap-2">
+          <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[12px]" />
+          <button onClick={() => call({ action: 'vendor_date', deliveryDate: dateVal })} disabled={busy || !dateVal} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#F59E0B' }}>Save</button>
+          <button onClick={() => setShowDate(false)} className="text-[11px] text-slate-400">Cancel</button>
+        </div>
+      )}
+      {showMeet && !task.done && (
+        <div className="ml-6 mt-2 flex items-center gap-2 flex-wrap">
+          <input type="date" value={meetDate} onChange={(e) => setMeetDate(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[12px]" />
+          <input type="time" value={meetTime} onChange={(e) => setMeetTime(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[12px]" />
+          <span className="text-[11px] text-slate-500">· Conference Room</span>
+          <button onClick={() => call({ action: 'welcome_meeting', time: meetTime, date: meetDate })} disabled={busy} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#7C3AED' }}>Post announcement</button>
+          <button onClick={() => setShowMeet(false)} className="text-[11px] text-slate-400">Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Marks a hired candidate as having failed to join on the joining date.
 function NotJoinedModal({ candidate, onClose, onSaved }) {

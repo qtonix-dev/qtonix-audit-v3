@@ -1676,7 +1676,43 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       }
     }
 
+    // Onboarding tasks routed to this person's department (e.g. IT: prepare a
+    // computer for a new joiner). Shows for anyone whose department matches.
+    try {
+      const me = req.hrUser;
+      const myDept = me && me.department ? String(me.department).trim().toLowerCase() : '';
+      if (myDept) {
+        const openTasks = await HrOnboardingTask.findAll({ where: { done: false }, order: [['createdAt', 'ASC']] });
+        const mine = openTasks.filter((t) => String(t.forDepartment || '').trim().toLowerCase() === myDept);
+        for (const t of mine) {
+          out.push({ id: `onbtask-${t.id}`, kind: 'onboarding_task', taskId: t.id, title: t.label, sub: t.sub, candidateName: t.candidateName });
+        }
+      }
+    } catch {}
+
     res.json({ reviews: out, count: out.length });
+  } catch (e) { next(e); }
+});
+
+// Mark a routed onboarding task (e.g. IT computer prep) done. Flips the linked
+// HR checklist item on the candidate too.
+router.post('/onboarding-task/:id/done', requireHrAccess, async (req, res, next) => {
+  try {
+    const t = await HrOnboardingTask.findByPk(req.params.id);
+    if (!t) return res.status(404).json({ error: 'Task not found.' });
+    t.done = true; t.doneAt = new Date(); t.doneById = req.hrActor.id; t.doneByName = req.hrActor.name;
+    await t.save();
+    // Flip the linked HR checklist item on the candidate.
+    if (t.hrTaskId) {
+      const cand = await HrCandidate.findByPk(t.candidateId);
+      if (cand && cand.onboarding && Array.isArray(cand.onboarding.hrTasks)) {
+        const onb = cand.onboarding;
+        onb.hrTasks = onb.hrTasks.map((x) => (x.id === t.hrTaskId ? { ...x, done: true, doneAt: new Date().toISOString(), meta: { ...(x.meta || {}), completedBy: req.hrActor.name } } : x));
+        cand.onboarding = onb; cand.changed('onboarding', true);
+        await cand.save();
+      }
+    }
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -5133,6 +5169,73 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
     pushTimeline(row, { type: 'onboarding', text: `${row.name} was created as an employee (ID ${emp.employeeId || emp.id}) by ${req.hrActor.name}.`, by: req.hrActor.name });
     await row.save();
     res.json({ ok: true, employeeId: emp.id });
+  } catch (e) { next(e); }
+});
+
+// Update a single HR onboarding checklist task: toggle done, or run its
+// automation (route a task to another department, save a vendor delivery date,
+// or create the team welcome-meeting announcement).
+router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    if (!row.onboarding) return res.status(400).json({ error: 'Onboarding not started.' });
+    const onb = row.onboarding;
+    const tasks = onb.hrTasks || [];
+    const idx = tasks.findIndex((t) => t.id === req.params.taskId);
+    if (idx < 0) return res.status(404).json({ error: 'Task not found.' });
+    const task = tasks[idx];
+    const b = req.body || {};
+    const nowIso = new Date().toISOString();
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+
+    // --- Automations -------------------------------------------------------
+    if (b.action === 'route_it' || (task.route && b.action === 'route')) {
+      // Fan the task out to the target department's employees' review feed.
+      const dept = task.route || 'IT & Hardware';
+      const existing = await HrOnboardingTask.findOne({ where: { candidateId: row.id, hrTaskId: task.id, done: false } });
+      if (!existing) {
+        await HrOnboardingTask.create({
+          candidateId: row.id, candidateName: row.name, forDepartment: dept,
+          branch: (job && job.locations && job.locations[0]) || '',
+          label: `Prepare computer & desk for ${row.name}`,
+          sub: `New joiner${job ? ` · ${job.title}` : ''}${row.offer && row.offer.joiningDate ? ` · joining ${row.offer.joiningDate}` : ''}`,
+          hrTaskId: task.id,
+        });
+      }
+      task.meta = { ...(task.meta || {}), routedTo: dept, routedAt: nowIso };
+      pushTimeline(row, { type: 'onboarding', text: `Task sent to ${dept} team: prepare computer for ${row.name}.`, by: req.hrActor.name });
+    } else if (b.action === 'vendor_date') {
+      task.meta = { ...(task.meta || {}), deliveryDate: String(b.deliveryDate || '').slice(0, 10) };
+      task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
+      pushTimeline(row, { type: 'onboarding', text: `ID card ordered for ${row.name} — expected ${task.meta.deliveryDate || 'TBD'}.`, by: req.hrActor.name });
+    } else if (b.action === 'welcome_meeting') {
+      // Create an announcement for the joiner's branch to attend.
+      const dept = (job && job.department) || row.department || '';
+      const branch = (job && job.locations && job.locations[0]) || row.branch || '';
+      const timeStr = String(b.time || '').slice(0, 40);
+      const dateStr = String(b.date || (row.offer && row.offer.joiningDate) || '').slice(0, 10);
+      const when = [dateStr ? new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }) : '', timeStr].filter(Boolean).join(' at ');
+      const ann = await HrAnnouncement.create({
+        title: `Welcome ${row.name} to the team! 🎉`,
+        body: `Please join us in the <strong>Conference Room</strong>${when ? ` on <strong>${when}</strong>` : ''} to welcome ${row.name}${job ? `, our new ${job.title}` : ''}${dept ? ` in ${dept}` : ''}. Let's give them a warm start!`,
+        pinned: false, audience: branch || 'all',
+        authorId: req.hrActor.id, authorName: req.hrActor.name,
+      });
+      task.meta = { ...(task.meta || {}), announcementId: ann.id, meetingTime: timeStr, meetingDate: dateStr, place: 'Conference Room' };
+      task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
+      pushTimeline(row, { type: 'onboarding', text: `Welcome-meeting announcement posted for ${dept || 'the team'} (${when || 'Conference Room'}).`, by: req.hrActor.name });
+    } else {
+      // Plain toggle.
+      task.done = b.done !== undefined ? !!b.done : !task.done;
+      task.doneAt = task.done ? nowIso : null;
+      task.doneById = task.done ? req.hrActor.id : null;
+    }
+    tasks[idx] = task;
+    onb.hrTasks = tasks;
+    row.onboarding = onb; row.changed('onboarding', true);
+    await row.save();
+    res.json({ ok: true, task });
   } catch (e) { next(e); }
 });
 
