@@ -3753,8 +3753,11 @@ function OnboardingListPage({ isAdmin }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
   const [openFor, setOpenFor] = useState(null);
+  const [diag, setDiag] = useState(null);
+  const [showDiag, setShowDiag] = useState(false);
   const load = () => hrApi('/onboarding').then((r) => setRows(r.candidates || [])).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  const runDiag = () => { setShowDiag(true); hrApi('/onboarding/debug').then(setDiag).catch((e) => setErr(e.message)); };
 
   const daysTo = (d) => { try { const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return Math.round((new Date(d + 'T00:00:00') - new Date(ist + 'T00:00:00')) / 86400000); } catch { return null; } };
   const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
@@ -3771,7 +3774,30 @@ function OnboardingListPage({ isAdmin }) {
         <div className="text-center py-20">
           <div className="w-14 h-14 rounded-2xl bg-orange-50 text-[#FF6A00] flex items-center justify-center mx-auto mb-4"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg></div>
           <div className="text-[15px] font-bold text-[#050A1F] mb-1">No one is onboarding right now</div>
-          <div className="text-[13px] text-slate-400">When you set a joining date for a hired candidate (Recruitment → Hired → Manage hire), they’ll appear here.</div>
+          <div className="text-[13px] text-slate-400 mb-4">When you set a joining date for a hired candidate (Recruitment → Hired → Manage hire), they’ll appear here.</div>
+          {!showDiag && <button onClick={runDiag} className="text-[12px] font-bold text-slate-500 underline">Why don’t I see my hired candidates?</button>}
+          {showDiag && (
+            <div className="mt-4 text-left max-w-3xl mx-auto">
+              {!diag ? <div className="text-slate-400 text-sm text-center">Checking…</div> : (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="px-4 py-2 bg-slate-50 text-[12px] text-slate-500">Server date (IST today): <b>{diag.istToday}</b> · {diag.total} candidate(s) checked · {diag.shown} would show</div>
+                  <table className="w-full text-[12px]">
+                    <thead><tr className="text-left text-slate-400 border-b border-slate-100"><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Joining date (stored)</th><th className="px-3 py-2">Parsed</th><th className="px-3 py-2">Why not shown</th></tr></thead>
+                    <tbody>
+                      {diag.candidates.map((c) => (
+                        <tr key={c.id} className={`border-b border-slate-50 ${c.wouldShow ? 'bg-green-50/40' : ''}`}>
+                          <td className="px-3 py-2 font-semibold text-slate-700">{titleCase(c.name)}<div className="text-[10px] text-slate-400 font-normal">stage: {c.stage || '—'} · offer: {c.offerStatus || '—'}</div></td>
+                          <td className="px-3 py-2 text-slate-600">{c.rawJoiningDate || <span className="text-red-500">none</span>}</td>
+                          <td className="px-3 py-2 text-slate-600">{c.parsedJoiningDate || '—'}</td>
+                          <td className="px-3 py-2">{c.wouldShow ? <span className="text-green-600 font-bold">✓ shows</span> : <span className="text-amber-600">{c.reason}</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">

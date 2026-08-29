@@ -5129,13 +5129,14 @@ router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
       const offer = c.offer || {};
       const rawJd = offer.joiningDate || '';
       const jd = toYmd(rawJd);
+      const hired = isHiredCandidate(c);
       let reason = 'shown';
-      if (!rawJd) reason = 'no joiningDate on offer';
-      else if (!jd) reason = `joiningDate "${rawJd}" could not be parsed`;
-      else if (offer.notJoined) reason = 'marked notJoined';
+      if (offer.notJoined) reason = 'marked notJoined';
       else if (offer.joinedConfirmed) reason = 'joinedConfirmed (already joined)';
-      else if (!(new Date(jd + 'T00:00:00Z').getTime() > istTodayMs)) reason = `joining date ${jd} is not in the future (today ${istTodayStr})`;
-      return { id: c.id, name: c.name, stage: c.stage, offerStatus: offer.status || null, rawJoiningDate: rawJd || null, parsedJoiningDate: jd || null, blacklisted: !!c.blacklisted, joinedConfirmed: !!offer.joinedConfirmed, notJoined: !!offer.notJoined, hasOnboarding: !!c.onboarding, wouldShow: reason === 'shown', reason };
+      else if (!hired) reason = `not a hired candidate (stage: ${c.stage || '—'}, offer: ${offer.status || '—'})`;
+      else if (rawJd && !jd) reason = `joiningDate "${rawJd}" could not be parsed`;
+      else if (jd && !(new Date(jd + 'T00:00:00Z').getTime() > istTodayMs)) reason = `joining date ${jd} is not in the future (today ${istTodayStr})`;
+      return { id: c.id, name: c.name, stage: c.stage, offerStatus: offer.status || null, isHired: hired, rawJoiningDate: rawJd || null, parsedJoiningDate: jd || null, blacklisted: !!c.blacklisted, joinedConfirmed: !!offer.joinedConfirmed, notJoined: !!offer.notJoined, hasOnboarding: !!c.onboarding, wouldShow: reason === 'shown', reason };
     });
     res.json({ istToday: istTodayStr, total: rows.length, shown: report.filter((r) => r.wouldShow).length, candidates: report });
   } catch (e) { next(e); }
@@ -5164,14 +5165,20 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
-      // Resolve the joining date (it lives in the offer JSON).
-      const rawJd = offer.joiningDate || '';
-      if (!rawJd) continue;
       if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
+      // Only actual hired candidates belong on the onboarding board.
+      if (!isHiredCandidate(c)) continue;
+      const rawJd = offer.joiningDate || '';
       const jd = toYmd(rawJd);
-      if (!jd) continue;
-      const jdMs = new Date(jd + 'T00:00:00Z').getTime();
-      if (!(jdMs > istTodayMs)) continue; // only strictly-future joiners remain on the list
+      // Date rule: if a joining date exists it must be in the future (a past date
+      // means they've already joined/not — handled via the "Did they join?"
+      // review). If NO joining date is set yet, still surface the candidate so HR
+      // can start onboarding and set the date — this matches the per-candidate
+      // Onboarding panel, which opens for any hired candidate.
+      if (jd) {
+        const jdMs = new Date(jd + 'T00:00:00Z').getTime();
+        if (!(jdMs > istTodayMs)) continue;
+      }
       // Lazy-init: a candidate hired via the normal offer→accept flow has a
       // joining date but may not yet have an onboarding blob (older records, or
       // paths that didn't create one). Create it now so onboarding can begin.
