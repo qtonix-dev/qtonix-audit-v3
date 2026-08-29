@@ -1690,6 +1690,32 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       }
     } catch {}
 
+    // "Did they join?" — for hired candidates whose joining date has arrived but
+    // whose joined/not-joined status hasn't been confirmed yet. Shown to the
+    // candidate's assigned HR / recruiter (and to HR admins/managers), so they
+    // can confirm the person joined (→ employee) or didn't (→ blacklist).
+    try {
+      const me = req.hrActor;
+      const canConfirm = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+      if (canConfirm) {
+        const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+        const hired = await HrCandidate.findAll({ where: { blacklisted: false } });
+        for (const c of hired) {
+          const offer = c.offer || {};
+          if (!offer.joiningDate) continue;
+          if (offer.joinedConfirmed || offer.notJoined) continue;
+          const jd = String(offer.joiningDate).slice(0, 10);
+          if (jd > istToday) continue; // not yet the joining day
+          // Scope to this HR unless they're an admin/all-branch manager.
+          const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
+          const assigned = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+          const isMine = req.isHrAdmin || (req.isHrManager && (me.branchScope === 'all' || !me.branch || c.branch === me.branch || (job && (job.locations || []).includes(me.branch)))) || assigned.includes(me.id) || c.recruiterId === me.id;
+          if (!isMine) continue;
+          out.push({ id: `joinconfirm-${c.id}`, kind: 'join_confirm', candidateId: c.id, candidateName: c.name, role: job ? job.title : '', joiningDate: jd });
+        }
+      }
+    } catch {}
+
     res.json({ reviews: out, count: out.length });
   } catch (e) { next(e); }
 });
@@ -1716,7 +1742,36 @@ router.post('/onboarding-task/:id/done', requireHrAccess, async (req, res, next)
   } catch (e) { next(e); }
 });
 
-// POST /me/late-check/:date — the senior submits status + notes for their late
+// Confirm whether a hired candidate joined on their joining day. Called from the
+// HR review-tab "Did they join?" task. joined=true marks joinedConfirmed (they
+// become an employee via the onboarding panel / create-employee); joined=false
+// records the reason and moves the candidate to the Blacklist.
+router.post('/candidates/:id/join-confirm', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!(req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type)))) {
+      return res.status(403).json({ error: 'You don’t have permission to confirm joining.' });
+    }
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const offer = row.offer || {};
+    const b = req.body || {};
+    if (b.joined === true) {
+      offer.joinedConfirmed = true; offer.notJoined = false; offer.notJoinedReason = '';
+      row.offer = offer; row.changed('offer', true);
+      pushTimeline(row, { type: 'offer', text: `${row.name} confirmed as JOINED by ${req.hrActor.name}.`, by: req.hrActor.name });
+    } else {
+      if (!String(b.reason || '').trim()) return res.status(400).json({ error: 'Please provide a reason for not joining.' });
+      offer.notJoined = true; offer.joinedConfirmed = false;
+      offer.notJoinedAt = new Date().toISOString();
+      offer.notJoinedReason = String(b.reason).slice(0, 300);
+      row.offer = offer; row.changed('offer', true);
+      row.blacklisted = true; row.blacklistedAt = new Date(); row.blacklistReason = String(b.reason).slice(0, 300);
+      pushTimeline(row, { type: 'offer', text: `${row.name} marked did-not-join by ${req.hrActor.name} — moved to Blacklist. Reason: ${String(b.reason).slice(0, 150)}`, by: req.hrActor.name });
+    }
+    await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 // team members. body: { updates: [{ id, status, notes }] } where status is one
 // of coming | not_coming | not_picking. On save, notify the branch HR manager(s)
 // so they can follow up (especially "not picking").
@@ -4907,8 +4962,12 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
           row.onboarding = onb; row.changed('onboarding', true);
           pushTimeline(row, { type: 'offer', text: `Joining date changed ${prevDate} → ${newDate} by ${req.hrActor.name}${b.changeReason ? ` — ${String(b.changeReason).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
         }
-        // Initialize onboarding the first time a joining date is set.
-        if (newDate && !row.onboarding) {
+        // Initialize onboarding the first time a joining date is set — but only
+        // if that date is in the FUTURE. A past/blank date means the candidate
+        // has effectively already joined or not, so onboarding is skipped and HR
+        // is prompted to confirm the joined/not-joined status instead.
+        const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+        if (newDate && newDate > istToday && !row.onboarding) {
           row.onboarding = onboardingInit();
           row.changed('onboarding', true);
         }
@@ -5039,11 +5098,14 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
 router.get('/onboarding', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
+    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
       if (!c.onboarding || !offer.joiningDate) continue;
-      if (offer.notJoined) continue;
+      if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
+      const jd = String(offer.joiningDate).slice(0, 10);
+      if (!(jd > istToday)) continue; // only strictly-future joiners remain on the list
       const onb = c.onboarding;
       const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
       const isSales = /sales/i.test(String((job && job.department) || ''));
@@ -5094,6 +5156,40 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
 });
 
 // Send (or resend) the onboarding welcome email to the candidate with the link.
+// Mark the candidate's documents as verified physically (in person). No
+// onboarding link/token is created and no welcome/reminder email is sent, but
+// the rest of the onboarding (checklist, senior notice, reporting details,
+// welcome-aboard, KPI/KRA) proceeds normally. Toggleable.
+router.post('/candidates/:id/onboarding/docs-physical', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const onb = row.onboarding || onboardingInit();
+    if (b.on === false) {
+      // Undo physical verification.
+      if (onb.docsPhysical) { onb.docsPhysical = false; onb.docsComplete = false; if (onb.status === 'submitted' && onb.physicalMarkedStatus) onb.status = onb.physicalMarkedStatus; }
+      pushTimeline(row, { type: 'onboarding', text: `Physical document verification undone by ${req.hrActor.name}.`, by: req.hrActor.name });
+    } else {
+      // Mark verified in person. Suppress the public page + welcome/reminder
+      // emails by clearing the token and setting the one-shot email markers.
+      onb.docsPhysical = true;
+      onb.physicalMarkedStatus = onb.status || 'pending';
+      onb.status = 'submitted';
+      onb.docsComplete = true;
+      onb.submittedAt = onb.submittedAt || new Date().toISOString();
+      onb.token = null; // no public onboarding page
+      onb.welcomeEmailSentAt = onb.welcomeEmailSentAt || 'physical'; // suppress welcome
+      onb.reminderSentAt = onb.reminderSentAt || 'physical'; // suppress reminder
+      onb.verifiedById = req.hrActor.id; onb.verifiedByName = req.hrActor.name;
+      pushTimeline(row, { type: 'onboarding', text: `Documents verified physically by ${req.hrActor.name} — no onboarding link sent; checklist and other automations continue.`, by: req.hrActor.name });
+    }
+    row.onboarding = onb; row.changed('onboarding', true);
+    await row.save();
+    res.json({ ok: true, onboarding: onb });
+  } catch (e) { next(e); }
+});
+
 router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
