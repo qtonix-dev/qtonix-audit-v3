@@ -1536,6 +1536,17 @@ async function computeLateForSenior(seniorId, dateStr) {
   const policy = getHrPolicy(s);
   const shiftCache = {};
   const getShift = async (sid) => { if (!sid) return null; if (shiftCache[sid] === undefined) shiftCache[sid] = await HrShift.findByPk(sid); return shiftCache[sid]; };
+  // Batch-load everything we need for the whole team + this date up front, so
+  // the per-employee loop does no queries (was 4-5 queries per employee).
+  const teamIds = team.map((e) => e.id);
+  const attByEmp = {}; const leaveSet = new Set(); const lateByEmp = {};
+  if (teamIds.length) {
+    (await HrAttendance.findAll({ where: { employeeId: teamIds, date: dateStr } })).forEach((a) => { attByEmp[a.employeeId] = a; });
+    (await HrLeave.findAll({ where: { employeeId: teamIds, date: dateStr, status: 'approved' } })).forEach((l) => { leaveSet.add(l.employeeId); });
+    (await HrLateCheck.findAll({ where: { employeeId: teamIds, date: dateStr } })).forEach((r) => { lateByEmp[r.employeeId] = r; });
+  }
+  const holidaysToday = await HrHoliday.findAll({ where: { date: dateStr } });
+  const isHolidayFor = (branch) => holidaysToday.some((h) => h.branch === '' || h.branch === (branch || ''));
   const results = [];
   for (const emp of team) {
     if (!emp.shiftId) continue; // no shift → can't judge lateness
@@ -1547,17 +1558,15 @@ async function computeLateForSenior(seniorId, dateStr) {
     // Only flag once the grace window has fully passed for today.
     if (nowMin == null || nowMin < startMin + grace) continue;
     // Skip anyone on approved leave / holiday / week-off today, or already logged in.
-    const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date: dateStr } });
+    const att = attByEmp[emp.id];
     if (att && att.loginTime) continue;                       // already clocked in
     if (att && ['leave', 'holiday', 'week_off', 'half_day'].includes(att.status)) continue;
-    const onLeave = await HrLeave.findOne({ where: { employeeId: emp.id, date: dateStr, status: 'approved' } });
-    if (onLeave) continue;
+    if (leaveSet.has(emp.id)) continue;
     if (isWeekOff(policy, emp.branch, dateStr)) continue;
-    const holiday = await HrHoliday.findOne({ where: { date: dateStr, branch: { [Op.in]: ['', emp.branch || ''] } } });
-    if (holiday) continue;
+    if (isHolidayFor(emp.branch)) continue;
 
     // Upsert the late-check record (idempotent for the day).
-    let row = await HrLateCheck.findOne({ where: { employeeId: emp.id, date: dateStr } });
+    let row = lateByEmp[emp.id];
     if (!row) {
       row = await HrLateCheck.create({
         date: dateStr, employeeId: emp.id, seniorId, branch: emp.branch || '',
@@ -1576,37 +1585,48 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
     const actorId = req.hrActor.id;
     const isAdminActor = req.hrActor.kind === 'admin' || req.isHrAdmin;
     const pend = await HrLeave.findAll({ where: { status: 'pending' }, order: [['date', 'ASC']] });
+    // Batch-load every applicant referenced by a pending leave in ONE query, so
+    // the branch-permission check below doesn't do a findByPk per leave.
+    const pendEmpIds = [...new Set(pend.map((l) => l.employeeId).filter(Boolean))];
+    const usersById = {};
+    if (pendEmpIds.length) { (await HrUser.findAll({ where: { id: pendEmpIds } })).forEach((u) => { usersById[u.id] = u; }); }
     const decidable = [];
     for (const lv of pend) {
       let canDecide = false;
       if (lv.approverId && ((lv.decidedByKind === 'admin' && isAdminActor && lv.approverId === actorId) || (lv.decidedByKind !== 'admin' && req.hrActor.kind === 'hr' && lv.approverId === actorId))) canDecide = true;
       if (!canDecide) {
-        const applicant = await HrUser.findByPk(lv.employeeId);
+        const applicant = usersById[lv.employeeId];
         if (applicant && canManageBranch(req, applicant.branch)) canDecide = true;
       }
       if (canDecide) decidable.push(lv);
     }
     // Group multi-day requests (same groupId) into a single review item; the
     // client approves/rejects the whole group via the group key.
-    const nameCache = {};
-    const nameOf = async (id) => { if (nameCache[id] !== undefined) return nameCache[id]; const u = await HrUser.findByPk(id); nameCache[id] = u ? u.name : 'Employee'; return nameCache[id]; };
+    const nameOf = (id) => { const u = usersById[id]; return u ? u.name : 'Employee'; };
     const groups = {};
     for (const lv of decidable) {
       const key = lv.groupId || `single:${lv.id}`;
       if (!groups[key]) groups[key] = { key, ids: [], employeeId: lv.employeeId, type: lv.type, duration: lv.duration, reason: lv.reason, dates: [] };
       groups[key].ids.push(lv.id); groups[key].dates.push(lv.date);
     }
+    // Batch-load prior approved leaves for all these employees in ONE query,
+    // then group them in memory (instead of a findAll per review group).
+    const groupEmpIds = [...new Set(Object.values(groups).map((g) => g.employeeId).filter(Boolean))];
+    const prevByEmp = {};
+    if (groupEmpIds.length) {
+      const allPrev = await HrLeave.findAll({ where: { employeeId: groupEmpIds, status: 'approved' }, order: [['date', 'DESC']] });
+      for (const l of allPrev) { (prevByEmp[l.employeeId] = prevByEmp[l.employeeId] || []).push(l); }
+    }
+    const todayStr = istDateStr();
     const out = [];
     for (const g of Object.values(groups)) {
       g.dates.sort();
       // Last approved leave this employee took before now (for context in the popup).
       let lastLeave = null;
       try {
-        const prev = await HrLeave.findAll({ where: { employeeId: g.employeeId, status: 'approved' }, order: [['date', 'DESC']] });
-        const todayStr = istDateStr();
+        const prev = prevByEmp[g.employeeId] || [];
         const past = prev.filter((l) => l.date < todayStr);
         if (past.length) {
-          // Collapse a multi-day group to its span for the "last leave" summary.
           const gid = past[0].groupId;
           const sameGroup = gid ? past.filter((l) => l.groupId === gid) : [past[0]];
           const ds = sameGroup.map((l) => l.date).sort();
@@ -1616,7 +1636,7 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       } catch {}
       out.push({
         id: g.ids[0], groupKey: g.key, ids: g.ids, kind: 'leave',
-        who: await nameOf(g.employeeId), employeeId: g.employeeId,
+        who: nameOf(g.employeeId), employeeId: g.employeeId,
         type: g.type, duration: g.duration, reason: g.reason,
         date: g.dates[0], dateTo: g.dates[g.dates.length - 1], days: g.dates.length,
         dates: g.dates, lastLeave,
@@ -4650,12 +4670,20 @@ router.get('/my-interviews', requireHrAccess, async (req, res, next) => {
   try {
     if (req.hrActor.kind !== 'hr') return res.json({ jobs: [] }); // admins don't sit on panels
     const myId = req.hrActor.id;
-    const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']] });
-    const jobsById = {};
+    // Only the columns we need; interviews live in JSON so we still scan, but we
+    // avoid pulling large unrelated blobs and we batch the job lookups.
+    const rows = await HrCandidate.findAll({ order: [['updatedAt', 'DESC']], attributes: ['id', 'name', 'email', 'stage', 'jobPostId', 'interviews'] });
+    const mineByRow = new Map();
     for (const r of rows) {
       const mine = (r.interviews || []).filter((iv) => (iv.panelists || []).some((p) => p.id === myId));
-      if (!mine.length) continue;
-      const job = r.jobPostId ? await HrJobPost.findByPk(r.jobPostId) : null;
+      if (mine.length) mineByRow.set(r, mine);
+    }
+    const jobIds = [...new Set([...mineByRow.keys()].map((r) => r.jobPostId).filter(Boolean))];
+    const jById = {};
+    if (jobIds.length) { (await HrJobPost.findAll({ where: { id: jobIds }, attributes: ['id', 'title'] })).forEach((j) => { jById[j.id] = j; }); }
+    const jobsById = {};
+    for (const [r, mine] of mineByRow) {
+      const job = r.jobPostId ? jById[r.jobPostId] : null;
       const jkey = r.jobPostId || 'none';
       if (!jobsById[jkey]) jobsById[jkey] = { jobId: r.jobPostId, jobTitle: job ? job.title : 'General', candidates: [] };
       mine.forEach((iv) => {
