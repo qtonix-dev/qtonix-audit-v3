@@ -5059,6 +5059,12 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
           if (b.note) offer.acceptNote = String(b.note).slice(0, 500);
           if (b.joiningDate) offer.joiningDate = String(b.joiningDate).slice(0, 40);
           offer.status = 'accepted';
+          // Start onboarding if the joining date is in the future.
+          {
+            const istToday2 = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+            const jd2 = offer.joiningDate ? String(offer.joiningDate).slice(0, 10) : '';
+            if (jd2 && jd2 > istToday2 && !row.onboarding) { row.onboarding = onboardingInit(); row.changed('onboarding', true); }
+          }
           pushTimeline(row, { type: 'offer', text: `Candidate accepted the offer${finalPrice ? ` at ${finalPrice}` : ''}${offer.joiningDate ? `, joining ${offer.joiningDate}` : ''}${b.note ? ` — ${String(b.note).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
         } else if (b.status === 'declined') {
           // Record the final numbers, then move the candidate to Rejected.
@@ -5111,10 +5117,18 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
-      if (!c.onboarding || !offer.joiningDate) continue;
+      if (!offer.joiningDate) continue;
       if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
       const jd = String(offer.joiningDate).slice(0, 10);
       if (!(jd > istToday)) continue; // only strictly-future joiners remain on the list
+      // Lazy-init: a candidate hired via the normal offer→accept flow has a
+      // joining date but may not yet have an onboarding blob (older records, or
+      // paths that didn't create one). Create it now so onboarding can begin.
+      if (!c.onboarding) {
+        c.onboarding = onboardingInit();
+        c.changed('onboarding', true);
+        await c.save();
+      }
       const onb = c.onboarding;
       const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
       const isSales = /sales/i.test(String((job && job.department) || ''));
