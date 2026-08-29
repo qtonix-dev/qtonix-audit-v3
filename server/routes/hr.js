@@ -751,6 +751,7 @@ router.put('/employees/:id/attendance/:date', requireHrAccess, async (req, res, 
     const b = req.body || {};
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     // Late = login later than the shift start (if a shift is set).
     let late = !!b.late;
     if (b.loginTime && emp.shiftId) {
@@ -774,6 +775,9 @@ router.post('/employees/:id/attendance/bulk', requireHrAccess, async (req, res, 
   try {
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
     const id = Number(req.params.id);
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const entries = Array.isArray(req.body && req.body.entries) ? req.body.entries : [];
     let n = 0;
     for (const e of entries) {
@@ -1016,6 +1020,7 @@ router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, 
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can set leave allocation.' });
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
     ['casual', 'medical', 'privilege', 'wfh'].forEach((k) => { if (b[k] !== undefined) alloc[k] = Number(b[k]) || 0; });
@@ -1033,6 +1038,7 @@ router.put('/employees/:id/leave-category', requireHrAccess, async (req, res, ne
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can change the leave category.' });
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const catId = String((req.body && req.body.categoryId) || 'default');
     emp.profile = { ...(emp.profile || {}), leaveCategory: catId };
     // Clear any per-employee override so the category allocation takes effect.
@@ -3042,6 +3048,7 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const id = Number(req.params.id);
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     // LOP (loss of pay) is a valid recorded type; it is always unpaid.
     const type = ['casual', 'medical', 'privilege', 'wfh', 'lop'].includes(b.type) ? b.type : null;
@@ -3136,6 +3143,9 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
 router.delete('/employees/:id/leave/:leaveId', requireHrAccess, async (req, res, next) => {
   try {
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can remove leave.' });
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const row = await HrLeave.findOne({ where: { id: Number(req.params.leaveId), employeeId: Number(req.params.id) } });
     if (!row) return res.status(404).json({ error: 'Leave record not found.' });
     await row.destroy();

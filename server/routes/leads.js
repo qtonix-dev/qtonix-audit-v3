@@ -1485,9 +1485,17 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       let sum = 0;
       for (const l of leads) {
         let leadCountedNew = false;
-        (l.deals || []).forEach((d, di) => {
-          if (d.stage !== 'closed_won') return;
-          for (const it of (d.installments || [])) {
+        // Match the dashboard's classification exactly: consider only won deals,
+        // ordered by when they were won, so "first deal" (di === 0) is the same
+        // deal both views treat as the source of the lead's New Sale. Iterating
+        // raw l.deals (including non-won) here would shift di and silently make
+        // the real first sale count as a cross sale — diverging from the
+        // dashboard figures.
+        const wonDeals = (l.deals || []).filter((d) => d.stage === 'closed_won')
+          .sort((a, b) => new Date(a.wonAt || a.createdAt || 0) - new Date(b.wonAt || b.createdAt || 0));
+        wonDeals.forEach((d, di) => {
+          const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+          for (const it of insts) {
             if (!(it.paid && it.paidDate)) continue;
             const pd = new Date(it.paidDate);
             if (!(pd >= mStart && pd < mEnd)) continue;
