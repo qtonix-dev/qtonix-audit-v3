@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
-import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase } from './HrParts.jsx';
+import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase, uploadToImageKit } from './HrParts.jsx';
 import HrExpenses from './HrExpenses.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
@@ -2268,17 +2268,26 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   const [to, setTo] = useState(today);
   const [halfDate, setHalfDate] = useState(today);
   const [reason, setReason] = useState('');
+  const [documentUrl, setDocumentUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   // Keep To in step when From moves past it.
   const onFrom = (v) => { setFrom(v); if (to < v) setTo(v); };
   const dayCount = (() => { if (duration === 'half') return 0.5; const a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00'); return Math.max(1, Math.round((b - a) / 86400000) + 1); })();
+  const uploadMedical = async (file) => {
+    if (!file) return; setUploading(true); setErr('');
+    try { const { url } = await uploadToImageKit(file, `/qtonix-hr/leave/self/${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, file.name); setDocumentUrl(url); }
+    catch (e) { setErr('Upload failed: ' + e.message); } finally { setUploading(false); }
+  };
   const submit = async () => {
     setErr('');
-    const body = duration === 'half'
-      ? { type, duration: 'half', date: halfDate, reason }
-      : { type, duration: 'full', from, to, reason };
     if (duration === 'full' && to < from) { setErr('The end date can’t be before the start date.'); return; }
+    // Employees must attach a medical certificate for medical leave.
+    if (type === 'medical' && !documentUrl) { setErr('Please upload your medical certificate to apply for medical leave.'); return; }
+    const body = duration === 'half'
+      ? { type, duration: 'half', date: halfDate, reason, documentUrl }
+      : { type, duration: 'full', from, to, reason, documentUrl };
     setBusy(true);
     try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify(body) }); onDone(); }
     catch (e) { setErr(e.message); setBusy(false); }
@@ -2309,6 +2318,17 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
             <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
           )}
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
+          {type === 'medical' && (
+            <div>
+              <div className="text-[12px] font-bold text-slate-600 mb-1">Medical certificate <span className="text-red-500">*</span></div>
+              {documentUrl ? (
+                <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
+              ) : (
+                <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Upload certificate'}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>
+              )}
+              <div className="text-[11px] text-slate-400 mt-1">Required for medical leave.</div>
+            </div>
+          )}
           <div className="flex items-center justify-between text-[12px]">
             <span className="text-slate-500">Applying for <b className="text-slate-700">{dayCount === 0.5 ? 'half a day' : `${dayCount} day${dayCount > 1 ? 's' : ''}`}</b></span>
           </div>

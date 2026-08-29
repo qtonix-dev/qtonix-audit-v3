@@ -1077,7 +1077,7 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
             </div>
           )}
           {type === 'medical' && (
-            <Field label="Medical document">
+            <Field label="Medical document (optional)">
               {documentUrl ? <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
                 : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Upload certificate'}<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>}
             </Field>

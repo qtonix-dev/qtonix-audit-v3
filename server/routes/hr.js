@@ -1466,14 +1466,23 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const clash = dates.find((d) => existing.some((e) => e.date === d));
     if (clash) return res.status(400).json({ error: `You already have a request for ${clash}.` });
 
+    // Medical leave requires a supporting document when the EMPLOYEE applies
+    // themselves (HR recording on an employee's behalf is exempt).
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const rules = (getHrPolicy(s).leaveRules) || {};
+    if (type === 'medical' && rules.medical && rules.medical.requireDocument && !b.documentUrl) {
+      return res.status(400).json({ error: 'Medical leave requires a supporting document. Please attach the medical certificate.', policyBlock: 'medical_doc' });
+    }
+
     const approver = await resolveLeaveApprover(emp);
     const groupId = dates.length > 1 ? `lg${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` : null;
     const reason = String(b.reason || '').slice(0, 300);
+    const documentUrl = b.documentUrl ? String(b.documentUrl).slice(0, 500) : null;
     const created = [];
     for (const date of dates) {
       const row = await HrLeave.create({
         employeeId: emp.id, type, date, duration, paid: type !== 'wfh',
-        reason, status: 'pending', groupId,
+        reason, documentUrl, status: 'pending', groupId,
         appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
       });
       created.push(row.toJSON());
@@ -3019,10 +3028,10 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
           }
         }
       }
-      // Medical leave requires a supporting document.
-      if (type === 'medical' && rules.medical && rules.medical.requireDocument && !b.documentUrl) {
-        return res.status(400).json({ error: 'Medical leave requires a supporting document. Please attach the medical certificate.', policyBlock: 'medical_doc' });
-      }
+      // Medical document is OPTIONAL when HR records leave on an employee's
+      // behalf (HR has verified the situation directly). It stays REQUIRED when
+      // the employee applies themselves (enforced in POST /me/leave).
+      // (No medical-document block here.)
       // Privilege leave requires N days advance notice (based on the first date).
       if (type === 'privilege' && rules.privilege && rules.privilege.noticeDays) {
         const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00');
