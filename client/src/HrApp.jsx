@@ -3681,6 +3681,88 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
 // The HR onboarding panel for a hired candidate: their submitted documents +
 // the phased HR checklist, the public onboarding link, and the action to create
 // the employee record in HRMS once documents are in.
+// Core HR → Onboarding: a central list of every candidate currently in
+// onboarding, each opening the full onboarding panel.
+function OnboardingListPage({ isAdmin }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const [openFor, setOpenFor] = useState(null);
+  const load = () => hrApi('/onboarding').then((r) => setRows(r.candidates || [])).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+
+  const daysTo = (d) => { try { const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return Math.round((new Date(d + 'T00:00:00') - new Date(ist + 'T00:00:00')) / 86400000); } catch { return null; } };
+  const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <div className="flex items-center gap-2.5 mb-1">
+        <span className="w-3.5 h-3.5 rounded-[5px]" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />
+        <h1 className="text-[22px] font-extrabold text-[#050A1F]">Onboarding</h1>
+      </div>
+      <p className="text-[13px] text-slate-400 mb-5">Candidates who are hired and going through onboarding. Open one to manage their documents and checklist.</p>
+      {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>}
+      {rows === null ? <div className="text-slate-400 text-sm py-16 text-center">Loading…</div> : rows.length === 0 ? (
+        <div className="text-center py-20">
+          <div className="w-14 h-14 rounded-2xl bg-orange-50 text-[#FF6A00] flex items-center justify-center mx-auto mb-4"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg></div>
+          <div className="text-[15px] font-bold text-[#050A1F] mb-1">No one is onboarding right now</div>
+          <div className="text-[13px] text-slate-400">When you set a joining date for a hired candidate (Recruitment → Hired → Manage hire), they’ll appear here.</div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th className="text-left px-4 py-3">Candidate</th>
+              <th className="text-left px-3 py-3">Joining</th>
+              <th className="text-left px-3 py-3">Documents</th>
+              <th className="text-left px-3 py-3">HR checklist</th>
+              <th className="text-left px-3 py-3">Status</th>
+              <th className="px-3 py-3"></th>
+            </tr></thead>
+            <tbody>
+              {rows.map((c) => {
+                const dt = daysTo(c.joiningDate);
+                const dueSoon = dt !== null && dt <= 2;
+                return (
+                  <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-[#0A0E28]">{titleCase(c.name)}</div>
+                      <div className="text-[11px] text-slate-400">{c.role}{c.department ? ` · ${c.department}` : ''}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="text-[13px] text-[#0A0E28]">{fmt(c.joiningDate)}</div>
+                      <div className={`text-[11px] font-bold ${dueSoon ? 'text-orange-600' : 'text-slate-400'}`}>{dt === null ? '' : dt < 0 ? `${-dt}d ago` : dt === 0 ? 'Today' : `in ${dt}d`}{c.joiningTime ? ` · ${c.joiningTime}` : ''}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      {c.docsStatus === 'submitted'
+                        ? <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#DCFCE7', color: '#15803D' }}>Submitted</span>
+                        : <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>Pending</span>}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${c.tasksTotal ? Math.round(c.tasksDone / c.tasksTotal * 100) : 0}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} /></div>
+                        <span className="text-[11px] font-bold text-slate-500">{c.tasksDone}/{c.tasksTotal}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      {c.joined ? <span className="text-[11px] font-bold text-green-600">Joined</span>
+                        : c.converted ? <span className="text-[11px] font-bold text-indigo-600">Employee created</span>
+                        : <span className="text-[11px] font-bold text-slate-400">In progress</span>}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <button onClick={() => setOpenFor({ _id: c.id, name: c.name })} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#0A1F44' }}>Open</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {openFor && <OnboardingPanelModal candidate={openFor} isAdmin={isAdmin} onClose={() => setOpenFor(null)} onChanged={load} />}
+    </div>
+  );
+}
+
 function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -7072,7 +7154,7 @@ export default function HrApp() {
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
         {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
-        {effectiveView === 'corehr_onboarding' && <CoreHrPlaceholder title="Onboarding" />}
+        {effectiveView === 'corehr_onboarding' && <OnboardingListPage isAdmin={isAdmin} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} hrView={isHrStaff} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (

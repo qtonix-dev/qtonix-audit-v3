@@ -5034,6 +5034,38 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
 // ===== Onboarding (HR side) ================================================
 // Full onboarding detail for the candidate's Hired record: candidate documents
 // + the HR checklist + assigned-HR contact + the public onboarding URL.
+// List all candidates currently in onboarding (hired, with a joining date) for
+// the Core HR → Onboarding page. Includes progress + status at a glance.
+router.get('/onboarding', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
+    const out = [];
+    for (const c of rows) {
+      const offer = c.offer || {};
+      if (!c.onboarding || !offer.joiningDate) continue;
+      if (offer.notJoined) continue;
+      const onb = c.onboarding;
+      const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
+      const isSales = /sales/i.test(String((job && job.department) || ''));
+      const tasks = (onb.hrTasks || []).filter((t) => !t.salesOnly || isSales);
+      const doneCount = tasks.filter((t) => t.done).length;
+      out.push({
+        id: c.id, name: c.name, role: job ? job.title : '', department: job ? job.department : '',
+        branch: (job && job.locations && job.locations[0]) || c.branch || '',
+        joiningDate: offer.joiningDate, joiningTime: offer.joiningTime || '',
+        docsStatus: onb.status || 'pending',
+        docsSubmittedAt: onb.submittedAt || null,
+        converted: !!onb.convertedEmployeeId,
+        joined: !!offer.joinedConfirmed,
+        tasksDone: doneCount, tasksTotal: tasks.length,
+      });
+    }
+    // Soonest joining first.
+    out.sort((a, b) => String(a.joiningDate).localeCompare(String(b.joiningDate)));
+    res.json({ candidates: out });
+  } catch (e) { next(e); }
+});
+
 router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
