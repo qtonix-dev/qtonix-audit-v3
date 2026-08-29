@@ -126,6 +126,29 @@ function isHiredCandidate(c) {
   return false;
 }
 
+// Normalise a joining date from any stored/entered format to yyyy-mm-dd.
+// India is day-first, so a slash/dash numeric date is treated as DD/MM/YYYY
+// unless the first part is clearly a month indicator. Returns '' if unparseable.
+function normalizeJoiningYmd(v) {
+  if (!v) return '';
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO / ISO datetime
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); // DD/MM/YYYY (India) or MM/DD/YYYY
+  if (m) {
+    let a = Number(m[1]), b = Number(m[2]); const y = m[3];
+    let day, mon;
+    if (a > 12) { day = a; mon = b; } else if (b > 12) { mon = a; day = b; } else { day = a; mon = b; }
+    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  const d = new Date(s); // fallback: engine parse (ISO datetime, GMT string, etc.)
+  if (!isNaN(d.getTime())) {
+    const ist = new Date(d.getTime() + 330 * 60000);
+    return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+  }
+  return '';
+}
+
 // Normalise a phone to +91XXXXXXXXXX for a 10-digit Indian mobile; keep an
 // existing country code otherwise. Deterministic (no network needed).
 function normalizePhoneServer(raw) {
@@ -4957,8 +4980,8 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
             if (d) { d.offered = amt; d.editedAt = now; d.editedBy = req.hrActor.name; }
           }
         }
-        const prevDate = offer.joiningDate ? String(offer.joiningDate).slice(0, 10) : '';
-        const newDate = b.joiningDate !== undefined ? (b.joiningDate ? String(b.joiningDate).slice(0, 40) : '') : prevDate;
+        const prevDate = offer.joiningDate ? normalizeJoiningYmd(offer.joiningDate) : '';
+        const newDate = b.joiningDate !== undefined ? (b.joiningDate ? (normalizeJoiningYmd(b.joiningDate) || String(b.joiningDate).slice(0, 40)) : '') : prevDate;
         if (b.joiningDate !== undefined) offer.joiningDate = newDate;
         if (b.joiningTime !== undefined) offer.joiningTime = String(b.joiningTime || '').slice(0, 8);
         // Record a joining-date change with its reason, and re-baseline onboarding.
@@ -5116,22 +5139,7 @@ router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
-    const toYmd = (v) => {
-      if (!v) return '';
-      const s = String(v).trim();
-      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-      m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-      if (m) {
-        let a = Number(m[1]), b = Number(m[2]); const y = m[3];
-        let day, mon;
-        if (a > 12) { day = a; mon = b; } else if (b > 12) { mon = a; day = b; } else { day = a; mon = b; }
-        if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      }
-      const d = new Date(s);
-      if (!isNaN(d.getTime())) { const ist = new Date(d.getTime() + 330 * 60000); return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`; }
-      return '';
-    };
+    const toYmd = normalizeJoiningYmd;
     const report = rows.map((c) => {
       const offer = c.offer || {};
       const rawJd = offer.joiningDate || '';
@@ -5155,33 +5163,7 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     // IST "today" as a yyyy-mm-dd string and as a day-start timestamp.
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
-    // Parse a joining date in whatever format it was stored (ISO yyyy-mm-dd,
-    // full ISO timestamp, dd/mm/yyyy, mm/dd/yyyy, or a Date) into a yyyy-mm-dd.
-    const toYmd = (v) => {
-      if (!v) return '';
-      const s = String(v).trim();
-      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO / ISO datetime (the normal case)
-      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-      // Slash/dash numeric formats. Qtonix is India-based, so a 3-part numeric
-      // date is DAY-first (DD/MM/YYYY) unless the first part is clearly > 12.
-      m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-      if (m) {
-        let a = Number(m[1]), b = Number(m[2]); const y = m[3];
-        let day, mon;
-        if (a > 12) { day = a; mon = b; }          // 13/09/2026 → day 13
-        else if (b > 12) { mon = a; day = b; }     // 09/13/2026 → US, month 9
-        else { day = a; mon = b; }                 // ambiguous → assume DD/MM (India)
-        if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) {
-          return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        }
-      }
-      const d = new Date(s); // fallback: let the engine parse other formats
-      if (!isNaN(d.getTime())) {
-        const ist = new Date(d.getTime() + 330 * 60000);
-        return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
-      }
-      return '';
-    };
+    const toYmd = normalizeJoiningYmd;
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
@@ -6726,3 +6708,4 @@ module.exports.notify = notify;
 // For the future payroll/payslip module:
 module.exports.getPendingSalaryReimbursements = getPendingSalaryReimbursements;
 module.exports.markReimbursementsPaid = markReimbursementsPaid;
+module.exports.normalizeJoiningYmd = normalizeJoiningYmd;

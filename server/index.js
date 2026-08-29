@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v340';
+const APP_VERSION = 'v341';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -518,6 +518,31 @@ connectWithRetry()
       if (fixed) console.log(`[migrate] backfilled decided fields on ${fixed} leave row(s)`);
     } catch (e) {
       console.error('[migrate] leave decided-field backfill skipped:', e.message);
+    }
+
+    // One-time backfill: normalise candidate joining dates to yyyy-mm-dd. Dates
+    // entered in Indian DD/MM/YYYY (or other) formats were being misread (e.g.
+    // 2/9/2026 parsed as 9 Feb), which hid future joiners from the onboarding
+    // page. Rewrite any non-ISO joining date to canonical ISO so comparisons and
+    // display are correct everywhere.
+    try {
+      const { HrCandidate } = require('./models');
+      const { normalizeJoiningYmd } = require('./routes/hr');
+      if (typeof normalizeJoiningYmd === 'function') {
+        const cands = await HrCandidate.findAll();
+        let fixed = 0;
+        for (const c of cands) {
+          const offer = c.offer;
+          if (!offer || !offer.joiningDate) continue;
+          const raw = String(offer.joiningDate);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) continue; // already clean ISO
+          const norm = normalizeJoiningYmd(raw);
+          if (norm && norm !== raw) { offer.joiningDate = norm; c.offer = offer; c.changed('offer', true); await c.save(); fixed++; }
+        }
+        if (fixed) console.log(`[migrate] normalised joining date on ${fixed} candidate(s)`);
+      }
+    } catch (e) {
+      console.error('[migrate] joining-date normalise skipped:', e.message);
     }
 
     // One-time migration: "callback" is reserved for the Call Backs section

@@ -3868,6 +3868,30 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
   const submitted = onb && onb.status === 'submitted';
   const created = data && data.convertedEmployeeId;
 
+  const [editDate, setEditDate] = useState(false);
+  const [njDate, setNjDate] = useState('');
+  const [njTime, setNjTime] = useState('');
+  const [njReason, setNjReason] = useState('');
+  const offer = (data && data.offer) || {};
+  // Normalise whatever is stored into yyyy-mm-dd for the date input.
+  const isoJoining = (() => {
+    const v = offer.joiningDate; if (!v) return '';
+    const s = String(v); let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (m) { let a = Number(m[1]), b = Number(m[2]); const y = m[3]; let d, mo; if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; } return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+    const dd = new Date(s); if (!isNaN(dd.getTime())) return dd.toISOString().slice(0, 10); return '';
+  })();
+  const openDateEditor = () => { setNjDate(isoJoining); setNjTime(offer.joiningTime || '09:30'); setNjReason(''); setEditDate(true); };
+  const saveJoiningDate = async () => {
+    if (!njDate) { setErr('Please pick a joining date.'); return; }
+    setBusy('date'); setErr('');
+    try {
+      await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'manage_hire', joiningDate: njDate, joiningTime: njTime, changeReason: njReason || 'Joining date corrected from onboarding panel' }) });
+      setEditDate(false); await load(); onChanged && onChanged();
+    } catch (e) { setErr(e.message); }
+    setBusy('');
+  };
+
   const copyLink = () => { if (data && data.onboardingUrl) { navigator.clipboard.writeText(data.onboardingUrl); setBusy('copied'); setTimeout(() => setBusy(''), 1500); } };
   const markPhysical = async (on) => {
     setBusy('physical'); setErr('');
@@ -3904,12 +3928,31 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
       <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
         <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div>
+          <div className="min-w-0">
             <div className="text-lg font-extrabold text-[#050A1F]">Onboarding — {titleCase(candidate.name)}</div>
-            {data && <div className="text-[12px] text-slate-400">{data.role}{data.offer && data.offer.joiningDate ? ` · Joining ${new Date(data.offer.joiningDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}{data.offer && data.offer.joiningTime ? ` · ${data.offer.joiningTime}` : ''}</div>}
+            {data && (
+              <div className="text-[12px] text-slate-400 flex items-center gap-1.5 flex-wrap">
+                <span>{data.role}</span>
+                {isoJoining ? <span>· Joining {new Date(isoJoining + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}{offer.joiningTime ? ` · ${offer.joiningTime}` : ''}</span> : <span className="text-amber-600">· No joining date set</span>}
+                <button onClick={openDateEditor} className="text-[11px] font-bold text-indigo-500 hover:text-indigo-600 underline">{isoJoining ? 'Edit' : 'Set date'}</button>
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
         </div>
+        {editDate && (
+          <div className="px-6 py-3 bg-indigo-50/60 border-b border-indigo-100 shrink-0">
+            <div className="text-[12px] font-bold text-[#050A1F] mb-2">Set / correct joining date</div>
+            <div className="flex items-end gap-2 flex-wrap">
+              <div><div className="text-[11px] text-slate-500 mb-1">Date</div><input type="date" value={njDate} onChange={(e) => setNjDate(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" /></div>
+              <div><div className="text-[11px] text-slate-500 mb-1">Time</div><input type="time" value={njTime} onChange={(e) => setNjTime(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" /></div>
+              <input value={njReason} onChange={(e) => setNjReason(e.target.value)} placeholder="Reason (optional)" className="flex-1 min-w-[140px] rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" />
+              <button onClick={saveJoiningDate} disabled={busy === 'date'} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'date' ? 'Saving…' : 'Save'}</button>
+              <button onClick={() => setEditDate(false)} className="text-[12px] text-slate-400">Cancel</button>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1.5">Saving stores the date in a clean format so onboarding starts correctly. A future date puts this candidate on the onboarding list.</div>
+          </div>
+        )}
         <div className="p-6 overflow-y-auto space-y-4">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           {!data ? <div className="text-slate-400 text-sm py-6 text-center">Loading…</div> : (
