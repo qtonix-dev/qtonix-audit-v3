@@ -5114,26 +5114,53 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
 router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
-    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
+    const toYmd = (v) => {
+      if (!v) return '';
+      const s = String(v).trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) { const ist = new Date(d.getTime() + 330 * 60000); return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`; }
+      return '';
+    };
     const report = rows.map((c) => {
       const offer = c.offer || {};
       const rawJd = offer.joiningDate || '';
-      const jd = rawJd ? String(rawJd).slice(0, 10) : '';
+      const jd = toYmd(rawJd);
       let reason = 'shown';
       if (!rawJd) reason = 'no joiningDate on offer';
+      else if (!jd) reason = `joiningDate "${rawJd}" could not be parsed`;
       else if (offer.notJoined) reason = 'marked notJoined';
       else if (offer.joinedConfirmed) reason = 'joinedConfirmed (already joined)';
-      else if (!(jd > istToday)) reason = `joining date ${jd} is not in the future (today ${istToday})`;
-      return { id: c.id, name: c.name, stage: c.stage, offerStatus: offer.status || null, joiningDate: rawJd || null, hasOnboarding: !!c.onboarding, wouldShow: reason === 'shown', reason };
+      else if (!(new Date(jd + 'T00:00:00Z').getTime() > istTodayMs)) reason = `joining date ${jd} is not in the future (today ${istTodayStr})`;
+      return { id: c.id, name: c.name, stage: c.stage, offerStatus: offer.status || null, rawJoiningDate: rawJd || null, parsedJoiningDate: jd || null, blacklisted: !!c.blacklisted, joinedConfirmed: !!offer.joinedConfirmed, notJoined: !!offer.notJoined, hasOnboarding: !!c.onboarding, wouldShow: reason === 'shown', reason };
     });
-    res.json({ istToday, total: rows.length, candidates: report });
+    res.json({ istToday: istTodayStr, total: rows.length, shown: report.filter((r) => r.wouldShow).length, candidates: report });
   } catch (e) { next(e); }
 });
 
 router.get('/onboarding', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
-    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    // IST "today" as a yyyy-mm-dd string and as a day-start timestamp.
+    const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
+    // Parse a joining date in whatever format it was stored (ISO yyyy-mm-dd,
+    // full ISO timestamp, dd/mm/yyyy, mm/dd/yyyy, or a Date) into a yyyy-mm-dd.
+    const toYmd = (v) => {
+      if (!v) return '';
+      const s = String(v).trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO / ISO datetime (the normal case)
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      const d = new Date(s); // fallback: let the engine parse other formats
+      if (!isNaN(d.getTime())) {
+        const ist = new Date(d.getTime() + 330 * 60000);
+        return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+      }
+      return '';
+    };
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
@@ -5141,8 +5168,10 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
       const rawJd = offer.joiningDate || '';
       if (!rawJd) continue;
       if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
-      const jd = String(rawJd).slice(0, 10);
-      if (!(jd > istToday)) continue; // only strictly-future joiners remain on the list
+      const jd = toYmd(rawJd);
+      if (!jd) continue;
+      const jdMs = new Date(jd + 'T00:00:00Z').getTime();
+      if (!(jdMs > istTodayMs)) continue; // only strictly-future joiners remain on the list
       // Lazy-init: a candidate hired via the normal offer→accept flow has a
       // joining date but may not yet have an onboarding blob (older records, or
       // paths that didn't create one). Create it now so onboarding can begin.
