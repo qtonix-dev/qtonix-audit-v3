@@ -440,6 +440,75 @@ function onboardingReceived({ candidateName }) {
   });
 }
 
+// Reminder if the candidate hasn't submitted documents yet.
+function onboardingReminder({ candidateName, role, deadlineText, onboardingUrl, signature }) {
+  return shell({
+    kicker: 'Gentle Reminder',
+    headline: `A quick reminder, ${esc(firstName(candidateName))}`,
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `We\u2019re looking forward to your first day! We noticed your onboarding documents haven\u2019t come through yet.${deadlineText ? ` To keep everything on track, please complete them by <strong>${esc(deadlineText)}</strong>.` : ''}`,
+    ctaLabel: onboardingUrl ? 'Complete your onboarding' : null,
+    ctaUrl: onboardingUrl || null,
+    ctaNote: 'It only takes a few minutes, and your progress saves automatically.',
+    outroHtml: `If you\u2019ve already started, thank you \u2014 just pick up where you left off. Any trouble? Reply to this email.`,
+    signature: signature || { name: 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'career@qtonix.com' },
+  });
+}
+
+// Sent to the Project Manager + department Team Leads announcing a new joiner.
+function onboardingSeniorNotice({ managerName, candidateName, role, department, joiningDateText, signature }) {
+  const details = [
+    role ? { label: 'Role', value: esc(role) } : null,
+    department ? { label: 'Department', value: esc(department) } : null,
+    joiningDateText ? { label: 'Joining date', value: esc(joiningDateText) } : null,
+  ].filter(Boolean);
+  return shell({
+    kicker: 'New Team Member',
+    headline: `${esc(firstName(candidateName))} is joining your team`,
+    subhead: role || '',
+    greetingName: managerName || 'there',
+    introHtml: `Heads up \u2014 <strong>${esc(candidateName)}</strong> is joining${role ? ` as our new <strong>${esc(role)}</strong>` : ''}${joiningDateText ? ` on <strong>${esc(joiningDateText)}</strong>` : ''}. Please help us get them set up: confirm the seating arrangement, plan their first-week priorities, and be ready to welcome them.`,
+    details,
+    outroHtml: `HR will coordinate the desk, hardware, and accounts. If there\u2019s anything specific the role needs on day one, let us know.`,
+    signature: signature || { name: 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'career@qtonix.com' },
+  });
+}
+
+// Reporting details, sent to the candidate ~2 days before joining (docs complete).
+function onboardingReportingDetails({ candidateName, role, joiningDateText, reportingTime, officeAddress, contactPerson, contactPhone, signature }) {
+  const details = [
+    joiningDateText ? { label: 'Joining date', value: esc(joiningDateText) } : null,
+    reportingTime ? { label: 'Reporting time', value: esc(reportingTime) } : null,
+    officeAddress ? { label: 'Office address', value: esc(officeAddress) } : null,
+    contactPerson ? { label: 'Contact person', value: esc(contactPerson) + (contactPhone ? ` \u00b7 ${esc(contactPhone)}` : '') } : null,
+  ].filter(Boolean);
+  return shell({
+    kicker: 'Your First Day',
+    headline: `See you soon, ${esc(firstName(candidateName))}!`,
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: `We\u2019re all set for your first day. Here are your reporting details \u2014 please arrive a few minutes early and carry your <strong>original documents</strong> for verification.`,
+    details,
+    outroHtml: `If you have any trouble finding us or need to reach out on the day, use the contact above. Welcome aboard!`,
+    signature: signature || { name: 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'career@qtonix.com' },
+  });
+}
+
+// KPI & KRA email — the body is drafted by OpenAI and reviewed/edited by HR
+// before sending, so this template just wraps the approved HTML body.
+function onboardingKpiKra({ employeeName, role, bodyHtml, signature }) {
+  return shell({
+    kicker: 'Your Goals & Responsibilities',
+    headline: `Your KPIs & KRAs, ${esc(firstName(employeeName))}`,
+    subhead: role || '',
+    greetingName: employeeName,
+    introHtml: bodyHtml || `Please find your key responsibilities and performance indicators below.`,
+    outroHtml: `Take a little time to review these with your manager. They\u2019ll guide your first few months \u2014 and we\u2019re here to support you.`,
+    signature: signature || { name: 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'hr@qtonix.com' },
+  });
+}
+
 module.exports = {
   taskReceived, taskAdditionalInfoRequest,
   shortlistedEmail,
@@ -449,5 +518,6 @@ module.exports = {
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,
   birthdayWish, workAnniversary, welcomeJoinee,
-  onboardingWelcome, onboardingReceived,
+  onboardingWelcome, onboardingReceived, onboardingReminder,
+  onboardingSeniorNotice, onboardingReportingDetails, onboardingKpiKra,
 };

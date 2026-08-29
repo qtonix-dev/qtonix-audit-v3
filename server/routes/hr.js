@@ -5225,6 +5225,23 @@ router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (r
       task.meta = { ...(task.meta || {}), announcementId: ann.id, meetingTime: timeStr, meetingDate: dateStr, place: 'Conference Room' };
       task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
       pushTimeline(row, { type: 'onboarding', text: `Welcome-meeting announcement posted for ${dept || 'the team'} (${when || 'Conference Room'}).`, by: req.hrActor.name });
+    } else if (b.action === 'welcome_aboard') {
+      // Send the welcome-aboard email (candidate joined). Reminds them to bring
+      // originals for verification.
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+      const mailbox = mailboxEmail(s);
+      if (!token || !mailbox) return res.status(400).json({ error: 'No recruitment mailbox is linked.' });
+      const gmail = require('../services/gmail');
+      const hrEmail = require('../services/hrEmailTemplate');
+      const empName = (onb.fields && onb.fields.name) || row.name;
+      const bodyHtml = hrEmail.welcomeJoinee({ employeeName: empName, designation: job ? job.title : '', department: job ? job.department : '', branch: (job && job.locations && job.locations[0]) || '' });
+      const to = (onb.fields && onb.fields.email) || row.email;
+      await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: `Welcome to Qtonix, ${String(empName).split(' ')[0]}! 🎉`, bodyHtml });
+      task.meta = { ...(task.meta || {}), sentAt: nowIso };
+      task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
+      onb.welcomeAboardSentAt = nowIso;
+      pushTimeline(row, { type: 'onboarding', text: `Welcome-aboard email sent to ${empName} by ${req.hrActor.name}.`, by: req.hrActor.name });
     } else {
       // Plain toggle.
       task.done = b.done !== undefined ? !!b.done : !task.done;
@@ -5236,6 +5253,71 @@ router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (r
     row.onboarding = onb; row.changed('onboarding', true);
     await row.save();
     res.json({ ok: true, task });
+  } catch (e) { next(e); }
+});
+
+// Draft a KPI & KRA email for a joiner using OpenAI. Returns HTML for HR/admin
+// to review and edit before sending (does NOT send).
+router.post('/candidates/:id/onboarding/kpi-draft', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const key = s && s.getKey ? s.getKey('openai') : null;
+    if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in CRM Admin → API keys.' });
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const empName = (row.onboarding && row.onboarding.fields && row.onboarding.fields.name) || row.name;
+    const role = job ? job.title : (req.body && req.body.role) || '';
+    const dept = job ? job.department : '';
+    const system = [
+      'You are an experienced HR business partner writing the KPI (Key Performance Indicators) and KRA (Key Result Areas) section of a welcome email for a new employee.',
+      'Produce clear, role-appropriate KRAs (the areas they are responsible for) and measurable KPIs (how success is measured) for their first 3–6 months.',
+      'Keep it encouraging and realistic, not overwhelming. Use clean HTML: a short intro <p>, then a <strong>Key Result Areas</strong> heading with a <ul> of 3–5 items, then a <strong>Key Performance Indicators</strong> heading with a <ul> of 3–5 measurable items. No <html> wrapper, no signature.',
+      'Return strict JSON: {"body":"<p>...</p>..."}. No markdown, no commentary outside JSON.',
+    ].join(' ');
+    const ctx = `Employee: ${empName}\nRole: ${role || 'the role'}\nDepartment: ${dept || 'n/a'}\nCompany: Qtonix (a software & digital-marketing company)`;
+    try { const { recordApiCall } = require('../models'); recordApiCall && recordApiCall('openai'); } catch {}
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: ctx }], max_tokens: 900, response_format: { type: 'json_object' } }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
+    let parsed = {}; try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
+    let body = String(parsed.body || '').trim();
+    if (body && !/<p[\s>]/i.test(body)) { body = `<p style="margin:0 0 14px;line-height:1.6;">${body.replace(/\n{2,}/g, '</p><p style="margin:0 0 14px;line-height:1.6;">').replace(/\n/g, '<br>')}</p>`; }
+    res.json({ body, employeeName: empName, role });
+  } catch (e) { next(e); }
+});
+
+// Send the (HR-reviewed) KPI & KRA email to the joiner.
+router.post('/candidates/:id/onboarding/kpi-send', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    if (!b.body || !String(b.body).trim()) return res.status(400).json({ error: 'Nothing to send — draft the KPI/KRA first.' });
+    const onb = row.onboarding || {};
+    const to = (onb.fields && onb.fields.email) || row.email;
+    if (!to) return res.status(400).json({ error: 'No email on file for this employee.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    const mailbox = mailboxEmail(s);
+    if (!token || !mailbox) return res.status(400).json({ error: 'No HR mailbox is linked.' });
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const empName = (onb.fields && onb.fields.name) || row.name;
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+    const bodyHtml = hrEmail.onboardingKpiKra({ employeeName: empName, role: job ? job.title : '', bodyHtml: String(b.body) });
+    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: `Your KPIs & KRAs at Qtonix, ${String(empName).split(' ')[0]}`, bodyHtml });
+    // mark the kpi_kra task done
+    if (Array.isArray(onb.hrTasks)) {
+      onb.hrTasks = onb.hrTasks.map((t) => (t.id === 'kpi_kra' ? { ...t, done: true, doneAt: new Date().toISOString(), doneById: req.hrActor.id } : t));
+      row.onboarding = onb; row.changed('onboarding', true);
+    }
+    pushTimeline(row, { type: 'onboarding', text: `KPI & KRA email sent to ${empName} by ${req.hrActor.name}.`, by: req.hrActor.name });
+    await row.save();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -5874,6 +5956,13 @@ router.post('/settings/test-emails', requireHrAccess, requireHrAdmin, async (req
       ['Shortlisted', `You've been shortlisted — ${role}`, hrEmail.shortlistedEmail({ candidateName: 'Ava Thompson', role, signature: sig })],
       ['Assessment task', `Assessment task — ${role}`, hrEmail.taskAssignment({ candidateName: 'Ava Thompson', role, taskTitle: 'Build a responsive dashboard component', taskDetailsHtml: 'Build a small React dashboard with a chart and a filterable table. Include a short README.', deadlineText: 'Sunday, 24 August 2026, 5:30 PM IST', uploadUrl: `${(process.env.APP_URL || '').replace(/\/$/, '')}/task/sample-token`, signature: sig })],
       ['Rejection', `Update on your application — ${role}`, hrEmail.rejectionEmail({ role, bodyHtml: rejectBody, signature: sig })],
+      ['Onboarding welcome', `Welcome to Qtonix, Ava! – Next Steps`, hrEmail.onboardingWelcome({ candidateName: 'Ava Thompson', role, joiningDateText: 'Monday, 8 September 2026', department: 'Engineering', deadlineText: 'Friday, 5 September 2026', onboardingUrl: `${(process.env.APP_URL || '').replace(/\/$/, '')}/onboarding/sample-token`, signature: sig })],
+      ['Onboarding reminder', `Reminder: complete your Qtonix onboarding`, hrEmail.onboardingReminder({ candidateName: 'Ava Thompson', role, deadlineText: 'Friday, 5 September 2026', onboardingUrl: `${(process.env.APP_URL || '').replace(/\/$/, '')}/onboarding/sample-token`, signature: sig })],
+      ['Onboarding — documents received', `We received your onboarding documents — Qtonix`, hrEmail.onboardingReceived({ candidateName: 'Ava Thompson' })],
+      ['New joiner notice (PM & TLs)', `New joiner: Ava Thompson (${role})`, hrEmail.onboardingSeniorNotice({ managerName: 'Rahul Verma', candidateName: 'Ava Thompson', role, department: 'Engineering', joiningDateText: 'Monday, 8 September 2026', signature: sig })],
+      ['Reporting details', `Your first day at Qtonix — reporting details`, hrEmail.onboardingReportingDetails({ candidateName: 'Ava Thompson', role, joiningDateText: 'Monday, 8 September 2026', reportingTime: '09:30 AM', officeAddress: 'Plot 12, Info City, Bhubaneswar 751024', contactPerson: 'Anshika Priyadarshini', contactPhone: '+91 90400 06123', signature: sig })],
+      ['Welcome aboard (joined)', `Welcome to Qtonix, Ava! 🎉`, hrEmail.welcomeJoinee({ employeeName: 'Ava Thompson', designation: role, department: 'Engineering', branch: 'Bhubaneswar' })],
+      ['KPI & KRA', `Your KPIs & KRAs at Qtonix, Ava`, hrEmail.onboardingKpiKra({ employeeName: 'Ava Thompson', role, bodyHtml: '<p style="margin:0 0 14px;line-height:1.6;">We\u2019re excited to have you! Here are your focus areas for the first few months.</p><p style="margin:0 0 8px;"><strong>Key Result Areas</strong></p><ul><li>Deliver assigned frontend features on schedule</li><li>Maintain code quality and reviews</li><li>Collaborate with design & backend</li></ul><p style="margin:12px 0 8px;"><strong>Key Performance Indicators</strong></p><ul><li>90%+ sprint commitments met</li><li>&lt;2 post-release defects per feature</li><li>Positive peer-review feedback</li></ul>', signature: sig })],
     ];
     const sentList = [], failed = [];
     for (const [label, subject, html] of samples) {

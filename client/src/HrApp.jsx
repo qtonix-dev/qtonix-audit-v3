@@ -3887,6 +3887,10 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
 
   const call = async (body) => { setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/onboarding/task/${task.id}`, { method: 'POST', body: JSON.stringify(body) }); onChanged(r.task); } catch (e) { alert(e.message); } setBusy(false); };
   const toggle = () => { if (task.createsEmployee && !task.done && !created) { onCreateEmployee(); return; } call({ done: !task.done }); };
+  const [showKpi, setShowKpi] = useState(false);
+
+  const isWelcomeEmail = task.id === 'welcome_email';
+  const isKpi = task.id === 'kpi_kra';
 
   const routed = task.meta && task.meta.routedTo;
   return (
@@ -3900,6 +3904,8 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
         {!task.done && task.wantsDate && !showDate && <button onClick={() => setShowDate(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#F59E0B' }}>Set delivery date ›</button>}
         {!task.done && task.createsEmployee && !created && <button onClick={onCreateEmployee} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#16A34A' }}>Create employee ›</button>}
         {!task.done && task.meeting && !showMeet && <button onClick={() => setShowMeet(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#7C3AED' }}>Schedule ›</button>}
+        {!task.done && isWelcomeEmail && <button onClick={() => call({ action: 'welcome_aboard' })} disabled={busy} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#0F9D58' }}>Send welcome ›</button>}
+        {!task.done && isKpi && <button onClick={() => setShowKpi(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#4338CA' }}>Draft with AI ›</button>}
       </div>
       {routed && <div className="ml-6 mt-1 text-[11px] text-sky-600 font-semibold">✓ Sent to {routed} — they’ll mark it done from their dashboard.</div>}
       {task.meta && task.meta.deliveryDate && task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">ID card expected by {new Date(task.meta.deliveryDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}.</div>}
@@ -3920,6 +3926,53 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
           <button onClick={() => setShowMeet(false)} className="text-[11px] text-slate-400">Cancel</button>
         </div>
       )}
+      {showKpi && <KpiKraModal candidateId={candidateId} onClose={() => setShowKpi(false)} onSent={() => { setShowKpi(false); call({ done: true }); }} />}
+    </div>
+  );
+}
+
+// Draft KPI/KRA via OpenAI, let HR/admin review & edit, then send.
+function KpiKraModal({ candidateId, onClose, onSent }) {
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState('draft');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: '{}' })
+      .then((r) => { setBody(r.body || ''); setBusy(''); })
+      .catch((e) => { setErr(e.message); setBusy(''); });
+  }, []); // eslint-disable-line
+  const send = async () => {
+    setBusy('send'); setErr('');
+    try { await hrApi(`/candidates/${candidateId}/onboarding/kpi-send`, { method: 'POST', body: JSON.stringify({ body }) }); onSent(); }
+    catch (e) { setErr(e.message); setBusy(''); }
+  };
+  const redraft = async () => {
+    setBusy('draft'); setErr('');
+    try { const r = await hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: '{}' }); setBody(r.body || ''); } catch (e) { setErr(e.message); }
+    setBusy('');
+  };
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0"><div className="text-lg font-extrabold text-[#050A1F]">KPI & KRA — AI draft</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 overflow-y-auto space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <div className="text-[12px] text-slate-400">AI has drafted role-appropriate KRAs & KPIs. Review and edit the HTML below before sending — it goes to the new joiner in the branded template.</div>
+          {busy === 'draft' ? <div className="text-slate-400 text-sm py-10 text-center">Drafting with AI…</div> : (
+            <>
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={14} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-mono leading-relaxed" />
+              <details><summary className="text-[12px] font-bold text-slate-500 cursor-pointer">Preview</summary><div className="mt-2 border border-slate-100 rounded-lg p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: body }} /></details>
+            </>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-between gap-2">
+          <button onClick={redraft} disabled={busy === 'draft'} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 disabled:opacity-50">↻ Re-draft</button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+            <button onClick={send} disabled={busy === 'send' || !body.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'send' ? 'Sending…' : 'Send to employee'}</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
