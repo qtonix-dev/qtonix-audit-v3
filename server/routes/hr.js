@@ -5500,30 +5500,44 @@ router.post('/candidates/:id/onboarding/kpi-draft', requireHrAccess, async (req,
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const b = req.body || {};
+    const notesRaw = String(b.notes || '');
+    const notesText = notesRaw.replace(/<br\s*\/?>(?=)/gi, '\n').replace(/<\/(p|div|li|ul|ol|h[1-6])>/gi, '\n').replace(/<li[^>]*>/gi, '• ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim();
+    if (!notesText) return res.status(400).json({ error: 'Please enter the KRA & KPI details first.' });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const key = s && s.getKey ? s.getKey('openai') : null;
     if (!key) return res.status(400).json({ error: 'OpenAI isn’t configured yet. Ask an admin to add the API key in CRM Admin → API keys.' });
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     const empName = (row.onboarding && row.onboarding.fields && row.onboarding.fields.name) || row.name;
-    const role = job ? job.title : (req.body && req.body.role) || '';
+    const role = job ? job.title : (b.role || '');
     const dept = job ? job.department : '';
+    const jobDesc = (job && (job.description || job.jd || '')) ? String(job.description || job.jd).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1500) : '';
     const system = [
-      'You are an experienced HR business partner writing the KPI (Key Performance Indicators) and KRA (Key Result Areas) section of a welcome email for a new employee.',
-      'Produce clear, role-appropriate KRAs (the areas they are responsible for) and measurable KPIs (how success is measured) for their first 3–6 months.',
-      'Keep it encouraging and realistic, not overwhelming. Use clean HTML: a short intro <p>, then a <strong>Key Result Areas</strong> heading with a <ul> of 3–5 items, then a <strong>Key Performance Indicators</strong> heading with a <ul> of 3–5 measurable items. No <html> wrapper, no signature.',
-      'Return strict JSON: {"body":"<p>...</p>..."}. No markdown, no commentary outside JSON.',
-    ].join(' ');
-    const ctx = `Employee: ${empName}\nRole: ${role || 'the role'}\nDepartment: ${dept || 'n/a'}\nCompany: Qtonix (a software & digital-marketing company)`;
+      'You are an experienced HR business partner writing the KRA (Key Result Areas) and KPI (Key Performance Indicators) section of a welcome email for a new employee at Qtonix (a software & digital-marketing company).',
+      'You are given: the role, the job description, and the HR team’s own KRA/KPI notes. Refine and structure the HR notes into a clear, polished, encouraging list for the employee’s first 3–6 months. Stay faithful to the HR notes — expand and clarify them, align them with the job description, but do not invent unrelated responsibilities.',
+      'Output clean, EMAIL-SAFE HTML using INLINE styles only (no <style> blocks, no classes). Structure exactly:',
+      '<p style="margin:0 0 14px;line-height:1.6;color:#334155;">[one short warm intro sentence]</p>',
+      '<p style="margin:0 0 8px;font-weight:700;color:#0A0E28;">Key Result Areas</p>',
+      '<ul style="margin:0 0 16px;padding-left:20px;color:#334155;line-height:1.7;"><li style="margin:0 0 6px;">…</li>…</ul>',
+      '<p style="margin:0 0 8px;font-weight:700;color:#0A0E28;">Key Performance Indicators</p>',
+      '<ul style="margin:0 0 4px;padding-left:20px;color:#334155;line-height:1.7;"><li style="margin:0 0 6px;">…</li>…</ul>',
+      'Each list should have 3–6 items. No <html>/<body> wrapper, no email signature, no headings other than the two shown.',
+      'Return strict JSON: {"body":"<p>...</p>..."}. No markdown, no commentary outside the JSON.',
+    ].join('\n');
+    const ctx = `Employee: ${empName}\nRole: ${role || 'the role'}\nDepartment: ${dept || 'n/a'}\n\nJob description:\n${jobDesc || '(not provided)'}\n\nHR's KRA & KPI notes (use these as the basis):\n${notesText}`;
     try { const { recordApiCall } = require('../models'); recordApiCall && recordApiCall('openai'); } catch {}
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: ctx }], max_tokens: 900, response_format: { type: 'json_object' } }),
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: ctx }], max_tokens: 1100, response_format: { type: 'json_object' } }),
     });
     const data = await resp.json();
     if (!resp.ok) return res.status(502).json({ error: (data.error && data.error.message) || 'OpenAI request failed.' });
     let parsed = {}; try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch { parsed = {}; }
     let body = String(parsed.body || '').trim();
-    if (body && !/<p[\s>]/i.test(body)) { body = `<p style="margin:0 0 14px;line-height:1.6;">${body.replace(/\n{2,}/g, '</p><p style="margin:0 0 14px;line-height:1.6;">').replace(/\n/g, '<br>')}</p>`; }
+    // Safety net: if the model returned plain text, wrap into styled paragraphs.
+    if (body && !/<(p|ul|ol|div)[\s>]/i.test(body)) {
+      body = `<p style="margin:0 0 14px;line-height:1.6;color:#334155;">${body.replace(/\n{2,}/g, '</p><p style="margin:0 0 14px;line-height:1.6;color:#334155;">').replace(/\n/g, '<br>')}</p>`;
+    }
     res.json({ body, employeeName: empName, role });
   } catch (e) { next(e); }
 });

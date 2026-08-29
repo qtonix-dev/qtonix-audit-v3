@@ -4585,14 +4585,21 @@ function DealsTab({ lead, config, user, onChange }) {
 
       {/* Gateway + reference, captured whenever an admin confirms a payment. */}
       {payFor && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setPayFor(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
-            <div className="text-sm text-slate-500 mt-1">
-              {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · installment {payFor.inst.seq} of {payFor.deal.name}
+        <div className="fixed inset-0 bg-black/40 z-50 flex justify-end" onClick={() => setPayFor(null)}>
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+            <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
+            <div className="px-6 py-4 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · installment {payFor.inst.seq} of {payFor.deal.name}
+                </div>
+              </div>
+              <button type="button" onClick={() => setPayFor(null)} className="text-slate-400 text-xl leading-none">×</button>
             </div>
+            <div className="px-6 py-4 overflow-y-auto flex-1">
 
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mt-4 mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">
               Where did the payment come in?
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -4664,13 +4671,16 @@ function DealsTab({ lead, config, user, onChange }) {
               </div>
             )}
 
-            <button type="button" disabled={!payGateway || busyInst === payFor.inst.id} onClick={confirmPaid}
-              className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
-              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-              {busyInst === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
-            </button>
-            <button type="button" onClick={() => setPayFor(null)}
-              className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 shrink-0">
+              <button type="button" disabled={!payGateway || busyInst === payFor.inst.id} onClick={confirmPaid}
+                className="w-full rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
+                style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                {busyInst === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
+              </button>
+              <button type="button" onClick={() => setPayFor(null)}
+                className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">Cancel</button>
+            </div>
           </div>
         </div>
       )}
@@ -6172,15 +6182,22 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
           collection, because the same client may pay by card one cycle and by
           bank transfer the next. */}
       {payFor && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+        <div className="fixed inset-0 bg-black/40 z-50 flex justify-end"
           onClick={() => setPayFor(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
-            <div className="text-sm text-slate-500 mt-1">
-              {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · {payFor.deal.name}
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+            <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
+            <div className="px-6 py-4 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-extrabold text-[#050A1F]">Record payment</div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {payFor.deal.currency} {Number(payFor.inst.amount || 0).toLocaleString()} · {payFor.deal.name}
+                </div>
+              </div>
+              <button type="button" onClick={() => setPayFor(null)} className="text-slate-400 text-xl leading-none">×</button>
             </div>
+            <div className="px-6 py-4 overflow-y-auto flex-1">
 
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mt-4 mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">
               Where did the payment come in?
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -6251,17 +6268,20 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
               </div>
             )}
 
-            <button
-              disabled={!payGateway || busy === payFor.inst.id}
-              onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, payGateway, payRef, payDate)}
-              className="w-full mt-4 rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
-              style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-              {busy === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
-            </button>
-            <button onClick={() => setPayFor(null)}
-              className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">
-              Cancel
-            </button>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 shrink-0">
+              <button
+                disabled={!payGateway || busy === payFor.inst.id}
+                onClick={() => collect(payFor.lead, payFor.deal, payFor.inst, payGateway, payRef, payDate)}
+                className="w-full rounded-lg px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40"
+                style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                {busy === payFor.inst.id ? 'Saving…' : 'Confirm payment received'}
+              </button>
+              <button onClick={() => setPayFor(null)}
+                className="w-full mt-2 rounded-lg px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600">
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -4243,44 +4243,80 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
 
 // Draft KPI/KRA via OpenAI, let HR/admin review & edit, then send.
 function KpiKraModal({ candidateId, onClose, onSent }) {
+  const [stage, setStage] = useState('notes'); // 'notes' | 'draft'
+  const [notes, setNotes] = useState('');
   const [body, setBody] = useState('');
-  const [busy, setBusy] = useState('draft');
+  const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
-  useEffect(() => {
-    hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: '{}' })
-      .then((r) => { setBody(r.body || ''); setBusy(''); })
-      .catch((e) => { setErr(e.message); setBusy(''); });
-  }, []); // eslint-disable-line
+
+  const notesEmpty = !notes || !notes.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+  const generate = async () => {
+    if (notesEmpty) { setErr('Please enter the KRA & KPI details first — the AI uses these along with the job description.'); return; }
+    setBusy('gen'); setErr('');
+    try {
+      const r = await hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: JSON.stringify({ notes }) });
+      setBody(r.body || ''); setStage('draft');
+    } catch (e) { setErr(e.message); }
+    setBusy('');
+  };
+  const regenerate = async () => {
+    setBusy('gen'); setErr('');
+    try { const r = await hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: JSON.stringify({ notes }) }); setBody(r.body || ''); }
+    catch (e) { setErr(e.message); }
+    setBusy('');
+  };
   const send = async () => {
+    if (!body || !body.replace(/<[^>]*>/g, '').trim()) { setErr('Nothing to send yet.'); return; }
     setBusy('send'); setErr('');
     try { await hrApi(`/candidates/${candidateId}/onboarding/kpi-send`, { method: 'POST', body: JSON.stringify({ body }) }); onSent(); }
     catch (e) { setErr(e.message); setBusy(''); }
   };
-  const redraft = async () => {
-    setBusy('draft'); setErr('');
-    try { const r = await hrApi(`/candidates/${candidateId}/onboarding/kpi-draft`, { method: 'POST', body: '{}' }); setBody(r.body || ''); } catch (e) { setErr(e.message); }
-    setBusy('');
-  };
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0"><div className="text-lg font-extrabold text-[#050A1F]">KPI & KRA — AI draft</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div>
+            <div className="text-lg font-extrabold text-[#050A1F]">KPI & KRA email</div>
+            <div className="text-[12px] text-slate-400">{stage === 'notes' ? 'Step 1 of 2 — enter the KRA & KPI details' : 'Step 2 of 2 — review & edit the AI draft'}</div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
         <div className="p-6 overflow-y-auto space-y-3">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
-          <div className="text-[12px] text-slate-400">AI has drafted role-appropriate KRAs & KPIs. Review and edit the HTML below before sending — it goes to the new joiner in the branded template.</div>
-          {busy === 'draft' ? <div className="text-slate-400 text-sm py-10 text-center">Drafting with AI…</div> : (
+
+          {stage === 'notes' ? (
             <>
-              <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={14} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-mono leading-relaxed" />
-              <details><summary className="text-[12px] font-bold text-slate-500 cursor-pointer">Preview</summary><div className="mt-2 border border-slate-100 rounded-lg p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: body }} /></details>
+              <div className="text-[13px] text-slate-500">Enter the key result areas and performance indicators for this role. The AI will refine and structure them into a polished email using these notes and the job description.</div>
+              <MailEditor value={notes} onChange={setNotes} minHeight={220} placeholder={'e.g.\n• Own the frontend delivery for the CRM module\n• Ship assigned features within sprint timelines\n• Maintain code quality and review standards\n\nKPIs:\n• 90%+ sprint commitments met\n• < 2 post-release defects per feature'} />
+              <div className="text-[11px] text-slate-400">Tip: a few bullet points for KRAs and a few for KPIs is enough — the AI will expand and format them.</div>
+            </>
+          ) : (
+            <>
+              <div className="text-[13px] text-slate-500">Here’s the AI-formatted draft. Edit anything you like — it’ll be sent to the joiner inside the branded Qtonix email template.</div>
+              <MailEditor value={body} onChange={setBody} minHeight={260} placeholder="The AI draft will appear here…" />
             </>
           )}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-between gap-2">
-          <button onClick={redraft} disabled={busy === 'draft'} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 disabled:opacity-50">↻ Re-draft</button>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-            <button onClick={send} disabled={busy === 'send' || !body.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'send' ? 'Sending…' : 'Send to employee'}</button>
-          </div>
+          {stage === 'notes' ? (
+            <>
+              <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={generate} disabled={busy === 'gen' || notesEmpty} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'gen' ? 'Generating…' : 'Generate with AI →'}</button>
+            </>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <button onClick={() => { setStage('notes'); setErr(''); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">‹ Back to notes</button>
+                <button onClick={regenerate} disabled={busy === 'gen'} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 disabled:opacity-50">{busy === 'gen' ? 'Re-generating…' : '↻ Re-generate'}</button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+                <button onClick={send} disabled={busy === 'send'} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#16A34A' }}>{busy === 'send' ? 'Sending…' : 'Send to employee'}</button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
