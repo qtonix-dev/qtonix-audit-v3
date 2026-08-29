@@ -497,6 +497,30 @@ function onboardingReportingDetails({ candidateName, role, joiningDateText, repo
 
 // KPI & KRA email — the body is drafted by OpenAI and reviewed/edited by HR
 // before sending, so this template just wraps the approved HTML body.
+// Reply to a candidate's onboarding question. Mirrors the Application thank-you
+// layout: kicker + headline + greeting + body, with their question quoted and
+// HR's answer below.
+function onboardingQueryReply({ candidateName, question, answer, hrName, signature }) {
+  const q = esc(question || '').replace(/\n/g, '<br>');
+  const a = esc(answer || '').replace(/\n/g, '<br>');
+  const introHtml = `Thanks for reaching out during your onboarding. Here's the response to your question.`
+    + `<div style="margin:16px 0 0;padding:14px 16px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;">`
+    + `<div style="font-size:12px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Your question</div>`
+    + `<div style="font-size:14px;color:#334155;line-height:1.6;">${q}</div></div>`
+    + `<div style="margin:12px 0 0;padding:14px 16px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;">`
+    + `<div style="font-size:12px;font-weight:700;color:#EA580C;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Our response</div>`
+    + `<div style="font-size:14px;color:#334155;line-height:1.6;">${a}</div></div>`;
+  return shell({
+    kicker: 'Onboarding Support',
+    headline: 'Response to your question',
+    subhead: '',
+    greetingName: candidateName,
+    introHtml,
+    outroHtml: `If you have any more questions before your first day, just reply to this email or use the question box on your onboarding page. We're glad to help.`,
+    signature: signature || { name: hrName || 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'hr@qtonix.com' },
+  });
+}
+
 function onboardingKpiKra({ employeeName, role, bodyHtml, signature }) {
   return shell({
     kicker: 'Your Goals & Responsibilities',
@@ -519,5 +543,5 @@ module.exports = {
   applicationThankYou, applicationInternalNotice, shell,
   birthdayWish, workAnniversary, welcomeJoinee,
   onboardingWelcome, onboardingReceived, onboardingReminder,
-  onboardingSeniorNotice, onboardingReportingDetails, onboardingKpiKra,
+  onboardingSeniorNotice, onboardingReportingDetails, onboardingKpiKra, onboardingQueryReply,
 };

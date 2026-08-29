@@ -3932,9 +3932,21 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
   };
 
   const copyLink = () => { if (data && data.onboardingUrl) { navigator.clipboard.writeText(data.onboardingUrl); setBusy('copied'); setTimeout(() => setBusy(''), 1500); } };
-  const markPhysical = async (on) => {
+  const markPhysical = async (on, extra) => {
     setBusy('physical'); setErr('');
-    try { await hrApi(`/candidates/${candidate._id}/onboarding/docs-physical`, { method: 'POST', body: JSON.stringify({ on }) }); await load(); onChanged && onChanged(); }
+    try { await hrApi(`/candidates/${candidate._id}/onboarding/docs-physical`, { method: 'POST', body: JSON.stringify({ on, ...(extra || {}) }) }); await load(); onChanged && onChanged(); setShowPhysForm(false); }
+    catch (e) { setErr(e.message); }
+    setBusy('');
+  };
+  const [showPhysForm, setShowPhysForm] = useState(false);
+  const [physDate, setPhysDate] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10));
+  const [physBy, setPhysBy] = useState('');
+  const [replyFor, setReplyFor] = useState(''); // queryId being replied to
+  const [replyText, setReplyText] = useState('');
+  const sendReply = async (queryId) => {
+    if (!replyText.trim()) { setErr('Please type a reply.'); return; }
+    setBusy('reply'); setErr('');
+    try { await hrApi(`/candidates/${candidate._id}/onboarding/query/${queryId}/reply`, { method: 'POST', body: JSON.stringify({ reply: replyText.trim() }) }); setReplyFor(''); setReplyText(''); await load(); }
     catch (e) { setErr(e.message); }
     setBusy('');
   };
@@ -4038,7 +4050,7 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                 {onb.docsPhysical ? (
                   <div className="flex items-center gap-2 mt-3 flex-wrap">
                     <span className="text-[12px] font-bold rounded-lg px-2.5 py-1.5" style={{ background: '#EEF2FF', color: '#4338CA' }}>📄 Documents verified in person</span>
-                    <span className="text-[11px] text-slate-400">No onboarding link or welcome email is sent for this candidate.</span>
+                    <span className="text-[11px] text-slate-400">{onb.verifiedByName ? `By ${onb.verifiedByName}` : ''}{onb.physicalCollectedDate ? ` · collected ${new Date(onb.physicalCollectedDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}. No onboarding link or welcome email is sent.</span>
                     <button onClick={() => markPhysical(false)} disabled={busy === 'physical'} className="ml-auto text-[11px] text-slate-400 hover:text-slate-600 underline">Undo</button>
                   </div>
                 ) : (
@@ -4048,8 +4060,25 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                       <button onClick={copyLink} className="rounded-lg border border-slate-300 px-3 py-2 text-[12px] font-bold text-slate-600">{busy === 'copied' ? 'Copied!' : 'Copy link'}</button>
                       <button onClick={sendWelcome} disabled={busy === 'welcome'} className="rounded-lg px-3 py-2 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'welcome' ? 'Sending…' : (onb.welcomeEmailSentAt ? 'Resend welcome' : 'Send welcome email')}</button>
                     </div>
+                    <div className="text-[11px] text-slate-400 mt-2">The link expires the day before joining. If the candidate needs more time, <button onClick={async () => { setBusy('react'); setErr(''); try { await hrApi(`/candidates/${candidate._id}/onboarding/reactivate`, { method: 'POST', body: '{}' }); await load(); } catch (e) { setErr(e.message); } setBusy(''); }} disabled={busy === 'react'} className="font-bold text-indigo-600 hover:text-indigo-700 underline disabled:opacity-50">{busy === 'react' ? 'reactivating…' : 'reactivate the link'}</button>.</div>
                     {onb.welcomeEmailSentAt && onb.welcomeEmailSentAt !== 'physical' && <div className="text-[11px] text-slate-400 mt-2">Welcome email sent {new Date(onb.welcomeEmailSentAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</div>}
-                    {!submitted && <div className="mt-2"><button onClick={() => markPhysical(true)} disabled={busy === 'physical'} className="text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 px-3 py-1.5 hover:bg-indigo-50">{busy === 'physical' ? 'Saving…' : 'Documents collected in person? Mark verified →'}</button><div className="text-[11px] text-slate-400 mt-1">Use this when the candidate hands over documents physically — no link or welcome email is sent, but the checklist and other emails continue.</div></div>}
+                    {!submitted && !showPhysForm && <div className="mt-2"><button onClick={() => { setShowPhysForm(true); setPhysBy((data.hrStaff && data.hrStaff[0] && data.hrStaff[0].id) || ''); }} disabled={busy === 'physical'} className="text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 px-3 py-1.5 hover:bg-indigo-50">Documents collected in person? Mark verified →</button><div className="text-[11px] text-slate-400 mt-1">Use this when the candidate hands over documents physically — no link or welcome email is sent, but the checklist and other emails continue.</div></div>}
+                    {!submitted && showPhysForm && (
+                      <div className="mt-2 rounded-xl p-3" style={{ background: '#EEF2FF', border: '1px solid #c7d2fe' }}>
+                        <div className="text-[12px] font-bold text-indigo-800 mb-2">Documents collected in person</div>
+                        <div className="flex items-end gap-2 flex-wrap">
+                          <div><div className="text-[11px] text-indigo-700 font-semibold mb-1">Date collected</div><input type="date" value={physDate} onChange={(e) => setPhysDate(e.target.value)} className="rounded-lg border border-indigo-300 px-2.5 py-1.5 text-[13px] bg-white" /></div>
+                          <div><div className="text-[11px] text-indigo-700 font-semibold mb-1">Verified by</div>
+                            <select value={physBy} onChange={(e) => setPhysBy(e.target.value)} className="rounded-lg border border-indigo-300 px-2.5 py-1.5 text-[13px] bg-white">
+                              <option value="">Select…</option>
+                              {(data.hrStaff || []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                          </div>
+                          <button onClick={() => { if (!physBy) { setErr('Please select who verified the documents.'); return; } markPhysical(true, { date: physDate, verifiedById: physBy }); }} disabled={busy === 'physical'} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'physical' ? 'Saving…' : 'Mark verified'}</button>
+                          <button onClick={() => setShowPhysForm(false)} className="text-[12px] text-slate-400">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -4095,6 +4124,47 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                   </div>
                 ))}
               </div>
+
+              {/* Candidate questions — submitted from the onboarding page. */}
+              {(() => {
+                const qs = data.queries || [];
+                const newCount = qs.filter((q) => !q.reply).length;
+                return (
+                  <div className="rounded-xl border border-slate-200 p-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-3 h-3 rounded" style={{ background: '#7C3AED' }} />Candidate questions</div>
+                      {newCount > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>{newCount} new</span>}
+                    </div>
+                    <div className="text-[12px] text-slate-400 mb-3">Questions submitted by the candidate from their onboarding page.</div>
+                    {qs.length === 0 ? <div className="text-[13px] text-slate-400 py-1">No questions yet.</div> : (
+                      <div className="space-y-2.5">
+                        {qs.slice().reverse().map((q) => (
+                          <div key={q.id} className="rounded-lg border border-slate-200 p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-[13px] font-semibold text-[#0A0E28]">{q.message}</div>
+                              {q.reply ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>Answered</span> : <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: '#FEF3C7', color: '#B45309' }}>New</span>}
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-1">{q.at ? new Date(q.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}{q.repliedByName ? ` · replied by ${q.repliedByName}` : ''}</div>
+                            {q.reply ? (
+                              <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534' }}><div className="text-[10px] font-bold uppercase mb-0.5" style={{ color: '#16A34A' }}>Your reply</div>{q.reply}</div>
+                            ) : replyFor === q.id ? (
+                              <div className="mt-2">
+                                <textarea rows={2} value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Type your reply… the candidate will get an email with their question and your answer." className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" />
+                                <div className="flex gap-2 mt-1.5">
+                                  <button onClick={() => sendReply(q.id)} disabled={busy === 'reply'} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'reply' ? 'Sending…' : 'Send reply & email candidate'}</button>
+                                  <button onClick={() => { setReplyFor(''); setReplyText(''); }} className="text-[11px] text-slate-400">Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button onClick={() => { setReplyFor(q.id); setReplyText(''); }} className="mt-2 text-[11px] font-bold text-indigo-600 hover:text-indigo-700">Reply →</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* HR checklist — interactive with per-task automations. */}
               <div className="rounded-xl border border-slate-200 p-4">

@@ -5,6 +5,18 @@
   var ticker = null;
   var files = {};         // { key: {name,base64} }  or  { key: [ ... ] } for multi
   var prevCompanies = []; // [{ id }]
+  var QUERIES = [];
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function timeAgo(iso){ try{ var d=new Date(iso); var diff=(Date.now()-d.getTime())/1000; if(diff<60)return 'just now'; if(diff<3600)return Math.floor(diff/60)+'m ago'; if(diff<86400)return Math.floor(diff/3600)+'h ago'; return Math.floor(diff/86400)+'d ago'; }catch(e){ return ''; } }
+  function renderQueries(list){
+    QUERIES = list || [];
+    var box = document.getElementById('qlist'); if(!box) return;
+    if(!QUERIES.length){ box.innerHTML=''; return; }
+    box.innerHTML = QUERIES.slice().reverse().map(function(q){
+      var reply = q.reply ? ('<div class="qr"><div class="qrl">HR replied</div>'+esc(q.reply)+'</div>') : '<div class="qpend">Awaiting HR response\u2026</div>';
+      return '<div class="qitem"><div class="qm">'+esc(q.message)+'</div><div class="qtime">Asked '+timeAgo(q.at)+'</div>'+reply+'</div>';
+    }).join('');
+  }
   var saveTimer = null;
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
@@ -23,11 +35,21 @@
     .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); })
     .then(function(res){
       if (!res.ok){ renderError(res.d && res.d.error); return; }
+      if (res.d.expired){ renderExpired(res.d.candidateName); return; }
       if (res.d.submitted){ renderDone(res.d.candidateName, true); return; }
       ctx = res.d;
       render();
     })
     .catch(function(){ renderError('Something went wrong. Please try again.'); });
+
+  function renderExpired(name){
+    app.innerHTML = '<div class="band"><div class="band-inner"><div class="brand">Qtonix<span>.</span></div>'
+      + '<h1>Onboarding link expired</h1></div></div>'
+      + '<div class="wrap"><div class="card"><div class="ok"><div class="big">&#9203;</div>'
+      + '<h2>This onboarding link has expired</h2>'
+      + '<p class="muted">Onboarding links close the day before your joining date. If you still need to submit your details, '
+      + 'please contact your HR contact and they can reactivate the link for you.</p></div></div></div>';
+  }
 
   function renderError(msg){
     app.innerHTML = '<div class="band"><div class="band-inner"><div class="brand">Qtonix<span>.</span></div>'
@@ -100,7 +122,7 @@
     +       fieldHtml({id:'dob',label:'Date of birth',type:'date',req:true})
     +       fieldHtml({id:'bloodGroup',label:'Blood group',type:'select',req:true,opts:BLOOD})
     +       fieldHtml({id:'maritalStatus',label:'Marital status',type:'select',req:true,opts:['Unmarried','Married']})
-    +       fieldHtml({id:'anniversary',label:'Anniversary date',type:'date',req:false})
+    +       '<div id="anniversaryWrap" class="hidden">' + fieldHtml({id:'anniversary',label:'Anniversary date',type:'date',req:false}) + '</div>'
     +     '</div>'
     // Section 2
     +     '<div class="stitle"><span class="n">2</span>Address</div>'
@@ -131,6 +153,14 @@
     +     '<button class="btn" id="submitBtn">Submit my details &amp; documents</button>'
     +     '<div class="err hidden" id="formErr"></div>'
     +     '<div class="savenote">&#10003; Your progress is saved automatically &mdash; you can finish later from the same link</div>'
+    +     '<div class="qsection" id="qsection">'
+    +       '<div class="qhead">Have a question?</div>'
+    +       '<div class="qsub">Ask your HR contact anything about your joining, documents, or first day.</div>'
+    +       '<textarea id="qinput" class="qinput" placeholder="Type your question here\u2026"></textarea>'
+    +       '<button type="button" class="qsend" id="qsend">Send question</button>'
+    +       '<div class="qerr hidden" id="qerr"></div>'
+    +       '<div id="qlist" class="qlist"></div>'
+    +     '</div>'
     +   '</div>'
     + '</div></div>';
 
@@ -146,7 +176,8 @@
     // marital -> anniversary required
     el('maritalStatus').addEventListener('change', function(){
       var ann = el('anniversary');
-      if (this.value === 'Married'){ ann.disabled = false; } else { ann.disabled = true; ann.value = ''; }
+      var wrap = el('anniversaryWrap');
+      if (this.value === 'Married'){ wrap.className=''; ann.disabled = false; } else { wrap.className='hidden'; ann.disabled = true; ann.value = ''; }
       recomputeProgress();
     });
     el('anniversary').disabled = true;
@@ -174,6 +205,23 @@
     });
     if (el('addCompany')) el('addCompany').addEventListener('click', addCompany);
     el('submitBtn').addEventListener('click', submit);
+    // Ask-a-question wiring.
+    renderQueries(c.queries || []);
+    var qsend = el('qsend');
+    if (qsend) qsend.addEventListener('click', function(){
+      var input = el('qinput'); var msg = (input.value||'').trim();
+      var qe = el('qerr');
+      if (!msg){ qe.textContent='Please type your question.'; qe.className='qerr'; return; }
+      qsend.disabled = true; qsend.textContent = 'Sending\u2026'; qe.className='qerr hidden';
+      fetch('/api/careers/onboarding/' + encodeURIComponent(token) + '/query', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: msg }) })
+        .then(function(r){ return r.json(); })
+        .then(function(res){
+          qsend.disabled=false; qsend.textContent='Send question';
+          if (res && res.query){ input.value=''; QUERIES.push(res.query); renderQueries(QUERIES); }
+          else { qe.textContent=(res && res.error)||'Could not send.'; qe.className='qerr'; }
+        })
+        .catch(function(){ qsend.disabled=false; qsend.textContent='Send question'; qe.textContent='Network error. Please try again.'; qe.className='qerr'; });
+    });
   }
 
   function pickFile(key){

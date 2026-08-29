@@ -4586,7 +4586,7 @@ function DealsTab({ lead, config, user, onChange }) {
       {/* Gateway + reference, captured whenever an admin confirms a payment. */}
       {payFor && (
         <div className="fixed inset-0 bg-black/40 z-50 flex justify-end" onClick={() => setPayFor(null)}>
-          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+          <div className="bg-white w-full max-w-[540px] h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
             <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
             <div className="px-6 py-4 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
               <div>
@@ -6184,7 +6184,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       {payFor && (
         <div className="fixed inset-0 bg-black/40 z-50 flex justify-end"
           onClick={() => setPayFor(null)}>
-          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+          <div className="bg-white w-full max-w-[540px] h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
             <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
             <div className="px-6 py-4 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
               <div>

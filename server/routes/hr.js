@@ -5251,6 +5251,9 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
       onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '',
       hr: hr ? { id: hr.id, name: hr.name, phone: hr.phone || '', email: hr.email || '' } : null,
       convertedEmployeeId: onb.convertedEmployeeId || null,
+      queries: (onb.queries || []).map((q) => ({ id: q.id, message: q.message, at: q.at, reply: q.reply || null, repliedAt: q.repliedAt || null, repliedByName: q.repliedByName || null })),
+      hrStaff: (await HrUser.findAll({ where: { active: true } })).filter((u) => ['hr', 'recruiter', 'manager'].includes(u.type) || u.isHrManager || u.isHrAdmin).map((u) => ({ id: u.id, name: u.name })),
+      physicalCollectedDate: onb.physicalCollectedDate || null,
     });
   } catch (e) { next(e); }
 });
@@ -5260,6 +5263,56 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
 // onboarding link/token is created and no welcome/reminder email is sent, but
 // the rest of the onboarding (checklist, senior notice, reporting details,
 // welcome-aboard, KPI/KRA) proceeds normally. Toggleable.
+// Reactivate an expired onboarding link — grants the candidate access again
+// until a chosen date (defaults to the joining date). HR uses this when a
+// candidate needs a little more time to submit documents.
+router.post('/candidates/:id/onboarding/reactivate', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const onb = row.onboarding || onboardingInit();
+    if (!onb.token) onb.token = crypto.randomBytes(16).toString('hex');
+    const until = String((req.body && req.body.until) || '').slice(0, 10);
+    onb.reactivatedUntil = until || (row.offer && row.offer.joiningDate ? String(row.offer.joiningDate).slice(0, 10) : new Date(Date.now() + 330 * 60000 + 3 * 86400000).toISOString().slice(0, 10));
+    row.onboarding = onb; row.changed('onboarding', true);
+    pushTimeline(row, { type: 'onboarding', text: `Onboarding link reactivated until ${onb.reactivatedUntil} by ${req.hrActor.name}.`, by: req.hrActor.name });
+    await row.save();
+    res.json({ ok: true, reactivatedUntil: onb.reactivatedUntil });
+  } catch (e) { next(e); }
+});
+
+// HR replies to a candidate's onboarding query. Saves the reply and emails the
+// candidate their original question + the answer (Application-thank-you layout).
+router.post('/candidates/:id/onboarding/query/:queryId/reply', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const reply = String((req.body && req.body.reply) || '').trim();
+    if (!reply) return res.status(400).json({ error: 'Please type a reply.' });
+    const onb = row.onboarding || {};
+    const q = (onb.queries || []).find((x) => x.id === req.params.queryId);
+    if (!q) return res.status(404).json({ error: 'Query not found.' });
+    q.reply = reply.slice(0, 4000); q.repliedAt = new Date().toISOString(); q.repliedById = req.hrActor.id; q.repliedByName = req.hrActor.name;
+    row.onboarding = onb; row.changed('onboarding', true);
+    await row.save();
+    // Email the candidate their question + the answer.
+    try {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+      const mailbox = mailboxEmail(s);
+      const to = (onb.fields && onb.fields.email) || row.email;
+      if (token && mailbox && to) {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const bodyHtml = hrEmail.onboardingQueryReply({ candidateName: (onb.fields && onb.fields.name) || row.name, question: q.message, answer: reply, hrName: req.hrActor.name });
+        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: 'Response to your onboarding question — Qtonix', bodyHtml });
+        q.emailedAt = new Date().toISOString(); row.changed('onboarding', true); await row.save();
+      }
+    } catch (e) { /* reply saved even if email fails */ }
+    res.json({ ok: true, query: q });
+  } catch (e) { next(e); }
+});
+
 router.post('/candidates/:id/onboarding/docs-physical', requireHrAccess, async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
@@ -5291,8 +5344,16 @@ router.post('/candidates/:id/onboarding/docs-physical', requireHrAccess, async (
       onb.token = null; // no public onboarding page
       onb.welcomeEmailSentAt = onb.welcomeEmailSentAt || 'physical'; // suppress welcome
       onb.reminderSentAt = onb.reminderSentAt || 'physical'; // suppress reminder
-      onb.verifiedById = req.hrActor.id; onb.verifiedByName = req.hrActor.name;
-      pushTimeline(row, { type: 'onboarding', text: `Documents verified physically by ${req.hrActor.name} — no onboarding link sent; checklist and other automations continue.`, by: req.hrActor.name });
+      // Who collected the documents, and when (HR-provided).
+      onb.physicalCollectedDate = String((b.date || '')).slice(0, 10) || new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      if (b.verifiedById) {
+        const verifier = await HrUser.findByPk(b.verifiedById);
+        onb.verifiedById = b.verifiedById;
+        onb.verifiedByName = verifier ? verifier.name : req.hrActor.name;
+      } else {
+        onb.verifiedById = req.hrActor.id; onb.verifiedByName = req.hrActor.name;
+      }
+      pushTimeline(row, { type: 'onboarding', text: `Documents verified physically (collected ${onb.physicalCollectedDate}) by ${onb.verifiedByName}, recorded by ${req.hrActor.name} — no onboarding link sent; checklist and other automations continue.`, by: req.hrActor.name });
     }
     row.onboarding = onb; row.changed('onboarding', true);
     await row.save();
@@ -6215,6 +6276,7 @@ router.post('/settings/test-emails', requireHrAccess, requireHrAdmin, async (req
       ['Reporting details', `Your first day at Qtonix — reporting details`, hrEmail.onboardingReportingDetails({ candidateName: 'Ava Thompson', role, joiningDateText: 'Monday, 8 September 2026', reportingTime: '09:30 AM', officeAddress: 'Plot 12, Info City, Bhubaneswar 751024', contactPerson: 'Anshika Priyadarshini', contactPhone: '+91 90400 06123', signature: sig })],
       ['Welcome aboard (joined)', `Welcome to Qtonix, Ava! 🎉`, hrEmail.welcomeJoinee({ employeeName: 'Ava Thompson', designation: role, department: 'Engineering', branch: 'Bhubaneswar' })],
       ['KPI & KRA', `Your KPIs & KRAs at Qtonix, Ava`, hrEmail.onboardingKpiKra({ employeeName: 'Ava Thompson', role, bodyHtml: '<p style="margin:0 0 14px;line-height:1.6;">We\u2019re excited to have you! Here are your focus areas for the first few months.</p><p style="margin:0 0 8px;"><strong>Key Result Areas</strong></p><ul><li>Deliver assigned frontend features on schedule</li><li>Maintain code quality and reviews</li><li>Collaborate with design & backend</li></ul><p style="margin:12px 0 8px;"><strong>Key Performance Indicators</strong></p><ul><li>90%+ sprint commitments met</li><li>&lt;2 post-release defects per feature</li><li>Positive peer-review feedback</li></ul>', signature: sig })],
+      ['Onboarding question reply', `Response to your onboarding question — Qtonix`, hrEmail.onboardingQueryReply({ candidateName: 'Ava Thompson', question: 'What documents should I bring on my first day?', answer: 'Please bring your original PAN, Aadhaar, and degree certificates. Photocopies will be collected at the office.', hrName: 'Anshika Priyadarshini' })],
     ];
     const sentList = [], failed = [];
     for (const [label, subject, html] of samples) {

@@ -302,6 +302,28 @@ router.get('/onboarding/:token', async (req, res, next) => {
     const cand = await findOnboardingByToken(req.params.token);
     if (!cand) return res.status(404).json({ error: 'This onboarding link is not valid.' });
     const onb = cand.onboarding || {};
+    const offer = cand.offer || {};
+    // The link expires the day BEFORE joining (documents should be in by then).
+    // HR can reactivate it from the onboarding panel if the candidate needs more
+    // time. An expired link shows a friendly message instead of the form.
+    const toYmd = (v) => { if (!v) return ''; const s = String(v); let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`; m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); if (m) { let a = Number(m[1]), b = Number(m[2]); const y = m[3]; let d, mo; if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; } return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; } const dd = new Date(s); return isNaN(dd.getTime()) ? '' : dd.toISOString().slice(0, 10); };
+    const jd = toYmd(offer.joiningDate);
+    if (jd && !onb.reactivatedUntil) {
+      const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      // Expiry day = joining date minus 1 day. Expired once today >= expiry day.
+      const expiryMs = new Date(jd + 'T00:00:00Z').getTime() - 86400000;
+      const todayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
+      if (todayMs >= expiryMs && onb.status !== 'submitted') {
+        return res.json({ expired: true, candidateName: cand.name });
+      }
+    }
+    // A manual reactivation window (HR-granted) overrides expiry until its date.
+    if (onb.reactivatedUntil) {
+      const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      if (new Date(istTodayStr + 'T00:00:00Z').getTime() > new Date(String(onb.reactivatedUntil).slice(0, 10) + 'T00:00:00Z').getTime() && onb.status !== 'submitted') {
+        return res.json({ expired: true, candidateName: cand.name });
+      }
+    }
     if (onb.status === 'submitted') return res.json({ submitted: true, candidateName: cand.name });
     const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
     // HR contact = job's assigned HR, else the recruiter.
@@ -309,7 +331,6 @@ router.get('/onboarding/:token', async (req, res, next) => {
     const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
     if (ids.length) hr = await HrUser.findByPk(ids[0]);
     if (!hr && cand.recruiterId) hr = await HrUser.findByPk(cand.recruiterId);
-    const offer = cand.offer || {};
     const experienced = (job && job.experienceType && job.experienceType !== 'freshers');
     res.json({
       submitted: false,
@@ -324,7 +345,27 @@ router.get('/onboarding/:token', async (req, res, next) => {
         name: cand.name || '', email: cand.email || '', phone: cand.phone || '',
       },
       draft: onb.draft || null,
+      queries: (onb.queries || []).map((q) => ({ id: q.id, message: q.message, at: q.at, reply: q.reply || null, repliedAt: q.repliedAt || null })),
     });
+  } catch (e) { next(e); }
+});
+
+// Public: candidate posts a question/query. Stored on the onboarding blob and
+// surfaced to HR in Core HR → Onboarding for a reply.
+router.post('/onboarding/:token/query', async (req, res, next) => {
+  try {
+    const cand = await findOnboardingByToken(req.params.token);
+    if (!cand) return res.status(404).json({ error: 'This onboarding link is not valid.' });
+    const msg = String((req.body && req.body.message) || '').trim();
+    if (!msg) return res.status(400).json({ error: 'Please type your question.' });
+    if (msg.length > 2000) return res.status(400).json({ error: 'Your message is too long.' });
+    const onb = cand.onboarding || {};
+    onb.queries = Array.isArray(onb.queries) ? onb.queries : [];
+    const q = { id: 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: msg, at: new Date().toISOString(), reply: null, repliedAt: null };
+    onb.queries.push(q);
+    cand.onboarding = onb; cand.changed('onboarding', true);
+    await cand.save();
+    res.json({ ok: true, query: { id: q.id, message: q.message, at: q.at, reply: null, repliedAt: null } });
   } catch (e) { next(e); }
 });
 
