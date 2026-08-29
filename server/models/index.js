@@ -1586,7 +1586,11 @@ const HrCandidate = sequelize.define('HrCandidate', {
   onboarding: { type: DataTypes.JSON, defaultValue: null },
   aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
   resumeMatch: { type: DataTypes.JSON, defaultValue: null }, // { level:'high'|'medium'|'low', score, reason, scoredAt }
-}, { tableName: 'hr_candidates' });
+}, { tableName: 'hr_candidates', indexes: [
+  { name: 'idx_hr_cand_blacklisted', fields: ['blacklisted'] },
+  { name: 'idx_hr_cand_stage', fields: ['stage'] },
+  { name: 'idx_hr_cand_job', fields: ['jobPostId'] },
+] });
 HrCandidate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 // In-app notifications for HR users (mentions, new applications, interview reminders).

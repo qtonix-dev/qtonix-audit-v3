@@ -206,7 +206,7 @@ async function notifySurveyCompleted(survey, user) {
     recipientName: user.name, surveyName: survey.name,
     signature: { name: 'Qtonix People Team', title: 'Human Resources · Qtonix', email: mailbox },
   });
-  await gmail.sendMessage(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: user.email, subject: `Thanks for completing ${survey.name}`, bodyHtml });
+  await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: user.email, subject: `Thanks for completing ${survey.name}`, bodyHtml }, { type: 'survey_done' });
 }
 
 const TEST_PERIOD = 'test';
@@ -298,7 +298,7 @@ async function notifySurveyLaunched(survey) {
         recipientName: u.name, surveyName: survey.name, description: survey.description,
         deadlineText: '', surveyUrl, signature: sig,
       });
-      await gmail.sendMessage(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: u.email, subject: `Please complete: ${survey.name}`, bodyHtml });
+      await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: `"Qtonix People Team" <${mailbox}>`, to: u.email, subject: `Please complete: ${survey.name}`, bodyHtml }, { type: 'survey_launch' });
     } catch (e) { console.error('[survey] email to', u.email, 'failed:', e.message); }
   }
 }

@@ -83,6 +83,7 @@ async function resolvePanelists(panelIds) {
   return out;
 }
 const gmail = require('../services/gmail');
+const { sendAndLog } = require('../services/hrEmailLog');
 const { requireHrAccess, requireScheduler, canViewInternal } = require('../middleware/hrAuth');
 
 async function hrMailbox() {
@@ -260,14 +261,14 @@ router.post('/candidates/:id/emails/send', requireHrAccess, async (req, res, nex
     const to = b.to || cand.email;
     if (!to) return res.status(400).json({ error: 'No recipient email.' });
     const attachments = Array.isArray(b.attachments) ? b.attachments : [];
-    const sent = await gmail.sendMessage(s, token, email, {
+    const sent = await sendAndLog(s, token, email, {
       from: email, to, cc: b.cc, bcc: b.bcc,
       subject: b.subject || `Regarding your application`,
       bodyHtml: b.body || '',
       inReplyTo: b.inReplyTo || null,
       threadId: b.threadId || null,
       attachments,
-    });
+    }, { type: 'hr_recruiter_reply' });
     // Log to the candidate timeline.
     const t = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
     t.unshift({ id: `t${Date.now()}`, type: 'email', text: `${req.hrActor.name} emailed the candidate: “${(b.subject || '').slice(0, 80)}”.`, by: req.hrActor.name, at: new Date().toISOString() });
@@ -380,7 +381,7 @@ router.post('/candidates/:id/schedule-interview', requireHrAccess, requireSchedu
     const emailed = [];
     const failed = [];
     const sendTo = async (to, bodyHtml, subject, cc) => {
-      try { await gmail.sendMessage(s, token, email, { from: email, to, cc: cc || undefined, bodyHtml, subject, attachments: buildIcs(to) }); emailed.push(to); }
+      try { await sendAndLog(s, token, email, { from: email, to, cc: cc || undefined, bodyHtml, subject, attachments: buildIcs(to) }, { type: 'hr_interview_invite' }); emailed.push(to); }
       catch (e) { console.error('[interview] email to', to, 'failed:', e && (e.response && e.response.data ? JSON.stringify(e.response.data) : e.message)); failed.push(to); }
     };
 
@@ -487,7 +488,7 @@ router.post('/candidates/:id/interview/:ivId/reschedule', requireHrAccess, requi
           recipientName, isPanel, candidateName: cand.name, role: roleTitle, roundLabel: iv.roundLabel || '',
           whenText: when, durationMins, mode: iv.mode || 'online', meetLink: iv.meetLink, notes: iv.notes || '', signature: sig,
         });
-        try { await gmail.sendMessage(s, token, email, { from: email, to, cc: (!isPanel ? rcandCc : undefined), bodyHtml, subject: `Interview rescheduled${roleTitle ? ` — ${roleTitle}` : ''}`, attachments: buildIcs() }); emailed.push(to); }
+        try { await sendAndLog(s, token, email, { from: email, to, cc: (!isPanel ? rcandCc : undefined), bodyHtml, subject: `Interview rescheduled${roleTitle ? ` — ${roleTitle}` : ''}`, attachments: buildIcs() }, { type: 'hr_interview_reschedule' }); emailed.push(to); }
         catch (e) { console.error('[interview] reschedule email to', to, 'failed:', e.message); failed.push(to); }
       };
       if (cand.email) await sendReschedule(cand.email, cand.name, false);

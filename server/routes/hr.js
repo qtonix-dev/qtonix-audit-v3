@@ -48,6 +48,14 @@ function mailboxEmail(s) {
   return (def && def.email) || '';
 }
 
+// Send an HR email AND record it to CrmEmailLog so it shows in Admin → Emails
+// (last activity + the activity popup). Delegates to the shared hrEmailLog
+// service; each send gets a unique dedupeKey so repeat sends are all logged.
+async function sendHrEmailLogged(s, token, mailbox, msg, opts = {}) {
+  const { sendAndLog } = require('../services/hrEmailLog');
+  return sendAndLog(s, token, mailbox, msg, opts);
+}
+
 // Pre-shortlist pipeline stages — moving INTO one of these never triggers the
 // "resume shortlisted" email. Anything beyond these (interview, offered, hired,
 // or a custom later stage) means the candidate has passed the Contacted stage.
@@ -69,7 +77,7 @@ async function sendShortlistEmail(row, hrActor) {
     const sig = await rejectSignature(hrActor, mailbox);
     const bodyHtml = hrEmail.shortlistedEmail({ candidateName: row.name, role: job ? job.title : '', signature: sig });
     const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml });
+    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_shortlisted' });
     row.shortlistEmailSent = true;
     return true;
   } catch (e) { console.error('[shortlist] email failed:', e.message); return false; }
@@ -1732,14 +1740,21 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       if (canConfirm) {
         const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
         const hired = await HrCandidate.findAll({ where: { blacklisted: false } });
-        for (const c of hired) {
+        // Pre-filter on the cheap in-memory checks first, then batch-load the
+        // jobs for the survivors in ONE query (avoids a findByPk per candidate).
+        const candidates = hired.filter((c) => {
           const offer = c.offer || {};
-          if (!offer.joiningDate) continue;
-          if (offer.joinedConfirmed || offer.notJoined) continue;
+          if (!offer.joiningDate) return false;
+          if (offer.joinedConfirmed || offer.notJoined) return false;
+          return String(offer.joiningDate).slice(0, 10) <= istToday; // joining day reached
+        });
+        const jobIds = [...new Set(candidates.map((c) => c.jobPostId).filter(Boolean))];
+        const jobsById = {};
+        if (jobIds.length) { (await HrJobPost.findAll({ where: { id: jobIds } })).forEach((j) => { jobsById[j.id] = j; }); }
+        for (const c of candidates) {
+          const offer = c.offer || {};
           const jd = String(offer.joiningDate).slice(0, 10);
-          if (jd > istToday) continue; // not yet the joining day
-          // Scope to this HR unless they're an admin/all-branch manager.
-          const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
+          const job = c.jobPostId ? jobsById[c.jobPostId] : null;
           const assigned = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
           const isMine = req.isHrAdmin || (req.isHrManager && (me.branchScope === 'all' || !me.branch || c.branch === me.branch || (job && (job.locations || []).includes(me.branch)))) || assigned.includes(me.id) || c.recruiterId === me.id;
           if (!isMine) continue;
@@ -4004,7 +4019,7 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
           // Wrap the HR-reviewed draft body in the branded rejection template.
           const bodyHtml = hrEmail.rejectionEmail({ role: job ? job.title : '', bodyHtml: String(req.body.body).slice(0, 8000), signature: sig });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] }, { type: 'hr_reject_or_custom' });
           emailed = true;
           pushTimeline(row, { type: 'rejection', text: `Rejection email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
           await row.save();
@@ -4298,7 +4313,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
             deadlineText: `${deadlineText} IST`, uploadUrl, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_assignment' });
           emailed = true;
         }
       } catch (e) { console.error('[task] assign email failed:', e.message); }
@@ -4373,7 +4388,7 @@ router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, n
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Updated assessment task details${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Updated assessment task details${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_updated' });
           emailed = true;
         }
       } catch (e) { console.error('[task] edit email failed:', e.message); }
@@ -4420,7 +4435,7 @@ router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (r
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_reactivate' });
           emailed = true;
         }
       } catch (e) { console.error('[task] reactivate email failed:', e.message); }
@@ -4515,7 +4530,7 @@ router.post('/candidates/:id/task/:taskId/request-info', requireHrAccess, async 
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Additional information requested${job ? ` — ${job.title}` : ''}`, bodyHtml });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Additional information requested${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_addinfo' });
           emailed = true;
         }
       } catch (e) { console.error('[task] request-info email failed:', e.message); }
@@ -5165,34 +5180,33 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
     const toYmd = normalizeJoiningYmd;
-    const out = [];
+    // First pass: keep only candidates that belong on the board (cheap checks).
+    const keep = [];
     for (const c of rows) {
       const offer = c.offer || {};
       if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
-      // Only actual hired candidates belong on the onboarding board.
       if (!isHiredCandidate(c)) continue;
-      const rawJd = offer.joiningDate || '';
-      const jd = toYmd(rawJd);
-      // Date rule: exclude ONLY when we can confidently parse the joining date
-      // AND it is strictly in the past (they've already joined/not — handled via
-      // the "Did they join?" review). In every other case — no date, or a date
-      // we can't confidently place in the past — we SHOW the candidate so HR can
-      // manage them. Showing is always safe; hiding is what caused the trouble.
+      const jd = toYmd(offer.joiningDate || '');
       if (jd) {
         const jdMs = new Date(jd + 'T00:00:00Z').getTime();
-        if (jdMs < istTodayMs) continue; // strictly before today → drop
-        // jd === today or future → keep (today's joiners can still be managed here)
+        if (jdMs < istTodayMs) continue; // confidently past → drop
       }
-      // Lazy-init: a candidate hired via the normal offer→accept flow has a
-      // joining date but may not yet have an onboarding blob (older records, or
-      // paths that didn't create one). Create it now so onboarding can begin.
-      if (!c.onboarding) {
-        c.onboarding = onboardingInit();
-        c.changed('onboarding', true);
-        await c.save();
-      }
+      keep.push(c);
+    }
+    // Lazy-init onboarding blobs for survivors, then persist them in parallel
+    // (instead of awaiting a save per row inside the loop).
+    const toSave = [];
+    for (const c of keep) { if (!c.onboarding) { c.onboarding = onboardingInit(); c.changed('onboarding', true); toSave.push(c); } }
+    if (toSave.length) await Promise.all(toSave.map((c) => c.save()));
+    // Batch-load every needed job in ONE query.
+    const jobIds = [...new Set(keep.map((c) => c.jobPostId).filter(Boolean))];
+    const jobsById = {};
+    if (jobIds.length) { (await HrJobPost.findAll({ where: { id: jobIds } })).forEach((j) => { jobsById[j.id] = j; }); }
+    const out = [];
+    for (const c of keep) {
+      const offer = c.offer || {};
       const onb = c.onboarding;
-      const job = c.jobPostId ? await HrJobPost.findByPk(c.jobPostId) : null;
+      const job = c.jobPostId ? jobsById[c.jobPostId] : null;
       const isSales = /sales/i.test(String((job && job.department) || ''));
       const tasks = (onb.hrTasks || []).filter((t) => !t.salesOnly || isSales);
       const doneCount = tasks.filter((t) => t.done).length;
@@ -5305,7 +5319,7 @@ router.post('/candidates/:id/onboarding/query/:queryId/reply', requireHrAccess, 
         const gmail = require('../services/gmail');
         const hrEmail = require('../services/hrEmailTemplate');
         const bodyHtml = hrEmail.onboardingQueryReply({ candidateName: (onb.fields && onb.fields.name) || row.name, question: q.message, answer: reply, hrName: req.hrActor.name });
-        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: 'Response to your onboarding question — Qtonix', bodyHtml });
+        await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to, subject: 'Response to your onboarding question — Qtonix', bodyHtml }, { type: 'onboarding_query_reply' });
         q.emailedAt = new Date().toISOString(); row.changed('onboarding', true); await row.save();
       }
     } catch (e) { /* reply saved even if email fails */ }
@@ -5389,7 +5403,7 @@ router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (r
       onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '', signature: sig,
     });
     const cc = []; if (hr && hr.email) cc.push(hr.email);
-    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Welcome to Qtonix, ${String(row.name).split(' ')[0]}! \u2013 Next Steps`, bodyHtml });
+    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Welcome to Qtonix, ${String(row.name).split(' ')[0]}! \u2013 Next Steps`, bodyHtml }, { type: 'onboarding_welcome' });
     onb.welcomeEmailSentAt = new Date().toISOString();
     if (!onb.activatedAt) onb.activatedAt = onb.welcomeEmailSentAt;
     row.onboarding = onb; row.changed('onboarding', true);
@@ -5536,7 +5550,7 @@ router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (r
       const empName = (onb.fields && onb.fields.name) || row.name;
       const bodyHtml = hrEmail.welcomeJoinee({ employeeName: empName, designation: job ? job.title : '', department: job ? job.department : '', branch: (job && job.locations && job.locations[0]) || '' });
       const to = (onb.fields && onb.fields.email) || row.email;
-      await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: `Welcome to Qtonix, ${String(empName).split(' ')[0]}! 🎉`, bodyHtml });
+      await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to, subject: `Welcome to Qtonix, ${String(empName).split(' ')[0]}! 🎉`, bodyHtml }, { type: 'onboarding_welcome_aboard' });
       task.meta = { ...(task.meta || {}), sentAt: nowIso };
       task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
       onb.welcomeAboardSentAt = nowIso;
@@ -5622,7 +5636,7 @@ router.post('/candidates/:id/onboarding/kpi-send', requireHrAccess, async (req, 
     const gmail = require('../services/gmail');
     const hrEmail = require('../services/hrEmailTemplate');
     const bodyHtml = hrEmail.onboardingKpiKra({ employeeName: empName, role: job ? job.title : '', bodyHtml: String(b.body) });
-    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to, subject: `Your KPIs & KRAs at Qtonix, ${String(empName).split(' ')[0]}`, bodyHtml });
+    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to, subject: `Your KPIs & KRAs at Qtonix, ${String(empName).split(' ')[0]}`, bodyHtml }, { type: 'onboarding_kpi_kra' });
     // mark the kpi_kra task done
     if (Array.isArray(onb.hrTasks)) {
       onb.hrTasks = onb.hrTasks.map((t) => (t.id === 'kpi_kra' ? { ...t, done: true, doneAt: new Date().toISOString(), doneById: req.hrActor.id } : t));

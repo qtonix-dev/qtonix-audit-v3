@@ -257,7 +257,7 @@ router.post('/task/:token/submit', async (req, res, next) => {
         const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
         if (ids.length) { const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } }); staff.forEach((u) => { if (u.email) ccSet.add(u.email.toLowerCase()); }); }
         ccSet.delete(String(cand.email).toLowerCase()); ccSet.delete(String(mailbox).toLowerCase());
-        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, cc: Array.from(ccSet), subject: isAdditional ? `We received your additional information${job ? ` — ${job.title}` : ''}` : `We received your task submission${job ? ` — ${job.title}` : ''}`, bodyHtml });
+        await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: mailbox, to: cand.email, cc: Array.from(ccSet), subject: isAdditional ? `We received your additional information${job ? ` — ${job.title}` : ''}` : `We received your task submission${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_received' });
       } catch (e) { console.error('[task] thank-you email failed:', e.message); }
     }
 
@@ -289,7 +289,25 @@ router.post('/task/:token/submit', async (req, res, next) => {
 
 // ===== Candidate onboarding (document collection before joining) ===========
 async function findOnboardingByToken(token) {
-  const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
+  if (!token) return null;
+  // Fast path: query the JSON column directly (works on MySQL). The token is a
+  // 32-char hex string, so a LIKE on the serialized JSON is safe and lets the
+  // database do the filtering instead of loading every candidate row.
+  try {
+    const { sequelize } = require('../models');
+    const dialect = sequelize.getDialect();
+    if (dialect === 'mysql') {
+      const hit = await HrCandidate.findOne({
+        where: sequelize.and(
+          { blacklisted: false },
+          sequelize.where(sequelize.fn('JSON_UNQUOTE', sequelize.fn('JSON_EXTRACT', sequelize.col('onboarding'), sequelize.literal("'$.token'"))), token)
+        ),
+      });
+      return hit || null;
+    }
+  } catch (e) { /* fall through to the scan below */ }
+  // Fallback (SQLite / anything else): scan, but only pull the columns we need.
+  const rows = await HrCandidate.findAll({ where: { blacklisted: false }, attributes: ['id', 'name', 'email', 'phone', 'jobPostId', 'recruiterId', 'stage', 'offer', 'onboarding'] });
   for (const c of rows) {
     if (c.onboarding && c.onboarding.token === token) return c;
   }
@@ -486,7 +504,7 @@ router.post('/onboarding/:token/submit', async (req, res, next) => {
         const gmail = require('../services/gmail');
         const hrEmail = require('../services/hrEmailTemplate');
         const bodyHtml = hrEmail.onboardingReceived ? hrEmail.onboardingReceived({ candidateName: cand.name }) : `<p>Hi ${cand.name},</p><p>We've received your onboarding documents. Thank you!</p>`;
-        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, subject: 'We received your onboarding documents — Qtonix', bodyHtml });
+        await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: mailbox, to: cand.email, subject: 'We received your onboarding documents — Qtonix', bodyHtml }, { type: 'onboarding_received' });
       }
     } catch (e) { console.error('[onboarding] confirmation email failed:', e.message); }
 
@@ -514,7 +532,7 @@ async function sendApplicationConfirmation(cand, job) {
     const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
     if (ids.length) { const staff = await HrUser.findAll({ where: { id: { [Op.in]: ids } } }); cc = staff.map((u) => u.email).filter(Boolean).filter((e) => e.toLowerCase() !== String(cand.email).toLowerCase() && e.toLowerCase() !== String(mailbox).toLowerCase()); }
   } catch {}
-  try { await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, cc, subject: `We received your application — ${job.title}`, bodyHtml }); } catch (e) { console.error('[careers] confirmation email failed:', e.message); }
+  try { await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: mailbox, to: cand.email, cc, subject: `We received your application — ${job.title}`, bodyHtml }, { type: 'hr_application_thankyou' }); } catch (e) { console.error('[careers] confirmation email failed:', e.message); }
 }
 
 // Resolve the recruitment mailbox address: the legacy single hrMailbox if
@@ -577,7 +595,7 @@ async function notifyNewApplication(cand, job) {
       jobLocation, source: 'Careers page',
       viewUrl: appUrl ? `${appUrl}/hr/recruitment` : '',
     });
-    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: mailbox, subject: `New application — ${job.title} (${cand.name})`, bodyHtml });
+    await require('../services/hrEmailLog').sendAndLog(s, token, mailbox, { from: mailbox, to: mailbox, subject: `New application — ${job.title} (${cand.name})`, bodyHtml }, { type: 'hr_application_notice' });
   } catch (e) { console.error('[careers] internal notice email failed:', e.message); }
 }
 
