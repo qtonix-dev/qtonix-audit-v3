@@ -5207,8 +5207,15 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
         tasksDone: doneCount, tasksTotal: tasks.length,
       });
     }
-    // Soonest joining first.
-    out.sort((a, b) => String(a.joiningDate).localeCompare(String(b.joiningDate)));
+    // Soonest upcoming joining date first; candidates without a date go last.
+    out.sort((a, b) => {
+      const ax = a.joiningDate ? String(normalizeJoiningYmd(a.joiningDate)) : '';
+      const bx = b.joiningDate ? String(normalizeJoiningYmd(b.joiningDate)) : '';
+      if (ax && bx) return ax.localeCompare(bx);
+      if (ax) return -1;
+      if (bx) return 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
     res.json({ candidates: out });
   } catch (e) { next(e); }
 });
@@ -5219,6 +5226,14 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
     if (!row.onboarding) { row.onboarding = onboardingInit(); row.changed('onboarding', true); await row.save(); }
     const onb = row.onboarding;
+    // Self-heal: if the onboarding link went missing (e.g. an earlier physical-
+    // verify/undo left the token blank) and the candidate isn't currently marked
+    // physically verified, regenerate the token so the link works again.
+    if (!onb.token && !onb.docsPhysical) {
+      onb.token = crypto.randomBytes(16).toString('hex');
+      row.onboarding = onb; row.changed('onboarding', true);
+      await row.save();
+    }
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     let hr = null;
     const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
@@ -5234,7 +5249,7 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
       offer: row.offer || {},
       onboarding: onb,
       onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '',
-      hr: hr ? { id: hr.id, name: hr.name, phone: hr.phone || '' } : null,
+      hr: hr ? { id: hr.id, name: hr.name, phone: hr.phone || '', email: hr.email || '' } : null,
       convertedEmployeeId: onb.convertedEmployeeId || null,
     });
   } catch (e) { next(e); }
@@ -5252,9 +5267,19 @@ router.post('/candidates/:id/onboarding/docs-physical', requireHrAccess, async (
     const b = req.body || {};
     const onb = row.onboarding || onboardingInit();
     if (b.on === false) {
-      // Undo physical verification.
-      if (onb.docsPhysical) { onb.docsPhysical = false; onb.docsComplete = false; if (onb.status === 'submitted' && onb.physicalMarkedStatus) onb.status = onb.physicalMarkedStatus; }
-      pushTimeline(row, { type: 'onboarding', text: `Physical document verification undone by ${req.hrActor.name}.`, by: req.hrActor.name });
+      // Undo physical verification: restore the public onboarding page (new
+      // token) and the previous status, and clear the physical email markers so
+      // the welcome/reminder can be sent again.
+      if (onb.docsPhysical) {
+        onb.docsPhysical = false;
+        onb.docsComplete = false;
+        if (onb.status === 'submitted' && onb.physicalMarkedStatus) onb.status = onb.physicalMarkedStatus;
+        if (!onb.token) onb.token = crypto.randomBytes(16).toString('hex'); // restore the link
+        if (onb.welcomeEmailSentAt === 'physical') onb.welcomeEmailSentAt = null;
+        if (onb.reminderSentAt === 'physical') onb.reminderSentAt = null;
+        onb.verifiedById = null; onb.verifiedByName = null;
+      }
+      pushTimeline(row, { type: 'onboarding', text: `Physical document verification undone by ${req.hrActor.name} — onboarding link restored.`, by: req.hrActor.name });
     } else {
       // Mark verified in person. Suppress the public page + welcome/reminder
       // emails by clearing the token and setting the one-shot email markers.

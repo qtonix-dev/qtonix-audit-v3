@@ -3464,6 +3464,19 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
     return true;
   });
 
+  // In the Hired view, order by soonest upcoming joining date first; hired
+  // candidates without a joining date go to the end.
+  if (isHiredView) {
+    const jkey = (c) => {
+      const v = c.offer && c.offer.joiningDate; if (!v) return '';
+      const s = String(v); let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+      if (m) { let a = Number(m[1]), b = Number(m[2]); const y = m[3]; let d, mo; if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; } return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+      const dd = new Date(s); return isNaN(dd.getTime()) ? '' : dd.toISOString().slice(0, 10);
+    };
+    filtered.sort((a, b) => { const ax = jkey(a), bx = jkey(b); if (ax && bx) return ax.localeCompare(bx); if (ax) return -1; if (bx) return 1; return 0; });
+  }
+
   // Client-side pagination (mirrors the CRM lead list).
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const curPage = Math.min(page, pages);
@@ -3589,7 +3602,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
                           {isRejectedView && <CandIconBtn icon="info" label="Rejection reason" onClick={() => setRejReason(c)} />}
                           {isHiredView
-                            ? <><CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} /><CandIconBtn icon="clipboard" label="Onboarding" onClick={() => setOnbFor(c)} /></>
+                            ? <><CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} /></>
                             : <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />}
                           {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
                         </div>
@@ -3610,7 +3623,6 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
       {hiredOfferFor && <HiredOfferModal candidate={hiredOfferFor} onClose={() => setHiredOfferFor(null)} onSaved={() => { setHiredOfferFor(null); load(q); }} />}
       {notJoinedFor && <NotJoinedModal candidate={notJoinedFor} onClose={() => setNotJoinedFor(null)} onSaved={() => { setNotJoinedFor(null); load(q); }} />}
       {manageHireFor && <ManageHireModal candidate={manageHireFor} onClose={() => setManageHireFor(null)} onSaved={() => { setManageHireFor(null); load(q); }} />}
-      {onbFor && <OnboardingPanelModal candidate={onbFor} isAdmin={isAdmin} onClose={() => setOnbFor(null)} onChanged={() => load(q)} />}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
   );
@@ -3763,7 +3775,7 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
 // the employee record in HRMS once documents are in.
 // Core HR → Onboarding: a central list of every candidate currently in
 // onboarding, each opening the full onboarding panel.
-function OnboardingListPage({ isAdmin }) {
+function OnboardingListPage({ isAdmin, onOpenCandidate }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
   const [openFor, setOpenFor] = useState(null);
@@ -3864,12 +3876,12 @@ function OnboardingListPage({ isAdmin }) {
           </table>
         </div>
       )}
-      {openFor && <OnboardingPanelModal candidate={openFor} isAdmin={isAdmin} onClose={() => setOpenFor(null)} onChanged={load} />}
+      {openFor && <OnboardingPanelModal candidate={openFor} isAdmin={isAdmin} onClose={() => setOpenFor(null)} onChanged={load} onOpenCandidate={onOpenCandidate} />}
     </div>
   );
 }
 
-function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
+function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCandidate }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
@@ -3906,6 +3918,19 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
     setBusy('');
   };
 
+  // Joined / Not-joined — available any time from the drawer.
+  const [njMode, setNjMode] = useState(''); // '' | 'no'
+  const [njNotes, setNjNotes] = useState('');
+  const confirmJoined = async (joined) => {
+    if (!joined && !njNotes.trim()) { setErr('Please add a note explaining why they didn’t join.'); return; }
+    setBusy('join'); setErr('');
+    try {
+      await hrApi(`/candidates/${candidate._id}/join-confirm`, { method: 'POST', body: JSON.stringify({ joined, reason: joined ? '' : njNotes.trim() }) });
+      onChanged && onChanged();
+      onClose(); // candidate leaves the onboarding list (joined→employee / not→blacklist)
+    } catch (e) { setErr(e.message); setBusy(''); }
+  };
+
   const copyLink = () => { if (data && data.onboardingUrl) { navigator.clipboard.writeText(data.onboardingUrl); setBusy('copied'); setTimeout(() => setBusy(''), 1500); } };
   const markPhysical = async (on) => {
     setBusy('physical'); setErr('');
@@ -3939,7 +3964,7 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-[120] flex justify-end" onClick={onClose}>
-      <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+      <div className="bg-white w-full max-w-3xl h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
         <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div className="min-w-0">
@@ -3971,6 +3996,40 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           {!data ? <div className="text-slate-400 text-sm py-6 text-center">Loading…</div> : (
             <>
+              {/* Candidate details */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[15px] font-extrabold text-[#050A1F]">{titleCase(data.candidate.name)}</div>
+                    <div className="text-[12px] text-slate-400">{data.role}{data.department ? ` · ${data.department}` : ''}</div>
+                  </div>
+                  {onOpenCandidate && <button onClick={() => onOpenCandidate(candidate._id)} className="text-[11px] font-bold rounded-lg border border-slate-300 px-2.5 py-1.5 text-slate-600 hover:bg-slate-50 shrink-0">Candidate page →</button>}
+                </div>
+                <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-3 text-[12px]">
+                  {[['Email', data.candidate.email], ['Phone', data.candidate.phone], ['Accepted salary', offer.acceptedAmount || offer.finalCtc], ['Joining date', isoJoining ? new Date(isoJoining + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + (offer.joiningTime ? ` · ${offer.joiningTime}` : '') : 'Not set'], ['Assigned HR', data.hr ? data.hr.name : '—']].map(([k, v]) => (
+                    <div key={k} className="flex gap-2 min-w-0"><span className="text-slate-400 shrink-0">{k}:</span><span className="text-[#0A0E28] font-medium truncate">{v || '—'}</span></div>
+                  ))}
+                </div>
+                {/* Joined / Not joined */}
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  {njMode !== 'no' ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[12px] font-bold text-slate-600 mr-1">Confirm joining:</span>
+                      <button onClick={() => confirmJoined(true)} disabled={busy === 'join'} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#16A34A' }}>✓ Joined</button>
+                      <button onClick={() => { setNjMode('no'); setErr(''); }} className="text-[12px] font-bold rounded-lg px-3 py-1.5 border border-red-200 text-red-600 hover:bg-red-50">✗ Didn't join</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="text-[12px] font-bold text-slate-600">Why didn't they join? <span className="text-red-500">*</span></div>
+                      <textarea rows={2} value={njNotes} onChange={(e) => setNjNotes(e.target.value)} placeholder="Add a note — the candidate will be moved to the Blacklist." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-[13px]" />
+                      <div className="flex gap-2">
+                        <button onClick={() => confirmJoined(false)} disabled={busy === 'join' || !njNotes.trim()} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#EF4444' }}>{busy === 'join' ? 'Saving…' : 'Confirm & blacklist'}</button>
+                        <button onClick={() => { setNjMode(''); setNjNotes(''); }} className="text-[12px] text-slate-400">Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
               {/* HR contact + link */}
               <div className="rounded-xl border border-slate-200 p-4">
                 <div className="flex items-center gap-3 flex-wrap">
@@ -7323,7 +7382,7 @@ export default function HrApp() {
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
         {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
-        {effectiveView === 'corehr_onboarding' && <OnboardingListPage isAdmin={isAdmin} />}
+        {effectiveView === 'corehr_onboarding' && <OnboardingListPage isAdmin={isAdmin} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} hrView={isHrStaff} />}
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
