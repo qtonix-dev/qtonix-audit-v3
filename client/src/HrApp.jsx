@@ -3662,7 +3662,18 @@ function RejReasonModal({ candidate, jobTitle, onClose, onSaved }) {
 function ManageHireModal({ candidate, onClose, onSaved }) {
   const o = candidate.offer || {};
   const [salary, setSalary] = useState(o.acceptedAmount || o.finalCtc || '');
-  const origDate = o.joiningDate ? String(o.joiningDate).slice(0, 10) : '';
+  // Normalise whatever is stored (ISO, DD/MM/YYYY, timestamp) into yyyy-mm-dd so
+  // the date input can actually display and edit it. A raw "2/9/2026" would
+  // otherwise leave the field blank and un-editable.
+  const toIso = (v) => {
+    if (!v) return '';
+    const s = String(v).trim();
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (m) { let a = Number(m[1]), b = Number(m[2]); const y = m[3]; let d, mo; if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; } return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+    const dd = new Date(s); if (!isNaN(dd.getTime())) return dd.toISOString().slice(0, 10); return '';
+  };
+  const origDate = toIso(o.joiningDate);
   const [joiningDate, setJoiningDate] = useState(origDate);
   const [joiningTime, setJoiningTime] = useState(o.joiningTime || '09:30');
   // Joined status is only decided on/after the joining day. Toggleable: clicking
@@ -3679,8 +3690,9 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
   const dateChanged = origDate && joiningDate && joiningDate !== origDate;
   const toggleJoined = (v) => { setJoined((cur) => (cur === v ? '' : v)); setErr(''); };
 
+  const cleared = origDate && !joiningDate; // date existed and HR removed it
   const save = async () => {
-    if (!joiningDate) { setErr('Please set a joining date.'); return; }
+    if (!joiningDate && !cleared) { setErr('Please set a joining date (or use “Clear joining date” to remove it).'); return; }
     if (dateChanged && !changeReason.trim()) { setErr('You changed the joining date — please add a reason (e.g. candidate requested to postpone).'); return; }
     if (joined === 'no' && !reason.trim()) { setErr('Please enter a reason for not joining.'); return; }
     setBusy(true); setErr('');
@@ -3689,11 +3701,11 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
         op: 'manage_hire',
         acceptedAmount: salary.trim(),
         joiningDate: joiningDate || '',
-        joiningTime: joiningTime || '',
+        joiningTime: joiningDate ? (joiningTime || '') : '',
         joinedConfirmed: joined === 'yes',
         notJoined: joined === 'no',
         notJoinedReason: joined === 'no' ? reason.trim() : '',
-        changeReason: dateChanged ? changeReason.trim() : '',
+        changeReason: dateChanged ? changeReason.trim() : (cleared ? 'Joining date removed' : ''),
       }) });
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -3707,8 +3719,10 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Accepted salary</div><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="e.g. 8L" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining date</div><input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
-            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining time</div><input type="time" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningTime} onChange={(e) => setJoiningTime(e.target.value)} /></div>
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining time</div><input type="time" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningTime} onChange={(e) => setJoiningTime(e.target.value)} disabled={!joiningDate} /></div>
           </div>
+          {joiningDate && <button onClick={() => { setJoiningDate(''); setJoiningTime('09:30'); setJoined(''); }} className="text-[11px] font-bold text-red-500 hover:text-red-600">Clear joining date</button>}
+          {cleared && <div className="text-[11px] text-amber-600">The joining date will be removed. You can set a fresh date now, or save to clear it and re-add later.</div>}
           {!origDate && <div className="text-[11px] text-slate-400">Setting the joining date starts the onboarding process — the candidate gets their document page and welcome email 7 days before joining.</div>}
           {dateChanged && (
             <div>

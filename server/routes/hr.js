@@ -4994,12 +4994,13 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
           row.onboarding = onb; row.changed('onboarding', true);
           pushTimeline(row, { type: 'offer', text: `Joining date changed ${prevDate} → ${newDate} by ${req.hrActor.name}${b.changeReason ? ` — ${String(b.changeReason).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
         }
-        // Initialize onboarding the first time a joining date is set — but only
-        // if that date is in the FUTURE. A past/blank date means the candidate
-        // has effectively already joined or not, so onboarding is skipped and HR
-        // is prompted to confirm the joined/not-joined status instead.
-        const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-        if (newDate && newDate > istToday && !row.onboarding) {
+        // Initialize onboarding whenever the joining date is set to a FUTURE
+        // date and no onboarding record exists yet. A past/blank date means the
+        // candidate has effectively already joined or not, so onboarding is
+        // skipped and HR confirms the joined/not-joined status instead.
+        const istTodayMs2 = new Date(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10) + 'T00:00:00Z').getTime();
+        const newDateMs = newDate ? new Date(newDate + 'T00:00:00Z').getTime() : 0;
+        if (newDate && newDateMs >= istTodayMs2 && !row.onboarding) {
           row.onboarding = onboardingInit();
           row.changed('onboarding', true);
         }
@@ -5172,14 +5173,15 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
       if (!isHiredCandidate(c)) continue;
       const rawJd = offer.joiningDate || '';
       const jd = toYmd(rawJd);
-      // Date rule: if a joining date exists it must be in the future (a past date
-      // means they've already joined/not — handled via the "Did they join?"
-      // review). If NO joining date is set yet, still surface the candidate so HR
-      // can start onboarding and set the date — this matches the per-candidate
-      // Onboarding panel, which opens for any hired candidate.
+      // Date rule: exclude ONLY when we can confidently parse the joining date
+      // AND it is strictly in the past (they've already joined/not — handled via
+      // the "Did they join?" review). In every other case — no date, or a date
+      // we can't confidently place in the past — we SHOW the candidate so HR can
+      // manage them. Showing is always safe; hiding is what caused the trouble.
       if (jd) {
         const jdMs = new Date(jd + 'T00:00:00Z').getTime();
-        if (!(jdMs > istTodayMs)) continue;
+        if (jdMs < istTodayMs) continue; // strictly before today → drop
+        // jd === today or future → keep (today's joiners can still be managed here)
       }
       // Lazy-init: a candidate hired via the normal offer→accept flow has a
       // joining date but may not yet have an onboarding blob (older records, or
