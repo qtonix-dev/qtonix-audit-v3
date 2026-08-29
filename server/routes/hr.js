@@ -5110,6 +5110,26 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
 // + the HR checklist + assigned-HR contact + the public onboarding URL.
 // List all candidates currently in onboarding (hired, with a joining date) for
 // the Core HR → Onboarding page. Includes progress + status at a glance.
+// Diagnostic: why a candidate is / isn't on the onboarding list. Admin/HR only.
+router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
+    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const report = rows.map((c) => {
+      const offer = c.offer || {};
+      const rawJd = offer.joiningDate || '';
+      const jd = rawJd ? String(rawJd).slice(0, 10) : '';
+      let reason = 'shown';
+      if (!rawJd) reason = 'no joiningDate on offer';
+      else if (offer.notJoined) reason = 'marked notJoined';
+      else if (offer.joinedConfirmed) reason = 'joinedConfirmed (already joined)';
+      else if (!(jd > istToday)) reason = `joining date ${jd} is not in the future (today ${istToday})`;
+      return { id: c.id, name: c.name, stage: c.stage, offerStatus: offer.status || null, joiningDate: rawJd || null, hasOnboarding: !!c.onboarding, wouldShow: reason === 'shown', reason };
+    });
+    res.json({ istToday, total: rows.length, candidates: report });
+  } catch (e) { next(e); }
+});
+
 router.get('/onboarding', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
@@ -5117,9 +5137,11 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const out = [];
     for (const c of rows) {
       const offer = c.offer || {};
-      if (!offer.joiningDate) continue;
+      // Resolve the joining date (it lives in the offer JSON).
+      const rawJd = offer.joiningDate || '';
+      if (!rawJd) continue;
       if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
-      const jd = String(offer.joiningDate).slice(0, 10);
+      const jd = String(rawJd).slice(0, 10);
       if (!(jd > istToday)) continue; // only strictly-future joiners remain on the list
       // Lazy-init: a candidate hired via the normal offer→accept flow has a
       // joining date but may not yet have an onboarding blob (older records, or

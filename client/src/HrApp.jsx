@@ -3382,6 +3382,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const isThisWeek = (c) => { if (!c.createdAt) return false; const d = new Date(c.createdAt); const now = new Date(); const start = new Date(now); const day = (now.getDay() + 6) % 7; start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0); return d >= start; };
   const isThisMonth = (c) => { const iso = c.rejectedAt || c.updatedAt || c.createdAt; if (!iso) return false; const d = new Date(iso); const now = new Date(); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); };
   // Keyword search runs server-side; the view decides which server list to pull.
+  const [loading, setLoading] = useState(false);
   const load = (kw) => {
     const params = new URLSearchParams();
     if (kw && kw.trim()) params.set('q', kw.trim());
@@ -3389,9 +3390,13 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
     if (isRejectedView) params.set('rejected', 'only');
     if (isBlacklistView) params.set('blacklist', 'only');
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return hrApi(`/candidates${qs}`).then(setCands).catch(() => {});
+    setLoading(true);
+    return hrApi(`/candidates${qs}`).then(setCands).catch(() => {}).finally(() => setLoading(false));
   };
-  useEffect(() => { load(); }, [curView]);
+  // Clear the current rows the moment the view changes so the previous list
+  // (e.g. Active) never flashes under a different tab (e.g. Hired) while the new
+  // data loads.
+  useEffect(() => { setCands([]); load(); }, [curView]);
   useEffect(() => { const t = setTimeout(() => load(q), 300); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (initialJobFilter) setJobFilter(initialJobFilter); }, [initialJobFilter]);
   useEffect(() => { setSourceFilter(initialSource || ''); }, [initialSource]);
@@ -3544,6 +3549,12 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                 <th className="px-2.5 py-2.5">Recruiter</th><th className="px-2.5 py-2.5">Updated</th><th className="px-2.5 py-2.5 text-right">Actions</th>
               </tr></thead>
               <tbody>
+                {loading && cands.length === 0 && (
+                  <tr><td colSpan={isHiredView ? 11 : 9} className="px-4 py-10 text-center text-sm text-slate-400">Loading…</td></tr>
+                )}
+                {!loading && paged.length === 0 && (
+                  <tr><td colSpan={isHiredView ? 11 : 9} className="px-4 py-10 text-center text-sm text-slate-400">{isHiredView ? 'No hired candidates yet.' : 'No candidates found.'}</td></tr>
+                )}
                 {paged.map((c) => {
                   const a = c.answers || {}; const st = stageLabel(c);
                   return (
