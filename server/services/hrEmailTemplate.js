@@ -402,6 +402,44 @@ function welcomeJoinee({ employeeName, designation, department, branch }) {
   });
 }
 
+// ===== Onboarding emails ===================================================
+// Sent when the joining date is set: thank-you for choosing Qtonix + CTA to the
+// onboarding document page. `introHtml`/`outroHtml` may be OpenAI-polished by the
+// caller; sensible defaults are used otherwise.
+function onboardingWelcome({ candidateName, role, joiningDateText, department, deadlineText, onboardingUrl, introHtml, outroHtml, signature }) {
+  const details = [
+    role ? { label: 'Your role', value: esc(role) } : null,
+    joiningDateText ? { label: 'Joining date', value: esc(joiningDateText) } : null,
+    department ? { label: 'Department', value: esc(department) } : null,
+    deadlineText ? { label: 'Submit documents by', value: esc(deadlineText) } : null,
+  ].filter(Boolean);
+  return shell({
+    kicker: 'Welcome to Qtonix',
+    headline: `Welcome to Qtonix, ${esc(firstName(candidateName))}! \uD83C\uDF89`,
+    subhead: role || '',
+    greetingName: candidateName,
+    introHtml: introHtml || `Thank you for choosing to build your career with us. We\u2019re thrilled to welcome you as our new <strong>${esc(role || 'team member')}</strong>${joiningDateText ? ` joining on <strong>${esc(joiningDateText)}</strong>` : ''}.<br><br>To get your setup and payroll started, please complete your onboarding details and upload a few documents using the secure link below.`,
+    details,
+    ctaLabel: onboardingUrl ? 'Complete your onboarding' : null,
+    ctaUrl: onboardingUrl || null,
+    ctaNote: deadlineText ? `Please complete this by ${esc(deadlineText)}. Your progress is saved automatically, so you can finish in more than one sitting.` : 'Your progress is saved automatically, so you can finish in more than one sitting.',
+    outroHtml: outroHtml || `If you have any questions before your first day, just reply to this email or reach out to your HR contact. We can\u2019t wait to have you on board!`,
+    signature: signature || { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition \u00b7 Qtonix', email: 'career@qtonix.com' },
+  });
+}
+
+// Confirmation to the candidate that their onboarding documents were received.
+function onboardingReceived({ candidateName }) {
+  return shell({
+    kicker: 'Documents Received',
+    headline: 'Thank you \u2014 we\u2019ve got your details',
+    greetingName: candidateName,
+    introHtml: `We\u2019ve received your onboarding details and documents. Our HR team will review everything and get in touch before your joining day.`,
+    outroHtml: `Please remember to carry your <strong>original documents</strong> for verification on your first day. We look forward to welcoming you!`,
+    signature: { name: 'Qtonix HR Team', title: 'People & Culture \u00b7 Qtonix', email: 'career@qtonix.com' },
+  });
+}
+
 module.exports = {
   taskReceived, taskAdditionalInfoRequest,
   shortlistedEmail,
@@ -411,4 +449,5 @@ module.exports = {
   interviewInviteCandidate, interviewInvitePanel, interviewReschedule,
   applicationThankYou, applicationInternalNotice, shell,
   birthdayWish, workAnniversary, welcomeJoinee,
+  onboardingWelcome, onboardingReceived,
 };

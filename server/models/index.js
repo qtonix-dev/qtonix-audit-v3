@@ -1350,6 +1350,16 @@ const HrUser = sequelize.define('HrUser', {
   birthday: { type: DataTypes.DATEONLY, allowNull: true },
   maritalStatus: { type: DataTypes.STRING(20), allowNull: true }, // single | married
   anniversary: { type: DataTypes.DATEONLY, allowNull: true },
+  // Personal details + document links carried over when an employee is created
+  // from an onboarding candidate. onboardingDocs: [{ name, url, kind, at }].
+  fatherName: { type: DataTypes.STRING(120), defaultValue: '' },
+  bloodGroup: { type: DataTypes.STRING(8), defaultValue: '' },
+  panNumber: { type: DataTypes.STRING(20), defaultValue: '' },
+  aadhaarNumber: { type: DataTypes.STRING(20), defaultValue: '' },
+  presentAddress: { type: DataTypes.TEXT, defaultValue: '' },
+  permanentAddress: { type: DataTypes.TEXT, defaultValue: '' },
+  onboardingDocs: { type: DataTypes.JSON, defaultValue: [] },
+  fromCandidateId: { type: DataTypes.INTEGER, allowNull: true },
   // Permission: may post to the company notice board (admins always can).
   canPostAnnouncements: { type: DataTypes.BOOLEAN, defaultValue: false },
   // HR Manager: a branch-scoped admin-lite role. Within their branch they can
@@ -1387,6 +1397,7 @@ HrUser.prototype.toJSON = function () {
 const HrBranch = sequelize.define('HrBranch', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(80), allowNull: false, unique: true },
+  address: { type: DataTypes.TEXT, defaultValue: '' }, // office address; feeds pre-joining reporting email
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'hr_branches' });
 HrBranch.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
@@ -1560,6 +1571,19 @@ const HrCandidate = sequelize.define('HrCandidate', {
   // offer: { active, salaryDiscussions:[...], approvals:[...], loi:{...},
   //   offerLetter:{...}, finalCtc, joiningDate, status }
   offer: { type: DataTypes.JSON, defaultValue: null },
+  // onboarding: {
+  //   token, activatedAt, status:'pending'|'submitted', joiningTime,
+  //   fields:{photo,name,email,phone,fatherName,dob,maritalStatus,anniversary,
+  //           presentAddress,permanentAddress,bloodGroup,pan,aadhaar,
+  //           addressProofType,qualification,qualificationOther},
+  //   docs:{ panCard,aadhaarCard,addressProof,degreeCertificate,
+  //          marksheets:[], },  each = { name,url,at }
+  //   prevCompanies:[{ name, expLetters:[], salarySlips:[] }],
+  //   draft:{...}, submittedAt, docsComplete,
+  //   hrTasks:[{ id,phase,label,auto,done,doneAt,doneById,meta }],
+  //   welcomeEmailSentAt, reminderSentAt, seniorNotifiedAt, reportingSentAt,
+  //   welcomeAboardSentAt, convertedEmployeeId, joiningChanges:[{from,to,reason,by,at}] }
+  onboarding: { type: DataTypes.JSON, defaultValue: null },
   aiSummary: { type: DataTypes.JSON, defaultValue: null },  // cached AI screening result
   resumeMatch: { type: DataTypes.JSON, defaultValue: null }, // { level:'high'|'medium'|'low', score, reason, scoredAt }
 }, { tableName: 'hr_candidates' });
@@ -1747,6 +1771,29 @@ const HrOnboarding = sequelize.define('HrOnboarding', {
   order: { type: DataTypes.INTEGER, defaultValue: 0 },
 }, { tableName: 'hr_onboarding', indexes: [{ name: 'idx_hr_onboard_emp', fields: ['employeeId'] }] });
 HrOnboarding.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// A cross-department task raised during a candidate's onboarding and routed to
+// another team (e.g. "IT: prepare computer"). Surfaces in the target
+// department's employees' Review feed; ticking it done flips the linked HR
+// onboarding checklist item back on the candidate.
+const HrOnboardingTask = sequelize.define('HrOnboardingTask', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  candidateId: { type: DataTypes.INTEGER, allowNull: false },
+  candidateName: { type: DataTypes.STRING(120), defaultValue: '' },
+  forDepartment: { type: DataTypes.STRING(80), defaultValue: '' }, // e.g. "IT & Hardware"
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  label: { type: DataTypes.STRING(200), allowNull: false },
+  sub: { type: DataTypes.STRING(300), defaultValue: '' },
+  hrTaskId: { type: DataTypes.STRING(40), defaultValue: '' }, // links back to onboarding.hrTasks[].id
+  done: { type: DataTypes.BOOLEAN, defaultValue: false },
+  doneAt: { type: DataTypes.DATE, allowNull: true },
+  doneById: { type: DataTypes.INTEGER, allowNull: true },
+  doneByName: { type: DataTypes.STRING(120), defaultValue: '' },
+}, { tableName: 'hr_onboarding_tasks', indexes: [
+  { name: 'idx_hr_onbtask_dept', fields: ['forDepartment'] },
+  { name: 'idx_hr_onbtask_cand', fields: ['candidateId'] },
+] });
+HrOnboardingTask.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 // Daily attendance for an employee. One row per employee per date. Status covers
 // present / absent / half-day / leave / holiday / week-off. Late is derived from
@@ -2055,7 +2102,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

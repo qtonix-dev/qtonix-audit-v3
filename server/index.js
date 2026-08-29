@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v328';
+const APP_VERSION = 'v330';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -104,6 +104,9 @@ app.get('/careers/:token/embed', (req, res) => {
 app.get('/careers-shared.js', (req, res) => {
   res.type('application/javascript').sendFile(path.join(__dirname, 'public/careers-shared.js'));
 });
+app.get('/onboarding-shared.js', (req, res) => {
+  res.type('application/javascript').sendFile(path.join(__dirname, 'public/onboarding-shared.js'));
+});
 
 // Branded OG share image (1200x630, blue box + centered logo). Cached on disk;
 // regenerated when missing or when ?refresh=1. Served for all share cards.
@@ -152,6 +155,12 @@ app.get('/jobs/:token', async (req, res) => {
 // pattern as the careers/schedule pages; the token is in the path.
 app.get('/task/:token', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/task-page.html'));
+});
+
+// Public candidate onboarding page (document collection before joining). Same
+// standalone-HTML pattern; the token is in the path.
+app.get('/onboarding/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/onboarding-page.html'));
 });
 
 // Public candidate self-schedule page (Calendly-style). Same pattern as careers.

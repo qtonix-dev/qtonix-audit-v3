@@ -1197,6 +1197,25 @@ function SummaryBox({ label, value, sub, color, active, onClick }) {
   );
 }
 
+// Per-type icon tile for a Review item, so each kind is differentiable at a
+// glance. Returns a 34px rounded tile with a soft tint + line icon.
+function ReviewIcon({ kind }) {
+  const map = {
+    late_check:     ['#FEF3C7', '#D97706', <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>],
+    late_check_hr:  ['#EDE9FE', '#7C3AED', <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></>],
+    leave:          ['#FFEDD5', '#EA580C', <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>],
+    expense_approval:['#DBEAFE', '#2563EB', <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>],
+    interview_attendance:['#E0F2FE', '#0284C7', <><rect x="2" y="4" width="16" height="16" rx="2" /><path d="m22 8-4 4 4 4V8z" /></>],
+    interview_feedback:['#E0E7FF', '#4F46E5', <><path d="M20 6 9 17l-5-5" /></>],
+  };
+  const [bg, stroke, path] = map[kind] || ['#F1F5F9', '#64748b', <circle cx="12" cy="12" r="9" />];
+  return (
+    <div className="shrink-0 rounded-[9px] flex items-center justify-center" style={{ width: 34, height: 34, background: bg }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{path}</svg>
+    </div>
+  );
+}
+
 // Minimal dashboard for non-HR employees: a greeting, HR announcements, and any
 // upcoming interviews where they sit on the panel. (HR/Admin see HrDashboard.)
 function EmployeeDashboard({ user, onOpenCandidate }) {
@@ -1273,6 +1292,14 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
   const saveLateCheckHr = async (date, updates) => { try { await hrApi(`/late-check/${date}/hr`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateHrItem(null); loadReviews(); } catch (e) { alert(e.message); } };
 
   const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
+  // Uniform typography for the dashboard cards: a prominent box title, a black
+  // light-weight item name, and muted sub-detail.
+  const CARD = 'bg-white rounded-2xl border border-slate-200 p-5';
+  const TITLE = 'text-[15px] font-extrabold text-[#050A1F] mb-4 flex items-center gap-2.5 tracking-tight';
+  const DOT = 'w-3.5 h-3.5 rounded-[5px] inline-block shrink-0';
+  const NAME = 'text-[13.5px] font-medium text-[#0A0E28]';   // item / person name
+  const SUBT = 'text-[11px] text-slate-400';                  // sub-detail
+  const TSUB = 'font-medium normal-case tracking-normal text-[11px] text-slate-400'; // inline title suffix
   const ringColor = { casual: '#22C55E', medical: '#0EA5E9', privilege: '#F59E0B', wfh: '#8B5CF6' };
   const celRows = cel ? (celTab === 'birthdays' ? cel.birthdays : celTab === 'anniversaries' ? cel.anniversaries : cel.joinees) : [];
   const initials = (n) => String(n || '').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
@@ -1281,11 +1308,11 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
     <div className="max-w-6xl mx-auto">
       {/* greeting hero */}
       <div className="rounded-2xl p-8 mb-4 relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#050A1F,#0A0E28 60%,#111a3f)' }}>
-        <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 70, top: -34, filter: 'blur(1px)' }} />
+        <div className="absolute rounded-full" style={{ width: 120, height: 120, background: ORNG, opacity: .85, right: 40, top: -44, filter: 'blur(1px)' }} />
         <div className="relative">
-          <h1 className="text-3xl font-extrabold text-white mb-2">{greeting}, {firstName}!</h1>
-          <p className="text-slate-300 max-w-xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
-          <div className="flex justify-end mt-4">
+          <h1 className="text-3xl font-extrabold text-white mb-3">{greeting}, {firstName}!</h1>
+          <div className="flex items-end justify-between gap-4">
+            <p className="text-slate-300 max-w-2xl text-sm leading-relaxed">{quote}<span className="block mt-1.5 text-slate-400 font-bold">— {quoteAuthor}</span></p>
             <button onClick={() => setOrgOpen(true)} className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 px-3 py-2 text-xs font-bold text-white transition-colors">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="8.5" y="14" width="7" height="7" rx="1" /><path d="M6.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10 M12 13.5V14" /></svg>
               Organization chart
@@ -1297,11 +1324,11 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
       {ann.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
-          <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Announcements</h3>
+          <h3 className={TITLE}><span className={DOT} style={{ background: ORNG }} />Announcements</h3>
           <div className="grid md:grid-cols-2 gap-x-6 gap-y-3.5">
             {ann.slice(0, 4).map((a, i) => (
               <div key={a.id || i} className="border-l-[3px] pl-3" style={{ borderColor: '#FF6A00' }}>
-                <div className="text-sm font-extrabold text-[#050A1F]">{a.title || 'Announcement'}</div>
+                <div className={NAME}>{a.title || 'Announcement'}</div>
                 {a.body && <div className="text-[12px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">{String(a.body).replace(/<[^>]+>/g, ' ').trim()}</div>}
                 <div className="text-[11px] text-slate-400 mt-1">{a.authorName ? `${a.authorName} · ` : ''}{a.createdAt ? fmtDT(a.createdAt) : ''}</div>
               </div>
@@ -1354,16 +1381,16 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
           {/* LEAVE BALANCE */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#22C55E]" />Leave balance</h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: '#22C55E' }} />Leave balance</h3>
             <div className="flex gap-3.5 flex-wrap">
               {['casual', 'medical', 'privilege'].map((k) => {
                 const bal = leave ? (leave.balance[k] ?? 0) : 0; const alloc = leave ? (leave.allocation[k] ?? 0) : 0;
                 return (
                   <div key={k} className="text-center" style={{ width: 74 }}>
                     <div className="rounded-full flex flex-col items-center justify-center mx-auto mb-1.5" style={{ width: 64, height: 64, border: `6px solid ${ringColor[k]}` }}>
-                      <span className="text-[15px] font-extrabold text-[#050A1F]">{bal}</span><span className="text-[9px] text-slate-400 font-bold">of {alloc}</span>
+                      <span className="text-[17px] font-extrabold text-[#050A1F] leading-none">{bal}</span><span className="text-[9px] text-slate-400 font-semibold mt-0.5">of {alloc}</span>
                     </div>
-                    <div className="text-[11px] font-bold text-slate-500 capitalize">{k}</div>
+                    <div className="text-[11px] font-semibold text-slate-500 capitalize">{k}</div>
                   </div>
                 );
               })}
@@ -1376,7 +1403,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
           {/* EXPENSE CLAIMS */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Expense claims</h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: '#0EA5E9' }} />Expense claims</h3>
             {claims.length === 0 ? (
               <div className="text-sm text-slate-400">No claims yet. Raise one to get a work expense reimbursed.</div>
             ) : (
@@ -1388,9 +1415,9 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                   return stat.map(([label, n, color]) => (
                     <div key={label} className="text-center" style={{ width: 74 }}>
                       <div className="rounded-full flex flex-col items-center justify-center mx-auto mb-1.5" style={{ width: 64, height: 64, border: `6px solid ${color}` }}>
-                        <span className="text-[17px] font-extrabold text-[#050A1F]">{n}</span>
+                        <span className="text-[17px] font-extrabold text-[#050A1F] leading-none">{n}</span>
                       </div>
-                      <div className="text-[11px] font-bold text-slate-500">{label}</div>
+                      <div className="text-[11px] font-semibold text-slate-500">{label}</div>
                     </div>
                   ));
                 })()}
@@ -1404,7 +1431,7 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
           {/* CELEBRATIONS */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#8B5CF6]" />Celebrations <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· company-wide</span></h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: '#8B5CF6' }} />Celebrations <span className={TSUB}>· company-wide</span></h3>
             <div className="flex gap-1.5 mb-3">
               {[['birthdays', 'Birthdays'], ['anniversaries', 'Anniversaries'], ['joinees', 'New joinees']].map(([k, lbl]) => (
                 <button key={k} onClick={() => setCelTab(k)} className={`text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg ${celTab === k ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={celTab === k ? { background: '#050A1F' } : {}}>{lbl}</button>
@@ -1412,9 +1439,9 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
             </div>
             {celRows.length === 0 ? <div className="text-sm text-slate-400 py-1">Nothing coming up.</div> : celRows.slice(0, 6).map((r, i) => (
               <div key={i} className="flex items-center gap-2.5 py-2 border-t border-slate-50">
-                <div className="w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center" style={{ background: '#ede9fe', color: '#6d28d9' }}>{initials(r.name)}</div>
-                <div><div className="text-[13px] font-bold text-[#050A1F]">{r.name}</div><div className="text-[11px] text-slate-400">{r.sub}</div></div>
-                <span className="ml-auto text-[11px] font-extrabold" style={{ color: '#FF4500' }}>{r.when}</span>
+                <div className="w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center" style={{ background: '#ede9fe', color: '#6d28d9' }}>{initials(r.name)}</div>
+                <div><div className={NAME}>{r.name}</div><div className="text-[11px] text-slate-400">{r.sub}</div></div>
+                <span className="ml-auto text-[11px] font-bold" style={{ color: '#FF4500' }}>{r.when}</span>
               </div>
             ))}
           </div>
@@ -1424,61 +1451,77 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
         <div className="flex flex-col gap-4">
           {/* REVIEW */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded" style={{ background: ORNG }} />Review</h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: ORNG }} />Review</h3>
             {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
               <>
-                <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-extrabold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
+                <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-bold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
                 <div className="max-h-80 overflow-y-auto -mr-1 pr-1">
                 {reviews.map((it) => {
                   if (it.kind === 'leave') return (
-                    <div key={it.groupKey || it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 text-[13px] text-slate-700 mt-2">
-                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Leave</span> · {titleCase(it.who)}
-                        <div className="text-[11px] text-slate-400">{it.type}{it.duration === 'half' ? ' · half day' : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
+                    <div key={it.groupKey || it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="leave" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Leave <span className="text-slate-500">· {titleCase(it.who)}</span></div>
+                        <div className={`${SUBT} mb-1.5 capitalize`}>{it.type}{it.duration === 'half' ? ' · half day' : it.days > 1 ? ` · ${it.days} days` : ' · full day'}</div>
+                        <button onClick={() => setDecideItem(it)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: ORNG }}>Take Decision</button>
                       </div>
-                      <button onClick={() => setDecideItem(it)} className="ml-auto text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: ORNG }}>Take Decision</button>
                     </div>
                   );
                   if (it.kind === 'interview_attendance') return (
-                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
-                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Interview</span> · Did <b>{titleCase(it.who)}</b> attend?</div>
-                      <div className="text-[11px] text-slate-400 mb-1.5">{it.roundLabel ? `${it.roundLabel} · ` : ''}{fmtDT(it.at)}</div>
-                      <div className="flex gap-1.5">
-                        <button onClick={() => markAttendance(it.candidateId, it.interviewId, true)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Attended</button>
-                        <button onClick={() => markAttendance(it.candidateId, it.interviewId, false)} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>No-show</button>
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="interview_attendance" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Interview <span className="text-slate-500">· did {titleCase(it.who)} attend?</span></div>
+                        <div className={`${SUBT} mb-1.5`}>{it.roundLabel ? `${it.roundLabel} · ` : ''}{fmtDT(it.at)}</div>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => markAttendance(it.candidateId, it.interviewId, true)} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Attended</button>
+                          <button onClick={() => markAttendance(it.candidateId, it.interviewId, false)} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>No-show</button>
+                        </div>
                       </div>
                     </div>
                   );
                   if (it.kind === 'expense_approval') return (
-                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
-                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Expense</span> · {titleCase(it.who)} raised <b>₹{Number(it.amount).toLocaleString('en-IN')}</b></div>
-                      <div className="text-[11px] text-slate-400 mb-1.5">{it.title}{it.category ? ` · ${it.category}` : ''}{it.branch ? ` · ${it.branch}` : ''} → {it.payeeName}{it.invoiceUrl ? <> · <a href={it.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-bold">invoice</a></> : ''}</div>
-                      <div className="flex gap-1.5">
-                        <button onClick={() => decideExpense(it.expenseId, 'approve')} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
-                        <button onClick={() => decideExpense(it.expenseId, 'reject')} className="text-[11px] font-extrabold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="expense_approval" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Expense <span className="text-slate-500">· {titleCase(it.who)}</span></div>
+                        <div className={`${SUBT} mb-1.5`}>₹{Number(it.amount).toLocaleString('en-IN')}{it.category ? ` · ${it.category}` : ''}{it.branch ? ` · ${it.branch}` : ''} → {it.payeeName}{it.invoiceUrl ? <> · <a href={it.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-semibold">invoice</a></> : ''}</div>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => decideExpense(it.expenseId, 'approve')} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
+                          <button onClick={() => decideExpense(it.expenseId, 'reject')} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
+                        </div>
                       </div>
                     </div>
                   );
                   if (it.kind === 'late_check') return (
-                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
-                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Attendance check</span> · <b>{it.count}</b> team member{it.count === 1 ? '' : 's'} not logged in</div>
-                      <div className="text-[11px] text-slate-400 mb-1.5">Past shift start + grace. Mark who’s coming and who isn’t.</div>
-                      <button onClick={() => setLateItem(it)} className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#F59E0B' }}>Review attendance ›</button>
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="late_check" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Attendance check</div>
+                        <div className={`${SUBT} mb-1.5`}>{it.count} team member{it.count === 1 ? '' : 's'} not logged in · past shift grace</div>
+                        <button onClick={() => setLateItem(it)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#F59E0B' }}>Review attendance ›</button>
+                      </div>
                     </div>
                   );
                   if (it.kind === 'late_check_hr') return (
-                    <div key={it.id} className="py-2.5 border-t border-slate-100 mt-2">
-                      <div className="text-[13px] text-slate-700"><span className="font-extrabold text-[#050A1F]">Late follow-up</span> · <b>{it.count}</b> update{it.count === 1 ? '' : 's'} from team leads</div>
-                      <div className="text-[11px] text-slate-400 mb-1.5">Review each lead’s status & notes. Call the “not picking” ones and update.</div>
-                      <button onClick={() => setLateHrItem(it)} className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#4338CA' }}>Review & update ›</button>
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="late_check_hr" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Late follow-up</div>
+                        <div className={`${SUBT} mb-1.5`}>{it.count} update{it.count === 1 ? '' : 's'} from team leads · call the “not picking” ones</div>
+                        <button onClick={() => setLateHrItem(it)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#4338CA' }}>Review & update ›</button>
+                      </div>
                     </div>
                   );
                   // interview_feedback
                   return (
-                    <div key={it.id} className="flex items-center gap-2 py-2.5 border-t border-slate-100 mt-2">
-                      <div className="min-w-0"><span className="font-extrabold text-[#050A1F]">Feedback</span> · {titleCase(it.who)}
-                        <div className="text-[11px] text-slate-400">{it.roundLabel ? `${it.roundLabel} · ` : ''}awaiting your feedback</div>
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <ReviewIcon kind="interview_feedback" />
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>Feedback <span className="text-slate-500">· {titleCase(it.who)}</span></div>
+                        <div className={`${SUBT} mb-1.5`}>{it.roundLabel ? `${it.roundLabel} · ` : ''}awaiting your feedback</div>
+                        <button onClick={() => onOpenCandidate && onOpenCandidate(it.candidateId, 'feedback')} className="text-[11px] font-bold rounded-lg px-3 py-1.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>Submit feedback ›</button>
                       </div>
-                      <button onClick={() => onOpenCandidate && onOpenCandidate(it.candidateId, 'feedback')} className="ml-auto text-[11px] font-extrabold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#dbeafe', color: '#1d4ed8' }}>Submit feedback ›</button>
                     </div>
                   );
                 })}
@@ -1490,19 +1533,19 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
           {/* INTERVIEWS */}
           {interviews.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#050A1F]" />Your upcoming interviews</h3>
+              <h3 className={TITLE}><span className={DOT} style={{ background: '#050A1F' }} />Your upcoming interviews</h3>
               <div className="flex flex-col gap-2.5">
                 {interviews.slice(0, 5).map((iv, i) => (
                   <div key={i} className="border border-slate-100 rounded-xl px-3 py-2.5">
                     <div className="flex items-center gap-2">
-                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className="text-[13px] font-extrabold text-[#050A1F] hover:text-[#FF4500] text-left">{titleCase(iv.name)}</button>
-                      {iv.roundLabel ? <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{iv.roundLabel}</span> : null}
+                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className={`${NAME} hover:text-[#FF4500] text-left`}>{titleCase(iv.name)}</button>
+                      {iv.roundLabel ? <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{iv.roundLabel}</span> : null}
                     </div>
                     <div className="text-[11px] text-slate-400">{iv.jobTitle}</div>
-                    <div className="text-[12px] font-bold text-slate-600 mt-0.5">{fmtDT(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
+                    <div className="text-[12px] font-semibold text-slate-600 mt-0.5">{fmtDT(iv.at)}{iv.mode ? ` · ${iv.mode}` : ''}</div>
                     <div className="flex items-center gap-3 mt-2">
-                      {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ background: '#0F9D58' }}>Join interview</a>}
-                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className="text-[11px] font-extrabold" style={{ color: '#1d4ed8' }}>View candidate ›</button>
+                      {iv.meetLink && <a href={iv.meetLink} target="_blank" rel="noreferrer" className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: '#0F9D58' }}>Join interview</a>}
+                      <button onClick={() => onOpenCandidate && onOpenCandidate(iv.candidateId)} className="text-[11px] font-bold" style={{ color: '#1d4ed8' }}>View candidate ›</button>
                     </div>
                   </div>
                 ))}
@@ -1515,10 +1558,10 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
         <div className="flex flex-col gap-4">
           {/* WHO IS IN */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#0EA5E9]" />Who is in <span className="font-semibold normal-case tracking-normal text-[11px] text-slate-400">· today</span></h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: '#0EA5E9' }} />Who is in <span className={TSUB}>· today</span></h3>
             <div className="flex gap-2 mb-3">
               {[['not_in', 'Not in', '#EF4444'], ['late', 'Late', '#F59E0B'], ['in', 'On time', '#16A34A'], ['leave', 'Leave', '#64748b']].map(([k, lbl, c]) => (
-                <div key={k} className="flex-1 text-center rounded-lg py-2 border border-slate-100"><span className="block text-lg font-extrabold" style={{ color: c }}>{whos ? (whos.counts[k] || 0) : 0}</span><span className="text-[11px] font-bold text-slate-500">{lbl}</span></div>
+                <div key={k} className="flex-1 text-center rounded-lg py-2 border border-slate-100"><span className="block text-lg font-extrabold" style={{ color: c }}>{whos ? (whos.counts[k] || 0) : 0}</span><span className="text-[11px] font-semibold text-slate-500">{lbl}</span></div>
               ))}
             </div>
             {whos && whos.people.length === 0 && <div className="text-sm text-slate-400 py-2">No team members to show.</div>}
@@ -1534,8 +1577,8 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
                     <div key={p.id}>
                       {showHeader && <div className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400 mt-2 mb-1 pt-1">{p.group === 'team' ? 'Your team' : 'All employees'}</div>}
                       <div className="flex items-center gap-2.5 py-1.5 border-t border-slate-50">
-                        <div className="w-7 h-7 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-extrabold flex items-center justify-center">{initials(p.name)}</div>
-                        <div className="min-w-0"><div className="text-[13px] font-bold text-[#050A1F] truncate">{titleCase(p.name)}</div><div className="text-[11px] text-slate-400 truncate">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
+                        <div className="w-8 h-8 rounded-full bg-[#e2e9f8] text-slate-700 text-xs font-bold flex items-center justify-center">{initials(p.name)}</div>
+                        <div className="min-w-0"><div className={`${NAME} truncate`}>{titleCase(p.name)}</div><div className="text-[11px] text-slate-400 truncate">{p.department}{p.reportsToMe ? ' · reports to you' : ''}</div></div>
                         <span className="ml-auto shrink-0 text-[10px] font-extrabold rounded px-1.5 py-0.5" style={p.status === 'late' ? { background: '#FEF3C7', color: '#B45309' } : p.status === 'leave' ? { background: '#EDE9FE', color: '#6D28D9' } : p.status === 'in' ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#64748b' }}>
                           {p.status === 'late' ? `LATE ${t12(p.at)}` : p.status === 'leave' ? 'LEAVE' : p.status === 'in' ? `IN ${t12(p.at)}` : 'NOT IN'}
                         </span>
@@ -1549,21 +1592,21 @@ function EmployeeDashboard({ user, onOpenCandidate }) {
 
           {/* HOLIDAYS */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wide text-[#050A1F] mb-3 flex items-center gap-2"><span className="w-3.5 h-3.5 rounded bg-[#F59E0B]" />Upcoming holidays</h3>
+            <h3 className={TITLE}><span className={DOT} style={{ background: '#F59E0B' }} />Upcoming holidays</h3>
             {!nextHol ? <div className="text-sm text-slate-400">No upcoming holidays.</div> : (
               <>
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-3 rounded-xl p-3 mb-1.5" style={{ background: '#FFF7ED', border: '1px solid #FFEDD5' }}>
                   <span className="text-3xl leading-none">{nextHol.emoji || '📅'}</span>
                   <div>
-                    <div className="text-xl font-extrabold text-[#050A1F] leading-tight">{nextHol.name}</div>
-                    <div className="font-extrabold text-sm" style={{ color: '#FF4500' }}>{fmtHol(nextHol.date)}</div>
+                    <div className="text-[15px] font-semibold text-[#0A0E28] leading-tight">{nextHol.name}</div>
+                    <div className="font-bold text-[13px]" style={{ color: '#FF4500' }}>{fmtHol(nextHol.date)}</div>
                   </div>
                 </div>
-                <div className="mt-2.5">{upcoming.slice(1, 5).map((h, i) => (
-                  <div key={i} className="flex items-center gap-2 py-2 border-t border-slate-100 text-[13px]">
+                <div>{upcoming.slice(1, 5).map((h, i) => (
+                  <div key={i} className="flex items-center gap-2.5 py-2 border-t border-slate-100 text-[13px]">
                     <span className="text-lg leading-none">{h.emoji || '📅'}</span>
-                    <span className="flex-1">{h.name}</span>
-                    <span className="text-slate-400 font-bold">{fmtShort(h.date)}</span>
+                    <span className="flex-1 text-[#0A0E28]">{h.name}</span>
+                    <span className="text-slate-400 font-semibold">{fmtShort(h.date)}</span>
                   </div>
                 ))}</div>
               </>
@@ -3258,6 +3301,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const [hiredOfferFor, setHiredOfferFor] = useState(null); // candidate whose hired offer is being set
   const [notJoinedFor, setNotJoinedFor] = useState(null); // hired candidate who didn't join
   const [manageHireFor, setManageHireFor] = useState(null); // hired candidate whose hire is being managed
+  const [onbFor, setOnbFor] = useState(null); // hired candidate whose onboarding panel is open
   const [hrList, setHrList] = useState([]); // HR-department staff for the HR filter
   useEffect(() => { hrApi('/employees?hrDept=1').then((r) => setHrList(r || [])).catch(() => {}); }, []);
   const [weekFilter, setWeekFilter] = useState(!!weekOnly); // only applications added this week
@@ -3467,7 +3511,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
                           <CandIconBtn icon="eye" label="View candidate" onClick={() => setViewId(c._id)} />
                           {isRejectedView && <CandIconBtn icon="info" label="Rejection reason" onClick={() => setRejReason(c)} />}
                           {isHiredView
-                            ? <CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} />
+                            ? <><CandIconBtn icon="edit" label="Manage hire (salary, joining, joined status)" onClick={() => setManageHireFor(c)} /><CandIconBtn icon="clipboard" label="Onboarding" onClick={() => setOnbFor(c)} /></>
                             : <CandIconBtn icon="note" label="Add note" onClick={() => setNotesFor(c._id)} />}
                           {isAdmin && <CandIconBtn icon="trash" label="Delete candidate" onClick={() => delCandidate(c._id)} />}
                         </div>
@@ -3488,6 +3532,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
       {hiredOfferFor && <HiredOfferModal candidate={hiredOfferFor} onClose={() => setHiredOfferFor(null)} onSaved={() => { setHiredOfferFor(null); load(q); }} />}
       {notJoinedFor && <NotJoinedModal candidate={notJoinedFor} onClose={() => setNotJoinedFor(null)} onSaved={() => { setNotJoinedFor(null); load(q); }} />}
       {manageHireFor && <ManageHireModal candidate={manageHireFor} onClose={() => setManageHireFor(null)} onSaved={() => { setManageHireFor(null); load(q); }} />}
+      {onbFor && <OnboardingPanelModal candidate={onbFor} isAdmin={isAdmin} onClose={() => setOnbFor(null)} onChanged={() => load(q)} />}
       {bulkModal && <BulkActionModal action={bulkModal} ids={sel} jobs={jobs} stages={allStages} onClose={() => setBulkModal(null)} onDone={() => { setBulkModal(null); setSel([]); load(q); }} />}
     </div>
   );
@@ -3539,15 +3584,26 @@ function RejReasonModal({ candidate, jobTitle, onClose, onSaved }) {
 function ManageHireModal({ candidate, onClose, onSaved }) {
   const o = candidate.offer || {};
   const [salary, setSalary] = useState(o.acceptedAmount || o.finalCtc || '');
-  const [joiningDate, setJoiningDate] = useState(o.joiningDate ? String(o.joiningDate).slice(0, 10) : '');
-  // No default — HR must pick Joined / Didn't join on the joining day. Only
-  // pre-select if a status was already recorded before.
+  const origDate = o.joiningDate ? String(o.joiningDate).slice(0, 10) : '';
+  const [joiningDate, setJoiningDate] = useState(origDate);
+  const [joiningTime, setJoiningTime] = useState(o.joiningTime || '09:30');
+  // Joined status is only decided on/after the joining day. Toggleable: clicking
+  // an active choice clears it back to "not decided" (fixes the old bug).
   const [joined, setJoined] = useState(o.notJoined === true ? 'no' : (o.joinedConfirmed ? 'yes' : ''));
   const [reason, setReason] = useState(o.notJoinedReason || '');
+  const [changeReason, setChangeReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+
+  // IST "today" (yyyy-mm-dd) to decide whether the joining day has arrived.
+  const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const joiningDayArrived = joiningDate && joiningDate <= istToday;
+  const dateChanged = origDate && joiningDate && joiningDate !== origDate;
+  const toggleJoined = (v) => { setJoined((cur) => (cur === v ? '' : v)); setErr(''); };
+
   const save = async () => {
-    if (!joined) { setErr('Please select whether the candidate joined or didn’t join.'); return; }
+    if (!joiningDate) { setErr('Please set a joining date.'); return; }
+    if (dateChanged && !changeReason.trim()) { setErr('You changed the joining date — please add a reason (e.g. candidate requested to postpone).'); return; }
     if (joined === 'no' && !reason.trim()) { setErr('Please enter a reason for not joining.'); return; }
     setBusy(true); setErr('');
     try {
@@ -3555,9 +3611,11 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
         op: 'manage_hire',
         acceptedAmount: salary.trim(),
         joiningDate: joiningDate || '',
+        joiningTime: joiningTime || '',
         joinedConfirmed: joined === 'yes',
         notJoined: joined === 'no',
         notJoinedReason: joined === 'no' ? reason.trim() : '',
+        changeReason: dateChanged ? changeReason.trim() : '',
       }) });
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -3569,15 +3627,30 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
         <div className="p-6 space-y-3">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           <div><div className="text-[12px] font-bold text-slate-600 mb-1">Accepted salary</div><input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="e.g. 8L" /></div>
-          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining date</div><input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
-          <div>
-            <div className="text-[12px] font-bold text-slate-600 mb-1">Joining status <span className="text-slate-400 font-normal">— confirm on the joining day</span></div>
-            <div className="flex gap-2">
-              <button onClick={() => { setJoined('yes'); setErr(''); }} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'yes' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>✓ Joined</button>
-              <button onClick={() => { setJoined('no'); setErr(''); }} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'no' ? 'border-red-400 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>✗ Didn't join</button>
-            </div>
-            {!joined && <div className="text-[11px] text-slate-400 mt-1.5">No status selected yet.</div>}
+          <div className="grid grid-cols-2 gap-3">
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining date</div><input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} /></div>
+            <div><div className="text-[12px] font-bold text-slate-600 mb-1">Joining time</div><input type="time" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={joiningTime} onChange={(e) => setJoiningTime(e.target.value)} /></div>
           </div>
+          {!origDate && <div className="text-[11px] text-slate-400">Setting the joining date starts the onboarding process — the candidate gets their document page and welcome email 7 days before joining.</div>}
+          {dateChanged && (
+            <div>
+              <div className="text-[12px] font-bold text-slate-600 mb-1">Reason for changing the joining date <span className="text-red-500">*</span></div>
+              <textarea rows={2} className="w-full rounded-lg border border-amber-300 bg-amber-50/40 px-3 py-2 text-sm" value={changeReason} onChange={(e) => setChangeReason(e.target.value)} placeholder="e.g. candidate requested to postpone by a week" />
+              <div className="text-[11px] text-amber-600 mt-1">Changing the date re-schedules all onboarding reminders.</div>
+            </div>
+          )}
+          {joiningDayArrived ? (
+            <div>
+              <div className="text-[12px] font-bold text-slate-600 mb-1">Joining status <span className="text-slate-400 font-normal">— it's the joining day</span></div>
+              <div className="flex gap-2">
+                <button onClick={() => toggleJoined('yes')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'yes' ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>✓ Joined</button>
+                <button onClick={() => toggleJoined('no')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${joined === 'no' ? 'border-red-400 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>✗ Didn't join</button>
+              </div>
+              {joined ? <button onClick={() => setJoined('')} className="text-[11px] text-slate-400 mt-1.5 hover:text-slate-600">Clear selection</button> : <div className="text-[11px] text-slate-400 mt-1.5">Tap a choice — tap again to clear.</div>}
+            </div>
+          ) : (
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[12px] text-slate-500">Joined / didn't-join can be confirmed on the joining day{joiningDate ? ` (${new Date(joiningDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})` : ''}.</div>
+          )}
           {joined === 'no' && <div>
             <div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div>
             <textarea rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. accepted another offer, no-show…" />
@@ -3592,6 +3665,204 @@ function ManageHireModal({ candidate, onClose, onSaved }) {
     </div>
   );
 }
+
+// The HR onboarding panel for a hired candidate: their submitted documents +
+// the phased HR checklist, the public onboarding link, and the action to create
+// the employee record in HRMS once documents are in.
+function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const load = () => hrApi(`/candidates/${candidate._id}/onboarding`).then(setData).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []); // eslint-disable-line
+
+  const onb = data && data.onboarding;
+  const docs = (onb && onb.docs) || {};
+  const submitted = onb && onb.status === 'submitted';
+  const created = data && data.convertedEmployeeId;
+
+  const copyLink = () => { if (data && data.onboardingUrl) { navigator.clipboard.writeText(data.onboardingUrl); setBusy('copied'); setTimeout(() => setBusy(''), 1500); } };
+  const sendWelcome = async () => {
+    setBusy('welcome'); setErr('');
+    try { await hrApi(`/candidates/${candidate._id}/onboarding/send-welcome`, { method: 'POST', body: '{}' }); await load(); onChanged && onChanged(); }
+    catch (e) { setErr(e.message); }
+    setBusy('');
+  };
+
+  const docList = onb ? [
+    ['Photo', docs.photo], ['PAN card', docs.panCard], ['Aadhaar card', docs.aadhaarCard],
+    ['Address proof', docs.addressProof], ['Degree certificate', docs.degreeCertificate],
+    ...(Array.isArray(docs.marksheets) ? docs.marksheets.map((m, i) => [`Marksheet ${i + 1}`, m]) : []),
+    ...((onb.prevCompanies || []).flatMap((c) => [
+      ...(c.expLetters || []).map((u, i) => [`${c.name || 'Company'} — letter ${i + 1}`, u]),
+      ...(c.salarySlips || []).map((u, i) => [`${c.name || 'Company'} — salary slip ${i + 1}`, u]),
+    ])),
+  ] : [];
+
+  const PHASES = [
+    ['prepare', 'Prepare', '2 days before'],
+    ['setup', 'Set up', '1 day before'],
+    ['joinday', 'Joining day', 'confirm & welcome'],
+    ['induction', 'Induction', 'day one'],
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div>
+            <div className="text-lg font-extrabold text-[#050A1F]">Onboarding — {titleCase(candidate.name)}</div>
+            {data && <div className="text-[12px] text-slate-400">{data.role}{data.offer && data.offer.joiningDate ? ` · Joining ${new Date(data.offer.joiningDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}{data.offer && data.offer.joiningTime ? ` · ${data.offer.joiningTime}` : ''}</div>}
+          </div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-4">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          {!data ? <div className="text-slate-400 text-sm py-6 text-center">Loading…</div> : (
+            <>
+              {/* HR contact + link */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {data.hr ? <div className="text-[13px]"><span className="text-slate-400">HR contact:</span> <span className="font-bold text-[#050A1F]">{data.hr.name}</span>{data.hr.phone ? <span className="text-slate-500"> · {data.hr.phone}</span> : ''}</div> : <div className="text-[13px] text-slate-400">No HR contact assigned to this job.</div>}
+                </div>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <input readOnly value={data.onboardingUrl} className="flex-1 min-w-[220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] text-slate-500" />
+                  <button onClick={copyLink} className="rounded-lg border border-slate-300 px-3 py-2 text-[12px] font-bold text-slate-600">{busy === 'copied' ? 'Copied!' : 'Copy link'}</button>
+                  <button onClick={sendWelcome} disabled={busy === 'welcome'} className="rounded-lg px-3 py-2 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'welcome' ? 'Sending…' : (onb.welcomeEmailSentAt ? 'Resend welcome' : 'Send welcome email')}</button>
+                </div>
+                {onb.welcomeEmailSentAt && <div className="text-[11px] text-slate-400 mt-2">Welcome email sent {new Date(onb.welcomeEmailSentAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</div>}
+              </div>
+
+              {/* Candidate documents */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-3 h-3 rounded" style={{ background: '#0EA5E9' }} />Candidate documents</div>
+                  {submitted ? <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#DCFCE7', color: '#15803D' }}>Submitted {onb.submittedAt ? new Date(onb.submittedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</span> : <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>Awaiting submission</span>}
+                </div>
+                {!submitted ? <div className="text-[13px] text-slate-400 py-2">The candidate hasn’t submitted their documents yet. They can upload via the link above.</div> : (
+                  <>
+                    <div className="grid sm:grid-cols-2 gap-x-6">
+                      {docList.filter(([, u]) => u && u.url).map(([label, u]) => (
+                        <div key={label} className="flex items-center gap-2 py-1.5 border-t border-slate-50 text-[13px]">
+                          <span className="w-5 h-5 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>✓</span>
+                          <span className="text-[#0A0E28]">{label}</span>
+                          <a href={u.url} target="_blank" rel="noreferrer" className="ml-auto text-[12px] font-bold" style={{ color: '#0435AC' }}>View</a>
+                        </div>
+                      ))}
+                    </div>
+                    {onb.fields && <details className="mt-3"><summary className="text-[12px] font-bold text-slate-500 cursor-pointer">View submitted details</summary>
+                      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 mt-2 text-[12px]">
+                        {[['Name', onb.fields.name], ['Email', onb.fields.email], ['Phone', onb.fields.phone], ["Father's name", onb.fields.fatherName], ['DOB', onb.fields.dob], ['Blood group', onb.fields.bloodGroup], ['Marital status', onb.fields.maritalStatus], ['Anniversary', onb.fields.anniversary], ['PAN', onb.fields.pan], ['Aadhaar', onb.fields.aadhaar], ['Qualification', onb.fields.qualification === 'Other' ? onb.fields.qualificationOther : onb.fields.qualification], ['Present address', onb.fields.presentAddress], ['Permanent address', onb.fields.permanentAddress]].filter(([, v]) => v).map(([k, v]) => (
+                          <div key={k} className="flex gap-2"><span className="text-slate-400">{k}:</span><span className="text-[#0A0E28] font-medium">{v}</span></div>
+                        ))}
+                      </div>
+                    </details>}
+                    {/* Create employee */}
+                    {created ? (
+                      <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mt-3">
+                        <span className="text-[13px] font-bold text-[#166534]">✓ Employee record created</span>
+                        <span className="text-[12px] text-slate-400">This candidate is now an employee in HRMS.</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 rounded-xl px-4 py-3 mt-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                        <div><div className="text-[13px] font-bold" style={{ color: '#166534' }}>All documents received</div><div className="text-[12px]" style={{ color: '#3f9668' }}>Move details & documents into HRMS and create the employee record.</div></div>
+                        <button onClick={() => setShowCreate(true)} className="ml-auto text-white rounded-lg px-4 py-2 text-[13px] font-extrabold" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>Create employee →</button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* HR checklist (read-only in v330; interactive automations land in v331) */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded" style={{ background: '#FF6A00' }} />HR onboarding checklist</div>
+                <div className="text-[11px] text-slate-400 mb-2">Interactive automations arrive in the next update. This is the standard checklist.</div>
+                {PHASES.map(([pid, plabel, pwhen]) => {
+                  const items = (onb.hrTasks || []).filter((t) => t.phase === pid && (!t.salesOnly || data.isSales));
+                  if (!items.length) return null;
+                  return (
+                    <div key={pid} className="mt-3">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wide text-[#0A0E28]">{plabel} <span className="text-slate-400 font-semibold normal-case">· {pwhen}</span></div>
+                      {items.map((t) => (
+                        <div key={t.id} className="flex items-center gap-2.5 py-1.5 border-t border-slate-50 text-[13px]">
+                          <span className={`w-4 h-4 rounded border-2 shrink-0 ${t.done ? 'bg-green-500 border-green-500' : 'border-slate-300'}`} />
+                          <span className={t.done ? 'text-slate-400 line-through' : 'text-[#0A0E28]'}>{t.label}</span>
+                          {t.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+        {showCreate && data && <CreateEmployeeFromCandidate data={data} candidateId={candidate._id} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); onChanged && onChanged(); }} />}
+      </div>
+    </div>
+  );
+}
+
+// Small form to create an employee (HrUser) from a submitted onboarding
+// candidate — HR fills the org-specific fields (Employee ID, branch, reporting).
+function CreateEmployeeFromCandidate({ data, candidateId, onClose, onCreated }) {
+  const f = (data.onboarding && data.onboarding.fields) || {};
+  const [form, setForm] = useState({
+    email: f.email || (data.candidate && data.candidate.email) || '',
+    password: '', employeeId: '', type: 'junior',
+    designation: data.role || '', department: data.department || '', branch: '',
+    reportsToId: '', shiftId: '',
+  });
+  const [opts, setOpts] = useState({ branches: [], shifts: [], managers: [] });
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    Promise.all([
+      hrApi('/branches').catch(() => []),
+      hrApi('/shifts').catch(() => ({ shifts: [] })),
+      hrApi('/users').catch(() => ({ users: [] })),
+    ]).then(([branches, shifts, users]) => {
+      const list = (users.users || users || []).filter((u) => u.active);
+      setOpts({ branches: branches || [], shifts: (shifts.shifts || shifts || []), managers: list });
+    });
+  }, []);
+  const set = (k, v) => setForm((s) => ({ ...s, [k]: v }));
+  const submit = async () => {
+    if (!form.email || !form.password || !form.type) { setErr('Email, password and role are required.'); return; }
+    setBusy(true); setErr('');
+    try { const r = await hrApi(`/candidates/${candidateId}/onboarding/create-employee`, { method: 'POST', body: JSON.stringify(form) }); onCreated(r); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const ROLE_OPTS = [['junior', 'Junior'], ['senior', 'Senior'], ['tl', 'Team Lead'], ['manager', 'Manager'], ['hr', 'HR'], ['recruiter', 'Recruiter'], ['employee', 'Employee'], ['intern', 'Intern'], ['trainee', 'Trainee']];
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[130] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Create employee in HRMS</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+        <div className="p-6 space-y-3">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          <div className="text-[12px] text-slate-400">Details and documents are carried over from onboarding. Enter the organisation-specific fields below.</div>
+          <div className="grid grid-cols-2 gap-3">
+            <LCE label="Employee ID"><input className={inpCE} value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="e.g. QTX-041" /></LCE>
+            <LCE label="Role / type *"><select className={inpCE} value={form.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></LCE>
+            <LCE label="Login email *"><input className={inpCE} value={form.email} onChange={(e) => set('email', e.target.value)} /></LCE>
+            <LCE label="Temp password *"><input className={inpCE} value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="set a starter password" /></LCE>
+            <LCE label="Designation"><input className={inpCE} value={form.designation} onChange={(e) => set('designation', e.target.value)} /></LCE>
+            <LCE label="Department"><input className={inpCE} value={form.department} onChange={(e) => set('department', e.target.value)} /></LCE>
+            <LCE label="Branch"><select className={inpCE} value={form.branch} onChange={(e) => set('branch', e.target.value)}><option value="">Select</option>{opts.branches.map((b) => <option key={b.id || b.name} value={b.name}>{b.name}</option>)}</select></LCE>
+            <LCE label="Shift"><select className={inpCE} value={form.shiftId} onChange={(e) => set('shiftId', e.target.value)}><option value="">Select</option>{opts.shifts.map((s) => <option key={s.id || s._id} value={s.id || s._id}>{s.name}</option>)}</select></LCE>
+            <LCE label="Reporting Manager / TL"><select className={inpCE} value={form.reportsToId} onChange={(e) => set('reportsToId', e.target.value)}><option value="">Select</option>{opts.managers.map((m) => <option key={m.id} value={m.id}>{titleCase(m.name)}{m.designation ? ` · ${m.designation}` : ''}</option>)}</select></LCE>
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy ? 'Creating…' : 'Create employee'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+const inpCE = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+function LCE({ label, children }) { return <div><div className="text-[12px] font-bold text-slate-600 mb-1">{label}</div>{children}</div>; }
 
 // Marks a hired candidate as having failed to join on the joining date.
 function NotJoinedModal({ candidate, onClose, onSaved }) {
@@ -3681,6 +3952,7 @@ function CandIconBtn({ icon, label, onClick }) {
     // Info-circle for the rejection reason (matches the info style used elsewhere).
     info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 8h.01M11 12h1v4h1',
     edit: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+    clipboard: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 12h6M9 16h4',
   };
   const extra = icon === 'eye' ? <circle cx="12" cy="12" r="3" /> : null;
   const danger = icon === 'trash';
@@ -5400,6 +5672,23 @@ function HrEmailActivityModal({ id, name, fmtDate, onOpenCandidate, onClose }) {
   );
 }
 
+// Inline editable office address for a branch (feeds the pre-joining reporting
+// email). Saves on blur when changed.
+function BranchAddress({ branch, onSaved }) {
+  const [val, setVal] = useState(branch.address || '');
+  const [saved, setSaved] = useState(false);
+  const save = async () => {
+    if ((val || '') === (branch.address || '')) return;
+    try { await hrApi(`/branches/${branch._id}`, { method: 'PUT', body: JSON.stringify({ address: val }) }); setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved && onSaved(); } catch {}
+  };
+  return (
+    <div className="mt-2">
+      <textarea rows={2} value={val} onChange={(e) => setVal(e.target.value)} onBlur={save} placeholder="Office address (used in the pre-joining email)" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] text-slate-600 resize-none" />
+      {saved && <div className="text-[10px] text-green-600 font-bold mt-0.5">Saved</div>}
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -5855,11 +6144,14 @@ function HrAdmin({ user, onOpenCandidate }) {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border border-slate-200 p-5">
                 <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
-                <div className="space-y-1.5 mb-3">
+                <div className="space-y-2.5 mb-3">
                   {branches.map((b) => (
-                    <div key={b._id} className="flex items-center justify-between text-sm group">
-                      <span className="font-semibold text-slate-600">{b.name}</span>
-                      <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
+                    <div key={b._id} className="border border-slate-100 rounded-lg p-2.5 group">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-semibold text-slate-600">{b.name}</span>
+                        <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Rename" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
+                      </div>
+                      <BranchAddress branch={b} onSaved={load} />
                     </div>
                   ))}
                 </div>

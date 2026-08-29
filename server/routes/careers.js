@@ -287,6 +287,175 @@ router.post('/task/:token/submit', async (req, res, next) => {
   }
 });
 
+// ===== Candidate onboarding (document collection before joining) ===========
+async function findOnboardingByToken(token) {
+  const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
+  for (const c of rows) {
+    if (c.onboarding && c.onboarding.token === token) return c;
+  }
+  return null;
+}
+
+// Public: fetch the onboarding form context for the candidate page.
+router.get('/onboarding/:token', async (req, res, next) => {
+  try {
+    const cand = await findOnboardingByToken(req.params.token);
+    if (!cand) return res.status(404).json({ error: 'This onboarding link is not valid.' });
+    const onb = cand.onboarding || {};
+    if (onb.status === 'submitted') return res.json({ submitted: true, candidateName: cand.name });
+    const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+    // HR contact = job's assigned HR, else the recruiter.
+    let hr = null;
+    const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+    if (ids.length) hr = await HrUser.findByPk(ids[0]);
+    if (!hr && cand.recruiterId) hr = await HrUser.findByPk(cand.recruiterId);
+    const offer = cand.offer || {};
+    const experienced = (job && job.experienceType && job.experienceType !== 'freshers');
+    res.json({
+      submitted: false,
+      candidateName: cand.name,
+      role: job ? job.title : '',
+      branch: (job && job.locations && job.locations[0]) || '',
+      joiningDate: offer.joiningDate || '',
+      joiningTime: offer.joiningTime || '',
+      experienced: !!experienced,
+      hr: hr ? { name: hr.name, phone: hr.phone || '', avatar: hr.avatar || null } : null,
+      prefill: {
+        name: cand.name || '', email: cand.email || '', phone: cand.phone || '',
+      },
+      draft: onb.draft || null,
+    });
+  } catch (e) { next(e); }
+});
+
+// Public: autosave a partial draft (fields only, no files) so a candidate can
+// finish later from the same link.
+router.post('/onboarding/:token/draft', async (req, res, next) => {
+  try {
+    const cand = await findOnboardingByToken(req.params.token);
+    if (!cand) return res.status(404).json({ error: 'This onboarding link is not valid.' });
+    const onb = cand.onboarding || {};
+    if (onb.status === 'submitted') return res.status(400).json({ error: 'Already submitted.' });
+    onb.draft = (req.body && typeof req.body.draft === 'object') ? req.body.draft : onb.draft;
+    cand.onboarding = onb; cand.changed('onboarding', true);
+    await cand.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Public: candidate submits all onboarding fields + documents. Uploads each
+// file to ImageKit under HRMS/Onboarding/<Candidate Name>/, stores field values
+// + doc URLs on candidate.onboarding, marks submitted, notifies HR.
+router.post('/onboarding/:token/submit', async (req, res, next) => {
+  try {
+    const cand = await findOnboardingByToken(req.params.token);
+    if (!cand) return res.status(404).json({ error: 'This onboarding link is not valid.' });
+    const onb = cand.onboarding || {};
+    if (onb.status === 'submitted') return res.status(400).json({ error: 'You have already submitted your details.' });
+    const body = req.body || {};
+    const fields = body.fields || {};
+    const filesIn = body.files || {}; // { key: [{name,base64}] or {name,base64} }
+
+    const imagekit = require('../services/imagekit');
+    const folder = `HRMS/Onboarding/${safeFolder(cand.name)}`;
+    const uploadOne = async (f) => {
+      if (!f || !f.base64) return null;
+      const out = await imagekit.uploadFile({ base64: f.base64, fileName: (f.name || 'file').slice(0, 120), folder });
+      return (out && out.url && /^https?:\/\//i.test(out.url)) ? { name: out.name || f.name || 'file', url: out.url, at: new Date().toISOString() } : null;
+    };
+    const uploadMany = async (arr) => {
+      const out = [];
+      for (const f of (Array.isArray(arr) ? arr : [])) { const u = await uploadOne(f); if (u) out.push(u); }
+      return out;
+    };
+
+    const docs = {};
+    docs.photo = await uploadOne(filesIn.photo);
+    docs.panCard = await uploadOne(filesIn.panCard);
+    docs.aadhaarCard = await uploadOne(filesIn.aadhaarCard);
+    docs.addressProof = await uploadOne(filesIn.addressProof);
+    docs.degreeCertificate = await uploadOne(filesIn.degreeCertificate);
+    docs.marksheets = await uploadMany(filesIn.marksheets);
+
+    const prevCompanies = [];
+    const companiesIn = Array.isArray(body.prevCompanies) ? body.prevCompanies : [];
+    for (const c of companiesIn) {
+      prevCompanies.push({
+        name: String(c.name || '').slice(0, 160),
+        expLetters: await uploadMany(c.expLetters),
+        salarySlips: await uploadMany(c.salarySlips),
+      });
+    }
+
+    onb.fields = {
+      name: String(fields.name || cand.name || '').slice(0, 160),
+      email: String(fields.email || '').slice(0, 160),
+      phone: String(fields.phone || '').slice(0, 40),
+      fatherName: String(fields.fatherName || '').slice(0, 160),
+      dob: String(fields.dob || '').slice(0, 10),
+      maritalStatus: String(fields.maritalStatus || '').slice(0, 20),
+      anniversary: String(fields.anniversary || '').slice(0, 10),
+      presentAddress: String(fields.presentAddress || '').slice(0, 500),
+      permanentAddress: String(fields.permanentAddress || '').slice(0, 500),
+      bloodGroup: String(fields.bloodGroup || '').slice(0, 8),
+      pan: String(fields.pan || '').toUpperCase().slice(0, 12),
+      aadhaar: String(fields.aadhaar || '').replace(/\s+/g, '').slice(0, 12),
+      addressProofType: String(fields.addressProofType || '').slice(0, 40),
+      qualification: String(fields.qualification || '').slice(0, 40),
+      qualificationOther: String(fields.qualificationOther || '').slice(0, 80),
+    };
+    onb.docs = docs;
+    onb.prevCompanies = prevCompanies;
+    onb.status = 'submitted';
+    onb.submittedAt = new Date().toISOString();
+    onb.docsComplete = true;
+    onb.draft = null;
+    cand.onboarding = onb; cand.changed('onboarding', true);
+
+    // Mirror uploaded files into the candidate's attachments for easy access.
+    const atts = Array.isArray(cand.attachments) ? cand.attachments.slice() : [];
+    const pushAtt = (u, label) => { if (u && u.url) atts.push({ id: `att${Date.now()}${Math.random().toString(36).slice(2, 6)}`, name: `${label}: ${u.name}`, url: u.url, at: u.at, source: 'onboarding' }); };
+    pushAtt(docs.photo, 'Photo'); pushAtt(docs.panCard, 'PAN'); pushAtt(docs.aadhaarCard, 'Aadhaar');
+    pushAtt(docs.addressProof, 'Address proof'); pushAtt(docs.degreeCertificate, 'Degree');
+    (docs.marksheets || []).forEach((u) => pushAtt(u, 'Marksheet'));
+    prevCompanies.forEach((c) => { (c.expLetters || []).forEach((u) => pushAtt(u, `${c.name} letter`)); (c.salarySlips || []).forEach((u) => pushAtt(u, `${c.name} salary slip`)); });
+    cand.attachments = atts; cand.changed('attachments', true);
+
+    const tl = Array.isArray(cand.timeline) ? cand.timeline.slice() : [];
+    tl.unshift({ id: `t${Date.now()}`, type: 'onboarding', text: `${cand.name} submitted their onboarding documents.`, by: cand.name, at: onb.submittedAt });
+    cand.timeline = tl; cand.changed('timeline', true);
+    await cand.save();
+
+    // Notify assigned HR + recruiter that docs are in.
+    try {
+      const job = cand.jobPostId ? await HrJobPost.findByPk(cand.jobPostId) : null;
+      const ids = new Set();
+      if (cand.recruiterId) ids.add(cand.recruiterId);
+      ((job && job.assignedHrIds) || []).forEach((id) => ids.add(id));
+      for (const id of ids) {
+        await require('../models').HrNotification.create({ userId: id, actorKind: 'hr', type: 'info', text: `${cand.name} has submitted their onboarding documents — ready to create the employee record.` }).catch(() => {});
+      }
+    } catch {}
+
+    // Confirmation email to the candidate.
+    try {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const { email: mailbox, token } = recruitmentMailbox(s);
+      if (cand.email && token && mailbox) {
+        const gmail = require('../services/gmail');
+        const hrEmail = require('../services/hrEmailTemplate');
+        const bodyHtml = hrEmail.onboardingReceived ? hrEmail.onboardingReceived({ candidateName: cand.name }) : `<p>Hi ${cand.name},</p><p>We've received your onboarding documents. Thank you!</p>`;
+        await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: cand.email, subject: 'We received your onboarding documents — Qtonix', bodyHtml });
+      }
+    } catch (e) { console.error('[onboarding] confirmation email failed:', e.message); }
+
+    res.json({ ok: true });
+  } catch (e) {
+    if (/not configured/i.test(e.message)) return res.status(400).json({ error: 'File uploads are not set up on this account yet.' });
+    next(e);
+  }
+});
+
 async function sendApplicationConfirmation(cand, job) {
   if (!cand.email) return;
   const s = await Settings.findOne({ where: { singleton: 'settings' } });

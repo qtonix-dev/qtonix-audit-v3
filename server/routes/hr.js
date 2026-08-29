@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -446,6 +446,7 @@ router.put('/branches/:id', requireHrAccess, requireHrAdmin, async (req, res, ne
     const row = await HrBranch.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Branch not found.' });
     if (req.body && req.body.name !== undefined) row.name = String(req.body.name).trim();
+    if (req.body && req.body.address !== undefined) row.address = String(req.body.address).slice(0, 500);
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -3700,6 +3701,58 @@ const pushTimeline = (row, entry) => {
   row.timeline = t; row.changed('timeline', true);
 };
 
+// ===== Onboarding helpers ==================================================
+// The standard HR onboarding checklist, grouped by phase relative to joining.
+// `auto` items are driven by a button/automation; the rest are manual ticks.
+// `route` marks a task that fans out to another department's review feed.
+function onboardingChecklistSeed() {
+  return [
+    // Prepare — 2 days before (kicked off once candidate docs are complete)
+    { id: 'notify_seniors', phase: 'prepare', label: 'Email department PM & Team Leads about the new joiner', auto: true },
+    { id: 'seating', phase: 'prepare', label: 'Finalize seating arrangement with senior' },
+    { id: 'inform_it', phase: 'prepare', label: 'Inform IT to prepare the computer', route: 'IT & Hardware' },
+    { id: 'id_card', phase: 'prepare', label: 'Contact vendor for ID-card printing', wantsDate: true },
+    { id: 'welcome_kit', phase: 'prepare', label: 'Prepare welcome kit' },
+    // Set up — 1 day before
+    { id: 'desk_check', phase: 'setup', label: 'Check desk & computer are ready' },
+    { id: 'company_email', phase: 'setup', label: 'Create company email' },
+    { id: 'teams_id', phase: 'setup', label: 'Create Microsoft Teams ID' },
+    { id: 'activate_hrms', phase: 'setup', label: 'Activate HRMS Employee ID & login', createsEmployee: true },
+    // Joining day — confirm & welcome
+    { id: 'confirm_joining', phase: 'joinday', label: 'Mark Joined / Not joined / Postpone', confirm: true },
+    { id: 'welcome_email', phase: 'joinday', label: 'Send welcome-aboard email', auto: true },
+    { id: 'doc_verify', phase: 'joinday', label: 'Physical document verification (originals)' },
+    { id: 'sign_agreement', phase: 'joinday', label: 'Sign Employee Agreement' },
+    { id: 'sign_rulebook', phase: 'joinday', label: 'Sign Employee Rule Book' },
+    // Induction — day one
+    { id: 'welcome_meeting', phase: 'induction', label: 'Team welcome meeting & introduction', meeting: true },
+    { id: 'hr_induction', phase: 'induction', label: 'HR induction / company presentation' },
+    { id: 'hrms_demo', phase: 'induction', label: 'HRMS demo' },
+    { id: 'crm_demo', phase: 'induction', label: 'Sales CRM demo', salesOnly: true },
+    { id: 'office_tour', phase: 'induction', label: 'Office tour' },
+    { id: 'share_creds', phase: 'induction', label: 'Share all credentials' },
+    { id: 'kpi_kra', phase: 'induction', label: 'Email KPI & KRA', auto: true },
+  ].map((t) => ({ ...t, done: false, doneAt: null, doneById: null, meta: {} }));
+}
+
+function getAppUrl() { return (process.env.APP_URL || '').replace(/\/$/, ''); }
+
+function onboardingInit() {
+  return {
+    token: crypto.randomBytes(16).toString('hex'),
+    activatedAt: null,
+    status: 'pending',
+    joiningTime: '',
+    fields: {}, docs: {}, prevCompanies: [], draft: null,
+    submittedAt: null, docsComplete: false,
+    hrTasks: onboardingChecklistSeed(),
+    welcomeEmailSentAt: null, reminderSentAt: null, seniorNotifiedAt: null,
+    reportingSentAt: null, welcomeAboardSentAt: null,
+    convertedEmployeeId: null, joiningChanges: [],
+  };
+}
+
+
 // Move a candidate between hiring-flow stages (logs to timeline).
 router.patch('/candidates/:id/stage', requireHrAccess, async (req, res, next) => {
   try {
@@ -4793,7 +4846,7 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
         break;
       case 'manage_hire': {
-        // Edit accepted salary, joining date and joined/not-joined in one go.
+        // Edit accepted salary, joining date/time and joined/not-joined in one go.
         if (b.acceptedAmount !== undefined) {
           const amt = String(b.acceptedAmount).slice(0, 60);
           offer.acceptedAmount = amt;
@@ -4804,7 +4857,25 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
             if (d) { d.offered = amt; d.editedAt = now; d.editedBy = req.hrActor.name; }
           }
         }
-        if (b.joiningDate !== undefined) offer.joiningDate = b.joiningDate ? String(b.joiningDate).slice(0, 40) : '';
+        const prevDate = offer.joiningDate ? String(offer.joiningDate).slice(0, 10) : '';
+        const newDate = b.joiningDate !== undefined ? (b.joiningDate ? String(b.joiningDate).slice(0, 40) : '') : prevDate;
+        if (b.joiningDate !== undefined) offer.joiningDate = newDate;
+        if (b.joiningTime !== undefined) offer.joiningTime = String(b.joiningTime || '').slice(0, 8);
+        // Record a joining-date change with its reason, and re-baseline onboarding.
+        if (prevDate && newDate && prevDate !== newDate) {
+          const onb = row.onboarding || {};
+          onb.joiningChanges = Array.isArray(onb.joiningChanges) ? onb.joiningChanges : [];
+          onb.joiningChanges.push({ from: prevDate, to: newDate, reason: String(b.changeReason || '').slice(0, 300), by: req.hrActor.name, at: now });
+          // Clear one-shot send markers so reminders recompute against the new date.
+          onb.welcomeEmailSentAt = null; onb.reminderSentAt = null; onb.seniorNotifiedAt = null; onb.reportingSentAt = null;
+          row.onboarding = onb; row.changed('onboarding', true);
+          pushTimeline(row, { type: 'offer', text: `Joining date changed ${prevDate} → ${newDate} by ${req.hrActor.name}${b.changeReason ? ` — ${String(b.changeReason).slice(0, 150)}` : ''}.`, by: req.hrActor.name });
+        }
+        // Initialize onboarding the first time a joining date is set.
+        if (newDate && !row.onboarding) {
+          row.onboarding = onboardingInit();
+          row.changed('onboarding', true);
+        }
         if (b.joinedConfirmed !== undefined) offer.joinedConfirmed = !!b.joinedConfirmed;
         if (b.notJoined) {
           offer.notJoined = true;
@@ -4924,7 +4995,148 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
   } catch (e) { next(e); }
 });
 
-// Admin decides on a salary-approval request (counter-offer).
+// ===== Onboarding (HR side) ================================================
+// Full onboarding detail for the candidate's Hired record: candidate documents
+// + the HR checklist + assigned-HR contact + the public onboarding URL.
+router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    if (!row.onboarding) { row.onboarding = onboardingInit(); row.changed('onboarding', true); await row.save(); }
+    const onb = row.onboarding;
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    let hr = null;
+    const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
+    if (ids.length) hr = await HrUser.findByPk(ids[0]);
+    if (!hr && row.recruiterId) hr = await HrUser.findByPk(row.recruiterId);
+    const appUrl = getAppUrl(req);
+    const isSales = /sales/i.test(String((job && job.department) || '') + ' ' + String(row.stage || ''));
+    res.json({
+      candidate: { id: row.id, name: row.name, email: row.email, phone: row.phone },
+      role: job ? job.title : '',
+      department: job ? job.department : '',
+      isSales,
+      offer: row.offer || {},
+      onboarding: onb,
+      onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '',
+      hr: hr ? { id: hr.id, name: hr.name, phone: hr.phone || '' } : null,
+      convertedEmployeeId: onb.convertedEmployeeId || null,
+    });
+  } catch (e) { next(e); }
+});
+
+// Send (or resend) the onboarding welcome email to the candidate with the link.
+router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    if (!row.email) return res.status(400).json({ error: 'This candidate has no email on file.' });
+    if (!row.onboarding) { row.onboarding = onboardingInit(); row.changed('onboarding', true); }
+    const onb = row.onboarding;
+    const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
+    const offer = row.offer || {};
+    const appUrl = getAppUrl(req);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    const mailbox = mailboxEmail(s);
+    if (!token || !mailbox) return res.status(400).json({ error: 'No recruitment mailbox is linked. Connect one in Admin → Email.' });
+    const gmail = require('../services/gmail');
+    const hrEmail = require('../services/hrEmailTemplate');
+    const jd = offer.joiningDate ? new Date(offer.joiningDate + 'T00:00:00') : null;
+    const joiningDateText = jd ? jd.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    const deadline = jd ? new Date(jd.getTime() - 3 * 86400000) : null;
+    const deadlineText = deadline ? deadline.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+    let hr = null; const ids = (job && job.assignedHrIds) || []; if (ids.length) hr = await HrUser.findByPk(ids[0]);
+    const sig = hr ? { name: hr.name, title: `HR \u00b7 Qtonix`, email: mailbox } : { name: 'Qtonix Recruitment Team', title: 'Talent Acquisition \u00b7 Qtonix', email: mailbox };
+    const bodyHtml = hrEmail.onboardingWelcome({
+      candidateName: row.name, role: job ? job.title : '', joiningDateText,
+      department: job ? job.department : '', deadlineText,
+      onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '', signature: sig,
+    });
+    const cc = []; if (hr && hr.email) cc.push(hr.email);
+    await gmail.sendMessage(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Welcome to Qtonix, ${String(row.name).split(' ')[0]}! \u2013 Next Steps`, bodyHtml });
+    onb.welcomeEmailSentAt = new Date().toISOString();
+    if (!onb.activatedAt) onb.activatedAt = onb.welcomeEmailSentAt;
+    row.onboarding = onb; row.changed('onboarding', true);
+    pushTimeline(row, { type: 'onboarding', text: `Onboarding welcome email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
+    await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Create an employee (HrUser) from a submitted onboarding candidate. HR supplies
+// the org-specific fields (Employee ID, branch, reporting manager/TL). All
+// onboarding documents are carried over and linked to the new employee.
+router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!(req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type)))) {
+      return res.status(403).json({ error: 'You don\u2019t have permission to create employees.' });
+    }
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const onb = row.onboarding || {};
+    if (onb.convertedEmployeeId) {
+      const existing = await HrUser.findByPk(onb.convertedEmployeeId);
+      if (existing) return res.status(400).json({ error: 'An employee has already been created for this candidate.' });
+    }
+    const b = req.body || {};
+    if (!b.email || !b.password || !b.type) return res.status(400).json({ error: 'Email, password and role are required.' });
+    const email = String(b.email).toLowerCase().trim();
+    const dup = await HrUser.findOne({ where: { email } });
+    if (dup) return res.status(409).json({ error: 'An employee with this email already exists.' });
+    const f = onb.fields || {};
+    const docs = onb.docs || {};
+    const linkedDocs = [];
+    const add = (u, kind) => { if (u && u.url) linkedDocs.push({ name: u.name, url: u.url, kind, at: u.at || new Date().toISOString() }); };
+    add(docs.photo, 'photo'); add(docs.panCard, 'pan'); add(docs.aadhaarCard, 'aadhaar');
+    add(docs.addressProof, 'address_proof'); add(docs.degreeCertificate, 'degree');
+    (docs.marksheets || []).forEach((u) => add(u, 'marksheet'));
+    (onb.prevCompanies || []).forEach((c) => { (c.expLetters || []).forEach((u) => add(u, 'experience_letter')); (c.salarySlips || []).forEach((u) => add(u, 'salary_slip')); });
+
+    const passwordHash = await bcrypt.hash(String(b.password), 10);
+    const marital = /married/i.test(f.maritalStatus || '') ? 'married' : (f.maritalStatus ? 'single' : null);
+    const emp = await HrUser.create({
+      name: f.name || row.name, email, passwordHash, type: b.type,
+      employeeId: b.employeeId || null,
+      phone: f.phone || row.phone || '+91 ',
+      designation: b.designation || (row.jobPostId ? '' : ''),
+      branch: b.branch || '',
+      department: b.department || '',
+      joiningDate: (row.offer && row.offer.joiningDate) || null,
+      shiftId: b.shiftId ? Number(b.shiftId) : null,
+      reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
+      reportsToAdminId: b.reportsToAdminId ? Number(b.reportsToAdminId) : null,
+      avatar: docs.photo && docs.photo.url ? docs.photo.url : null,
+      birthday: f.dob || null,
+      maritalStatus: marital,
+      anniversary: f.anniversary || null,
+      fatherName: f.fatherName || '',
+      bloodGroup: f.bloodGroup || '',
+      panNumber: f.pan || '',
+      aadhaarNumber: f.aadhaar || '',
+      presentAddress: f.presentAddress || '',
+      permanentAddress: f.permanentAddress || '',
+      onboardingDocs: linkedDocs,
+      fromCandidateId: row.id,
+      active: true,
+    });
+    // Seed the standard employee onboarding checklist (existing mechanism).
+    try {
+      const tmpl = (s => (s && Array.isArray(s.hrOnboardingTasks)) ? s.hrOnboardingTasks : [])(await Settings.findOne({ where: { singleton: 'settings' } }));
+      let order = 0;
+      for (const t of tmpl) { await HrOnboarding.create({ employeeId: emp.id, task: t, order: order++ }); }
+    } catch {}
+    onb.convertedEmployeeId = emp.id;
+    // Mark the "activate HRMS" checklist item done.
+    onb.hrTasks = (onb.hrTasks || []).map((t) => (t.id === 'activate_hrms' ? { ...t, done: true, doneAt: new Date().toISOString(), doneById: req.hrActor.id, meta: { ...(t.meta || {}), employeeId: emp.id } } : t));
+    row.onboarding = onb; row.changed('onboarding', true);
+    pushTimeline(row, { type: 'onboarding', text: `${row.name} was created as an employee (ID ${emp.employeeId || emp.id}) by ${req.hrActor.name}.`, by: req.hrActor.name });
+    await row.save();
+    res.json({ ok: true, employeeId: emp.id });
+  } catch (e) { next(e); }
+});
+
+
 router.post('/candidates/:id/offer/approve', requireHrAccess, async (req, res, next) => {
   try {
     if (!req.isHrAdmin) return res.status(403).json({ error: 'Only an admin can approve.' });
