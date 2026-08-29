@@ -66,20 +66,32 @@
   .btn:hover { filter: brightness(1.03); } .btn:disabled { opacity: .5; cursor: default; }
   .savenote { text-align: center; font-size: 12px; color: #94a3b8; margin-top: 10px; }
   .err { color: #dc2626; font-size: 13px; margin-top: 12px; font-weight: 600; }
-  .qsection { margin-top: 22px; padding-top: 20px; border-top: 1px solid #232a4d; }
-  .qhead { font-size: 16px; font-weight: 800; color: #fff; margin-bottom: 4px; }
-  .qsub { font-size: 13px; color: #94a3b8; margin-bottom: 12px; }
-  .qinput { width: 100%; background: #0A0E28; border: 1px solid #2a3357; border-radius: 10px; color: #fff; padding: 12px; font-size: 14px; min-height: 74px; font-family: inherit; resize: vertical; }
-  .qsend { margin-top: 10px; background: linear-gradient(90deg,#FF6A00,#FF4500); border: 0; border-radius: 10px; color: #fff; font-weight: 700; font-size: 14px; padding: 11px 20px; cursor: pointer; }
+  .brandrow { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .askbtn { display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; font-weight: 700; font-size: 13px; border-radius: 10px; padding: 10px 16px; cursor: pointer; font-family: inherit; }
+  .askbtn:hover { background: rgba(255,255,255,.2); }
+  .askbtn .qico { font-size: 14px; }
+  .askbtn .askn { background: #FF4500; color: #fff; border-radius: 999px; font-size: 10px; font-weight: 800; padding: 1px 7px; }
+  .qoverlay { position: fixed; inset: 0; background: rgba(4,14,60,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+  .qmodal { background: #fff; border-radius: 18px; width: 520px; max-width: 100%; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 30px 70px rgba(0,0,0,.35); }
+  .qmh { padding: 18px 22px; border-bottom: 1px solid #eef1f7; display: flex; justify-content: space-between; align-items: flex-start; }
+  .qmt { font-size: 17px; font-weight: 800; color: #050A1F; }
+  .qms { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .qmx { background: none; border: 0; font-size: 24px; color: #94a3b8; cursor: pointer; line-height: 1; }
+  .qmb { padding: 20px 22px; overflow-y: auto; }
+  .qmlabel { display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; }
+  .qinput { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; font-size: 14px; min-height: 84px; font-family: inherit; color: #0A0E28; }
+  .qinput:focus { outline: none; border-color: #FF6A00; }
+  .qsend { margin-top: 10px; background: linear-gradient(90deg,#FF6A00,#FF4500); border: 0; border-radius: 10px; color: #fff; font-weight: 700; font-size: 14px; padding: 11px 18px; cursor: pointer; }
   .qsend:disabled { opacity: .5; }
-  .qerr { color: #fca5a5; font-size: 13px; margin-top: 8px; font-weight: 600; }
-  .qlist { margin-top: 14px; }
-  .qitem { background: #111633; border: 1px solid #232a4d; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
-  .qm { font-size: 14px; color: #e2e8f0; }
-  .qtime { font-size: 11px; color: #64748b; margin-top: 5px; }
-  .qr { margin-top: 10px; padding-top: 10px; border-top: 1px solid #232a4d; font-size: 14px; color: #fdba74; line-height: 1.5; }
-  .qrl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #EA580C; margin-bottom: 4px; }
-  .qpend { font-size: 12px; color: #94a3b8; margin-top: 10px; font-style: italic; }
+  .qerr { color: #dc2626; font-size: 13px; margin-top: 8px; font-weight: 600; }
+  .qthread { margin-top: 22px; border-top: 1px solid #eef1f7; padding-top: 16px; }
+  .qtlabel { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #94a3b8; margin-bottom: 10px; }
+  .qi { border: 1px solid #e7ebf3; border-radius: 12px; padding: 13px; margin-bottom: 10px; }
+  .qim { font-size: 14px; color: #0A0E28; font-weight: 600; }
+  .qit { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+  .qir { margin-top: 9px; padding: 10px 12px; background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 9px; font-size: 13px; color: #7c2d12; line-height: 1.5; }
+  .qirl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #EA580C; margin-bottom: 3px; }
+  .qip { font-size: 12px; color: #94a3b8; font-style: italic; margin-top: 8px; }
   .muted { color: #94a3b8; font-size: 12px; }
   .ok { text-align: center; padding: 52px 20px; }
   .ok .big { font-size: 52px; }

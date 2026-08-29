@@ -4075,7 +4075,7 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                             </select>
                           </div>
                           <button onClick={() => { if (!physBy) { setErr('Please select who verified the documents.'); return; } markPhysical(true, { date: physDate, verifiedById: physBy }); }} disabled={busy === 'physical'} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'physical' ? 'Saving…' : 'Mark verified'}</button>
-                          <button onClick={() => setShowPhysForm(false)} className="text-[12px] text-slate-400">Cancel</button>
+                          <button onClick={() => setShowPhysForm(false)} className="text-[12px] font-bold rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50">Cancel</button>
                         </div>
                       </div>
                     )}
@@ -4125,7 +4125,7 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                 ))}
               </div>
 
-              {/* Candidate questions — submitted from the onboarding page. */}
+              {/* Candidate questions — click an open one to answer via popup. */}
               {(() => {
                 const qs = data.queries || [];
                 const newCount = qs.filter((q) => !q.reply).length;
@@ -4135,30 +4135,29 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                       <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-3 h-3 rounded" style={{ background: '#7C3AED' }} />Candidate questions</div>
                       {newCount > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>{newCount} new</span>}
                     </div>
-                    <div className="text-[12px] text-slate-400 mb-3">Questions submitted by the candidate from their onboarding page.</div>
+                    <div className="text-[12px] text-slate-400 mb-3">Click a question to answer it. Answered questions show the reply below.</div>
                     {qs.length === 0 ? <div className="text-[13px] text-slate-400 py-1">No questions yet.</div> : (
-                      <div className="space-y-2.5">
-                        {qs.slice().reverse().map((q) => (
+                      <div className="space-y-2">
+                        {qs.slice().reverse().map((q) => q.reply ? (
                           <div key={q.id} className="rounded-lg border border-slate-200 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="text-[13px] font-semibold text-[#0A0E28]">{q.message}</div>
-                              {q.reply ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>Answered</span> : <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: '#FEF3C7', color: '#B45309' }}>New</span>}
+                              <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>Answered</span>
                             </div>
                             <div className="text-[10px] text-slate-400 mt-1">{q.at ? new Date(q.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}{q.repliedByName ? ` · replied by ${q.repliedByName}` : ''}</div>
-                            {q.reply ? (
-                              <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534' }}><div className="text-[10px] font-bold uppercase mb-0.5" style={{ color: '#16A34A' }}>Your reply</div>{q.reply}</div>
-                            ) : replyFor === q.id ? (
-                              <div className="mt-2">
-                                <textarea rows={2} value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Type your reply… the candidate will get an email with their question and your answer." className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" />
-                                <div className="flex gap-2 mt-1.5">
-                                  <button onClick={() => sendReply(q.id)} disabled={busy === 'reply'} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'reply' ? 'Sending…' : 'Send reply & email candidate'}</button>
-                                  <button onClick={() => { setReplyFor(''); setReplyText(''); }} className="text-[11px] text-slate-400">Cancel</button>
-                                </div>
-                              </div>
-                            ) : (
-                              <button onClick={() => { setReplyFor(q.id); setReplyText(''); }} className="mt-2 text-[11px] font-bold text-indigo-600 hover:text-indigo-700">Reply →</button>
-                            )}
+                            <div className="mt-2 rounded-lg px-3 py-2 text-[12px]" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534' }}><div className="text-[10px] font-bold uppercase mb-0.5" style={{ color: '#16A34A' }}>Your reply</div>{q.reply}</div>
                           </div>
+                        ) : (
+                          <button key={q.id} onClick={() => { setReplyFor(q.id); setReplyText(''); setErr(''); }} className="w-full text-left rounded-lg border border-slate-200 p-3 hover:bg-indigo-50/40 hover:border-indigo-200 transition flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-[13px] font-semibold text-[#0A0E28]">{q.message}</div>
+                              <div className="text-[10px] text-slate-400 mt-1">{q.at ? new Date(q.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: '#FEF3C7', color: '#B45309' }}>New</span>
+                              <span className="text-slate-400 text-lg leading-none">›</span>
+                            </div>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -4189,6 +4188,32 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
           )}
         </div>
         {showCreate && data && <CreateEmployeeFromCandidate data={data} candidateId={candidate._id} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); onChanged && onChanged(); }} />}
+        {replyFor && (() => {
+          const q = (data.queries || []).find((x) => x.id === replyFor);
+          if (!q) return null;
+          return (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] p-4" onClick={() => { setReplyFor(''); setReplyText(''); }}>
+              <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <div className="text-base font-extrabold text-[#050A1F]">Answer candidate question</div>
+                  <button onClick={() => { setReplyFor(''); setReplyText(''); }} className="text-slate-400 text-xl leading-none">×</button>
+                </div>
+                <div className="p-5">
+                  {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>}
+                  <div className="rounded-lg p-3 text-[13px] text-slate-700" style={{ background: '#F8FAFC', border: '1px solid #e2e8f0' }}>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">Question from {titleCase(data.candidate.name).split(' ')[0]} · {q.at ? new Date(q.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</div>
+                    {q.message}
+                  </div>
+                  <textarea rows={4} value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Type your reply… the candidate will get an email with their question and your answer." className="w-full mt-3 rounded-lg border border-slate-300 px-3 py-2 text-[13px]" />
+                </div>
+                <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+                  <button onClick={() => { setReplyFor(''); setReplyText(''); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+                  <button onClick={() => sendReply(q.id)} disabled={busy === 'reply' || !replyText.trim()} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#4338CA' }}>{busy === 'reply' ? 'Sending…' : 'Send reply & email candidate'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

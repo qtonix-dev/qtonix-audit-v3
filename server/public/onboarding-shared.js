@@ -6,15 +6,33 @@
   var files = {};         // { key: {name,base64} }  or  { key: [ ... ] } for multi
   var prevCompanies = []; // [{ id }]
   var QUERIES = [];
-  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function timeAgo(iso){ try{ var d=new Date(iso); var diff=(Date.now()-d.getTime())/1000; if(diff<60)return 'just now'; if(diff<3600)return Math.floor(diff/60)+'m ago'; if(diff<86400)return Math.floor(diff/3600)+'h ago'; return Math.floor(diff/86400)+'d ago'; }catch(e){ return ''; } }
+  function queryModalHtml(){
+    return '<div class="qoverlay hidden" id="qoverlay">'
+      + '<div class="qmodal">'
+      +   '<div class="qmh"><div><div class="qmt">Ask your HR a question</div><div class="qms">Anything about your joining, documents, or first day</div></div>'
+      +     '<button type="button" class="qmx" id="qmClose">&times;</button></div>'
+      +   '<div class="qmb">'
+      +     '<label class="qmlabel">Your question</label>'
+      +     '<textarea id="qinput" class="qinput" placeholder="Type your question here\u2026"></textarea>'
+      +     '<button type="button" class="qsend" id="qsend">Send question</button>'
+      +     '<div class="qerr hidden" id="qerr"></div>'
+      +     '<div class="qthread" id="qthreadWrap"><div class="qtlabel">Your previous questions</div><div id="qlist"></div></div>'
+      +   '</div>'
+      + '</div></div>';
+  }
   function renderQueries(list){
     QUERIES = list || [];
-    var box = document.getElementById('qlist'); if(!box) return;
-    if(!QUERIES.length){ box.innerHTML=''; return; }
+    var box = document.getElementById('qlist');
+    var badge = document.getElementById('askN');
+    var threadWrap = document.getElementById('qthreadWrap');
+    if (badge){ if (QUERIES.length){ badge.textContent = QUERIES.length; badge.className = 'askn'; } else { badge.className = 'askn hidden'; } }
+    if (threadWrap){ threadWrap.className = QUERIES.length ? 'qthread' : 'qthread hidden'; }
+    if (!box) return;
+    if (!QUERIES.length){ box.innerHTML=''; return; }
     box.innerHTML = QUERIES.slice().reverse().map(function(q){
-      var reply = q.reply ? ('<div class="qr"><div class="qrl">HR replied</div>'+esc(q.reply)+'</div>') : '<div class="qpend">Awaiting HR response\u2026</div>';
-      return '<div class="qitem"><div class="qm">'+esc(q.message)+'</div><div class="qtime">Asked '+timeAgo(q.at)+'</div>'+reply+'</div>';
+      var reply = q.reply ? ('<div class="qir"><div class="qirl">HR replied</div>'+esc(q.reply)+'</div>') : '<div class="qip">Awaiting HR response\u2026</div>';
+      return '<div class="qi"><div class="qim">'+esc(q.message)+'</div><div class="qit">Asked '+timeAgo(q.at)+'</div>'+reply+'</div>';
     }).join('');
   }
   var saveTimer = null;
@@ -97,7 +115,12 @@
 
     var html = ''
     + '<div class="band"><div class="band-inner">'
-    +   '<div class="brand">Qtonix<span>.</span></div>'
+    +   '<div class="brandrow"><div class="brand">Qtonix<span>.</span></div>'
+    +     '<button type="button" class="askbtn" id="askBtn">'
+    +       '<span class="qico">&#128172;</span> Ask a question'
+    +       '<span class="askn hidden" id="askN">0</span>'
+    +     '</button>'
+    +   '</div>'
     +   '<div class="kicker">Welcome Aboard</div>'
     +   '<h1>Let\'s get you ready, '+esc(first)+'</h1>'
     +   '<div class="sub">'+esc(c.role||'')+(c.joiningDate?(' &middot; Joining '+fmtDate(c.joiningDate)):'')+(c.branch?(' &middot; '+esc(c.branch)):'')+'</div>'
@@ -153,16 +176,9 @@
     +     '<button class="btn" id="submitBtn">Submit my details &amp; documents</button>'
     +     '<div class="err hidden" id="formErr"></div>'
     +     '<div class="savenote">&#10003; Your progress is saved automatically &mdash; you can finish later from the same link</div>'
-    +     '<div class="qsection" id="qsection">'
-    +       '<div class="qhead">Have a question?</div>'
-    +       '<div class="qsub">Ask your HR contact anything about your joining, documents, or first day.</div>'
-    +       '<textarea id="qinput" class="qinput" placeholder="Type your question here\u2026"></textarea>'
-    +       '<button type="button" class="qsend" id="qsend">Send question</button>'
-    +       '<div class="qerr hidden" id="qerr"></div>'
-    +       '<div id="qlist" class="qlist"></div>'
-    +     '</div>'
     +   '</div>'
-    + '</div></div>';
+    + '</div></div>'
+    + queryModalHtml();
 
     app.innerHTML = html;
     wire();
@@ -206,7 +222,13 @@
     if (el('addCompany')) el('addCompany').addEventListener('click', addCompany);
     el('submitBtn').addEventListener('click', submit);
     // Ask-a-question wiring.
-    renderQueries(c.queries || []);
+    renderQueries((ctx && ctx.queries) || []);
+    var askBtn = el('askBtn'); var qov = el('qoverlay'); var qmClose = el('qmClose');
+    function openQ(){ if(qov){ qov.className='qoverlay'; var qi=el('qinput'); if(qi) setTimeout(function(){qi.focus();},50); } }
+    function closeQ(){ if(qov){ qov.className='qoverlay hidden'; } }
+    if (askBtn) askBtn.addEventListener('click', openQ);
+    if (qmClose) qmClose.addEventListener('click', closeQ);
+    if (qov) qov.addEventListener('click', function(e){ if(e.target===qov) closeQ(); });
     var qsend = el('qsend');
     if (qsend) qsend.addEventListener('click', function(){
       var input = el('qinput'); var msg = (input.value||'').trim();
