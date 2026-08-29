@@ -5119,8 +5119,15 @@ router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
     const toYmd = (v) => {
       if (!v) return '';
       const s = String(v).trim();
-      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+      if (m) {
+        let a = Number(m[1]), b = Number(m[2]); const y = m[3];
+        let day, mon;
+        if (a > 12) { day = a; mon = b; } else if (b > 12) { mon = a; day = b; } else { day = a; mon = b; }
+        if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
       const d = new Date(s);
       if (!isNaN(d.getTime())) { const ist = new Date(d.getTime() + 330 * 60000); return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`; }
       return '';
@@ -5153,8 +5160,21 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const toYmd = (v) => {
       if (!v) return '';
       const s = String(v).trim();
-      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO / ISO datetime (the normal case)
+      let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO / ISO datetime (the normal case)
       if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      // Slash/dash numeric formats. Qtonix is India-based, so a 3-part numeric
+      // date is DAY-first (DD/MM/YYYY) unless the first part is clearly > 12.
+      m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+      if (m) {
+        let a = Number(m[1]), b = Number(m[2]); const y = m[3];
+        let day, mon;
+        if (a > 12) { day = a; mon = b; }          // 13/09/2026 → day 13
+        else if (b > 12) { mon = a; day = b; }     // 09/13/2026 → US, month 9
+        else { day = a; mon = b; }                 // ambiguous → assume DD/MM (India)
+        if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) {
+          return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
+      }
       const d = new Date(s); // fallback: let the engine parse other formats
       if (!isNaN(d.getTime())) {
         const ist = new Date(d.getTime() + 330 * 60000);

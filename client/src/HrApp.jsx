@@ -3900,8 +3900,9 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged }) {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/40 z-[120] flex justify-end" onClick={onClose}>
+      <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col animate-[slideInRight_.22s_ease-out]" onClick={(e) => e.stopPropagation()} style={{ animationName: 'slideInRight' }}>
+        <style>{`@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div>
             <div className="text-lg font-extrabold text-[#050A1F]">Onboarding — {titleCase(candidate.name)}</div>
