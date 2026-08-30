@@ -40,7 +40,11 @@
   var EMP = { full_time: 'Full-time', part_time: 'Part-time', internship: 'Internship', freelance: 'Freelance', contract: 'Contract' };
   function chip(icon, text) { return '<span class="chip"><span class="ci">' + icon + '</span>' + esc(text) + '</span>'; }
 
-  fetch('/api/careers/careers/' + encodeURIComponent(token))
+  // At the clean root URL (career.qtonix.com/) there is no token in the path, so
+  // load the single careers page via the tokenless endpoint. If a token IS
+  // present (legacy /careers/<token> links), use it.
+  var endpoint = token ? ('/api/careers/careers/' + encodeURIComponent(token)) : '/api/careers/careers-list';
+  fetch(endpoint)
     .then(function (r) { if (!r.ok) throw 0; return r.json(); })
     .then(render)
     .catch(function () { app.innerHTML = '<div style="padding:60px;text-align:center" class="muted">Careers page not found.</div>'; });

@@ -236,7 +236,7 @@ function Login({ onSignIn }) {
 
         {/* Separate entrance to the HR portal (HR staff + admins). */}
         <div className="text-center mt-5">
-          <a href="/hr/login" className="text-xs font-bold text-slate-400 hover:text-[#FF6A00] transition">HR Portal →</a>
+          <a href="/go/hr" className="text-xs font-bold text-slate-400 hover:text-[#FF6A00] transition">HR Portal →</a>
         </div>
       </div>
     </div>

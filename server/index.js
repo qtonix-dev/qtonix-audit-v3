@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v358';
+const APP_VERSION = 'v359';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -83,20 +83,19 @@ app.use(async (req, res, next) => {
   try {
     if (req.method !== 'GET') return next();
     const p = req.path;
-    // Never touch API, uploads, brand/OG assets, the demo page, or any file request.
-    if (p.startsWith('/api') || p.startsWith('/uploads') || p.startsWith('/brand') || p.startsWith('/og') || p.startsWith('/demo') || p.includes('.')) return next();
+    // Never touch API, uploads, brand/OG assets, the demo page, cross-app /go/
+    // redirects, or any file request.
+    if (p.startsWith('/api') || p.startsWith('/uploads') || p.startsWith('/brand') || p.startsWith('/og') || p.startsWith('/demo') || p.startsWith('/go/') || p.includes('.')) return next();
 
     const pu = require('./services/publicUrl');
     const hostSurface = await pu.surfaceForHost(req);
     if (!hostSurface) return next(); // raw Railway host / unconfigured → default behaviour
 
-    // Careers-domain root → the public careers listing.
+    // Careers-domain root → serve the public careers listing DIRECTLY at the
+    // clean root URL (career.qtonix.com/) with careers SEO injected. No redirect
+    // to an opaque /careers/<token> URL — the root stays clean.
     if (hostSurface === 'careers' && (p === '/' || p === '')) {
-      const { Settings } = require('./models');
-      const s = await Settings.findOne({ where: { singleton: 'settings' } });
-      const token = s && s.hrCareers && s.hrCareers.token;
-      if (token) return res.redirect(302, `/careers/${token}`);
-      return next();
+      return serveCareersRoot(req, res);
     }
     // HRMS-domain root → the HR portal.
     if (hostSurface === 'hrms' && (p === '/' || p === '')) return res.redirect(302, '/hr');
@@ -235,13 +234,19 @@ async function servePublicCareersOrJob(req, res, tokenPathPrefix) {
       return res.type('html').send(html);
     }
     const selfUrl = `${base}${tokenPathPrefix}/${token}`;
-    // Careers landing page (the token is the careers/brand token).
+    // The token was NOT an individual job → it's the careers/brand token (or an
+    // unknown token). If it matches the careers page, 301 to the clean root URL
+    // so the ugly /careers/<token> address consolidates to career.qtonix.com/.
+    if (branding.token && token === branding.token) {
+      return res.redirect(301, '/');
+    }
+    // Careers landing page fallback (unknown token still shows the listing).
     const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
     const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
     const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
     const jsonLd = og.careersItemListLd(jobs, { base });
     const html = og.injectIntoHtml(listTmpl, {
-      title, description, image: `${base}/og/share.png`, url: selfUrl, jsonLd,
+      title, description, image: `${base}/og/share.png`, url: `${base}/`, jsonLd,
       keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
     });
     res.set('Cache-Control', 'no-cache, must-revalidate');
@@ -250,6 +255,49 @@ async function servePublicCareersOrJob(req, res, tokenPathPrefix) {
 }
 
 app.get('/jobs/:token', (req, res) => servePublicCareersOrJob(req, res, '/jobs'));
+
+// Cross-app navigation helpers. These let one app link to another regardless of
+// which domain you're on, and they bypass the hostname wall-off (they're under
+// /go/, which the middleware ignores). /go/crm always lands on the CRM (its
+// configured domain, else the raw deployment URL); /go/hr lands on the HR portal.
+app.get('/go/crm', async (req, res) => {
+  const pu = require('./services/publicUrl');
+  const domains = await pu.loadDomains();
+  const base = pu.normalizeOrigin(domains.crm) || pu.envOrigin() || `${req.protocol}://${req.get('host')}`;
+  // If CRM has no dedicated domain and we're currently ON the HRMS domain,
+  // the raw deployment URL (envOrigin) is where the CRM actually lives.
+  return res.redirect(302, `${base}/`);
+});
+app.get('/go/hr', async (req, res) => {
+  const pu = require('./services/publicUrl');
+  const domains = await pu.loadDomains();
+  const base = pu.normalizeOrigin(domains.hrms) || pu.envOrigin() || `${req.protocol}://${req.get('host')}`;
+  return res.redirect(302, `${base}/hr`);
+});
+
+// Serve the careers listing at the clean root URL (career.qtonix.com/) with the
+// careers-page SEO injected. Used by the hostname middleware for the root path.
+async function serveCareersRoot(req, res) {
+  const { HrJobPost, Settings } = require('./models');
+  const og = require('./services/ogTags');
+  const pu = require('./services/publicUrl');
+  const listTmpl = path.join(__dirname, 'public/jobs-page.html');
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const branding = (s && s.hrCareers) || {};
+    const base = await pu.baseFor('careers', req);
+    const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
+    const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
+    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
+    const jsonLd = og.careersItemListLd(jobs, { base });
+    const html = og.injectIntoHtml(listTmpl, {
+      title, description, image: `${base}/og/share.png`, url: `${base}/`, jsonLd,
+      keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
+    });
+    res.set('Cache-Control', 'no-cache, must-revalidate');
+    res.type('html').send(html);
+  } catch (e) { res.sendFile(listTmpl); }
+}
 
 // ===== SEO discovery files for the careers site =====
 // Served at the careers domain root: an XML sitemap and an llms.txt, both

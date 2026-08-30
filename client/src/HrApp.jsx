@@ -135,7 +135,7 @@ function HrLogin({ onSignIn }) {
           </button>
         </div>
         <div className="text-center mt-5">
-          <a href="/" className="text-xs font-bold text-slate-400 hover:text-[#FF6A00] transition">← Site Analysis Portal</a>
+          <a href="/go/crm" className="text-xs font-bold text-slate-400 hover:text-[#FF6A00] transition">← Site Analysis Portal</a>
         </div>
       </div>
     </div>

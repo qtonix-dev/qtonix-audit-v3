@@ -6208,8 +6208,14 @@ router.post('/candidates/:id/self-schedule/confirm', requireHrAccess, async (req
 router.get('/settings', requireHrAccess, async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const careersBase = await require('../services/publicUrl').baseFor('careers', req);
-    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {}, careersDomain: careersBase });
+    const pu = require('../services/publicUrl');
+    const careersBase = await pu.baseFor('careers', req);
+    // CRM location for the "back to CRM" link. Prefer a configured CRM domain,
+    // else the raw request host (the Railway URL) — never the HRMS domain, which
+    // would just bounce back into the HR portal.
+    const domains = await pu.loadDomains();
+    const crmBase = pu.normalizeOrigin(domains.crm) || pu.envOrigin() || '';
+    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {}, careersDomain: careersBase, crmDomain: crmBase });
   } catch (e) { next(e); }
 });
 router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) => {

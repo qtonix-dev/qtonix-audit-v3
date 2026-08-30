@@ -66,6 +66,17 @@ function publicView(job) {
   };
 }
 
+// Tokenless careers listing — MUST be declared before the '/:token' route below,
+// otherwise "careers-list" is captured as a job token. There is only one careers
+// page per install, so the public site loads it at the clean root URL
+// (career.qtonix.com/) with no opaque token in the path.
+router.get('/careers-list', async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    return sendCareersListing(res, (s && s.hrCareers) || {});
+  } catch (e) { next(e); }
+});
+
 router.get('/:token', async (req, res, next) => {
   try {
     const job = await findPublishedJob(req.params.token);
@@ -638,16 +649,18 @@ router.get('/careers/:brandToken', async (req, res, next) => {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const branding = s.hrCareers || {};
     if (!branding.token || branding.token !== req.params.brandToken) return res.status(404).json({ error: 'Careers page not found.' });
-    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['publishedAt', 'DESC']] });
-    // Ensure every listed job has a clean slug, so the listing links to
-    // /jobs/<slug> rather than the opaque token.
-    await Promise.all(jobs.map((j) => ensureJobSlug(j)));
-    res.json({
-      branding: { logo: branding.logo || '', title: branding.title || 'Careers', description: branding.description || '' },
-      jobs: jobs.map((j) => ({ token: j.publicToken, slug: j.slug || j.publicToken, title: j.title, department: j.department, workMode: j.workMode, locations: j.locations || [], employmentType: j.employmentType })),
-    });
+    return sendCareersListing(res, branding);
   } catch (e) { next(e); }
 });
+
+async function sendCareersListing(res, branding) {
+  const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['publishedAt', 'DESC']] });
+  await Promise.all(jobs.map((j) => ensureJobSlug(j)));
+  return res.json({
+    branding: { logo: branding.logo || '', title: branding.title || 'Careers', description: branding.description || '' },
+    jobs: jobs.map((j) => ({ token: j.publicToken, slug: j.slug || j.publicToken, title: j.title, department: j.department, workMode: j.workMode, locations: j.locations || [], employmentType: j.employmentType })),
+  });
+}
 
 // Public self-schedule: candidate views their confirmed slots + questions.
 router.get('/schedule/:token', async (req, res, next) => {
