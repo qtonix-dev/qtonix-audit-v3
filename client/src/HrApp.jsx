@@ -6518,11 +6518,11 @@ function HrCareersSeo() {
   const host = (() => { try { return new URL(window.location.origin).host; } catch { return 'qtonix.com'; } })();
 
   const saveCareers = async () => { setBusy('careers'); try { const r = await hrApi('/seo/careers', { method: 'PUT', body: JSON.stringify(cs) }); setCs(r); flash('careers'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
-  const genCareers = async () => { setBusy('careers-ai'); try { const r = await hrApi('/seo/careers/generate', { method: 'POST', body: '{}' }); setCs((x) => ({ ...x, title: r.title, description: r.description })); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const genCareers = async () => { setBusy('careers-ai'); try { const r = await hrApi('/seo/careers/generate', { method: 'POST', body: '{}' }); setCs((x) => ({ ...x, title: r.title, description: r.description, keywords: r.keywords || x.keywords })); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
 
   const setJob = (id, patch) => setData((d) => ({ ...d, jobs: d.jobs.map((j) => j.id === id ? { ...j, ...patch } : j) }));
-  const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription }) }); flash('job-' + job.id); } catch (e) { alert(e.message); } finally { setBusy(''); } };
-  const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description }); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription, seoKeywords: job.seoKeywords || [] }) }); flash('job-' + job.id); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description, seoKeywords: r.keywords || job.seoKeywords }); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
   const genAll = async () => { if (!confirm('Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.')) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); alert(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { alert(e.message); } finally { setBusy(''); } };
 
   const published = data.jobs.filter((j) => j.status === 'published');
@@ -6540,6 +6540,12 @@ function HrCareersSeo() {
           <div className="flex justify-between"><span className={lbl}>Meta description</span>{counter(cs.description, 160)}</div>
           <textarea rows={2} className={inp} value={cs.description || ''} onChange={(e) => setCs({ ...cs, description: e.target.value })} placeholder="Explore open roles at Qtonix across engineering, sales and design…" />
         </div>
+        {(cs.keywords && cs.keywords.length > 0) && (
+          <div className="mb-3">
+            <div className={lbl + ' mb-1'}>Target keywords</div>
+            <div className="flex flex-wrap gap-1.5">{cs.keywords.map((k, i) => (<span key={i} className="text-[11px] font-semibold rounded-full px-2.5 py-1" style={{ background: '#EEF2FF', color: '#4338CA' }}>{k}</span>))}</div>
+          </div>
+        )}
         <div className={lbl + ' mb-1'}>Google preview</div>
         <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 mb-3">
           <div className="text-[12px]" style={{ color: '#0F9D58' }}>{host} › careers</div>
@@ -6589,6 +6595,12 @@ function HrCareersSeo() {
                     <div className="flex justify-between"><span className={lbl}>Meta description</span>{counter(job.seoDescription, 160)}</div>
                     <textarea rows={2} className={inp} value={job.seoDescription || ''} onChange={(e) => setJob(job.id, { seoDescription: e.target.value })} placeholder="Add a description, or generate one with AI…" />
                   </div>
+                  {(job.seoKeywords && job.seoKeywords.length > 0) && (
+                    <div className="mb-2.5">
+                      <div className={lbl + ' mb-1'}>Target keywords</div>
+                      <div className="flex flex-wrap gap-1.5">{job.seoKeywords.map((k, i) => (<span key={i} className="text-[11px] font-semibold rounded-full px-2.5 py-1" style={{ background: '#EEF2FF', color: '#4338CA' }}>{k}</span>))}</div>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <button onClick={() => saveJob(job)} disabled={busy === 'job-' + job.id} className="rounded-lg px-3.5 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'job-' + job.id ? 'Saving…' : 'Save'}</button>
                     {job.token && <a href={`${window.location.origin}${slug}`} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-slate-500">Preview →</a>}

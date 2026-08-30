@@ -163,26 +163,52 @@ function ogImagePath() { return path.join(OG_DIR, 'share.png'); }
  * ~155 chars. Returns { title, description }; falls back without AI.
  */
 async function generateJobSeo(job, apiKey) {
-  const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.map((l) => String(l).split(',')[0].trim()).filter(Boolean)[0] : (job.branch || '');
+  const allLocs = Array.isArray(job.locations) ? job.locations.map((l) => String(l).split(',')[0].trim()).filter(Boolean) : [];
+  const loc = allLocs[0] || job.branch || '';
   const empMap = { full_time: 'Full-time', part_time: 'Part-time', internship: 'Internship', freelance: 'Freelance' };
   const modeMap = { in_office: 'In office', hybrid: 'Hybrid', remote: 'Remote' };
-  const skills = (Array.isArray(job.skills) ? job.skills : []).map((s) => (typeof s === 'string' ? s : s.name)).filter(Boolean).slice(0, 6);
+  const levelMap = { entry: 'Entry level', associate: 'Associate', mid_senior: 'Mid-Senior', senior: 'Senior', tl: 'Team Lead', manager: 'Manager' };
+  const skills = (Array.isArray(job.skills) ? job.skills : []).map((s) => (typeof s === 'string' ? s : s.name)).filter(Boolean).slice(0, 10);
   const fallbackTitle = `${job.title}${loc ? ` in ${loc}` : ''} | Qtonix Careers`.slice(0, 60);
   const fallbackDesc = (`Apply for ${job.title}${loc ? ` in ${loc}` : ''} at Qtonix. ${modeMap[job.workMode] || ''} ${empMap[job.employmentType] || ''} role. Join our team — apply online today.`).replace(/\s+/g, ' ').trim().slice(0, 155);
-  const fallback = { title: fallbackTitle, description: fallbackDesc };
+  const fallback = { title: fallbackTitle, description: fallbackDesc, keywords: [job.title, loc && `${job.title} jobs in ${loc}`, 'Qtonix careers', ...skills.slice(0, 3)].filter(Boolean) };
   if (!apiKey) return fallback;
   try {
-    const facts = { role: job.title, location: loc, workMode: modeMap[job.workMode] || '', employmentType: empMap[job.employmentType] || '', experience: job.experienceType || '', skills, descriptionExcerpt: stripHtml(job.description).slice(0, 700) };
-    const system = 'You are an SEO copywriter for a company careers site. Write search-engine-optimized metadata for ONE job posting so it ranks for candidates searching that role and location. Return STRICT JSON only, no markdown. Keys: "title" (<=60 characters INCLUDING a " | Qtonix Careers" suffix which you MUST include; front-load the exact role name and, if available, the city — this matters for local search), "description" (<=155 characters; naturally include the role and location, one concrete draw such as work mode or a key skill, and end with a clear call to action like "Apply now"; no emojis, no hashtags, no quotes).';
-    const user = `Write SEO metadata for this job:\n${JSON.stringify(facts, null, 2)}`;
-    const out = await callOpenAI(apiKey, { system, user, maxTokens: 200 });
+    // Give the model the FULL picture so it can write compelling, keyword-rich
+    // copy: the actual job description (not just the title), every location, the
+    // seniority, work mode, and salary signal. The richer the input, the better
+    // the ranking copy.
+    const facts = {
+      role: job.title,
+      department: job.department || '',
+      locations: allLocs,
+      primaryLocation: loc,
+      workMode: modeMap[job.workMode] || '',
+      employmentType: empMap[job.employmentType] || '',
+      seniority: levelMap[job.employmentLevel] || '',
+      experience: job.experienceType || '',
+      topSkills: skills,
+      salaryVisible: !job.hideSalary && (job.salaryMin || job.salaryMax) ? `${job.salaryCurrency || 'INR'} ${job.salaryMin || ''}-${job.salaryMax || ''}/${job.salaryPeriod || 'month'}` : '',
+      jobDescription: stripHtml(job.description).slice(0, 1600),
+    };
+    const system = [
+      'You are a senior SEO copywriter for a company careers site. You write metadata for ONE job posting that RANKS on Google for candidates searching that role + location, and that is compelling enough to earn the click.',
+      'Study the full job description provided and extract the real hook (the most attractive responsibility, tech, or benefit).',
+      'Return STRICT JSON only, no markdown. Keys:',
+      '"title": <=60 characters INCLUDING a " | Qtonix" style suffix you MUST include. Front-load the EXACT role name, then the city if available (local-search intent). Use natural search phrasing candidates type, e.g. "Senior React Developer Jobs in Pune".',
+      '"description": <=155 characters. Naturally include the role, the location, ONE concrete draw pulled from the job description (a key technology, responsibility, or benefit), and end with a call to action ("Apply now", "Apply online"). Persuasive but professional. No emojis, no hashtags, no quotes.',
+      '"keywords": an array of 5-8 short search phrases a candidate would actually type to find this job (include role synonyms, "[role] jobs in [city]", seniority, and 1-2 key skills). Lowercase.',
+    ].join(' ');
+    const user = `Write SEO metadata for this job. Base the hook on the jobDescription, not just the title.\n${JSON.stringify(facts, null, 2)}`;
+    const out = await callOpenAI(apiKey, { system, user, maxTokens: 320 });
     const j = parseJson(out);
     if (j && (j.title || j.description)) {
       let title = String(j.title || fallback.title).replace(/\s+/g, ' ').trim();
-      if (!/qtonix/i.test(title)) title = `${title} | Qtonix Careers`;
+      if (!/qtonix/i.test(title)) title = `${title} | Qtonix`;
       title = title.slice(0, 60);
       const description = String(j.description || fallback.description).replace(/\s+/g, ' ').trim().slice(0, 160);
-      return { title, description };
+      const keywords = Array.isArray(j.keywords) ? j.keywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean).slice(0, 10) : fallback.keywords;
+      return { title, description, keywords };
     }
   } catch (e) { console.error('[jobMeta] SEO generate failed:', e.message); }
   return fallback;
@@ -193,23 +219,38 @@ async function generateJobSeo(job, apiKey) {
  * page (lists all roles). Returns { title, description }.
  */
 async function generateCareersSeo(jobs, branding, apiKey) {
-  const roles = (jobs || []).map((j) => j.title).filter(Boolean).slice(0, 15);
+  const list = (jobs || []).slice(0, 20);
+  const roles = list.map((j) => j.title).filter(Boolean).slice(0, 15);
+  const departments = [...new Set(list.map((j) => j.department).filter(Boolean))].slice(0, 8);
+  const locations = [...new Set(list.flatMap((j) => (Array.isArray(j.locations) ? j.locations : []).map((l) => String(l).split(',')[0].trim())).filter(Boolean))].slice(0, 6);
   const fallback = {
     title: 'Careers at Qtonix — Open Jobs & Roles'.slice(0, 60),
-    description: `Explore ${roles.length || 'our'} open roles at Qtonix across engineering, sales and design. Find your next job and apply online today.`.replace(/\s+/g, ' ').trim().slice(0, 155),
+    description: `Explore ${roles.length || 'our'} open roles at Qtonix across ${departments.slice(0, 3).join(', ') || 'engineering, sales and design'}. Find your next job and apply online today.`.replace(/\s+/g, ' ').trim().slice(0, 155),
+    keywords: ['qtonix careers', 'qtonix jobs', 'jobs at qtonix', ...departments.map((d) => `${d.toLowerCase()} jobs`).slice(0, 3), ...locations.map((l) => `jobs in ${l.toLowerCase()}`).slice(0, 2)].filter(Boolean),
   };
   if (!apiKey || roles.length === 0) return fallback;
   try {
-    const system = 'You are an SEO copywriter. Write search-optimized metadata for a company CAREERS landing page listing multiple roles. Return STRICT JSON only. Keys: "title" (<=60 chars, MUST include "Qtonix" and a word like Careers/Jobs), "description" (<=155 chars, mention hiring across the breadth of teams, invite applications, end with a call to action; no emojis, no hashtags).';
-    const user = `Company: Qtonix. Open roles: ${roles.join(', ')}`;
-    const out = await callOpenAI(apiKey, { system, user, maxTokens: 200 });
+    // Feed the model the actual open positions with short JD excerpts, the
+    // departments and the cities, so the landing-page copy reflects what's truly
+    // being hired for and ranks for those role/location searches.
+    const positions = list.slice(0, 12).map((j) => ({ title: j.title, department: j.department || '', location: (Array.isArray(j.locations) && j.locations[0]) ? String(j.locations[0]).split(',')[0].trim() : '', excerpt: stripHtml(j.description || '').slice(0, 220) }));
+    const system = [
+      'You are a senior SEO copywriter. Write search-optimized metadata for a company CAREERS landing page that lists multiple open roles. It should rank for "[company] careers", "[company] jobs", and the key role/department searches, and invite applications.',
+      'Return STRICT JSON only. Keys:',
+      '"title": <=60 chars, MUST include "Qtonix" and a word like Careers or Jobs; hint at the breadth (e.g. teams or seniority) where it fits.',
+      '"description": <=155 chars; mention hiring across the real departments/teams shown, reference a city or "remote" if present, invite applications, end with a call to action. No emojis, no hashtags.',
+      '"keywords": 5-8 lowercase search phrases (include "qtonix careers", "qtonix jobs", the main departments as "[dept] jobs", and 1-2 "[role] jobs" or "jobs in [city]").',
+    ].join(' ');
+    const user = `Company: Qtonix.\nDepartments hiring: ${departments.join(', ') || 'various'}\nLocations: ${locations.join(', ') || 'various'}\nOpen positions:\n${JSON.stringify(positions, null, 2)}`;
+    const out = await callOpenAI(apiKey, { system, user, maxTokens: 320 });
     const j = parseJson(out);
     if (j && (j.title || j.description)) {
       let title = String(j.title || fallback.title).replace(/\s+/g, ' ').trim();
       if (!/qtonix/i.test(title)) title = `Qtonix — ${title}`;
       title = title.slice(0, 60);
       const description = String(j.description || fallback.description).replace(/\s+/g, ' ').trim().slice(0, 160);
-      return { title, description };
+      const keywords = Array.isArray(j.keywords) ? j.keywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean).slice(0, 10) : fallback.keywords;
+      return { title, description, keywords };
     }
   } catch (e) { console.error('[jobMeta] careers SEO failed:', e.message); }
   return fallback;

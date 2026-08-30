@@ -3587,15 +3587,15 @@ router.post('/job-posts/ai/parse-jd', requireHrAccess, async (req, res, next) =>
 // the admin SEO panel. Managers/admins only.
 router.get('/seo/jobs', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
-    const jobs = await HrJobPost.findAll({ order: [['createdAt', 'DESC']], attributes: ['id', 'title', 'department', 'status', 'publicToken', 'locations', 'workMode', 'seoTitle', 'seoDescription', 'seoGeneratedAt'] });
+    const jobs = await HrJobPost.findAll({ order: [['createdAt', 'DESC']], attributes: ['id', 'title', 'department', 'status', 'publicToken', 'locations', 'workMode', 'seoTitle', 'seoDescription', 'seoKeywords', 'seoGeneratedAt'] });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const careers = (s && s.hrCareers) || {};
     res.json({
-      careersSeo: { title: careers.seoTitle || '', description: careers.seoDescription || '', image: careers.seoImage || careers.ogImage || '' },
+      careersSeo: { title: careers.seoTitle || '', description: careers.seoDescription || '', keywords: careers.seoKeywords || [], image: careers.seoImage || careers.ogImage || '' },
       jobs: jobs.map((j) => ({
         id: j.id, title: j.title, department: j.department, status: j.status,
         token: j.publicToken, locations: j.locations || [], workMode: j.workMode,
-        seoTitle: j.seoTitle || '', seoDescription: j.seoDescription || '',
+        seoTitle: j.seoTitle || '', seoDescription: j.seoDescription || '', seoKeywords: j.seoKeywords || [],
         seoGeneratedAt: j.seoGeneratedAt,
       })),
     });
@@ -3610,8 +3610,9 @@ router.put('/seo/jobs/:id', requireHrAccess, requireHrManager, async (req, res, 
     const b = req.body || {};
     if (b.seoTitle !== undefined) job.seoTitle = String(b.seoTitle).slice(0, 200);
     if (b.seoDescription !== undefined) job.seoDescription = String(b.seoDescription).slice(0, 400);
+    if (b.seoKeywords !== undefined) job.seoKeywords = Array.isArray(b.seoKeywords) ? b.seoKeywords.map((k) => String(k).slice(0, 60)).slice(0, 12) : [];
     await job.save();
-    res.json({ id: job.id, seoTitle: job.seoTitle, seoDescription: job.seoDescription });
+    res.json({ id: job.id, seoTitle: job.seoTitle, seoDescription: job.seoDescription, seoKeywords: job.seoKeywords });
   } catch (e) { next(e); }
 });
 
@@ -3641,9 +3642,9 @@ router.post('/seo/jobs/generate-all', requireHrAccess, requireHrManager, async (
     for (const job of jobs) {
       if (onlyEmpty && (job.seoTitle || job.seoDescription)) { results.push({ id: job.id, skipped: true }); continue; }
       const seo = await generateJobSeo(job, apiKey);
-      job.seoTitle = seo.title; job.seoDescription = seo.description; job.seoGeneratedAt = new Date();
+      job.seoTitle = seo.title; job.seoDescription = seo.description; job.seoKeywords = seo.keywords || []; job.seoGeneratedAt = new Date();
       await job.save();
-      results.push({ id: job.id, title: job.title, seoTitle: seo.title, seoDescription: seo.description });
+      results.push({ id: job.id, title: job.title, seoTitle: seo.title, seoDescription: seo.description, seoKeywords: seo.keywords || [] });
     }
     res.json({ ai: !!apiKey, count: results.filter((r) => !r.skipped).length, results });
   } catch (e) { next(e); }
@@ -3657,9 +3658,10 @@ router.put('/seo/careers', requireHrAccess, requireHrManager, async (req, res, n
     const careers = { ...(s.hrCareers || {}) };
     if (b.title !== undefined) careers.seoTitle = String(b.title).slice(0, 200);
     if (b.description !== undefined) careers.seoDescription = String(b.description).slice(0, 400);
+    if (b.keywords !== undefined) careers.seoKeywords = Array.isArray(b.keywords) ? b.keywords.map((k) => String(k).slice(0, 60)).slice(0, 12) : [];
     if (b.image !== undefined) careers.seoImage = String(b.image).slice(0, 500);
     s.hrCareers = careers; s.changed('hrCareers', true); await s.save();
-    res.json({ title: careers.seoTitle || '', description: careers.seoDescription || '', image: careers.seoImage || '' });
+    res.json({ title: careers.seoTitle || '', description: careers.seoDescription || '', keywords: careers.seoKeywords || [], image: careers.seoImage || '' });
   } catch (e) { next(e); }
 });
 

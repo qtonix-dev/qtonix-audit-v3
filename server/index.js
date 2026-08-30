@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v352';
+const APP_VERSION = 'v353';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -151,7 +151,11 @@ app.get('/jobs/:token', async (req, res) => {
       const jsonLd = og.jobPostingLd(job, { url: `${base}/jobs/${req.params.token}`, base, logo: branding.logo || `${base}/og/share.png` });
       const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
         title, description: desc, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
+        keywords: Array.isArray(job.seoKeywords) ? job.seoKeywords : [],
       });
+      // Never let a CDN/browser cache stale SEO tags — social scrapers and the
+      // browser should always see the latest title/description after an edit.
+      res.set('Cache-Control', 'no-cache, must-revalidate');
       return res.type('html').send(html);
     }
     res.sendFile(path.join(__dirname, 'public/jobs-page.html'));
@@ -191,7 +195,9 @@ app.get('/careers/:token', async (req, res) => {
     const jsonLd = og.careersItemListLd(jobs, { base });
     const html = og.injectIntoHtml(path.join(__dirname, 'public/careers-page.html'), {
       title, description, image: `${base}/og/share.png`, url: `${base}/careers/${req.params.token}`, jsonLd,
+      keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
     });
+    res.set('Cache-Control', 'no-cache, must-revalidate');
     res.type('html').send(html);
   } catch (e) { res.sendFile(path.join(__dirname, 'public/careers-page.html')); }
 });

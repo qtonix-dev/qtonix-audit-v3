@@ -1509,6 +1509,7 @@ const HrJobPost = sequelize.define('HrJobPost', {
   // description). Empty → the page falls back to the job title / ogDescription.
   seoTitle: { type: DataTypes.STRING(200), defaultValue: '' },
   seoDescription: { type: DataTypes.STRING(400), defaultValue: '' },
+  seoKeywords: { type: DataTypes.JSON, defaultValue: [] },
   seoGeneratedAt: { type: DataTypes.DATE, allowNull: true },
   publishedAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'hr_job_posts' });

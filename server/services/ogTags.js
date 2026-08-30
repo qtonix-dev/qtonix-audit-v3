@@ -22,9 +22,10 @@ function clip(s, n = 200) {
  * Build the OG/Twitter meta block.
  *  opts: { title, description, image, url, siteName }
  */
-function buildTags({ title, description, image, url, siteName = 'Qtonix' }) {
+function buildTags({ title, description, image, url, siteName = 'Qtonix', keywords }) {
   const T = esc(title || 'Qtonix Careers');
   const D = esc(clip(description || 'Explore open roles and apply at Qtonix.'));
+  const kw = Array.isArray(keywords) ? keywords.filter(Boolean).join(', ') : '';
   const rows = [
     `<meta property="og:type" content="website" />`,
     `<meta property="og:site_name" content="${esc(siteName)}" />`,
@@ -38,6 +39,7 @@ function buildTags({ title, description, image, url, siteName = 'Qtonix' }) {
     `<meta name="twitter:description" content="${D}" />`,
     image ? `<meta name="twitter:image" content="${esc(image)}" />` : '',
     `<meta name="description" content="${D}" />`,
+    kw ? `<meta name="keywords" content="${esc(kw)}" />` : '',
   ].filter(Boolean);
   return rows.join('\n');
 }
