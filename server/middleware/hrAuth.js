@@ -101,8 +101,15 @@ function canManageBranch(req, branch) {
   if (req.isHrAdmin) return true;
   if (req.isHrManager) {
     if (req.hrManagerAll) return true;                 // all-branches manager
-    const scope = req.hrManagerScope || req.hrBranch;  // scoped branch
-    return !branch || !scope || String(branch).toLowerCase() === String(scope).toLowerCase();
+    const scope = req.hrManagerScope || req.hrBranch;  // the one branch they run
+    // A scoped manager can only act within their own branch. If we somehow have
+    // no scope for them, deny rather than fall open — an empty scope must never
+    // mean "manage everyone" (that would be a privilege-escalation hole if the
+    // manager flag were ever set without a branch). The only widening we allow
+    // is an employee with NO branch assigned, who any manager may manage.
+    if (!scope) return false;
+    if (!branch) return true;
+    return String(branch).toLowerCase() === String(scope).toLowerCase();
   }
   return false;
 }
