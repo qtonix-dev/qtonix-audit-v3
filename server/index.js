@@ -2,7 +2,8 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v355';
+const APP_VERSION = 'v356';
+global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -225,6 +226,57 @@ app.get('/api/health', async (req, res) => {
 // On a split deploy (frontend on Vercel), this block is simply inert.
 const clientDist = path.join(__dirname, '../client/dist');
 if (require('fs').existsSync(clientDist)) {
+  // Hostname-aware routing. A single Railway service can be reached on several
+  // custom domains at once (people.qtonix.com, career.qtonix.com, crmnest.com,
+  // reports.qtonix.com). The app normally separates its two SPAs by PATH
+  // (/hr → HRMS, / → CRM), so without this a visit to people.qtonix.com/ would
+  // show the CRM. This middleware maps the hostname to its surface and serves
+  // the right thing at the root, so each subdomain "just works".
+  app.use(async (req, res, next) => {
+    try {
+      // Only care about top-level page loads, never API/assets/known sections.
+      if (req.method !== 'GET') return next();
+      const p = req.path;
+      if (p.startsWith('/api') || p.startsWith('/uploads') || p.startsWith('/brand') || p.startsWith('/og') || p.includes('.')) return next();
+      const pu = require('./services/publicUrl');
+      const surface = await pu.surfaceForHost(req);
+      if (!surface) return next(); // raw Railway host or unconfigured → default path behaviour
+
+      if (surface === 'hrms') {
+        // HRMS domain: send the root to /hr so the React router boots into the
+        // HR portal. A redirect (not a rewrite) is required — the SPA decides
+        // CRM vs HRMS from the browser's own path, so the path must actually be
+        // /hr in the address bar, not just internally.
+        if (p === '/' || p === '') return res.redirect(302, '/hr');
+        return next();
+      }
+      if (surface === 'careers') {
+        // Careers domain: the root shows the public careers page. Its token
+        // lives in Settings.hrCareers.token. Deeper paths (/jobs, /careers,
+        // /task, /onboarding, /schedule) are already handled by their routes.
+        if (p === '/' || p === '') {
+          const { Settings } = require('./models');
+          const s = await Settings.findOne({ where: { singleton: 'settings' } });
+          const token = s && s.hrCareers && s.hrCareers.token;
+          if (token) return res.redirect(302, `/careers/${token}`);
+        }
+        return next();
+      }
+      if (surface === 'crm') {
+        // CRM domain: never let the CRM host expose the HR portal — send /hr to
+        // the HRMS domain if one is configured, else fall through.
+        if (p.startsWith('/hr')) {
+          const hrmsBase = await pu.baseFor('hrms', req);
+          const selfBase = await pu.baseFor('crm', req);
+          if (hrmsBase && hrmsBase !== selfBase) return res.redirect(302, `${hrmsBase}${req.url}`);
+        }
+        return next();
+      }
+      // 'reports' surface: report links are /r/<slug>; root can just serve the app.
+      return next();
+    } catch (e) { return next(); }
+  });
+
   app.use(express.static(clientDist));
   // Exclude the API, uploads and the standalone /demo page — but NOT
   // /demo-app/<token>, which is the React app running in training mode and so

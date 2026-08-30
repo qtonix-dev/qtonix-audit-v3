@@ -900,8 +900,10 @@ router.put('/domains', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Live reachability + "is it pointing at THIS app?" check for one domain. We
-// fetch a tiny known endpoint on the given host and confirm it's our server.
+// Live reachability + "is it pointing at THIS deployment?" check for one domain.
+// We fetch our own /api/health over the public domain and confirm (a) it's our
+// app and (b) it's the SAME running version — which proves the domain resolves
+// to this exact Railway service, not a different app or an old deploy.
 router.post('/domains/check', async (req, res, next) => {
   try {
     const pu = require('../services/publicUrl');
@@ -915,17 +917,22 @@ router.post('/domains/check', async (req, res, next) => {
       clearTimeout(timer);
       let body = null; try { body = await r.json(); } catch {}
       const isOurs = !!(body && (body.version || body.status === 'ok' || body.ok === true));
-      // TLS reachable if we got any response over https without throwing.
       const https = origin.startsWith('https://');
+      // Our own current version, to compare against what the domain serves.
+      const ourVersion = process.env.APP_VERSION_OVERRIDE || global.__APP_VERSION__ || null;
       if (!r.ok) return res.json({ ok: false, reachable: true, https, pointsHere: false, status: r.status, message: `Reached the domain but got HTTP ${r.status}. DNS is set, but it isn't serving this app yet.` });
-      if (!isOurs) return res.json({ ok: false, reachable: true, https, pointsHere: false, message: 'The domain responds, but not with this application. It may be pointing somewhere else.' });
-      return res.json({ ok: true, reachable: true, https, pointsHere: true, version: body.version || null, message: 'Connected — this domain is serving your app over HTTPS.' });
+      if (!isOurs) return res.json({ ok: false, reachable: true, https, pointsHere: false, message: 'The domain responds, but not with this application. It may be pointing at a different site — double-check the DNS target.' });
+      const sameDeploy = ourVersion ? (body.version === ourVersion) : true;
+      const versionNote = (ourVersion && body.version && !sameDeploy) ? ` (note: it serves ${body.version}, this admin is ${ourVersion} — likely a different deployment)` : '';
+      return res.json({ ok: true, reachable: true, https, pointsHere: true, sameDeploy, version: body.version || null, message: `Connected — this domain is serving your app over HTTPS${https ? '' : ' (no HTTPS yet)'}.${versionNote}` });
     } catch (e) {
       clearTimeout(timer);
-      const msg = /abort/i.test(String(e.message)) ? 'Timed out — the domain did not respond. DNS may not be set yet, or it is still propagating.'
-        : /certificate|tls|ssl/i.test(String(e.message)) ? 'Reached the domain but the SSL certificate is not ready yet. On Railway this provisions a few minutes after the domain is added.'
-        : 'Could not reach the domain. Check that the DNS record (CNAME) is added and has propagated.';
-      return res.json({ ok: false, reachable: false, pointsHere: false, message: msg, detail: String(e.message).slice(0, 160) });
+      const m = String(e.message || e);
+      const msg = /abort/i.test(m) ? 'Timed out — the domain did not respond. DNS may not be set yet, or it is still propagating (can take up to an hour).'
+        : /certificate|tls|ssl|self.signed/i.test(m) ? 'Reached the domain but the SSL certificate is not ready. On Railway, SSL is issued automatically a few minutes after you add the custom domain — wait and re-check.'
+        : /ENOTFOUND|getaddrinfo|EAI_AGAIN/i.test(m) ? 'The domain does not resolve yet. Add the DNS record (CNAME to your Railway target) and wait for it to propagate.'
+        : 'Could not reach the domain. Check that the DNS record is added in your DNS provider and the domain is added in Railway → Settings → Networking.';
+      return res.json({ ok: false, reachable: false, pointsHere: false, message: msg, detail: m.slice(0, 160) });
     }
   } catch (e) { next(e); }
 });

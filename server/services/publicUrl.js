@@ -52,6 +52,29 @@ function envOrigin() {
   return normalizeOrigin(process.env.APP_URL || process.env.PUBLIC_URL || '');
 }
 
+// Extract the bare lowercase host from a stored domain value or a request host.
+function hostOf(value) {
+  const o = normalizeOrigin(value);
+  if (!o) return String(value || '').split('/')[0].split(':')[0].trim().toLowerCase();
+  try { return new URL(o).host.toLowerCase(); } catch { return ''; }
+}
+
+// Given a request, work out WHICH surface its hostname belongs to, by matching
+// against the configured domains. Returns 'hrms'|'careers'|'crm'|'reports' or
+// null if the host isn't a configured custom domain (e.g. the raw Railway URL,
+// where we keep the default path-based behaviour). This is what lets a single
+// Railway service serve people.qtonix.com as HRMS and career.qtonix.com as the
+// careers site from the same deploy.
+async function surfaceForHost(req) {
+  const host = (req && typeof req.get === 'function') ? String(req.get('host') || '').split(':')[0].toLowerCase() : '';
+  if (!host) return null;
+  const domains = await loadDomains();
+  for (const surface of ['hrms', 'careers', 'crm', 'reports']) {
+    if (domains[surface] && hostOf(domains[surface]) === host) return surface;
+  }
+  return null;
+}
+
 /**
  * Resolve the base origin for a surface.
  * @param {string} surface one of hrms|careers|crm|reports
@@ -84,4 +107,4 @@ function join(base, pathname = '/') {
   return `${b}${p}`;
 }
 
-module.exports = { publicUrl, baseFor, normalizeOrigin, clearCache, loadDomains, join, reqOrigin, envOrigin };
+module.exports = { publicUrl, baseFor, normalizeOrigin, clearCache, loadDomains, join, reqOrigin, envOrigin, hostOf, surfaceForHost };

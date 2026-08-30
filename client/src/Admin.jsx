@@ -425,12 +425,19 @@ function DomainsSettings({ say }) {
             {r && (
               <div className={`mt-2 rounded-lg px-3 py-2 text-[12px] flex items-start gap-2 ${r.ok ? 'bg-green-50 border border-green-200 text-green-700' : r.reachable ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
                 <span>{r.ok ? '✓' : r.reachable ? '⚠' : '✕'}</span>
-                <span>{r.message}{r.version ? ` (v${r.version})` : ''}</span>
+                <span>{r.message}</span>
               </div>
             )}
             {domains[sfc.key] && (
-              <div className="mt-2 text-[11px] text-slate-500">
-                DNS: add a <span className="font-mono font-bold">CNAME</span> for <span className="font-mono font-bold">{hostOf(domains[sfc.key])}</span> → your Railway target, and add this domain in Railway → Settings → Networking.
+              <div className="mt-2 text-[11px] text-slate-500 leading-relaxed">
+                {(() => { const h = hostOf(domains[sfc.key]); const isRoot = h.split('.').length <= 2; return (
+                  <>
+                    <b>DNS:</b> {isRoot
+                      ? <>this looks like a <b>root domain</b> — add an <span className="font-mono font-bold">ALIAS</span>/<span className="font-mono font-bold">ANAME</span> record for <span className="font-mono font-bold">{h}</span> → your Railway target (or an <span className="font-mono">A</span> record if your DNS host doesn't support ALIAS).</>
+                      : <>add a <span className="font-mono font-bold">CNAME</span> record: host <span className="font-mono font-bold">{h.split('.')[0]}</span> → your Railway target.</>}
+                    {' '}Then add <span className="font-mono font-bold">{h}</span> in Railway → Settings → Networking.
+                  </>
+                ); })()}
               </div>
             )}
           </div>
@@ -444,12 +451,20 @@ function DomainsSettings({ say }) {
       <div className="bg-slate-50 rounded-xl border border-slate-200 p-5">
         <div className="text-sm font-bold mb-2" style={{ color: C.navy }}>How to connect a domain (one-time setup)</div>
         <ol className="text-[12px] text-slate-600 space-y-1.5 list-decimal pl-5">
-          <li>In <b>Railway → your service → Settings → Networking → Custom Domain</b>, add the domain (e.g. <span className="font-mono">career.qtonix.com</span>). Railway shows you a <b>CNAME target</b> (like <span className="font-mono">xxxx.up.railway.app</span>).</li>
-          <li>In your <b>DNS provider</b> (where qtonix.com is managed), add a <b>CNAME</b> record: host = the subdomain (<span className="font-mono">career</span>), value = the Railway target. For a root domain like <span className="font-mono">crmnest.com</span>, use your provider's ALIAS/ANAME (or an A record to Railway's IP if they require it).</li>
-          <li>Wait for DNS to propagate (usually minutes, up to ~an hour). Railway auto-issues an SSL certificate once it sees the record.</li>
-          <li>Enter the domain in the field above, click <b>Check</b> — green means it's pointing here and serving over HTTPS.</li>
-          <li>Click <b>Save domains</b>. Done — the app now uses it everywhere.</li>
+          <li>In <b>Railway → your service → Settings → Networking → Custom Domain</b>, add the domain (e.g. <span className="font-mono">career.qtonix.com</span>). Railway shows you a <b>target</b> like <span className="font-mono">xxxx.up.railway.app</span>. You can add all four domains to the <b>same</b> service — the app serves the right section per domain automatically.</li>
+          <li>In your <b>DNS provider</b>, add the record Railway asks for:
+            <ul className="list-disc pl-5 mt-1 space-y-0.5">
+              <li><b>Subdomain</b> (career.qtonix.com, people.qtonix.com, reports.qtonix.com): a <span className="font-mono">CNAME</span> from the subdomain to the Railway target.</li>
+              <li><b>Root domain</b> (crmnest.com): a <span className="font-mono">ALIAS</span>/<span className="font-mono">ANAME</span> to the Railway target — or an <span className="font-mono">A</span> record to Railway's IP if your provider requires it. (A plain CNAME usually isn't allowed on a root domain.)</li>
+            </ul>
+          </li>
+          <li>Wait for DNS to propagate (minutes, up to ~an hour). Railway auto-issues an SSL certificate once it sees the record.</li>
+          <li>Enter the domain above and click <b>Check</b> — green means it resolves here and serves over HTTPS.</li>
+          <li>Click <b>Save domains</b>. From then on every link the app builds uses these, and each domain opens straight to its section: <span className="font-mono">people.</span> → HR portal, <span className="font-mono">career.</span> → careers page, your CRM domain → CRM, <span className="font-mono">reports.</span> → report links.</li>
         </ol>
+        <div className="mt-3 text-[11px] text-slate-500 bg-white rounded-lg border border-slate-200 p-3">
+          <b>Order of operations matters:</b> add the domain in Railway and confirm the <b>Check</b> is green <i>before</i> you save it here. If you save a domain that isn't pointing here yet, links the app sends out (emails, shares) would point at a domain that doesn't load — so verify first, then save.
+        </div>
       </div>
     </div>
   );
