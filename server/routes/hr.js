@@ -1023,7 +1023,7 @@ router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, 
     if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
-    ['casual', 'medical', 'privilege', 'wfh'].forEach((k) => { if (b[k] !== undefined) alloc[k] = Number(b[k]) || 0; });
+    ['casual', 'medical', 'privilege', 'wfh'].forEach((k) => { if (b[k] !== undefined) { const n = Number(b[k]); alloc[k] = Number.isFinite(n) && n >= 0 ? n : 0; } });
     emp.profile = { ...(emp.profile || {}), leaveAllocation: alloc }; emp.changed('profile', true);
     await emp.save();
     hrLog(req, 'leave.allocation', emp.name);
@@ -2318,6 +2318,7 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
     let amount = Number(b.amount || 0);
     if (lineItems && lineItems.length) amount = lineItems.reduce((s, li) => s + li.amount, 0);
     if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid amount.' });
+    if (b.expenseDate !== undefined && b.expenseDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.expenseDate))) return res.status(400).json({ error: 'Invalid expense date. Use YYYY-MM-DD.' });
     // Employee payments must carry a pay type; 'other' requires a description.
     if (payee.payeeType === 'employee') {
       if (!payee.employeePayType) return res.status(400).json({ error: 'Choose the type of employee payment (TA, DA, Other, Advance or Incentive).' });

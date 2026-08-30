@@ -3089,6 +3089,16 @@ router.post('/:id/deals', requireAuth, async (req, res, next) => {
     const saleType = alreadyWon ? 'cross' : 'new';
 
     const amount = Number(b.amount) || 0;
+    if (b.amount !== undefined && b.amount !== '' && (!Number.isFinite(Number(b.amount)) || Number(b.amount) < 0)) {
+      return res.status(400).json({ error: 'Invalid amount. Must be a non-negative number.' });
+    }
+    // Reject malformed amounts on any explicitly-provided installment schedule.
+    if (Array.isArray(b.installments)) {
+      for (const it of b.installments) {
+        const n = Number(it.amount);
+        if (it.amount !== undefined && it.amount !== '' && (!Number.isFinite(n) || n < 0)) return res.status(400).json({ error: 'Invalid installment amount. Must be a non-negative number.' });
+      }
+    }
     const stage = String(b.stage || 'qualification').slice(0, 40);
     const winDate = stage === 'closed_won' ? new Date() : null;
 
@@ -3160,11 +3170,25 @@ router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
     if (!deal) return res.status(404).json({ error: 'Deal not found.' });
     const b = req.body || {};
     const before = deal.stage;
+    const isYmd2 = (v) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return false; const d = new Date(`${v}T00:00:00Z`); return !Number.isNaN(d.getTime()) && String(v) === d.toISOString().slice(0, 10); };
     for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark', 'planType', 'planDuration']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
-    if (b.amount !== undefined) deal.amount = Number(b.amount) || 0;
+    if (b.expectedClose !== undefined && b.expectedClose !== '' && !isYmd2(b.expectedClose)) return res.status(400).json({ error: 'Invalid expectedClose. Use a valid YYYY-MM-DD date.' });
+    if (b.amount !== undefined) {
+      const n = Number(b.amount);
+      if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Invalid amount. Must be a non-negative number.' });
+      deal.amount = n;
+    }
 
     // Replace installment schedule if provided (edits to amounts/dates/paid).
     if (Array.isArray(b.installments)) {
+      // Reject any malformed installment amount or date before writing, so a bad
+      // value can't silently corrupt the payment schedule or sales figures.
+      for (const it of b.installments) {
+        const n = Number(it.amount);
+        if (it.amount !== undefined && it.amount !== '' && (!Number.isFinite(n) || n < 0)) return res.status(400).json({ error: 'Invalid installment amount. Must be a non-negative number.' });
+        if (it.dueDate && !isYmd2(it.dueDate)) return res.status(400).json({ error: 'Invalid installment dueDate. Use a valid YYYY-MM-DD date.' });
+        if (it.paid && it.paidDate && !isYmd2(it.paidDate)) return res.status(400).json({ error: 'Invalid installment paidDate. Use a valid YYYY-MM-DD date.' });
+      }
       deal.installments = b.installments.map((it, i) => ({
         id: it.id || `inst_${Date.now()}_${i}`, seq: i + 1,
         amount: Number(it.amount) || 0,
@@ -3225,6 +3249,23 @@ router.patch('/:id/deals/:dealId/installments/:instId', requireAuth, async (req,
     const inst = (deal.installments || []).find((it) => it.id === req.params.instId);
     if (!inst) return res.status(404).json({ error: 'Installment not found.' });
     const b = req.body || {};
+    // Validate any date fields up front so a malformed date can never reach the
+    // sale-attribution math (a bad paidDate would otherwise corrupt which month
+    // a sale lands in). Empty/absent is allowed; a present value must be a real
+    // YYYY-MM-DD calendar date.
+    const isYmd = (v) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return false; const d = new Date(`${v}T00:00:00Z`); return !Number.isNaN(d.getTime()) && String(v) === d.toISOString().slice(0, 10); };
+    for (const f of ['paidDate', 'renewalDate', 'startDate', 'dueDate']) {
+      if (b[f] !== undefined && b[f] !== null && b[f] !== '' && !isYmd(b[f])) {
+        return res.status(400).json({ error: `Invalid ${f}. Use a valid YYYY-MM-DD date.` });
+      }
+    }
+    // Amount fields must be non-negative finite numbers when provided.
+    for (const f of ['amount', 'paidAmount']) {
+      if (b[f] !== undefined && b[f] !== null && b[f] !== '') {
+        const n = Number(b[f]);
+        if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: `Invalid ${f}. Must be a non-negative number.` });
+      }
+    }
     // Only an admin confirms money in the door. A manager runs the deal and
     // chases the client — they can move a due date and record that they sent
     // the invoice — but the payment itself is an admin action, so the two
