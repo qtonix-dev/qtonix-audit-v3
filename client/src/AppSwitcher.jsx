@@ -7,9 +7,9 @@ import { APP_BUILD } from './version.js';
 export function AppSwitcher({ current }) {
   const [open, setOpen] = useState(false);
   const apps = [
-    { id: 'crm', label: 'Sales CRM', desc: 'Leads, deals & pipeline', href: '/', color: '#2563EB',
+    { id: 'crm', label: 'Sales CRM', desc: 'Leads, deals & pipeline', href: '/go/crm', color: '#2563EB',
       icon: 'M3 3v18h18 M7 14l3-3 3 3 5-6' },
-    { id: 'hr', label: 'HRMS', desc: 'Recruitment & people', href: '/hr', color: '#FF6A00',
+    { id: 'hr', label: 'HRMS', desc: 'Recruitment & people', href: '/go/hr', color: '#FF6A00',
       icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   ];
   const active = apps.find((a) => a.id === current) || apps[0];

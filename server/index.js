@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v360';
+const APP_VERSION = 'v361';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -291,7 +291,12 @@ app.get('/go/crm', async (req, res) => {
 app.get('/go/hr', async (req, res) => {
   const pu = require('./services/publicUrl');
   const domains = await pu.loadDomains();
-  const base = pu.normalizeOrigin(domains.hrms) || pu.envOrigin() || `${req.protocol}://${req.get('host')}`;
+  const configured = pu.normalizeOrigin(domains.hrms);
+  // On a configured HRMS domain the app runs at the clean root (no /hr prefix),
+  // so send there directly. Without a dedicated domain, the HR app lives under
+  // /hr on the raw deployment.
+  if (configured) return res.redirect(302, `${configured}/`);
+  const base = pu.envOrigin() || `${req.protocol}://${req.get('host')}`;
   return res.redirect(302, `${base}/hr`);
 });
 
