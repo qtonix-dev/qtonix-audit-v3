@@ -5387,7 +5387,7 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
     const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
     if (ids.length) hr = await HrUser.findByPk(ids[0]);
     if (!hr && row.recruiterId) hr = await HrUser.findByPk(row.recruiterId);
-    const appUrl = getAppUrl(req);
+    const appUrl = await require('../services/publicUrl').baseFor('careers', req);
     const isSales = /sales/i.test(String((job && job.department) || '') + ' ' + String(row.stage || ''));
     res.json({
       candidate: { id: row.id, name: row.name, email: row.email, phone: row.phone },
@@ -5518,7 +5518,7 @@ router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (r
     const onb = row.onboarding;
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     const offer = row.offer || {};
-    const appUrl = getAppUrl(req);
+    const appUrl = await require('../services/publicUrl').baseFor('careers', req);
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
     const mailbox = mailboxEmail(s);

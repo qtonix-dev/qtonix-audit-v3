@@ -588,7 +588,7 @@ async function notifyNewApplication(cand, job) {
     if (!token || !mailbox) { console.error('[careers] internal notice skipped: no linked recruitment mailbox/token'); return; }
     const gmail = require('../services/gmail');
     const hrEmail = require('../services/hrEmailTemplate');
-    const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+    const appUrl = await require('../services/publicUrl').baseFor('hrms', req);
     const jobLocation = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : '';
     const bodyHtml = hrEmail.applicationInternalNotice({
       candidateName: cand.name, role: job.title, candidateEmail: cand.email, candidatePhone: cand.phone,
