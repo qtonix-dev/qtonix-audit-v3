@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v359';
+const APP_VERSION = 'v360';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -91,21 +91,41 @@ app.use(async (req, res, next) => {
     const hostSurface = await pu.surfaceForHost(req);
     if (!hostSurface) return next(); // raw Railway host / unconfigured → default behaviour
 
-    // Careers-domain root → serve the public careers listing DIRECTLY at the
-    // clean root URL (career.qtonix.com/) with careers SEO injected. No redirect
-    // to an opaque /careers/<token> URL — the root stays clean.
-    if (hostSurface === 'careers' && (p === '/' || p === '')) {
-      return serveCareersRoot(req, res);
-    }
-    // HRMS-domain root → the HR portal.
-    if (hostSurface === 'hrms' && (p === '/' || p === '')) return res.redirect(302, '/hr');
+    // Candidate + report paths always belong to their own surfaces, on ANY host.
+    const careersPrefixes = ['/careers', '/jobs', '/task', '/onboarding', '/schedule'];
+    const isCareersPath = careersPrefixes.some((pre) => p === pre || p.startsWith(pre + '/'));
+    const isReportPath = p.startsWith('/r/');
 
-    // Wall-off: path belongs to a different surface than the host domain →
-    // redirect to that surface's own domain (only when it's configured to a
-    // DIFFERENT host, so we never bounce to ourselves — comparing by host, not
-    // full origin, avoids an http/https self-redirect loop when a surface has no
-    // domain set and falls back to the current request host).
-    const pathSurface = surfaceOfPath(p);
+    // Careers domain: its root serves the listing directly; a careers path stays;
+    // anything else (an HRMS/CRM path) is redirected to where it belongs.
+    if (hostSurface === 'careers') {
+      if (p === '/' || p === '') return serveCareersRoot(req, res);
+      if (isCareersPath) return next();
+      // fallthrough to cross-surface redirect below
+    }
+
+    // HRMS domain: URLs are CLEAN (no /hr prefix). The HR SPA is served at the
+    // root here, so any non-careers/report path is an HRMS path and just serves
+    // the app. Only candidate/report paths get redirected away.
+    if (hostSurface === 'hrms') {
+      if (isCareersPath || isReportPath) {
+        const targetSurface = isReportPath ? 'reports' : 'careers';
+        const targetBase = await pu.baseFor(targetSurface, req);
+        const targetHost = pu.hostOf(targetBase);
+        const hereHost = String(req.get('host') || '').split(':')[0].toLowerCase();
+        if (targetBase && targetHost && targetHost !== hereHost) return res.redirect(302, `${targetBase}${req.url}`);
+      }
+      // A visitor landing on the legacy /hr(/...) path on the HRMS domain gets
+      // sent to the clean equivalent so old links redirect to the new URLs.
+      if (p === '/hr' || p.startsWith('/hr/')) {
+        const clean = p.replace(/^\/hr/, '') || '/';
+        return res.redirect(301, clean + (req.url.slice(p.length) || ''));
+      }
+      return next(); // serve the HR app at the clean path
+    }
+
+    // CRM / reports domains: candidate + /hr paths go to their surfaces.
+    const pathSurface = isCareersPath ? 'careers' : (isReportPath ? 'reports' : (p === '/hr' || p.startsWith('/hr/') ? 'hrms' : hostSurface));
     if (pathSurface !== hostSurface) {
       const targetBase = await pu.baseFor(pathSurface, req);
       const targetHost = pu.hostOf(targetBase);
@@ -409,12 +429,30 @@ app.get('/api/health', async (req, res) => {
 // On a split deploy (frontend on Vercel), this block is simply inert.
 const clientDist = path.join(__dirname, '../client/dist');
 if (require('fs').existsSync(clientDist)) {
-  app.use(express.static(clientDist));
+  // `index: false` stops express.static from auto-serving index.html at '/', so
+  // our handler below runs for the root and can inject the surface flag on the
+  // HRMS domain. Static still serves JS/CSS/assets normally.
+  app.use(express.static(clientDist, { index: false }));
+  const indexHtmlPath = path.join(clientDist, 'index.html');
+  let _indexHtmlCache = null;
+  const readIndexHtml = () => { if (_indexHtmlCache == null) { try { _indexHtmlCache = require('fs').readFileSync(indexHtmlPath, 'utf8'); } catch { _indexHtmlCache = ''; } } return _indexHtmlCache; };
   // Exclude the API, uploads and the standalone /demo page — but NOT
   // /demo-app/<token>, which is the React app running in training mode and so
   // must fall through to index.html like any other client route.
-  app.get(/^\/(?!api\/|api$|uploads|demo(?:$|\/)).*/, (req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
+  app.get(/^\/(?!api\/|api$|uploads|demo(?:$|\/)).*/, async (req, res) => {
+    try {
+      const pu = require('./services/publicUrl');
+      const surface = await pu.surfaceForHost(req);
+      // On the HRMS domain we serve the HR app at the ROOT with clean URLs (no
+      // /hr prefix). We tell the SPA which mode it's in by injecting a global
+      // flag; main.jsx reads it to mount the right app at '/'.
+      if (surface === 'hrms') {
+        const html = readIndexHtml().replace('<head>', `<head>\n    <script>window.__SURFACE__="hrms";</script>`);
+        res.set('Cache-Control', 'no-cache');
+        return res.type('html').send(html);
+      }
+    } catch {}
+    res.sendFile(indexHtmlPath);
   });
 }
 

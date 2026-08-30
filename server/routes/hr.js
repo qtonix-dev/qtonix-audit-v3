@@ -3602,6 +3602,16 @@ router.get('/seo/jobs', requireHrAccess, requireHrManager, async (req, res, next
   } catch (e) { next(e); }
 });
 
+// Ensure a job has a clean slug and return it (for the Share modal's pretty URL).
+router.get('/jobs/:id/slug', requireHrAccess, async (req, res, next) => {
+  try {
+    const job = await HrJobPost.findByPk(Number(req.params.id));
+    if (!job) return res.status(404).json({ error: 'Job not found.' });
+    const slug = await require('./careers').ensureJobSlug(job);
+    res.json({ slug, token: job.publicToken });
+  } catch (e) { next(e); }
+});
+
 // Save one job's SEO fields (admin-edited). Empty strings clear the override.
 router.put('/seo/jobs/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {

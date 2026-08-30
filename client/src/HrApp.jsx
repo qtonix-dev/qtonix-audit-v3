@@ -50,6 +50,10 @@ export const hrApiRaw = async (path, opts = {}) => {
 };
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
+// URL base for the HR app. On the HRMS domain (people.qtonix.com) the app is
+// mounted at the clean root, so there's no prefix and URLs are /dashboard. On
+// any other host it lives under /hr, so URLs are /hr/dashboard.
+const HR_BASE = (typeof window !== 'undefined' && window.__SURFACE__ === 'hrms') ? '' : '/hr';
 
 // Normalise a phone number to a consistent format. A bare 10-digit Indian mobile
 // gets a +91 prefix; numbers that already carry a country code are kept. Returns
@@ -2960,12 +2964,15 @@ function HrRecruitment({ isAdmin, me, intent, hrView = true }) {
   // Regular employees (interview panelists) see ONLY the candidate list — no Job
   // Post, no Pipeline. HR staff/admin see the full set.
   const RTABS = hrView ? ['jobs', 'candidates', 'pipeline'] : ['candidates'];
-  const urlTab = (() => { const seg = (rLoc.pathname.split('/')[3] || '').toLowerCase(); return RTABS.includes(seg) ? seg : null; })();
+  // Tab segment sits after ".../recruitment/". Parse it relative to HR_BASE so
+  // it works whether the URL is /recruitment/jobs or /hr/recruitment/jobs.
+  const recruitBase = `${HR_BASE}/recruitment`;
+  const urlTab = (() => { const rest = rLoc.pathname.startsWith(recruitBase) ? rLoc.pathname.slice(recruitBase.length).replace(/^\//, '') : ''; const seg = (rest.split('/')[0] || '').toLowerCase(); return RTABS.includes(seg) ? seg : null; })();
   const [tab, setTabRaw] = useState(urlTab || (hrView && intent && intent.tab ? intent.tab : (hrView ? 'jobs' : 'candidates')));
-  const setTab = (t) => { setTabRaw(t); const target = `/hr/recruitment/${t}`; if (rLoc.pathname !== target) rNav(target); };
+  const setTab = (t) => { setTabRaw(t); const target = `${recruitBase}/${t}`; if (rLoc.pathname !== target) rNav(target); };
   useEffect(() => { if (urlTab && urlTab !== tab) setTabRaw(urlTab); }, [urlTab]);
   // Ensure the URL reflects the initial tab (e.g. arriving via an intent).
-  useEffect(() => { if (!urlTab) { const target = `/hr/recruitment/${tab}`; if (rLoc.pathname !== target) rNav(target, { replace: true }); } }, []);
+  useEffect(() => { if (!urlTab) { const target = `${recruitBase}/${tab}`; if (rLoc.pathname !== target) rNav(target, { replace: true }); } }, []);
   // When a candidate/detail view is open inside a sub-tab, hide the tab row.
   const [detailOpen, setDetailOpen] = useState(false);
   useEffect(() => { setDetailOpen(false); }, [tab]);
@@ -3220,9 +3227,18 @@ function JobIconBtn({ icon, label, onClick, primary, danger }) {
 // Share modal: full listing-page URL and form-only embed URL, both absolute.
 // Form URL and embed code are admin-only; HR staff just get the listing link.
 function ShareJobModal({ job, onClose, isAdmin }) {
-  const origin = window.location.origin;
-  const listingUrl = `${origin}/careers/${job.publicToken}`;
-  const embedUrl = `${origin}/careers/${job.publicToken}/embed`;
+  const [base, setBase] = useState('');
+  const [slug, setSlug] = useState(job.slug || '');
+  useEffect(() => {
+    // The public links live on the careers domain (career.qtonix.com), not the
+    // HRMS domain the admin is viewing from. Fetch it, and make sure the job has
+    // a clean slug for a pretty URL.
+    hrApi('/settings').then((r) => setBase((r.careersDomain || window.location.origin).replace(/\/$/, ''))).catch(() => setBase(window.location.origin));
+    if (!job.slug) { hrApi(`/jobs/${job.id}/slug`).then((r) => setSlug(r.slug || job.publicToken)).catch(() => setSlug(job.publicToken)); }
+  }, [job.id]);
+  const idPart = slug || job.slug || job.publicToken;
+  const listingUrl = base ? `${base}/jobs/${idPart}` : '';
+  const embedUrl = base ? `${base}/careers/${job.publicToken}/embed` : '';
   const iframe = `<iframe src="${embedUrl}" width="100%" height="900" frameborder="0"></iframe>`;
   const [copied, setCopied] = useState('');
   const copy = (text, which) => { navigator.clipboard?.writeText(text); setCopied(which); setTimeout(() => setCopied(''), 1500); };
@@ -7491,10 +7507,14 @@ export default function HrApp() {
   // hyphenated path, e.g. corehr_attendance <-> core-hr/attendance.
   const viewToSlug = (v) => v.startsWith('corehr_') ? `core-hr/${v.slice('corehr_'.length)}` : v;
   const slugToView = (path) => {
-    const clean = path.replace(/^\/hr\/?/, '').replace(/\/+$/, '').toLowerCase();
+    // Strip the base prefix — '/hr' off the HRMS-domain-less builds, or '' when
+    // the HR app is mounted at the clean root on people.qtonix.com.
+    let clean = path;
+    if (HR_BASE) clean = clean.replace(new RegExp('^' + HR_BASE + '\\/?'), '');
+    else clean = clean.replace(/^\//, '');
+    clean = clean.replace(/\/+$/, '').toLowerCase();
     if (clean.startsWith('core-hr/')) { const id = 'corehr_' + clean.slice('core-hr/'.length).split('/')[0]; return VALID_VIEWS.includes(id) ? id : 'dashboard'; }
     const seg = clean.split('/')[0] || '';
-    // Back-compat: bare underscore URLs (/hr/corehr_attendance) still resolve.
     return VALID_VIEWS.includes(seg) ? seg : 'dashboard';
   };
   const pathView = slugToView(location.pathname);
@@ -7506,16 +7526,17 @@ export default function HrApp() {
   const [mobileNav, setMobileNav] = useState(false);
   const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
   const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
-  // setView also writes a clean URL (/hr/<view>, Core HR as /hr/core-hr/<sub>).
-  const setView = (v) => { setViewRaw(v); const target = `/hr/${viewToSlug(v)}`; if (location.pathname !== target) navigate(target); };
-  // Keep view in sync when the user navigates back/forward.
+  // setView writes a clean URL under the base: /dashboard on the HRMS domain, or
+  // /hr/dashboard elsewhere. Core HR as <base>/core-hr/<sub>.
+  const setView = (v) => { setViewRaw(v); const target = `${HR_BASE}/${viewToSlug(v)}`; if (location.pathname !== target) navigate(target); };
   useEffect(() => { if (pathView !== view) setViewRaw(pathView); }, [pathView]);
-  // Redirect legacy underscore URLs (/hr/corehr_attendance) to the clean slug so
-  // old bookmarks and links land on the tidy URL.
+  // Redirect legacy underscore Core-HR URLs to the clean slug.
   useEffect(() => {
-    const seg = (location.pathname.replace(/^\/hr\/?/, '').split('/')[0] || '');
+    let seg = location.pathname;
+    if (HR_BASE) seg = seg.replace(new RegExp('^' + HR_BASE + '\\/?'), ''); else seg = seg.replace(/^\//, '');
+    seg = (seg.split('/')[0] || '');
     if (seg.startsWith('corehr_')) {
-      const clean = `/hr/${viewToSlug(seg)}`;
+      const clean = `${HR_BASE}/${viewToSlug(seg)}`;
       if (location.pathname !== clean) navigate(clean, { replace: true });
     }
   }, [location.pathname]);
@@ -7529,7 +7550,7 @@ export default function HrApp() {
   }, []);
 
   const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
-  const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = '/hr/login'; }); };
+  const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = `${HR_BASE}/login`; }); };
 
   // For plain employees, whether they sit on any interview panel (drives whether
   // the Recruitment tab — candidate-list only — is shown at all).
