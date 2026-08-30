@@ -6454,6 +6454,7 @@ function HrCareersTab() {
   const [c, setC] = useState(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sub, setSub] = useState('branding'); // 'branding' | 'seo'
   const logoRef = useRef(null);
   useEffect(() => { hrApi('/settings').then((r) => setC(r.careers || {})).catch(() => {}); }, []);
   if (!c) return <div className="text-slate-400 text-sm">Loading…</div>;
@@ -6473,20 +6474,131 @@ function HrCareersTab() {
           <button onClick={() => navigator.clipboard?.writeText(publicUrl)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Copy</button>
         </div>
       )}
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-4">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">{c.logo ? <img src={c.logo} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">Logo</span>}</div>
-          <div>
-            <button onClick={() => logoRef.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Upload logo</button>
-            <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+      <div className="flex gap-1 mb-4 border-b border-slate-200">
+        {[['branding', 'Branding'], ['seo', 'SEO & job listings']].map(([id, label]) => (
+          <button key={id} onClick={() => setSub(id)} className="px-4 py-2 text-xs font-bold border-b-2 transition -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
+        ))}
+      </div>
+      {sub === 'branding' && (
+        <div className="bg-white rounded-2xl border border-slate-200/70 p-5 space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">{c.logo ? <img src={c.logo} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">Logo</span>}</div>
+            <div>
+              <button onClick={() => logoRef.current?.click()} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Upload logo</button>
+              <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+            </div>
+          </div>
+          <div><div className={L}>Page title</div><input className={inp2} value={c.title || ''} onChange={(e) => setC({ ...c, title: e.target.value })} placeholder="Careers at Qtonix" /></div>
+          <div><div className={L}>Description</div><textarea rows={4} className={inp2} value={c.description || ''} onChange={(e) => setC({ ...c, description: e.target.value })} placeholder="Tell candidates about your company and culture…" /></div>
+          <div className="flex items-center gap-3">
+            <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
+            {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓{!c.token ? ' — link generated' : ''}</span>}
           </div>
         </div>
-        <div><div className={L}>Page title</div><input className={inp2} value={c.title || ''} onChange={(e) => setC({ ...c, title: e.target.value })} placeholder="Careers at Qtonix" /></div>
-        <div><div className={L}>Description</div><textarea rows={4} className={inp2} value={c.description || ''} onChange={(e) => setC({ ...c, description: e.target.value })} placeholder="Tell candidates about your company and culture…" /></div>
-        <div className="flex items-center gap-3">
-          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save'}</button>
-          {saved && <span className="text-sm text-green-600 font-semibold">Saved ✓{!c.token ? ' — link generated' : ''}</span>}
+      )}
+      {sub === 'seo' && <HrCareersSeo />}
+    </div>
+  );
+}
+
+// SEO admin: careers-page meta + per-job page title/description, with AI
+// generation (OpenAI) and a live Google-style preview.
+function HrCareersSeo() {
+  const [data, setData] = useState(null);
+  const [cs, setCs] = useState({ title: '', description: '', image: '' });
+  const [busy, setBusy] = useState('');
+  const [savedFlash, setSavedFlash] = useState('');
+  const load = () => hrApi('/seo/jobs').then((r) => { setData(r); setCs(r.careersSeo || { title: '', description: '' }); }).catch((e) => alert(e.message));
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
+  const flash = (id) => { setSavedFlash(id); setTimeout(() => setSavedFlash(''), 1800); };
+  const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-[13px]';
+  const lbl = 'text-[11px] font-bold text-slate-500';
+  const counter = (v, max) => { const n = (v || '').length; const over = n > max; return <span className={`text-[11px] font-semibold ${over ? 'text-red-500' : n > max * 0.9 ? 'text-orange-500' : 'text-slate-400'}`}>{n} / {max}</span>; };
+  const host = (() => { try { return new URL(window.location.origin).host; } catch { return 'qtonix.com'; } })();
+
+  const saveCareers = async () => { setBusy('careers'); try { const r = await hrApi('/seo/careers', { method: 'PUT', body: JSON.stringify(cs) }); setCs(r); flash('careers'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const genCareers = async () => { setBusy('careers-ai'); try { const r = await hrApi('/seo/careers/generate', { method: 'POST', body: '{}' }); setCs((x) => ({ ...x, title: r.title, description: r.description })); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+
+  const setJob = (id, patch) => setData((d) => ({ ...d, jobs: d.jobs.map((j) => j.id === id ? { ...j, ...patch } : j) }));
+  const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription }) }); flash('job-' + job.id); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description }); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const genAll = async () => { if (!confirm('Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.')) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); alert(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+
+  const published = data.jobs.filter((j) => j.status === 'published');
+  return (
+    <div className="space-y-4">
+      {/* Careers page SEO */}
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="text-[13px] font-extrabold text-[#050A1F] flex items-center gap-2 mb-0.5"><span className="w-2.5 h-2.5 rounded" style={{ background: '#0EA5E9' }} />Careers page SEO</div>
+        <div className="text-[11px] text-slate-400 mb-3">Applies to the main careers page that lists all roles.</div>
+        <div className="mb-3">
+          <div className="flex justify-between"><span className={lbl}>Meta title</span>{counter(cs.title, 60)}</div>
+          <input className={inp} value={cs.title || ''} onChange={(e) => setCs({ ...cs, title: e.target.value })} placeholder="Careers at Qtonix — Open Jobs & Roles" />
         </div>
+        <div className="mb-3">
+          <div className="flex justify-between"><span className={lbl}>Meta description</span>{counter(cs.description, 160)}</div>
+          <textarea rows={2} className={inp} value={cs.description || ''} onChange={(e) => setCs({ ...cs, description: e.target.value })} placeholder="Explore open roles at Qtonix across engineering, sales and design…" />
+        </div>
+        <div className={lbl + ' mb-1'}>Google preview</div>
+        <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 mb-3">
+          <div className="text-[12px]" style={{ color: '#0F9D58' }}>{host} › careers</div>
+          <div className="text-[16px] leading-tight" style={{ color: '#1a0dab' }}>{cs.title || 'Careers at Qtonix'}</div>
+          <div className="text-[12px]" style={{ color: '#4d5156' }}>{cs.description || 'Explore open roles and join our team at Qtonix.'}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={saveCareers} disabled={busy === 'careers'} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'careers' ? 'Saving…' : 'Save careers SEO'}</button>
+          <button onClick={genCareers} disabled={busy === 'careers-ai'} className="rounded-lg px-3 py-2 text-[12px] font-bold disabled:opacity-50 inline-flex items-center gap-1.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>{busy === 'careers-ai' ? 'Writing…' : '✨ Generate with AI'}</button>
+          {savedFlash === 'careers' && <span className="text-[13px] text-green-600 font-semibold">Saved ✓</span>}
+        </div>
+      </div>
+
+      {/* Per-job SEO */}
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="flex items-center justify-between mb-0.5">
+          <div className="text-[13px] font-extrabold text-[#050A1F] flex items-center gap-2"><span className="w-2.5 h-2.5 rounded" style={{ background: '#FF6A00' }} />Job post SEO</div>
+          <span className="text-[11px] text-slate-400 font-semibold">{published.length} published role{published.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="text-[11px] text-slate-400 mb-3">Each job's own page title & meta description. Edit inline, or let AI write optimized copy.</div>
+        <div className="flex items-center justify-between rounded-lg px-3.5 py-2.5 mb-3" style={{ background: 'linear-gradient(90deg,#EDE9FE,#F5F3FF)', border: '1px solid #ddd6fe' }}>
+          <div className="text-[12px] font-bold" style={{ color: '#5b21b6' }}>✨ Optimize all job page titles & descriptions for search</div>
+          <button onClick={genAll} disabled={busy === 'all'} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: '#7C3AED' }}>{busy === 'all' ? 'Generating…' : 'Generate all with AI'}</button>
+        </div>
+        {published.length === 0 ? <div className="text-[13px] text-slate-400 py-2">No published jobs yet. Publish a role to manage its SEO.</div> : (
+          <div className="space-y-2.5">
+            {published.map((job) => {
+              const hasSeo = !!(job.seoTitle || job.seoDescription);
+              const slug = job.token ? `/jobs/${job.token}` : '';
+              return (
+                <div key={job.id} className="rounded-xl border border-slate-200 p-3.5">
+                  <div className="flex items-start justify-between gap-2 mb-2.5">
+                    <div>
+                      <div className="text-[14px] font-extrabold text-[#050A1F]">{job.title}</div>
+                      <div className="text-[11px] text-slate-400">{[job.department, (job.locations || [])[0], slug].filter(Boolean).join(' · ')}</div>
+                    </div>
+                    <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={hasSeo ? { background: '#DCFCE7', color: '#15803D' } : { background: '#FEF3C7', color: '#B45309' }}>{hasSeo ? 'SEO set' : 'Using defaults'}</span>
+                  </div>
+                  <div className="mb-2.5">
+                    <div className="flex justify-between"><span className={lbl}>Page title</span>{job.seoTitle ? counter(job.seoTitle, 60) : <span className="text-[11px] font-semibold text-orange-500">Empty — falls back to job title</span>}</div>
+                    <div className="flex gap-2">
+                      <input className={inp} value={job.seoTitle || ''} onChange={(e) => setJob(job.id, { seoTitle: e.target.value })} placeholder={`${job.title} in ${(job.locations || [])[0] || 'City'} | Qtonix Careers`} />
+                      <button onClick={() => genJob(job)} disabled={busy === 'jobai-' + job.id} className="rounded-lg px-2.5 text-[11px] font-bold shrink-0 disabled:opacity-50" style={{ background: '#EDE9FE', color: '#7C3AED' }}>{busy === 'jobai-' + job.id ? '…' : '✨ AI'}</button>
+                    </div>
+                  </div>
+                  <div className="mb-2.5">
+                    <div className="flex justify-between"><span className={lbl}>Meta description</span>{counter(job.seoDescription, 160)}</div>
+                    <textarea rows={2} className={inp} value={job.seoDescription || ''} onChange={(e) => setJob(job.id, { seoDescription: e.target.value })} placeholder="Add a description, or generate one with AI…" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => saveJob(job)} disabled={busy === 'job-' + job.id} className="rounded-lg px-3.5 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'job-' + job.id ? 'Saving…' : 'Save'}</button>
+                    {job.token && <a href={`${window.location.origin}${slug}`} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-slate-500">Preview →</a>}
+                    {savedFlash === 'job-' + job.id && <span className="text-[12px] text-green-600 font-semibold">Saved ✓</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -7346,10 +7458,18 @@ export default function HrApp() {
   // links keep the user on the same page. Falls back to dashboard.
   const VALID_VIEWS = ['dashboard', 'tasks', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
     'corehr_attendance', 'corehr_leave', 'corehr_payroll', 'corehr_expenses', 'corehr_stock', 'corehr_onboarding'];
-  const pathView = (() => {
-    const seg = (location.pathname.replace(/^\/hr\/?/, '').split('/')[0] || '').toLowerCase();
+  // Clean-URL slugs for the Core HR sub-pages: the internal view id keeps its
+  // underscore (used all over the component tree), but the URL uses a tidy
+  // hyphenated path, e.g. corehr_attendance <-> core-hr/attendance.
+  const viewToSlug = (v) => v.startsWith('corehr_') ? `core-hr/${v.slice('corehr_'.length)}` : v;
+  const slugToView = (path) => {
+    const clean = path.replace(/^\/hr\/?/, '').replace(/\/+$/, '').toLowerCase();
+    if (clean.startsWith('core-hr/')) { const id = 'corehr_' + clean.slice('core-hr/'.length).split('/')[0]; return VALID_VIEWS.includes(id) ? id : 'dashboard'; }
+    const seg = clean.split('/')[0] || '';
+    // Back-compat: bare underscore URLs (/hr/corehr_attendance) still resolve.
     return VALID_VIEWS.includes(seg) ? seg : 'dashboard';
-  })();
+  };
+  const pathView = slugToView(location.pathname);
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [view, setViewRaw] = useState(pathView);
@@ -7358,10 +7478,19 @@ export default function HrApp() {
   const [mobileNav, setMobileNav] = useState(false);
   const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
   const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
-  // setView also writes a clean URL (/hr/<view>).
-  const setView = (v) => { setViewRaw(v); const target = `/hr/${v}`; if (location.pathname !== target) navigate(target); };
+  // setView also writes a clean URL (/hr/<view>, Core HR as /hr/core-hr/<sub>).
+  const setView = (v) => { setViewRaw(v); const target = `/hr/${viewToSlug(v)}`; if (location.pathname !== target) navigate(target); };
   // Keep view in sync when the user navigates back/forward.
   useEffect(() => { if (pathView !== view) setViewRaw(pathView); }, [pathView]);
+  // Redirect legacy underscore URLs (/hr/corehr_attendance) to the clean slug so
+  // old bookmarks and links land on the tidy URL.
+  useEffect(() => {
+    const seg = (location.pathname.replace(/^\/hr\/?/, '').split('/')[0] || '');
+    if (seg.startsWith('corehr_')) {
+      const clean = `/hr/${viewToSlug(seg)}`;
+      if (location.pathname !== clean) navigate(clean, { replace: true });
+    }
+  }, [location.pathname]);
   const goRecruit = (intent) => { setRecruitIntent(intent || null); setView('recruitment'); setProfileTarget(null); setNavKey((k) => k + 1); };
 
   // Restore session.

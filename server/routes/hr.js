@@ -3582,6 +3582,99 @@ router.post('/job-posts/ai/parse-jd', requireHrAccess, async (req, res, next) =>
   } catch (e) { if (e.status) return res.status(e.status).json({ error: e.message }); next(e); }
 });
 
+// ===== Careers / Job SEO =====
+// List every job with its editable SEO fields, plus the careers-page SEO, for
+// the admin SEO panel. Managers/admins only.
+router.get('/seo/jobs', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const jobs = await HrJobPost.findAll({ order: [['createdAt', 'DESC']], attributes: ['id', 'title', 'department', 'status', 'publicToken', 'locations', 'workMode', 'seoTitle', 'seoDescription', 'seoGeneratedAt'] });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const careers = (s && s.hrCareers) || {};
+    res.json({
+      careersSeo: { title: careers.seoTitle || '', description: careers.seoDescription || '', image: careers.seoImage || careers.ogImage || '' },
+      jobs: jobs.map((j) => ({
+        id: j.id, title: j.title, department: j.department, status: j.status,
+        token: j.publicToken, locations: j.locations || [], workMode: j.workMode,
+        seoTitle: j.seoTitle || '', seoDescription: j.seoDescription || '',
+        seoGeneratedAt: j.seoGeneratedAt,
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+// Save one job's SEO fields (admin-edited). Empty strings clear the override.
+router.put('/seo/jobs/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const job = await HrJobPost.findByPk(Number(req.params.id));
+    if (!job) return res.status(404).json({ error: 'Job not found.' });
+    const b = req.body || {};
+    if (b.seoTitle !== undefined) job.seoTitle = String(b.seoTitle).slice(0, 200);
+    if (b.seoDescription !== undefined) job.seoDescription = String(b.seoDescription).slice(0, 400);
+    await job.save();
+    res.json({ id: job.id, seoTitle: job.seoTitle, seoDescription: job.seoDescription });
+  } catch (e) { next(e); }
+});
+
+// AI-generate SEO title + description for ONE job (does not save until the admin
+// clicks save — returns the suggestion so they can review/edit first).
+router.post('/seo/jobs/:id/generate', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const job = await HrJobPost.findByPk(Number(req.params.id));
+    if (!job) return res.status(404).json({ error: 'Job not found.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = s && s.getKey ? s.getKey('openai') : null;
+    const { generateJobSeo } = require('../services/jobMeta');
+    const seo = await generateJobSeo(job, apiKey);
+    res.json({ id: job.id, ...seo, ai: !!apiKey });
+  } catch (e) { next(e); }
+});
+
+// AI-generate + SAVE SEO for ALL published jobs in one shot ("Generate all").
+router.post('/seo/jobs/generate-all', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = s && s.getKey ? s.getKey('openai') : null;
+    const { generateJobSeo } = require('../services/jobMeta');
+    const onlyEmpty = !!(req.body && req.body.onlyEmpty);
+    const jobs = await HrJobPost.findAll({ where: { status: 'published' } });
+    const results = [];
+    for (const job of jobs) {
+      if (onlyEmpty && (job.seoTitle || job.seoDescription)) { results.push({ id: job.id, skipped: true }); continue; }
+      const seo = await generateJobSeo(job, apiKey);
+      job.seoTitle = seo.title; job.seoDescription = seo.description; job.seoGeneratedAt = new Date();
+      await job.save();
+      results.push({ id: job.id, title: job.title, seoTitle: seo.title, seoDescription: seo.description });
+    }
+    res.json({ ai: !!apiKey, count: results.filter((r) => !r.skipped).length, results });
+  } catch (e) { next(e); }
+});
+
+// Save the careers-page SEO (lives on Settings.hrCareers alongside branding).
+router.put('/seo/careers', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const b = req.body || {};
+    const careers = { ...(s.hrCareers || {}) };
+    if (b.title !== undefined) careers.seoTitle = String(b.title).slice(0, 200);
+    if (b.description !== undefined) careers.seoDescription = String(b.description).slice(0, 400);
+    if (b.image !== undefined) careers.seoImage = String(b.image).slice(0, 500);
+    s.hrCareers = careers; s.changed('hrCareers', true); await s.save();
+    res.json({ title: careers.seoTitle || '', description: careers.seoDescription || '', image: careers.seoImage || '' });
+  } catch (e) { next(e); }
+});
+
+// AI-generate careers-page SEO (returns suggestion; not saved until reviewed).
+router.post('/seo/careers/generate', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const apiKey = s && s.getKey ? s.getKey('openai') : null;
+    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, attributes: ['title'] });
+    const { generateCareersSeo } = require('../services/jobMeta');
+    const seo = await generateCareersSeo(jobs, (s && s.hrCareers) || {}, apiKey);
+    res.json({ ...seo, ai: !!apiKey });
+  } catch (e) { next(e); }
+});
+
 // Whitelist of job-post fields the client may set (prevents mass-assignment).
 function pickJobFields(b) {
   const out = {};

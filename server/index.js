@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v351';
+const APP_VERSION = 'v352';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -64,6 +64,11 @@ app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, messag
 app.use('/api', rateLimit({ windowMs: 60 * 1000, max: 120 }));
 
 app.use('/uploads', express.static(path.join(__dirname, '../storage/uploads')));
+// Brand assets (favicon in its various sizes). Served from server/public/brand
+// so every page — SPA, reporting, and the public career/job/task/onboarding
+// pages — can point at a stable, cacheable icon URL.
+app.use('/brand', express.static(path.join(__dirname, 'public/brand'), { maxAge: '7d' }));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public/brand/favicon-32.png')));
 app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
@@ -137,10 +142,12 @@ app.get('/jobs/:token', async (req, res) => {
     const branding = (s && s.hrCareers) || {};
     const base = `${req.protocol}://${req.get('host')}`;
     if (job) {
-      // Prefer cached AI meta; fall back to a clean derived title/description.
+      // Title/description precedence: admin-set SEO override > cached AI OG meta
+      // > a clean derived fallback. SEO fields are what the admin explicitly
+      // tuned for search, so they win for the <title> and meta description.
       const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : (job.branch || '');
-      const title = job.ogTitle || `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`;
-      const desc = job.ogDescription || og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
+      const title = job.seoTitle || job.ogTitle || `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`;
+      const desc = job.seoDescription || job.ogDescription || og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
       const jsonLd = og.jobPostingLd(job, { url: `${base}/jobs/${req.params.token}`, base, logo: branding.logo || `${base}/og/share.png` });
       const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
         title, description: desc, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
@@ -176,9 +183,10 @@ app.get('/careers/:token', async (req, res) => {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const branding = (s && s.hrCareers) || {};
     const base = `${req.protocol}://${req.get('host')}`;
-    // Cached careers meta lives on branding (hrCareers.ogTitle/ogDescription).
-    const title = branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
-    const description = branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
+    // Title/description precedence: admin-set careers SEO override > cached AI
+    // OG meta > branding title/description > a generic fallback.
+    const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
+    const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
     const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
     const jsonLd = og.careersItemListLd(jobs, { base });
     const html = og.injectIntoHtml(path.join(__dirname, 'public/careers-page.html'), {

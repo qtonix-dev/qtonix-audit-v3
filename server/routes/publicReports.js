@@ -102,6 +102,9 @@ function wrapperHtml(report, title) {
   return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/brand/favicon-180.png">
+<link rel="shortcut icon" href="/brand/favicon.png">
 <title>${esc(title)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}

@@ -155,4 +155,64 @@ async function buildOgImage(logoSrc) {
 
 function ogImagePath() { return path.join(OG_DIR, 'share.png'); }
 
-module.exports = { generateJobMeta, generateCareersMeta, buildOgImage, ogImagePath, stripHtml };
+/**
+ * Generate a SEARCH-optimized page title + meta description for a single job's
+ * public page. Distinct from the OG (social share) meta: SEO copy is written to
+ * rank — it front-loads the role and location (local-search intent) and keeps
+ * the title within Google's ~60-char display limit and the description within
+ * ~155 chars. Returns { title, description }; falls back without AI.
+ */
+async function generateJobSeo(job, apiKey) {
+  const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.map((l) => String(l).split(',')[0].trim()).filter(Boolean)[0] : (job.branch || '');
+  const empMap = { full_time: 'Full-time', part_time: 'Part-time', internship: 'Internship', freelance: 'Freelance' };
+  const modeMap = { in_office: 'In office', hybrid: 'Hybrid', remote: 'Remote' };
+  const skills = (Array.isArray(job.skills) ? job.skills : []).map((s) => (typeof s === 'string' ? s : s.name)).filter(Boolean).slice(0, 6);
+  const fallbackTitle = `${job.title}${loc ? ` in ${loc}` : ''} | Qtonix Careers`.slice(0, 60);
+  const fallbackDesc = (`Apply for ${job.title}${loc ? ` in ${loc}` : ''} at Qtonix. ${modeMap[job.workMode] || ''} ${empMap[job.employmentType] || ''} role. Join our team — apply online today.`).replace(/\s+/g, ' ').trim().slice(0, 155);
+  const fallback = { title: fallbackTitle, description: fallbackDesc };
+  if (!apiKey) return fallback;
+  try {
+    const facts = { role: job.title, location: loc, workMode: modeMap[job.workMode] || '', employmentType: empMap[job.employmentType] || '', experience: job.experienceType || '', skills, descriptionExcerpt: stripHtml(job.description).slice(0, 700) };
+    const system = 'You are an SEO copywriter for a company careers site. Write search-engine-optimized metadata for ONE job posting so it ranks for candidates searching that role and location. Return STRICT JSON only, no markdown. Keys: "title" (<=60 characters INCLUDING a " | Qtonix Careers" suffix which you MUST include; front-load the exact role name and, if available, the city — this matters for local search), "description" (<=155 characters; naturally include the role and location, one concrete draw such as work mode or a key skill, and end with a clear call to action like "Apply now"; no emojis, no hashtags, no quotes).';
+    const user = `Write SEO metadata for this job:\n${JSON.stringify(facts, null, 2)}`;
+    const out = await callOpenAI(apiKey, { system, user, maxTokens: 200 });
+    const j = parseJson(out);
+    if (j && (j.title || j.description)) {
+      let title = String(j.title || fallback.title).replace(/\s+/g, ' ').trim();
+      if (!/qtonix/i.test(title)) title = `${title} | Qtonix Careers`;
+      title = title.slice(0, 60);
+      const description = String(j.description || fallback.description).replace(/\s+/g, ' ').trim().slice(0, 160);
+      return { title, description };
+    }
+  } catch (e) { console.error('[jobMeta] SEO generate failed:', e.message); }
+  return fallback;
+}
+
+/**
+ * Generate a search-optimized title + meta description for the careers landing
+ * page (lists all roles). Returns { title, description }.
+ */
+async function generateCareersSeo(jobs, branding, apiKey) {
+  const roles = (jobs || []).map((j) => j.title).filter(Boolean).slice(0, 15);
+  const fallback = {
+    title: 'Careers at Qtonix — Open Jobs & Roles'.slice(0, 60),
+    description: `Explore ${roles.length || 'our'} open roles at Qtonix across engineering, sales and design. Find your next job and apply online today.`.replace(/\s+/g, ' ').trim().slice(0, 155),
+  };
+  if (!apiKey || roles.length === 0) return fallback;
+  try {
+    const system = 'You are an SEO copywriter. Write search-optimized metadata for a company CAREERS landing page listing multiple roles. Return STRICT JSON only. Keys: "title" (<=60 chars, MUST include "Qtonix" and a word like Careers/Jobs), "description" (<=155 chars, mention hiring across the breadth of teams, invite applications, end with a call to action; no emojis, no hashtags).';
+    const user = `Company: Qtonix. Open roles: ${roles.join(', ')}`;
+    const out = await callOpenAI(apiKey, { system, user, maxTokens: 200 });
+    const j = parseJson(out);
+    if (j && (j.title || j.description)) {
+      let title = String(j.title || fallback.title).replace(/\s+/g, ' ').trim();
+      if (!/qtonix/i.test(title)) title = `Qtonix — ${title}`;
+      title = title.slice(0, 60);
+      const description = String(j.description || fallback.description).replace(/\s+/g, ' ').trim().slice(0, 160);
+      return { title, description };
+    }
+  } catch (e) { console.error('[jobMeta] careers SEO failed:', e.message); }
+  return fallback;
+}
+
+module.exports = { generateJobMeta, generateCareersMeta, generateJobSeo, generateCareersSeo, buildOgImage, ogImagePath, stripHtml };

@@ -1505,6 +1505,11 @@ const HrJobPost = sequelize.define('HrJobPost', {
   ogTitle: { type: DataTypes.STRING(200), defaultValue: '' },
   ogDescription: { type: DataTypes.STRING(400), defaultValue: '' },
   ogGeneratedAt: { type: DataTypes.DATE, allowNull: true },
+  // Admin-editable SEO meta for this job's public page (<title> + meta
+  // description). Empty → the page falls back to the job title / ogDescription.
+  seoTitle: { type: DataTypes.STRING(200), defaultValue: '' },
+  seoDescription: { type: DataTypes.STRING(400), defaultValue: '' },
+  seoGeneratedAt: { type: DataTypes.DATE, allowNull: true },
   publishedAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'hr_job_posts' });
 HrJobPost.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
