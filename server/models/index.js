@@ -497,6 +497,12 @@ const Settings = sequelize.define(
     hrExpenseCategories: { type: DataTypes.JSON, defaultValue: [] },
     // Public careers page branding.
     hrCareers: { type: DataTypes.JSON, defaultValue: { logo: '', title: 'Careers at Qtonix', description: '', token: '' } },
+    // Custom public domains per surface. Empty → fall back to the request host /
+    // APP_URL. Set by an admin in the Domains settings panel; a single helper
+    // (services/publicUrl.js) turns these into the absolute links every surface
+    // emits (share links, OG tags, onboarding/report emails, QR codes).
+    // { hrms, careers, crm, reports } — each a bare host or full origin.
+    publicDomains: { type: DataTypes.JSON, defaultValue: { hrms: '', careers: '', crm: '', reports: '' } },
 
     pricing: { type: DataTypes.JSON },
     // CRM dropdown configuration — admin-editable so new sources/services/stages

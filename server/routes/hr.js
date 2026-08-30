@@ -4430,7 +4430,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
         if (token && mailbox) {
           const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
           const sig = await rejectSignature(req.hrActor, mailbox);
-          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const appUrl = await require('../services/publicUrl').baseFor('careers', req);
           const uploadUrl = `${appUrl}/task/${task.token}`;
           const deadlineText = new Date(task.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskAssignment({
@@ -4505,7 +4505,7 @@ router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, n
         if (token && mailbox) {
           const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
           const sig = await rejectSignature(req.hrActor, mailbox);
-          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const appUrl = await require('../services/publicUrl').baseFor('careers', req);
           const t = tasks[idx];
           const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskUpdated({
@@ -4552,7 +4552,7 @@ router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (r
         if (token && mailbox) {
           const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
           const sig = await rejectSignature(req.hrActor, mailbox);
-          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const appUrl = await require('../services/publicUrl').baseFor('careers', req);
           const t = tasks[idx];
           const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskAssignment({
@@ -4647,7 +4647,7 @@ router.post('/candidates/:id/task/:taskId/request-info', requireHrAccess, async 
         if (token && mailbox) {
           const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
           const sig = await rejectSignature(req.hrActor, mailbox);
-          const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+          const appUrl = await require('../services/publicUrl').baseFor('careers', req);
           const t = tasks[idx];
           const deadlineText = new Date(t.deadline).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
           const bodyHtml = hrEmail.taskAdditionalInfoRequest({

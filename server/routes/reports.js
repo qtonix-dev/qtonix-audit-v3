@@ -611,7 +611,7 @@ router.post('/:id/share', requireAuth, async (req, res, next) => {
     }
     report.publicEnabled = true;
     await report.save();
-    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const base = await require('../services/publicUrl').baseFor('reports', req);
     res.json({ slug: report.publicSlug, url: `${base}/r/${report.publicSlug}`, enabled: true });
   } catch (e) { next(e); }
 });
@@ -633,7 +633,7 @@ router.get('/:id/share', requireAuth, async (req, res, next) => {
     const report = await Report.findByPk(req.params.id);
     if (!report) return res.status(404).json({ error: 'Report not found.' });
     if (req.user.role !== 'admin' && report.agentId !== req.user.id) return res.status(403).json({ error: 'Not allowed.' });
-    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const base = await require('../services/publicUrl').baseFor('reports', req);
     const views = Array.isArray(report.publicViews) ? report.publicViews : [];
     res.json({
       slug: report.publicSlug, enabled: !!report.publicEnabled,

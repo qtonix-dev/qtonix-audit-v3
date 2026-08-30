@@ -373,6 +373,88 @@ function Branding({ settings, setSettings, say, reload }) {
 // ---------------------------------------------------------------------------
 // Demo / training mode
 // ---------------------------------------------------------------------------
+function DomainsSettings({ say }) {
+  const SURFACES = [
+    { key: 'careers', label: 'Careers, Jobs, Task & Onboarding', example: 'career.qtonix.com', desc: 'All public candidate-facing pages: the careers listing, individual job posts, assessment task uploads, and onboarding.' },
+    { key: 'hrms', label: 'HRMS (HR portal)', example: 'people.qtonix.com', desc: 'The internal HR portal your team logs into.' },
+    { key: 'crm', label: 'Sales CRM', example: 'crmnest.com', desc: 'The Sales CRM app.' },
+    { key: 'reports', label: 'Analysis Reports', example: 'reports.qtonix.com', desc: 'Public shareable Site-Analysis report links.' },
+  ];
+  const [domains, setDomains] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [checks, setChecks] = useState({}); // { key: {status, result} }
+
+  const load = () => api('/admin/domains').then((r) => setDomains(r.domains)).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try { const r = await api('/admin/domains', { method: 'PUT', body: JSON.stringify({ domains }) }); setDomains(r.domains); say && say('Domains saved', 'good'); }
+    catch (e) { say && say(e.message, 'bad'); }
+    setBusy(false);
+  };
+  const check = async (key) => {
+    setChecks((c) => ({ ...c, [key]: { status: 'checking' } }));
+    try { const r = await api('/admin/domains/check', { method: 'POST', body: JSON.stringify({ domain: domains[key] }) }); setChecks((c) => ({ ...c, [key]: { status: 'done', result: r } })); }
+    catch (e) { setChecks((c) => ({ ...c, [key]: { status: 'done', result: { ok: false, message: e.message } } })); }
+  };
+
+  if (!domains) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+  const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+
+  const hostOf = (v) => { try { return new URL(/^https?:/.test(v) ? v : 'https://' + v).host; } catch { return v; } };
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold" style={{ color: C.navy }}>Custom domains</div>
+        <p className="text-[11px] text-slate-400 mt-0.5">Point each part of the product at your own domain. Once set, every link the app generates — share links, emails, SEO tags, QR codes — uses these automatically. Leave blank to keep using the current address.</p>
+      </div>
+
+      {SURFACES.map((sfc) => {
+        const chk = checks[sfc.key];
+        const r = chk && chk.result;
+        return (
+          <div key={sfc.key} className="bg-white rounded-xl border border-slate-200 p-5">
+            <div className="text-sm font-bold" style={{ color: C.navy }}>{sfc.label}</div>
+            <p className="text-[11px] text-slate-400 mt-0.5 mb-2.5">{sfc.desc}</p>
+            <div className="flex gap-2 items-center">
+              <input className={inputCls} value={domains[sfc.key] || ''} onChange={(e) => setDomains({ ...domains, [sfc.key]: e.target.value })} placeholder={sfc.example} />
+              <button onClick={() => check(sfc.key)} disabled={!domains[sfc.key] || (chk && chk.status === 'checking')} className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 disabled:opacity-40">{chk && chk.status === 'checking' ? 'Checking…' : 'Check'}</button>
+            </div>
+            {r && (
+              <div className={`mt-2 rounded-lg px-3 py-2 text-[12px] flex items-start gap-2 ${r.ok ? 'bg-green-50 border border-green-200 text-green-700' : r.reachable ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                <span>{r.ok ? '✓' : r.reachable ? '⚠' : '✕'}</span>
+                <span>{r.message}{r.version ? ` (v${r.version})` : ''}</span>
+              </div>
+            )}
+            {domains[sfc.key] && (
+              <div className="mt-2 text-[11px] text-slate-500">
+                DNS: add a <span className="font-mono font-bold">CNAME</span> for <span className="font-mono font-bold">{hostOf(domains[sfc.key])}</span> → your Railway target, and add this domain in Railway → Settings → Networking.
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="flex justify-end">
+        <Btn onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save domains'}</Btn>
+      </div>
+
+      <div className="bg-slate-50 rounded-xl border border-slate-200 p-5">
+        <div className="text-sm font-bold mb-2" style={{ color: C.navy }}>How to connect a domain (one-time setup)</div>
+        <ol className="text-[12px] text-slate-600 space-y-1.5 list-decimal pl-5">
+          <li>In <b>Railway → your service → Settings → Networking → Custom Domain</b>, add the domain (e.g. <span className="font-mono">career.qtonix.com</span>). Railway shows you a <b>CNAME target</b> (like <span className="font-mono">xxxx.up.railway.app</span>).</li>
+          <li>In your <b>DNS provider</b> (where qtonix.com is managed), add a <b>CNAME</b> record: host = the subdomain (<span className="font-mono">career</span>), value = the Railway target. For a root domain like <span className="font-mono">crmnest.com</span>, use your provider's ALIAS/ANAME (or an A record to Railway's IP if they require it).</li>
+          <li>Wait for DNS to propagate (usually minutes, up to ~an hour). Railway auto-issues an SSL certificate once it sees the record.</li>
+          <li>Enter the domain in the field above, click <b>Check</b> — green means it's pointing here and serving over HTTPS.</li>
+          <li>Click <b>Save domains</b>. Done — the app now uses it everywhere.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
 function DemoModeSettings({ say }) {
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -2734,9 +2816,9 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['keys', 'API keys'], ['emails', 'Emails'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['domains', 'Domains'], ['keys', 'API keys'], ['emails', 'Emails'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
-  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey' && tab !== 'emails';
+  const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey' && tab !== 'emails' && tab !== 'domains';
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
@@ -2762,6 +2844,7 @@ export default function Admin() {
         </div>
 
         {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} reload={load} />}
+        {tab === 'domains' && <DomainsSettings say={say} />}
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'emails' && <EmailsTab settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}

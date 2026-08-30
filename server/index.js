@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v354';
+const APP_VERSION = 'v355';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -133,49 +133,54 @@ app.get('/og/share.png', async (req, res) => {
 
 // Public listing page — the full job post with the application form on the
 // Public branded careers listing (all published roles at one URL).
-app.get('/jobs/:token', async (req, res) => {
+// Shared handler for BOTH /jobs/:token and /careers/:token. A token can be an
+// individual job's publicToken OR the careers/brand token — the visible page is
+// the same (the careers listing renders client-side), but the injected SEO must
+// differ: an individual-job token gets that job's title/description/keywords,
+// anything else gets the careers-page SEO. Keeping both routes on one function
+// means they can never drift apart again.
+async function servePublicCareersOrJob(req, res, tokenPathPrefix) {
+  const { HrJobPost, Settings } = require('./models');
+  const og = require('./services/ogTags');
+  const pu = require('./services/publicUrl');
+  const tmpl = path.join(__dirname, 'public/jobs-page.html');
   try {
-    const { HrJobPost, Settings } = require('./models');
-    const og = require('./services/ogTags');
-    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token } });
+    const token = req.params.token;
+    const job = await HrJobPost.findOne({ where: { publicToken: token } });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const branding = (s && s.hrCareers) || {};
-    const base = `${req.protocol}://${req.get('host')}`;
+    // Absolute links point at the configured careers domain (career.qtonix.com)
+    // when set, else the current host. This is what social shares & Google see.
+    const base = await pu.baseFor('careers', req);
+    const selfUrl = `${base}${tokenPathPrefix}/${token}`;
     if (job) {
-      // Title/description precedence: admin-set SEO override > cached AI OG meta
-      // > a clean derived fallback. SEO fields are what the admin explicitly
-      // tuned for search, so they win for the <title> and meta description.
+      // Individual job: its own SEO wins for title/description/keywords.
       const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : (job.branch || '');
       const title = job.seoTitle || job.ogTitle || `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`;
       const desc = job.seoDescription || job.ogDescription || og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
-      const jsonLd = og.jobPostingLd(job, { url: `${base}/jobs/${req.params.token}`, base, logo: branding.logo || `${base}/og/share.png` });
-      const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
-        title, description: desc, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
+      const jsonLd = og.jobPostingLd(job, { url: selfUrl, base, logo: branding.logo || `${base}/og/share.png` });
+      const html = og.injectIntoHtml(tmpl, {
+        title, description: desc, image: `${base}/og/share.png`, url: selfUrl, jsonLd,
         keywords: Array.isArray(job.seoKeywords) ? job.seoKeywords : [],
       });
-      // Never let a CDN/browser cache stale SEO tags — social scrapers and the
-      // browser should always see the latest title/description after an edit.
       res.set('Cache-Control', 'no-cache, must-revalidate');
       return res.type('html').send(html);
     }
-    // The token wasn't an individual job — this is the shared careers page
-    // (its public link is /jobs/<careersToken>). Inject the CAREERS-page SEO
-    // (title/description/keywords the admin set) so this page is optimized too,
-    // instead of serving the raw file with a hardcoded <title>Careers</title>.
-    {
-      const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
-      const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
-      const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
-      const jsonLd = og.careersItemListLd(jobs, { base });
-      const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
-        title, description, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
-        keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
-      });
-      res.set('Cache-Control', 'no-cache, must-revalidate');
-      return res.type('html').send(html);
-    }
-  } catch (e) { res.sendFile(path.join(__dirname, 'public/jobs-page.html')); }
-});
+    // Careers landing page (the token is the careers/brand token).
+    const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
+    const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
+    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
+    const jsonLd = og.careersItemListLd(jobs, { base });
+    const html = og.injectIntoHtml(tmpl, {
+      title, description, image: `${base}/og/share.png`, url: selfUrl, jsonLd,
+      keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
+    });
+    res.set('Cache-Control', 'no-cache, must-revalidate');
+    res.type('html').send(html);
+  } catch (e) { res.sendFile(tmpl); }
+}
+
+app.get('/jobs/:token', (req, res) => servePublicCareersOrJob(req, res, '/jobs'));
 
 // Public candidate task-upload page (assessment task). Same standalone-HTML
 // pattern as the careers/schedule pages; the token is in the path.
@@ -194,28 +199,11 @@ app.get('/schedule/:token', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/schedule-page.html'));
 });
 
-// right (the shareable careers page). Same token, no auth.
-app.get('/careers/:token', async (req, res) => {
-  try {
-    const { Settings, HrJobPost } = require('./models');
-    const og = require('./services/ogTags');
-    const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const branding = (s && s.hrCareers) || {};
-    const base = `${req.protocol}://${req.get('host')}`;
-    // Title/description precedence: admin-set careers SEO override > cached AI
-    // OG meta > branding title/description > a generic fallback.
-    const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
-    const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
-    const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
-    const jsonLd = og.careersItemListLd(jobs, { base });
-    const html = og.injectIntoHtml(path.join(__dirname, 'public/careers-page.html'), {
-      title, description, image: `${base}/og/share.png`, url: `${base}/careers/${req.params.token}`, jsonLd,
-      keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
-    });
-    res.set('Cache-Control', 'no-cache, must-revalidate');
-    res.type('html').send(html);
-  } catch (e) { res.sendFile(path.join(__dirname, 'public/careers-page.html')); }
-});
+// The shareable careers page. Same token space as /jobs/:token — a token may be
+// an individual job or the careers/brand token, and the shared handler injects
+// the right SEO for each. (This is why /careers/<jobToken> now shows THAT job's
+// title instead of the generic careers title.)
+app.get('/careers/:token', (req, res) => servePublicCareersOrJob(req, res, '/careers'));
 
 // Public shareable Site Analysis report links (/r/:slug), no auth. Served before
 // the SPA catch-all so the customer sees the branded report + download button.

@@ -27,7 +27,7 @@ function istDatePlus(n) {
   return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
 }
 function fmtDate(s) { try { return new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch { return s; } }
-function appUrl() { return (process.env.APP_URL || '').replace(/\/$/, ''); }
+async function appUrl() { try { return await require('../services/publicUrl').baseFor('careers'); } catch { return (process.env.APP_URL || '').replace(/\/$/, ''); } }
 
 async function sendOnce(models, s, sender, { dedupeKey, type, to, toName, subject, bodyHtml, cc }) {
   const { CrmEmailLog } = models;
@@ -89,7 +89,7 @@ async function tick(models) {
       const hr = await hrContactFor(models, cand, job);
       const hrSig = hr ? { name: hr.name, title: 'HR \u00b7 Qtonix', email: sender.email } : null;
       const joiningDateText = fmtDate(jd);
-      const onbUrl = onb.token ? `${appUrl()}/onboarding/${onb.token}` : '';
+      const onbUrl = onb.token ? `${await appUrl()}/onboarding/${onb.token}` : '';
       let dirty = false;
 
       // 7 days before → welcome + activate (once).

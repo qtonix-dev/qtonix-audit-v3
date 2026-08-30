@@ -871,4 +871,63 @@ router.put('/tv', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== Custom public domains =====
+// Read the configured domains for each surface (hrms/careers/crm/reports).
+router.get('/domains', async (req, res, next) => {
+  try {
+    const { Settings } = require('../models');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const d = (s && s.publicDomains) || {};
+    res.json({ domains: { hrms: d.hrms || '', careers: d.careers || '', crm: d.crm || '', reports: d.reports || '' } });
+  } catch (e) { next(e); }
+});
+
+// Save the domains. Each value is normalized to a clean https origin (or '').
+router.put('/domains', async (req, res, next) => {
+  try {
+    const { Settings } = require('../models');
+    const pu = require('../services/publicUrl');
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const b = (req.body && req.body.domains) || {};
+    const next_ = { ...(s.publicDomains || {}) };
+    for (const k of ['hrms', 'careers', 'crm', 'reports']) {
+      if (b[k] !== undefined) next_[k] = pu.normalizeOrigin(b[k]); // '' clears it
+    }
+    s.publicDomains = next_; s.changed('publicDomains', true); await s.save();
+    pu.clearCache();
+    await AuditLog.create({ userId: req.user.id, userName: req.user.name, action: 'domains.save', target: Object.entries(next_).filter(([, v]) => v).map(([k]) => k).join(',') || 'cleared', ip: req.ip });
+    res.json({ domains: next_ });
+  } catch (e) { next(e); }
+});
+
+// Live reachability + "is it pointing at THIS app?" check for one domain. We
+// fetch a tiny known endpoint on the given host and confirm it's our server.
+router.post('/domains/check', async (req, res, next) => {
+  try {
+    const pu = require('../services/publicUrl');
+    const origin = pu.normalizeOrigin((req.body && req.body.domain) || '');
+    if (!origin) return res.status(400).json({ ok: false, error: 'Enter a domain first.' });
+    const url = `${origin}/api/health`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'Qtonix-DomainCheck' } });
+      clearTimeout(timer);
+      let body = null; try { body = await r.json(); } catch {}
+      const isOurs = !!(body && (body.version || body.status === 'ok' || body.ok === true));
+      // TLS reachable if we got any response over https without throwing.
+      const https = origin.startsWith('https://');
+      if (!r.ok) return res.json({ ok: false, reachable: true, https, pointsHere: false, status: r.status, message: `Reached the domain but got HTTP ${r.status}. DNS is set, but it isn't serving this app yet.` });
+      if (!isOurs) return res.json({ ok: false, reachable: true, https, pointsHere: false, message: 'The domain responds, but not with this application. It may be pointing somewhere else.' });
+      return res.json({ ok: true, reachable: true, https, pointsHere: true, version: body.version || null, message: 'Connected — this domain is serving your app over HTTPS.' });
+    } catch (e) {
+      clearTimeout(timer);
+      const msg = /abort/i.test(String(e.message)) ? 'Timed out — the domain did not respond. DNS may not be set yet, or it is still propagating.'
+        : /certificate|tls|ssl/i.test(String(e.message)) ? 'Reached the domain but the SSL certificate is not ready yet. On Railway this provisions a few minutes after the domain is added.'
+        : 'Could not reach the domain. Check that the DNS record (CNAME) is added and has propagated.';
+      return res.json({ ok: false, reachable: false, pointsHere: false, message: msg, detail: String(e.message).slice(0, 160) });
+    }
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
