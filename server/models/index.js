@@ -1507,6 +1507,10 @@ const HrJobPost = sequelize.define('HrJobPost', {
   roundPanels: { type: DataTypes.JSON, defaultValue: {} },
   // --- Public embed ---
   publicToken: { type: DataTypes.STRING(40), allowNull: true, unique: true },
+  // Clean, human/SEO-friendly URL slug, e.g. "graphic-designer" or
+  // "graphic-designer-bhubaneswar". Unique; used as /jobs/<slug>. The opaque
+  // publicToken still resolves too, for backward-compatible links.
+  slug: { type: DataTypes.STRING(120), allowNull: true, unique: true },
   // AI-generated share/SEO meta, cached so we don't regenerate on every request.
   ogTitle: { type: DataTypes.STRING(200), defaultValue: '' },
   ogDescription: { type: DataTypes.STRING(400), defaultValue: '' },

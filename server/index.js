@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v357';
+const APP_VERSION = 'v358';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -201,44 +201,122 @@ async function servePublicCareersOrJob(req, res, tokenPathPrefix) {
   const { HrJobPost, Settings } = require('./models');
   const og = require('./services/ogTags');
   const pu = require('./services/publicUrl');
-  const tmpl = path.join(__dirname, 'public/jobs-page.html');
+  // Individual job → the single-job DETAIL template (careers-page.html, which
+  // fetches /api/careers/<token>). Careers landing → the LISTING template
+  // (jobs-page.html, which fetches /api/careers/careers/<token>). Serving the
+  // wrong one is what made an individual job show "Careers page not found".
+  const jobTmpl = path.join(__dirname, 'public/careers-page.html');
+  const listTmpl = path.join(__dirname, 'public/jobs-page.html');
   try {
     const token = req.params.token;
-    const job = await HrJobPost.findOne({ where: { publicToken: token } });
+    const { Op } = require('sequelize');
+    const job = await HrJobPost.findOne({ where: { [Op.or]: [{ slug: token }, { publicToken: token }] } });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const branding = (s && s.hrCareers) || {};
-    // Absolute links point at the configured careers domain (career.qtonix.com)
-    // when set, else the current host. This is what social shares & Google see.
     const base = await pu.baseFor('careers', req);
-    const selfUrl = `${base}${tokenPathPrefix}/${token}`;
     if (job) {
-      // Individual job: its own SEO wins for title/description/keywords.
+      // Canonical clean URL is /jobs/<slug>. If reached via the opaque token or
+      // the /careers/ prefix, 301 to the clean slug so engines index one address.
+      let slug = job.slug;
+      if (!slug) { try { slug = await require('./routes/careers').ensureJobSlug(job); } catch {} }
+      slug = slug || job.publicToken;
+      const canonical = `/jobs/${slug}`;
+      if (req.path !== canonical) return res.redirect(301, canonical);
+      const selfUrl = `${base}${canonical}`;
       const loc = Array.isArray(job.locations) && job.locations.length ? job.locations.join(', ') : (job.branch || '');
       const title = job.seoTitle || job.ogTitle || `${job.title}${job.department ? ` — ${job.department}` : ''} | Qtonix Careers`;
       const desc = job.seoDescription || job.ogDescription || og.clip((job.description || '').replace(/<[^>]+>/g, ' ') || `${job.title}${loc ? ` · ${loc}` : ''} — apply now at Qtonix.`);
       const jsonLd = og.jobPostingLd(job, { url: selfUrl, base, logo: branding.logo || `${base}/og/share.png` });
-      const html = og.injectIntoHtml(tmpl, {
+      const html = og.injectIntoHtml(jobTmpl, {
         title, description: desc, image: `${base}/og/share.png`, url: selfUrl, jsonLd,
         keywords: Array.isArray(job.seoKeywords) ? job.seoKeywords : [],
       });
       res.set('Cache-Control', 'no-cache, must-revalidate');
       return res.type('html').send(html);
     }
+    const selfUrl = `${base}${tokenPathPrefix}/${token}`;
     // Careers landing page (the token is the careers/brand token).
     const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
     const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
     const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
     const jsonLd = og.careersItemListLd(jobs, { base });
-    const html = og.injectIntoHtml(tmpl, {
+    const html = og.injectIntoHtml(listTmpl, {
       title, description, image: `${base}/og/share.png`, url: selfUrl, jsonLd,
       keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
     });
     res.set('Cache-Control', 'no-cache, must-revalidate');
     res.type('html').send(html);
-  } catch (e) { res.sendFile(tmpl); }
+  } catch (e) { res.sendFile(listTmpl); }
 }
 
 app.get('/jobs/:token', (req, res) => servePublicCareersOrJob(req, res, '/jobs'));
+
+// ===== SEO discovery files for the careers site =====
+// Served at the careers domain root: an XML sitemap and an llms.txt, both
+// listing every open job so search engines and LLM crawlers can find them.
+async function publishedJobsForSeo() {
+  const { HrJobPost } = require('./models');
+  const careers = require('./routes/careers');
+  const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['publishedAt', 'DESC']] });
+  await Promise.all(jobs.map((j) => careers.ensureJobSlug(j)));
+  return jobs;
+}
+
+app.get('/sitemap.xml', async (req, res) => {
+  try {
+    const pu = require('./services/publicUrl');
+    const base = await pu.baseFor('careers', req);
+    const jobs = await publishedJobsForSeo();
+    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const urls = [
+      { loc: `${base}/`, priority: '1.0', changefreq: 'daily' },
+      ...jobs.map((j) => ({ loc: `${base}/jobs/${j.slug || j.publicToken}`, lastmod: (j.updatedAt || j.publishedAt || new Date()).toISOString().slice(0, 10), priority: '0.8', changefreq: 'weekly' })),
+    ];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url>\n    <loc>${esc(u.loc)}</loc>\n${u.lastmod ? `    <lastmod>${u.lastmod}</lastmod>\n` : ''}    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`).join('\n')}\n</urlset>\n`;
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.type('application/xml').send(xml);
+  } catch (e) { res.status(500).type('application/xml').send('<?xml version="1.0"?><urlset/>'); }
+});
+
+app.get('/llms.txt', async (req, res) => {
+  try {
+    const { Settings } = require('./models');
+    const pu = require('./services/publicUrl');
+    const base = await pu.baseFor('careers', req);
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const branding = (s && s.hrCareers) || {};
+    const jobs = await publishedJobsForSeo();
+    const strip = (h) => String(h || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const lines = [];
+    lines.push(`# ${branding.title || 'Qtonix Careers'}`);
+    lines.push('');
+    lines.push(`> ${branding.seoDescription || branding.description || 'Open positions at Qtonix. Apply online.'}`);
+    lines.push('');
+    lines.push(`Careers home: ${base}/`);
+    lines.push(`Sitemap: ${base}/sitemap.xml`);
+    lines.push('');
+    lines.push('## Open Positions');
+    lines.push('');
+    for (const j of jobs) {
+      const loc = Array.isArray(j.locations) && j.locations.length ? j.locations.join(', ') : (j.branch || '');
+      const meta = [j.department, loc, ({ in_office: 'In office', hybrid: 'Hybrid', remote: 'Remote' })[j.workMode]].filter(Boolean).join(' · ');
+      lines.push(`- [${j.title}](${base}/jobs/${j.slug || j.publicToken})${meta ? ` — ${meta}` : ''}`);
+      const summary = j.seoDescription || strip(j.description).slice(0, 200);
+      if (summary) lines.push(`  ${summary}`);
+    }
+    lines.push('');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.type('text/plain').send(lines.join('\n'));
+  } catch (e) { res.status(500).type('text/plain').send('# Careers'); }
+});
+
+app.get('/robots.txt', async (req, res) => {
+  try {
+    const pu = require('./services/publicUrl');
+    const base = await pu.baseFor('careers', req);
+    res.type('text/plain').send(`User-agent: *\nAllow: /\n\nSitemap: ${base}/sitemap.xml\n`);
+  } catch (e) { res.type('text/plain').send('User-agent: *\nAllow: /\n'); }
+});
 
 // Public candidate task-upload page (assessment task). Same standalone-HTML
 // pattern as the careers/schedule pages; the token is in the path.

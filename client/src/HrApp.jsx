@@ -6452,13 +6452,17 @@ function HrLogsTab() {
 // Careers page branding + public link.
 function HrCareersTab() {
   const [c, setC] = useState(null);
+  const [careersDomain, setCareersDomain] = useState('');
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sub, setSub] = useState('branding'); // 'branding' | 'seo'
   const logoRef = useRef(null);
-  useEffect(() => { hrApi('/settings').then((r) => setC(r.careers || {})).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/settings').then((r) => { setC(r.careers || {}); setCareersDomain(r.careersDomain || window.location.origin); }).catch(() => {}); }, []);
   if (!c) return <div className="text-slate-400 text-sm">Loading…</div>;
-  const publicUrl = c.token ? `${window.location.origin}/jobs/${c.token}` : '';
+  // The public careers page lives at the careers domain root (career.qtonix.com),
+  // not the current admin origin (people.qtonix.com).
+  const base = (careersDomain || window.location.origin).replace(/\/$/, '');
+  const publicUrl = `${base}/`;
   const save = async () => { setBusy(true); setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ careers: { title: c.title, description: c.description, logo: c.logo } }) }); setC(r.careers); setSaved(true); } catch (e) { alert(e.message); } finally { setBusy(false); } };
   const uploadLogo = async (file) => { if (!file) return; try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); setC((x) => ({ ...x, logo: r.url })); } catch (e) { alert(e.message); } };
   const L = 'text-[11px] font-bold text-slate-500 mb-1';
@@ -6474,6 +6478,18 @@ function HrCareersTab() {
           <button onClick={() => navigator.clipboard?.writeText(publicUrl)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 shrink-0">Copy</button>
         </div>
       )}
+      <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 mb-4">
+        <div className="text-[11px] font-bold text-slate-500 mb-2">SEO discovery files (for Google &amp; AI crawlers)</div>
+        {[['Sitemap', `${base}/sitemap.xml`], ['llms.txt', `${base}/llms.txt`], ['robots.txt', `${base}/robots.txt`]].map(([label, url]) => (
+          <div key={label} className="flex items-center gap-2 mb-1.5 last:mb-0">
+            <span className="text-[11px] font-bold text-slate-600 w-16 shrink-0">{label}</span>
+            <input readOnly className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white" value={url} onClick={(e) => e.target.select()} />
+            <a href={url} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 shrink-0">Open</a>
+            <button onClick={() => navigator.clipboard?.writeText(url)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-bold text-slate-600 shrink-0">Copy</button>
+          </div>
+        ))}
+        <div className="text-[10px] text-slate-400 mt-2">Submit the sitemap to Google Search Console. These update automatically as you publish or close jobs.</div>
+      </div>
       <div className="flex gap-1 mb-4 border-b border-slate-200">
         {[['branding', 'Branding'], ['seo', 'SEO & job listings']].map(([id, label]) => (
           <button key={id} onClick={() => setSub(id)} className="px-4 py-2 text-xs font-bold border-b-2 transition -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>

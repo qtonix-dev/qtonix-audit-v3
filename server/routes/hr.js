@@ -6208,7 +6208,8 @@ router.post('/candidates/:id/self-schedule/confirm', requireHrAccess, async (req
 router.get('/settings', requireHrAccess, async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {} });
+    const careersBase = await require('../services/publicUrl').baseFor('careers', req);
+    res.json({ autoScore: s.hrAutoScore !== false, careers: s.hrCareers || {}, careersDomain: careersBase });
   } catch (e) { next(e); }
 });
 router.put('/settings', requireHrAccess, requireHrAdmin, async (req, res, next) => {

@@ -7,11 +7,44 @@ const express = require('express');
 const router = express.Router();
 const { Op, HrJobPost, HrCandidate, Settings, HrUser } = require('../models');
 
+// Turn a job title (+ optional location) into a clean URL slug, e.g.
+// "Graphic Designer" → "graphic-designer". ASCII, lowercase, hyphenated.
+function slugify(str) {
+  return String(str || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip accents
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'job';
+}
+
+// Ensure a job has a unique slug, generating one from its title (falling back to
+// title+city, then a short token suffix) if needed. Returns the slug.
+async function ensureJobSlug(job) {
+  if (job.slug) return job.slug;
+  const base = slugify(job.title);
+  const city = Array.isArray(job.locations) && job.locations.length ? slugify(String(job.locations[0]).split(',')[0]) : '';
+  const candidates = [base, city ? `${base}-${city}` : '', `${base}-${(job.publicToken || '').slice(0, 6)}`].filter(Boolean);
+  for (const cand of candidates) {
+    const clash = await HrJobPost.findOne({ where: { slug: cand, id: { [Op.ne]: job.id } } });
+    if (!clash) { job.slug = cand; try { await job.save(); } catch {} return cand; }
+  }
+  // last resort: base + random
+  const uniq = `${base}-${Math.random().toString(36).slice(2, 7)}`;
+  job.slug = uniq; try { await job.save(); } catch {}
+  return uniq;
+}
+
+// Look up a published job by EITHER its clean slug or its legacy publicToken, so
+// old token links keep working while new links use the slug.
+async function findPublishedJob(idOrSlug) {
+  return HrJobPost.findOne({ where: { status: 'published', [Op.or]: [{ slug: idOrSlug }, { publicToken: idOrSlug }] } });
+}
+
 // Only expose fields that are safe to show a candidate — never internal ids,
 // creator, salary when hidden, etc.
 function publicView(job) {
   return {
     token: job.publicToken,
+    slug: job.slug || '',
     title: job.title,
     department: job.department,
     workMode: job.workMode,
@@ -35,7 +68,7 @@ function publicView(job) {
 
 router.get('/:token', async (req, res, next) => {
   try {
-    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token, status: 'published' } });
+    const job = await findPublishedJob(req.params.token);
     if (!job) return res.status(404).json({ error: 'This position is no longer available.' });
     res.json(publicView(job));
   } catch (e) { next(e); }
@@ -43,7 +76,7 @@ router.get('/:token', async (req, res, next) => {
 
 router.post('/:token/apply', async (req, res, next) => {
   try {
-    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token, status: 'published' } });
+    const job = await findPublishedJob(req.params.token);
     if (!job) return res.status(404).json({ error: 'This position is no longer available.' });
     const b = req.body || {};
     const name = `${(b.firstName || '').trim()} ${(b.lastName || '').trim()}`.trim();
@@ -128,7 +161,7 @@ function safeFolder(s) { return String(s || 'job').replace(/[^a-zA-Z0-9 _-]/g, '
 // published-job token; stores under HRMS/<Job>/Resumes on ImageKit.
 router.post('/:token/upload', async (req, res, next) => {
   try {
-    const job = await HrJobPost.findOne({ where: { publicToken: req.params.token, status: 'published' } });
+    const job = await findPublishedJob(req.params.token);
     if (!job) return res.status(404).json({ error: 'This position is no longer available.' });
     const { base64, fileName, kind } = req.body || {};
     if (!base64) return res.status(400).json({ error: 'No file provided.' });
@@ -606,9 +639,12 @@ router.get('/careers/:brandToken', async (req, res, next) => {
     const branding = s.hrCareers || {};
     if (!branding.token || branding.token !== req.params.brandToken) return res.status(404).json({ error: 'Careers page not found.' });
     const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['publishedAt', 'DESC']] });
+    // Ensure every listed job has a clean slug, so the listing links to
+    // /jobs/<slug> rather than the opaque token.
+    await Promise.all(jobs.map((j) => ensureJobSlug(j)));
     res.json({
       branding: { logo: branding.logo || '', title: branding.title || 'Careers', description: branding.description || '' },
-      jobs: jobs.map((j) => ({ token: j.publicToken, title: j.title, department: j.department, workMode: j.workMode, locations: j.locations || [], employmentType: j.employmentType })),
+      jobs: jobs.map((j) => ({ token: j.publicToken, slug: j.slug || j.publicToken, title: j.title, department: j.department, workMode: j.workMode, locations: j.locations || [], employmentType: j.employmentType })),
     });
   } catch (e) { next(e); }
 });
@@ -696,3 +732,6 @@ router.post('/schedule/:token/book', async (req, res, next) => {
 
 module.exports = router;
 module.exports.safeFolder = safeFolder;
+module.exports.slugify = slugify;
+module.exports.ensureJobSlug = ensureJobSlug;
+module.exports.findPublishedJob = findPublishedJob;

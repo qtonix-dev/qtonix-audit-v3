@@ -65,7 +65,7 @@
         if (j.employmentType) meta.push(chip('🕒', EMP[j.employmentType] || j.employmentType));
         var locs = (j.locations || []).map(function (l) { return typeof l === 'string' ? l : (l.city || l.name || ''); }).filter(Boolean);
         if (locs.length) meta.push(chip('📍', locs.join(', ')));
-        html += '<a class="job" href="/careers/' + esc(j.token) + '" target="_blank">';
+        html += '<a class="job" href="/jobs/' + esc(j.slug || j.token) + '" target="_blank">';
         html += '<div><div class="jtitle">' + esc(j.title) + '</div><div class="meta">' + meta.join('') + '</div></div>';
         html += '<span class="apply">Apply →</span></a>';
       });
