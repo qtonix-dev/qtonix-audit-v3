@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v353';
+const APP_VERSION = 'v354';
 
 const express = require('express');
 const { initDb, sequelize, Op, User, pruneDuplicateIndexes } = require('./models');
@@ -158,7 +158,22 @@ app.get('/jobs/:token', async (req, res) => {
       res.set('Cache-Control', 'no-cache, must-revalidate');
       return res.type('html').send(html);
     }
-    res.sendFile(path.join(__dirname, 'public/jobs-page.html'));
+    // The token wasn't an individual job — this is the shared careers page
+    // (its public link is /jobs/<careersToken>). Inject the CAREERS-page SEO
+    // (title/description/keywords the admin set) so this page is optimized too,
+    // instead of serving the raw file with a hardcoded <title>Careers</title>.
+    {
+      const title = branding.seoTitle || branding.ogTitle || (branding.title ? `${branding.title} | Qtonix Careers` : 'Careers at Qtonix');
+      const description = branding.seoDescription || branding.ogDescription || branding.description || 'Explore open roles and join our team at Qtonix.';
+      const jobs = await HrJobPost.findAll({ where: { status: 'published' }, order: [['createdAt', 'DESC']], limit: 50 });
+      const jsonLd = og.careersItemListLd(jobs, { base });
+      const html = og.injectIntoHtml(path.join(__dirname, 'public/jobs-page.html'), {
+        title, description, image: `${base}/og/share.png`, url: `${base}/jobs/${req.params.token}`, jsonLd,
+        keywords: Array.isArray(branding.seoKeywords) ? branding.seoKeywords : [],
+      });
+      res.set('Cache-Control', 'no-cache, must-revalidate');
+      return res.type('html').send(html);
+    }
   } catch (e) { res.sendFile(path.join(__dirname, 'public/jobs-page.html')); }
 });
 
