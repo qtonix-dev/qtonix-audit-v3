@@ -9,7 +9,9 @@ function signHr(hrUser) {
   return jwt.sign(
     { id: hrUser.id, name: hrUser.name, portal: 'hr', hrType: hrUser.type },
     SECRET(),
-    { expiresIn: '12h' }
+    // 16h covers a full night shift (e.g. 7 PM→5 AM) plus early arrival/overtime,
+    // so the session never expires mid-shift and forces a re-login.
+    { expiresIn: '16h' }
   );
 }
 

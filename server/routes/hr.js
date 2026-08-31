@@ -377,14 +377,42 @@ router.get('/shifts', requireHrAccess, async (req, res, next) => {
   catch (e) { next(e); }
 });
 
+// Validate + normalise a shift's breaks: array of {start,end}, each end>start,
+// total minutes ≤ cap. Returns { breaks, totalMin } or throws a message.
+function normaliseBreaks(raw, capMin) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = []; let total = 0;
+  for (const b of arr) {
+    const s = hhmmToMin(b && b.start), e = hhmmToMin(b && b.end);
+    if (s == null || e == null) continue;               // skip incomplete rows
+    if (e <= s) throw new Error('Each break must end after it starts.');
+    out.push({ start: b.start, end: b.end });
+    total += (e - s);
+  }
+  if (total > capMin) throw new Error(`Total break time is ${total} minutes but the limit is ${capMin} minutes (1 hour).`);
+  return { breaks: out, totalMin: total };
+}
+// A shift crosses midnight when its end time is at or before its start time.
+function shiftCrossesMidnight(startTime, endTime) {
+  const s = hhmmToMin(startTime), e = hhmmToMin(endTime);
+  if (s == null || e == null) return false;
+  return e <= s;
+}
+
 router.post('/shifts', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Shift name is required.' });
+    const cap = Number.isFinite(Number(b.maxBreakMinutes)) && Number(b.maxBreakMinutes) > 0 ? Number(b.maxBreakMinutes) : 60;
+    let breaks = [];
+    try { breaks = normaliseBreaks(b.breaks, cap).breaks; } catch (e) { return res.status(400).json({ error: e.message }); }
+    const crosses = b.crossesMidnight !== undefined ? !!b.crossesMidnight : shiftCrossesMidnight(b.startTime, b.endTime);
     const row = await HrShift.create({
       name: String(b.name).trim(),
       startTime: b.startTime || '', endTime: b.endTime || '',
       breakStart: b.breakStart || '', breakEnd: b.breakEnd || '',
+      breaks, maxBreakMinutes: cap,
+      crossesMidnight: crosses, dayCutoffHour: Number.isFinite(Number(b.dayCutoffHour)) ? Number(b.dayCutoffHour) : 6,
       graceMinutes: Number.isFinite(Number(b.graceMinutes)) ? Number(b.graceMinutes) : 20,
     });
     res.status(201).json(row.toJSON());
@@ -398,6 +426,12 @@ router.put('/shifts/:id', requireHrAccess, requireHrAdmin, async (req, res, next
     const b = req.body || {};
     ['name', 'startTime', 'endTime', 'breakStart', 'breakEnd'].forEach((k) => { if (b[k] !== undefined) row[k] = b[k]; });
     if (b.graceMinutes !== undefined && Number.isFinite(Number(b.graceMinutes))) row.graceMinutes = Number(b.graceMinutes);
+    if (b.maxBreakMinutes !== undefined && Number(b.maxBreakMinutes) > 0) row.maxBreakMinutes = Number(b.maxBreakMinutes);
+    if (b.breaks !== undefined) { try { row.breaks = normaliseBreaks(b.breaks, row.maxBreakMinutes || 60).breaks; } catch (e) { return res.status(400).json({ error: e.message }); } }
+    if (b.dayCutoffHour !== undefined && Number.isFinite(Number(b.dayCutoffHour))) row.dayCutoffHour = Number(b.dayCutoffHour);
+    // Auto-detect (or accept explicit) cross-midnight when times change.
+    if (b.crossesMidnight !== undefined) row.crossesMidnight = !!b.crossesMidnight;
+    else if (b.startTime !== undefined || b.endTime !== undefined) row.crossesMidnight = shiftCrossesMidnight(row.startTime, row.endTime);
     await row.save();
     res.json(row.toJSON());
   } catch (e) { next(e); }
@@ -2077,6 +2111,23 @@ const istDateStr = () => nowIST().toISOString().slice(0, 10);
 const istHHMM = () => nowIST().toISOString().slice(11, 16);
 const hhmmToMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 
+// The attendance "day" for an employee, honouring a night shift that crosses
+// midnight. For a normal shift it's just today's IST date. For a cross-midnight
+// shift (e.g. 19:00→05:00), any activity BEFORE the shift's day-cutoff hour
+// (default 6 AM) is attributed to the PREVIOUS calendar date — so a 7 PM
+// clock-in and 2 AM activity land on the same attendance day, and the clock
+// doesn't reset (or appear logged-out) at midnight.
+async function attendanceDayFor(emp) {
+  const ist = nowIST();
+  let cutoff = 0, crosses = false;
+  try {
+    if (emp && emp.shiftId) { const sh = await HrShift.findByPk(emp.shiftId); if (sh && sh.crossesMidnight) { crosses = true; cutoff = Number(sh.dayCutoffHour) || 6; } }
+  } catch {}
+  if (!crosses) return ist.toISOString().slice(0, 10);
+  // Shift back by the cutoff so pre-cutoff early-morning maps to the prior date.
+  return new Date(ist.getTime() - cutoff * 3600000).toISOString().slice(0, 10);
+}
+
 // Resolve who may approve THIS employee's leave: their reports-to chain; if none
 // resolvable, branch HR managers + admins. Returns {approverId, approverName, kind}.
 async function resolveLeaveApprover(emp) {
@@ -2131,7 +2182,8 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
   try {
     if (req.hrActor.kind !== 'hr') return res.json({ state: 'na' });
     const empId = req.hrActor.id;
-    const date = istDateStr();
+    const emp = await HrUser.findByPk(empId);
+    const date = await attendanceDayFor(emp);
     // On approved leave today?
     const leave = await HrLeave.findOne({ where: { employeeId: empId, date, status: 'approved' } });
     const row = await HrAttendance.findOne({ where: { employeeId: empId, date } });
@@ -2161,7 +2213,7 @@ router.post('/me/clock', requireHrAccess, async (req, res, next) => {
     const emp = await HrUser.findByPk(req.hrActor.id);
     if (!emp) return res.status(404).json({ error: 'Not found.' });
     const action = String((req.body && req.body.action) || '');
-    const date = istDateStr();
+    const date = await attendanceDayFor(emp);
     const time = istHHMM();
     // Block clocking on a full-day approved leave.
     const leave = await HrLeave.findOne({ where: { employeeId: emp.id, date, status: 'approved', duration: 'full' } });
@@ -2189,6 +2241,14 @@ router.post('/me/clock', requireHrAccess, async (req, res, next) => {
       const list = Array.isArray(row.breaks) ? row.breaks.slice() : [];
       list.push({ start: row.breakOpen, end: time });
       row.breaks = list; row.changed('breaks', true); row.breakOpen = null;
+      // Warn if total break now exceeds the shift's cap (default 60 min). We
+      // don't block ending the break, but we surface it so the employee/HR know.
+      try {
+        const sh = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+        const cap = (sh && sh.maxBreakMinutes) || 60;
+        let total = 0; list.forEach((b) => { const s = hhmmToMin(b.start), e = hhmmToMin(b.end); if (s != null && e != null) total += (e - s); });
+        if (total > cap) { row.breakExceeded = true; }
+      } catch {}
     } else if (action === 'out') {
       if (!row.loginTime) return res.status(400).json({ error: 'Clock in first.' });
       // Auto-close an open break at logout.

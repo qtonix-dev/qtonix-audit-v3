@@ -1432,11 +1432,21 @@ HrDepartment.prototype.toJSON = function () { const o = Object.assign({}, this.g
 const HrShift = sequelize.define('HrShift', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(80), allowNull: false },
-  startTime: { type: DataTypes.STRING(10), defaultValue: '' },  // "09:00"
-  endTime: { type: DataTypes.STRING(10), defaultValue: '' },    // "18:00"
-  breakStart: { type: DataTypes.STRING(10), defaultValue: '' },
+  startTime: { type: DataTypes.STRING(10), defaultValue: '' },  // "19:00"
+  endTime: { type: DataTypes.STRING(10), defaultValue: '' },    // "05:00" (may be < start → crosses midnight)
+  breakStart: { type: DataTypes.STRING(10), defaultValue: '' }, // legacy single break (kept for back-compat)
   breakEnd: { type: DataTypes.STRING(10), defaultValue: '' },
-  graceMinutes: { type: DataTypes.INTEGER, defaultValue: 20 },  // login after start+grace = late
+  // Multiple scheduled breaks: [{ start:"22:00", end:"22:20" }]. Total must be
+  // ≤ maxBreakMinutes (validated on save). Overrides the legacy single break.
+  breaks: { type: DataTypes.JSON, defaultValue: [] },
+  maxBreakMinutes: { type: DataTypes.INTEGER, defaultValue: 60 }, // total break cap (1 hr)
+  graceMinutes: { type: DataTypes.INTEGER, defaultValue: 20 },
+  // For shifts that cross midnight (e.g. 19:00→05:00), the attendance "day"
+  // shouldn't flip at 00:00. dayCutoffHour is the hour (IST) at which a new
+  // attendance day begins — default 6 (after a 5 AM shift end). A clock-in at
+  // 7 PM and the same shift's activity past midnight share ONE attendance day.
+  crossesMidnight: { type: DataTypes.BOOLEAN, defaultValue: false },
+  dayCutoffHour: { type: DataTypes.INTEGER, defaultValue: 6 },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'hr_shifts' });
 HrShift.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
@@ -1845,6 +1855,7 @@ const HrAttendance = sequelize.define('HrAttendance', {
   // and the currently-open break start (null when not on break).
   breaks: { type: DataTypes.JSON, defaultValue: [] },
   breakOpen: { type: DataTypes.STRING(5), allowNull: true },
+  breakExceeded: { type: DataTypes.BOOLEAN, defaultValue: false },
   markedById: { type: DataTypes.INTEGER, allowNull: true },
   source: { type: DataTypes.STRING(20), defaultValue: 'manual' }, // manual|api
   // Audit trail when HR manually overwrites a web-clocked time. Records who

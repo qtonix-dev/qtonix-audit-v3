@@ -7778,46 +7778,82 @@ function HrAdmin({ user, onOpenCandidate }) {
 
 // Shifts manager (add/edit/delete with break window).
 function ShiftsManager({ shifts, reload, setErr }) {
-  const blank = { name: '', startTime: '09:00', endTime: '18:00', breakStart: '13:00', breakEnd: '13:45' };
+  const blank = { name: '', startTime: '09:00', endTime: '18:00', breaks: [], maxBreakMinutes: 60, graceMinutes: 20 };
   const [f, setF] = useState(blank);
   const [editing, setEditing] = useState(null);
   const set = (o) => setF((s) => ({ ...s, ...o }));
+  const hhmm = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  const crosses = (() => { const s = hhmm(f.startTime), e = hhmm(f.endTime); return s != null && e != null && e <= s; })();
+  const breakTotal = (f.breaks || []).reduce((a, b) => { const s = hhmm(b.start), e = hhmm(b.end); return (s != null && e != null && e > s) ? a + (e - s) : a; }, 0);
+  const overCap = breakTotal > (f.maxBreakMinutes || 60);
+  const addBreak = () => set({ breaks: [...(f.breaks || []), { start: '', end: '' }] });
+  const setBreak = (i, k, v) => set({ breaks: (f.breaks || []).map((b, j) => j === i ? { ...b, [k]: v } : b) });
+  const delBreak = (i) => set({ breaks: (f.breaks || []).filter((_, j) => j !== i) });
   const submit = async () => {
     if (!f.name.trim()) { setErr('Shift name is required.'); return; }
+    if (overCap) { setErr(`Total break time ${breakTotal} min exceeds the ${f.maxBreakMinutes || 60} min limit.`); return; }
+    const payload = { ...f, breaks: (f.breaks || []).filter((b) => b.start && b.end) };
     try {
-      if (editing) await hrApi(`/shifts/${editing}`, { method: 'PUT', body: JSON.stringify(f) });
-      else await hrApi('/shifts', { method: 'POST', body: JSON.stringify(f) });
+      if (editing) await hrApi(`/shifts/${editing}`, { method: 'PUT', body: JSON.stringify(payload) });
+      else await hrApi('/shifts', { method: 'POST', body: JSON.stringify(payload) });
       setF(blank); setEditing(null); reload();
     } catch (e) { setErr(e.message); }
   };
   const del = async (s) => { if (!confirm(`Delete shift "${s.name}"?`)) return; try { await hrApi(`/shifts/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
+  const startEdit = (s) => { setEditing(s._id); setF({ name: s.name, startTime: s.startTime || '', endTime: s.endTime || '', breaks: (Array.isArray(s.breaks) && s.breaks.length) ? s.breaks : (s.breakStart ? [{ start: s.breakStart, end: s.breakEnd }] : []), maxBreakMinutes: s.maxBreakMinutes || 60, graceMinutes: s.graceMinutes ?? 20 }); };
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <div className="text-sm font-bold text-[#050A1F] mb-3">Shifts</div>
         <div className="space-y-2">
-          {shifts.map((s) => (
-            <div key={s._id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 group">
-              <div><div className="text-sm font-bold text-[#050A1F]">{s.name}</div><div className="text-[11px] text-slate-400">{s.startTime}–{s.endTime}{s.breakStart ? ` · break ${s.breakStart}–${s.breakEnd}` : ''}</div></div>
-              <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => { setEditing(s._id); setF({ name: s.name, startTime: s.startTime, endTime: s.endTime, breakStart: s.breakStart, breakEnd: s.breakEnd }); }}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => del(s)}><Icon.Trash size={14} /></IconBtn></span>
-            </div>
-          ))}
+          {shifts.map((s) => {
+            const bl = (Array.isArray(s.breaks) && s.breaks.length) ? s.breaks : (s.breakStart ? [{ start: s.breakStart, end: s.breakEnd }] : []);
+            const bt = bl.reduce((a, b) => { const x = hhmm(b.start), y = hhmm(b.end); return (x != null && y != null && y > x) ? a + (y - x) : a; }, 0);
+            return (
+              <div key={s._id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 group">
+                <div>
+                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{s.name}{s.crossesMidnight && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#1E293B', color: '#fff' }}>🌙 NIGHT</span>}</div>
+                  <div className="text-[11px] text-slate-400">{s.startTime}–{s.endTime}{s.crossesMidnight ? ' (next day)' : ''}{bl.length ? ` · ${bl.length} break${bl.length > 1 ? 's' : ''} (${bt} min)` : ''}</div>
+                </div>
+                <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => startEdit(s)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => del(s)}><Icon.Trash size={14} /></IconBtn></span>
+              </div>
+            );
+          })}
           {shifts.length === 0 && <div className="text-slate-400 text-sm py-4 text-center">No shifts yet.</div>}
         </div>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <div className="text-sm font-bold text-[#050A1F] mb-3">{editing ? 'Edit shift' : 'Add shift'}</div>
         <div className="space-y-3">
-          <SharedField label="Shift name"><input className={inputCls} value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Morning, Night" /></SharedField>
+          <SharedField label="Shift name"><input className={inputCls} value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Morning, Night (7 PM–5 AM)" /></SharedField>
           <div className="grid grid-cols-2 gap-3">
             <SharedField label="Start time"><input type="time" className={inputCls} value={f.startTime} onChange={(e) => set({ startTime: e.target.value })} /></SharedField>
             <SharedField label="End time"><input type="time" className={inputCls} value={f.endTime} onChange={(e) => set({ endTime: e.target.value })} /></SharedField>
-            <SharedField label="Break start"><input type="time" className={inputCls} value={f.breakStart} onChange={(e) => set({ breakStart: e.target.value })} /></SharedField>
-            <SharedField label="Break end"><input type="time" className={inputCls} value={f.breakEnd} onChange={(e) => set({ breakEnd: e.target.value })} /></SharedField>
+          </div>
+          {crosses && <div className="text-[11px] font-bold rounded-lg px-3 py-2" style={{ background: '#1E293B', color: '#fff' }}>🌙 Night shift — ends the next day. Attendance stays on one day across midnight (no re-login).</div>}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-slate-500">Breaks <span className="font-normal text-slate-400">(total ≤ {f.maxBreakMinutes || 60} min)</span></span>
+              <button onClick={addBreak} className="text-[11px] font-bold text-orange-600">+ Add break</button>
+            </div>
+            {(f.breaks || []).length === 0 && <div className="text-[12px] text-slate-400 py-1">No breaks. Click "Add break" to add one or more.</div>}
+            {(f.breaks || []).map((b, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1.5">
+                <input type="time" className={inputCls + ' flex-1'} value={b.start} onChange={(e) => setBreak(i, 'start', e.target.value)} />
+                <span className="text-slate-400">–</span>
+                <input type="time" className={inputCls + ' flex-1'} value={b.end} onChange={(e) => setBreak(i, 'end', e.target.value)} />
+                <button onClick={() => delBreak(i)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={14} /></button>
+              </div>
+            ))}
+            <div className={`text-[11px] font-bold mt-1 ${overCap ? 'text-red-600' : 'text-slate-400'}`}>Total break: {breakTotal} / {f.maxBreakMinutes || 60} min{overCap ? ' — over the limit!' : ''}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <SharedField label="Max break (min)"><input type="number" className={inputCls} value={f.maxBreakMinutes} onChange={(e) => set({ maxBreakMinutes: Number(e.target.value) })} /></SharedField>
+            <SharedField label="Grace (min)"><input type="number" className={inputCls} value={f.graceMinutes} onChange={(e) => set({ graceMinutes: Number(e.target.value) })} /></SharedField>
           </div>
           <div className="flex justify-end gap-2">
             {editing && <button onClick={() => { setEditing(null); setF(blank); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>}
-            <button onClick={submit} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white" style={{ background: ORANGE }}>{editing ? 'Save' : 'Add shift'}</button>
+            <button onClick={submit} disabled={overCap} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{editing ? 'Save' : 'Add shift'}</button>
           </div>
         </div>
       </div>
