@@ -761,6 +761,86 @@ router.get('/recognition/team', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// The logged-in employee's OWN recognition — counts + full list, for the
+// dashboard card and its "view all" popup.
+router.get('/me/recognition', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ counts: { praise: 0, review: 0, yellow: 0, red: 0 }, badges: [], cards: [] });
+    const me = await HrUser.findByPk(req.hrUser.id);
+    const cards = ((me && me.profile && me.profile.performanceCards) || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const counts = { praise: 0, review: 0, yellow: 0, red: 0 };
+    for (const c of cards) { if (counts[c.kind] !== undefined) counts[c.kind]++; }
+    const badges = cards.filter((c) => c.badge || (c.kind === 'praise' && c.badgeId)).map((c) => ({ icon: (c.badge && c.badge.icon) || '🌟', name: (c.badge && c.badge.name) || c.title || 'Appreciation', color: (c.badge && c.badge.color) || '#EA580C', by: c.auto ? 'Auto' : c.by, date: c.date, auto: !!c.auto }));
+    res.json({ counts, badges, cards });
+  } catch (e) { next(e); }
+});
+
+// Counts + recent-3 for ONE employee (shown in the give-recognition popup once
+// a senior selects someone). Same permission as reviewing them.
+router.get('/employees/:id/recognition-summary', requireHrAccess, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!(await canReviewEmployee(req, emp))) return res.status(403).json({ error: 'Not allowed.' });
+    const cards = ((emp.profile || {}).performanceCards || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const counts = { praise: 0, review: 0, yellow: 0, red: 0 };
+    for (const c of cards) { if (counts[c.kind] !== undefined) counts[c.kind]++; }
+    const recent = cards.slice(0, 3).map((c) => ({ kind: c.kind, title: c.title || '', badge: c.badge || null, by: c.auto ? 'Auto' : c.by, date: c.date, auto: !!c.auto }));
+    res.json({ counts, recent });
+  } catch (e) { next(e); }
+});
+
+// ALL recognition across the company — for admins and HR managers. Branch-scoped
+// HR managers see only their branch. Supports filters + pagination.
+router.get('/recognition/all', requireHrAccess, async (req, res, next) => {
+  try {
+    const canAll = req.isHrAdmin || req.hrManagerAll;
+    const scopedBranch = (!canAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
+    // Only admins and HR managers may see the company-wide log.
+    if (!(req.isHrAdmin || req.isHrManager)) return res.status(403).json({ error: 'Only HR managers and admins can view all recognition.' });
+    const q = req.query || {};
+    const typeF = ['praise', 'review', 'yellow', 'red'].includes(q.type) ? q.type : '';
+    const branchF = canAll ? String(q.branch || '') : scopedBranch;   // scoped managers are locked to their branch
+    const deptF = String(q.department || '').trim().toLowerCase();
+    const giverF = String(q.givenBy || '').trim().toLowerCase();
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(q.from)) ? q.from : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(q.to)) ? q.to : '';
+    const page = Math.max(1, parseInt(q.page, 10) || 1);
+    const perPage = 12;
+
+    const emps = await HrUser.findAll({ where: { active: true } });
+    const branches = [...new Set(emps.map((e) => e.branch).filter(Boolean))].sort();
+    const departments = [...new Set(emps.map((e) => e.department).filter(Boolean))].sort();
+    const givers = new Set();
+    let rows = [];
+    for (const e of emps) {
+      if (scopedBranch && String(e.branch || '') !== scopedBranch) continue;         // branch scope
+      if (branchF && String(e.branch || '') !== branchF) continue;
+      if (deptF && String(e.department || '').trim().toLowerCase() !== deptF) continue;
+      for (const c of ((e.profile || {}).performanceCards || [])) {
+        if (c.by && !c.auto) givers.add(c.by);
+        if (typeF && c.kind !== typeF) continue;
+        if (giverF && String(c.by || '').trim().toLowerCase() !== giverF) continue;
+        if (from && String(c.date || '') < from) continue;
+        if (to && String(c.date || '') > to) continue;
+        rows.push({
+          id: c.id, employeeId: e.id, employeeName: e.name, department: e.department || '', branch: e.branch || '',
+          kind: c.kind, title: c.title || '', note: c.note || '', badge: c.badge || null,
+          by: c.auto ? 'System' : (c.by || 'HR'), byRole: c.auto ? 'Automatic' : (c.byRole || ''), date: c.date, auto: !!c.auto,
+        });
+      }
+    }
+    rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const total = rows.length;
+    const pageRows = rows.slice((page - 1) * perPage, page * perPage);
+    res.json({
+      scopedBranch: scopedBranch || null,
+      filters: { branches, departments, givers: [...givers].sort() },
+      rows: pageRows, total, page, perPage, pages: Math.max(1, Math.ceil(total / perPage)),
+    });
+  } catch (e) { next(e); }
+});
+
 // POST a performance card (appreciation / review / yellow / red). Department
 // heads may card their own department; HR/admin anyone. Appreciations may carry
 // a badge and fire team + HR/Admin notifications (with an optional announcement).

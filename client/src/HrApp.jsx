@@ -307,56 +307,108 @@ const BUCKETS = [
 // A visible home for giving appreciation / reviews / cards. Shows the people the
 // current user can recognize (their reports, or everyone for HR/admin), plus a
 // recent-recognition feed.
+const REC_PERF = { praise: { label: 'Appreciation', icon: '🌟', bg: '#DCFCE7', fg: '#15803D' }, review: { label: 'Review', icon: '📝', bg: '#EFF6FF', fg: '#2563EB' }, yellow: { label: 'Yellow card', icon: '🟨', bg: '#FEF9C3', fg: '#CA8A04' }, red: { label: 'Red card', icon: '🟥', bg: '#FEE2E2', fg: '#DC2626' } };
+
+// The employee's own recognition: 4 stat boxes + a paginated list of everything
+// they've received. Closes on the × button or a click outside.
+function MyRecognitionModal({ data, onClose }) {
+  const [page, setPage] = useState(1);
+  const perPage = 6;
+  const cards = (data && data.cards) || [];
+  const counts = (data && data.counts) || { praise: 0, review: 0, yellow: 0, red: 0 };
+  const pages = Math.max(1, Math.ceil(cards.length / perPage));
+  const rows = cards.slice((page - 1) * perPage, page * perPage);
+  const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-lg font-extrabold text-[#050A1F]">🏅 My Recognition</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-6 overflow-auto">
+          <div className="grid grid-cols-4 gap-2.5 mb-5">
+            {[['praise', 'Appreciations'], ['review', 'Reviews'], ['yellow', 'Yellow'], ['red', 'Red']].map(([k, label]) => (
+              <div key={k} className="rounded-xl border p-3 text-center" style={{ background: REC_PERF[k].bg, borderColor: REC_PERF[k].fg + '33' }}>
+                <div className="text-2xl font-extrabold" style={{ color: REC_PERF[k].fg }}>{counts[k] || 0}</div>
+                <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: REC_PERF[k].fg }}>{label}</div>
+              </div>
+            ))}
+          </div>
+          {cards.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No recognition yet. Your appreciations, reviews and badges will appear here.</div>
+          ) : (
+            <div className="space-y-1">
+              {rows.map((c) => {
+                const meta = REC_PERF[c.kind] || REC_PERF.review;
+                const icon = c.badge ? c.badge.icon : meta.icon;
+                return (
+                  <div key={c.id} className="flex items-start gap-3 py-3 border-t border-slate-50 first:border-0">
+                    <span className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ background: c.badge ? (c.badge.color + '22') : meta.bg }}>{icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-[#050A1F]">{c.title || meta.label}</span>
+                        <span className="text-[9px] font-extrabold rounded-full px-2 py-0.5" style={{ background: meta.bg, color: meta.fg }}>{meta.label.toUpperCase()}</span>
+                        {c.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{c.auto ? 'Automatic' : `by ${c.by || 'HR'}`}{c.byRole ? ` (${c.byRole})` : ''} · {fmt(c.date)}</div>
+                      {c.note && <div className="text-[13px] text-slate-500 mt-1 whitespace-pre-wrap">{c.note}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {pages > 1 && (
+          <div className="px-6 py-3.5 border-t border-slate-100 flex items-center justify-between">
+            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px] font-bold text-slate-600 disabled:opacity-40">‹ Prev</button>
+            <span className="text-[12px] text-slate-400">Page {page} of {pages} · {cards.length} items</span>
+            <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page === pages} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px] font-bold text-slate-600 disabled:opacity-40">Next ›</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const REC_BADGE_FALLBACK = { icon: '🌟', color: '#EA580C' };
 function RecognitionPage({ user, onOpenEmployee }) {
+  const canSeeAll = !!(user && (user.isAdmin || user.hrManagerAll || user.hrManagerScope || user.isHrManager));
+  const [tab, setTab] = useState('give');
   const [data, setData] = useState(null);
-  const [q, setQ] = useState('');
-  const [give, setGive] = useState(null);
+  const [give, setGive] = useState(false);
   const load = () => hrApi('/recognition/team').then(setData).catch(() => setData({ team: [], recent: [] }));
   useEffect(() => { load(); }, []);
-  if (!data) return <div className="max-w-5xl mx-auto px-4 py-8 text-slate-400 text-sm">Loading…</div>;
-  const team = (data.team || []).filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase()) || (m.department || '').toLowerCase().includes(q.toLowerCase()));
   const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return d; } };
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
-      <div className="mb-5">
+      <div className="mb-4">
         <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2">🏅 Recognition</div>
-        <div className="text-sm text-slate-500">{data.canReviewAnyone ? 'Appreciate anyone, give reviews, or flag conduct.' : 'Recognize the people on your team.'}</div>
+        <div className="text-sm text-slate-500">{canSeeAll ? 'Appreciate your team, or review all recognition across the company.' : 'Recognize the people on your team.'}</div>
       </div>
-      <div className="grid md:grid-cols-3 gap-5">
-        <div className="md:col-span-2">
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-extrabold text-[#050A1F]">{data.canReviewAnyone ? 'Everyone' : 'My team'}</div>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-orange-300" />
-            </div>
-            {team.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
-                {data.canReviewAnyone ? 'No employees found.' : 'No team members report to you yet. Ask HR to set “reports to” on your team members.'}
-              </div>
-            ) : (
-              <div className="grid sm:grid-cols-2 gap-2.5">
-                {team.map((m) => (
-                  <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-orange-200 transition">
-                    <Avatar name={m.name} src={m.avatar} size={40} />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-bold text-[#050A1F] truncate">{m.name}</div>
-                      <div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges > 0 ? ` · 🏅 ${m.badges}` : ''}</div>
-                    </div>
-                    <button onClick={() => setGive(m)} className="shrink-0 text-[11px] font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ background: ORANGE }}>Recognize</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      {canSeeAll && (
+        <div className="flex gap-1 border-b border-slate-200 mb-5">
+          {[['give', 'Give recognition'], ['all', 'All recognition']].map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-[13px] font-extrabold border-b-2 -mb-px transition" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
+          ))}
         </div>
+      )}
+      {(!canSeeAll || tab === 'give') && (
         <div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-5 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-[15px] font-extrabold text-[#050A1F]">Give recognition</div>
+              <div className="text-[13px] text-slate-500 mt-0.5">Pick a team member, add a badge or note, and celebrate their work.</div>
+            </div>
+            <button onClick={() => setGive(true)} className="rounded-xl px-5 py-2.5 text-sm font-extrabold text-white shrink-0" style={{ background: ORANGE }}>+ Give recognition</button>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <div className="text-sm font-extrabold text-[#050A1F] mb-3">✨ Recent recognition</div>
-            {(data.recent || []).length === 0 ? (
-              <div className="text-sm text-slate-400 py-4 text-center">No recognition yet. Be the first! 🎉</div>
+            {(!data || (data.recent || []).length === 0) ? (
+              <div className="text-sm text-slate-400 py-6 text-center">No recognition yet. Give the first one! 🎉</div>
             ) : (
-              <div className="space-y-2.5">
+              <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
                 {(data.recent || []).map((r, i) => {
                   const bd = r.badge || REC_BADGE_FALLBACK;
                   return (
@@ -373,16 +425,88 @@ function RecognitionPage({ user, onOpenEmployee }) {
             )}
           </div>
         </div>
-      </div>
-      {give && <GiveRecognitionModal employee={give} onClose={() => setGive(null)} onSaved={() => { setGive(null); load(); }} />}
+      )}
+      {canSeeAll && tab === 'all' && <AllRecognition onOpenEmployee={onOpenEmployee} />}
+      {give && <GiveRecognitionPicker onClose={() => setGive(false)} onSaved={() => { setGive(false); load(); }} />}
     </div>
   );
 }
 
-// Self-contained give-recognition modal so the Recognition page and dashboard
-// card can award without opening a profile.
-function GiveRecognitionModal({ employee, onClose, onSaved }) {
+// The company-wide recognition log (admins / HR managers). Filters + pagination;
+// branch-scoped managers are locked to their branch.
+function AllRecognition({ onOpenEmployee }) {
+  const [data, setData] = useState(null);
+  const [f, setF] = useState({ type: '', branch: '', department: '', givenBy: '', from: '', to: '' });
+  const [page, setPage] = useState(1);
+  const load = () => {
+    const qs = new URLSearchParams(); Object.entries(f).forEach(([k, v]) => { if (v) qs.set(k, v); }); qs.set('page', page);
+    hrApi(`/recognition/all?${qs.toString()}`).then(setData).catch(() => setData({ rows: [], filters: {}, pages: 1 }));
+  };
+  useEffect(() => { load(); }, [f, page]);
+  useEffect(() => { setPage(1); }, [f]);
+  const fmt = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+  const filt = (data && data.filters) || { branches: [], departments: [], givers: [] };
+  const sel = 'border border-slate-300 rounded-lg px-2.5 py-1.5 text-[13px]';
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  return (
+    <div>
+      <div className="bg-white border border-slate-200 rounded-xl p-3 mb-3 flex flex-wrap gap-2 items-center">
+        <select className={sel} value={f.type} onChange={(e) => set('type', e.target.value)}><option value="">All types</option><option value="praise">Appreciation</option><option value="review">Review</option><option value="yellow">Yellow card</option><option value="red">Red card</option></select>
+        {data && data.scopedBranch ? (
+          <span className="text-[12px] font-bold text-slate-500 rounded-lg bg-slate-100 px-2.5 py-1.5">🏢 {data.scopedBranch}</span>
+        ) : (
+          <select className={sel} value={f.branch} onChange={(e) => set('branch', e.target.value)}><option value="">All branches</option>{(filt.branches || []).map((b) => <option key={b} value={b}>{b}</option>)}</select>
+        )}
+        <select className={sel} value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">All departments</option>{(filt.departments || []).map((d) => <option key={d} value={d}>{d}</option>)}</select>
+        <select className={sel} value={f.givenBy} onChange={(e) => set('givenBy', e.target.value)}><option value="">Given by anyone</option>{(filt.givers || []).map((g) => <option key={g} value={g}>{g}</option>)}</select>
+        <input type="date" className={sel + ' ml-auto'} value={f.from} onChange={(e) => set('from', e.target.value)} />
+        <span className="text-slate-400 text-sm">→</span>
+        <input type="date" className={sel} value={f.to} onChange={(e) => set('to', e.target.value)} />
+      </div>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead><tr className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400 bg-slate-50">
+            <th className="text-left px-4 py-2.5">Recognition</th><th className="text-left px-4 py-2.5">Employee</th><th className="text-left px-4 py-2.5">Given by</th><th className="text-left px-4 py-2.5">Date</th>
+          </tr></thead>
+          <tbody>
+            {(!data || (data.rows || []).length === 0) ? (
+              <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">No recognition matches these filters.</td></tr>
+            ) : (data.rows || []).map((r) => {
+              const meta = REC_PERF[r.kind] || REC_PERF.review;
+              const icon = r.badge ? r.badge.icon : meta.icon;
+              return (
+                <tr key={r.id} className="border-t border-slate-50">
+                  <td className="px-4 py-2.5"><div className="flex items-center gap-2.5"><span className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : meta.bg }}>{icon}</span><div><div className="text-[12px] font-extrabold text-[#050A1F]">{r.title || meta.label}</div><span className="text-[9px] font-extrabold rounded-full px-2 py-0.5" style={{ background: meta.bg, color: meta.fg }}>{meta.label.toUpperCase()}</span></div></div></td>
+                  <td className="px-4 py-2.5"><button onClick={() => onOpenEmployee(r.employeeId)} className="text-[13px] font-bold text-[#0A0E28] hover:text-orange-600">{r.employeeName}</button><div className="text-[11px] text-slate-400">{[r.department, r.branch].filter(Boolean).join(' · ')}</div></td>
+                  <td className="px-4 py-2.5"><div className="text-[12px] font-semibold">{r.by}</div><div className="text-[10px] text-slate-400">{r.byRole}</div></td>
+                  <td className="px-4 py-2.5 text-[12px] text-slate-600">{fmt(r.date)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {data && data.pages > 1 && (
+        <div className="flex items-center justify-between mt-3">
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-bold text-slate-600 disabled:opacity-40">‹ Prev</button>
+          <span className="text-[12px] text-slate-400">Page {data.page} of {data.pages} · {data.total} records</span>
+          <button onClick={() => setPage((p) => Math.min(data.pages, p + 1))} disabled={page === data.pages} className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-bold text-slate-600 disabled:opacity-40">Next ›</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Give-recognition popup: pick an employee (your reports only, searchable), see
+// their counts + recent-3 for context, then give a badge/appreciation/review or
+// a yellow/red card. Posts to /employees/:id/performance.
+function GiveRecognitionPicker({ onClose, onSaved }) {
   const PERF = { praise: { label: 'Appreciation', icon: '🌟', bg: '#DCFCE7', border: '#BBF7D0' }, review: { label: 'Review', icon: '📝', bg: '#EFF6FF', border: '#BFDBFE' }, yellow: { label: 'Yellow card', icon: '🟨', bg: '#FEF9C3', border: '#FDE68A' }, red: { label: 'Red card', icon: '🟥', bg: '#FEE2E2', border: '#FECACA' } };
+  const [team, setTeam] = useState([]);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [emp, setEmp] = useState(null);
+  const [summary, setSummary] = useState(null);
   const [kind, setKind] = useState('praise');
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
@@ -392,51 +516,92 @@ function GiveRecognitionModal({ employee, onClose, onSaved }) {
   const [badges, setBadges] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); }, []);
+  const pick = async (m) => { setEmp(m); setOpen(false); setQ(''); setSummary(null); try { setSummary(await hrApi(`/employees/${m.id}/recognition-summary`)); } catch {} };
   const submit = async () => {
+    if (!emp) { setErr('Select an employee first.'); return; }
     if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); return; }
     setBusy(true); setErr('');
-    try { await hrApi(`/employees/${employee.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) }); onSaved(); }
+    try { await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) }); onSaved(); }
     catch (e) { setErr(e.message); setBusy(false); }
   };
   const ic = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  const shown = team.filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase()) || (m.department || '').toLowerCase().includes(q.toLowerCase()));
+  const REC = { praise: ['#15803D', '#DCFCE7', 'Praise'], review: ['#2563EB', '#EFF6FF', 'Reviews'], yellow: ['#CA8A04', '#FEF9C3', 'Yellow'], red: ['#DC2626', '#FEE2E2', 'Red'] };
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Recognize {employee.name}</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
-        <div className="p-6 space-y-4">
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl my-6 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Give recognition</div><button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button></div>
+        <div className="p-6 space-y-4 overflow-auto">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
+          {/* Employee picker */}
           <div>
-            <div className="text-xs font-bold text-slate-500 mb-2">Type</div>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(PERF).map(([k, m]) => (
-                <button key={k} onClick={() => setKind(k)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${kind === k ? 'ring-2 ring-orange-300' : ''}`} style={{ background: m.bg, borderColor: m.border, color: '#334155' }}><span>{m.icon}</span>{m.label}</button>
-              ))}
+            <div className="text-xs font-bold text-slate-500 mb-1.5">Employee <span className="font-normal text-slate-400">(your team only)</span></div>
+            <div className="relative">
+              <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-3 border border-slate-300 rounded-lg px-3 py-2 text-left">
+                {emp ? <><Avatar name={emp.name} src={emp.avatar} size={32} /><div className="min-w-0"><div className="text-sm font-bold truncate">{emp.name}</div><div className="text-[11px] text-slate-400 truncate">{[emp.designation, emp.department].filter(Boolean).join(' · ')}</div></div></> : <span className="text-sm text-slate-400">Select an employee…</span>}
+                <span className="ml-auto text-slate-400">▾</span>
+              </button>
+              {open && (
+                <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-64 overflow-auto">
+                  <div className="p-2 sticky top-0 bg-white border-b border-slate-100"><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your team…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /></div>
+                  {shown.length === 0 ? <div className="px-3 py-4 text-sm text-slate-400 text-center">{team.length === 0 ? 'No one reports to you yet.' : 'No match.'}</div> : shown.map((m) => (
+                    <button key={m.id} onClick={() => pick(m)} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-left">
+                      <Avatar name={m.name} src={m.avatar} size={28} />
+                      <div className="min-w-0"><div className="text-sm font-bold truncate">{m.name}</div><div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges ? ` · 🏅 ${m.badges}` : ''}</div></div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-          {kind === 'praise' && (
-            <div>
-              <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
+          {/* Selected employee context */}
+          {emp && summary && (
+            <>
               <div className="grid grid-cols-4 gap-2">
-                {badges.map((b) => (
-                  <button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}>
-                    <div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>
-                  </button>
+                {Object.entries(REC).map(([k, [fg, bg, label]]) => (
+                  <div key={k} className="rounded-lg border p-2 text-center" style={{ background: bg, borderColor: fg + '33' }}><div className="text-lg font-extrabold" style={{ color: fg }}>{(summary.counts || {})[k] || 0}</div><div className="text-[9px] font-bold uppercase" style={{ color: fg }}>{label}</div></div>
                 ))}
               </div>
-            </div>
+              {(summary.recent || []).length > 0 && (
+                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
+                  <div className="text-[11px] font-extrabold uppercase text-slate-400 mb-2">Recent recognition</div>
+                  {(summary.recent || []).map((r, i) => { const m = PERF[r.kind] || PERF.review; const icon = r.badge ? r.badge.icon : m.icon; return (
+                    <div key={i} className="flex items-center gap-2 py-1"><span className="w-6 h-6 rounded-md flex items-center justify-center text-[13px]" style={{ background: r.badge ? (r.badge.color + '22') : m.bg }}>{icon}</span><span className="text-[12px] font-bold">{r.title || m.label}</span><span className="text-[10px] text-slate-400 ml-auto">{r.auto ? 'Auto' : `by ${r.by}`}</span></div>
+                  ); })}
+                </div>
+              )}
+            </>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <div><div className="text-xs font-bold text-slate-500 mb-1">{kind === 'praise' ? 'Title (optional)' : 'Title'}</div><input className={ic} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'praise' ? 'e.g. Great client save' : 'Short summary'} /></div>
-            <div><div className="text-xs font-bold text-slate-500 mb-1">Date</div><input type="date" className={ic} value={date} onChange={(e) => setDate(e.target.value)} /></div>
-          </div>
-          <div><div className="text-xs font-bold text-slate-500 mb-1">Details</div><textarea className={ic} rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'praise' ? 'What did they do well?' : 'What happened / feedback…'} /></div>
-          {kind === 'praise' && <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="w-4 h-4 accent-orange-500" />📣 Announce to the whole branch</label>}
-          <div className="text-[11px] text-slate-400">{kind === 'praise' ? 'The team, HR & admin are notified automatically.' : 'HR & admin can see this on the record.'}</div>
+          {/* Recognition form (once an employee is chosen) */}
+          {emp && (
+            <>
+              <div>
+                <div className="text-xs font-bold text-slate-500 mb-2">Type</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(PERF).map(([k, m]) => (<button key={k} onClick={() => setKind(k)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${kind === k ? 'ring-2 ring-orange-300' : ''}`} style={{ background: m.bg, borderColor: m.border, color: '#334155' }}><span>{m.icon}</span>{m.label}</button>))}
+                </div>
+              </div>
+              {kind === 'praise' && (
+                <div>
+                  <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {badges.map((b) => (<button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div></button>))}
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div><div className="text-xs font-bold text-slate-500 mb-1">{kind === 'praise' ? 'Title (optional)' : 'Title'}</div><input className={ic} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'praise' ? 'e.g. Great client save' : 'Short summary'} /></div>
+                <div><div className="text-xs font-bold text-slate-500 mb-1">Date</div><input type="date" className={ic} value={date} onChange={(e) => setDate(e.target.value)} /></div>
+              </div>
+              <div><div className="text-xs font-bold text-slate-500 mb-1">Details</div><textarea className={ic} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'praise' ? 'What did they do well?' : 'What happened / feedback…'} /></div>
+              {kind === 'praise' && <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="w-4 h-4 accent-orange-500" />📣 Announce to the whole branch</label>}
+            </>
+          )}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (kind === 'praise' ? 'Give appreciation 🎉' : 'Add note')}</button>
+          <button onClick={submit} disabled={busy || !emp} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (kind === 'praise' ? 'Give appreciation 🎉' : 'Add note')}</button>
         </div>
       </div>
     </div>
@@ -1398,8 +1563,8 @@ function JoinConfirmReview({ it, onConfirm, NAME, SUBT }) {
 
 function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
   const [clock, setClock] = useState(null);
-  const [recTeam, setRecTeam] = useState(null); // people this user can recognize
-  const [recGive, setRecGive] = useState(null); // employee being recognized from the card
+  const [myRec, setMyRec] = useState(null);      // the viewer's own recognition
+  const [myRecOpen, setMyRecOpen] = useState(false);
   const [leave, setLeave] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [whos, setWhos] = useState(null);
@@ -1440,7 +1605,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
     hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
     hrApi('/me/quote-of-the-day').then(setDailyQuote).catch(() => {});
     hrApi('/me/claims').then((r) => setClaims(r.claims || [])).catch(() => {});
-    hrApi('/recognition/team').then(setRecTeam).catch(() => {});
+    hrApi('/me/recognition').then(setMyRec).catch(() => {});
   }, []);
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
@@ -1504,29 +1669,6 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
         </div>
       </div>
 
-      {/* GIVE RECOGNITION — visible to anyone who can recognize someone. */}
-      {recTeam && (recTeam.team || []).length > 0 && (
-        <div className="rounded-2xl border p-5 mb-4" style={{ background: 'linear-gradient(120deg,#FFF7ED,#FEF3C7)', borderColor: '#FED7AA' }}>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <div className="text-[15px] font-extrabold text-[#050A1F] flex items-center gap-2">🏅 Recognize your {recTeam.canReviewAnyone ? 'team' : 'people'}</div>
-              <div className="text-[12px] text-slate-500 mt-0.5">Give a badge, appreciation, review, or flag conduct — {(recTeam.team || []).length} {recTeam.canReviewAnyone ? 'people' : 'reports'}.</div>
-            </div>
-            <button onClick={() => onNav && onNav('recognition')} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white shrink-0" style={{ background: ORNG }}>Open Recognition →</button>
-          </div>
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {(recTeam.team || []).slice(0, 8).map((m) => (
-              <button key={m.id} onClick={() => setRecGive(m)} title={`Recognize ${m.name}`} className="flex items-center gap-2 bg-white/70 hover:bg-white rounded-full pl-1 pr-3 py-1 border border-orange-100 transition">
-                <Avatar name={m.name} src={m.avatar} size={26} />
-                <span className="text-[12px] font-bold text-[#0A0E28]">{m.name.split(' ')[0]}</span>
-              </button>
-            ))}
-            {(recTeam.team || []).length > 8 && <span className="text-[12px] text-slate-400">+{(recTeam.team || []).length - 8} more</span>}
-          </div>
-        </div>
-      )}
-      {recGive && <GiveRecognitionModal employee={recGive} onClose={() => setRecGive(null)} onSaved={() => { setRecGive(null); hrApi('/recognition/team').then(setRecTeam).catch(() => {}); }} />}
-
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
       {ann.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
@@ -1582,6 +1724,27 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
                 <div className="mt-4"><button onClick={() => setCalOpen(true)} className="w-full rounded-xl py-2.5 font-extrabold text-sm text-white" style={{ background: 'rgba(255,255,255,.18)' }}>View attendance</button></div>
                 <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In <b>{t12(clock.loginTime)}</b> · Out <b>{t12(clock.logoutTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
               </>
+            )}
+          </div>
+
+          {/* MY BADGES & RECOGNITION — the viewer's own recognition. */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[13px] font-extrabold text-[#050A1F] flex items-center gap-1.5">🏅 My Badges &amp; Recognition</h3>
+              <button onClick={() => setMyRecOpen(true)} className="text-[11px] font-extrabold rounded-lg px-2.5 py-1" style={{ background: '#FFF1E6', color: '#EA580C' }}>View all ›</button>
+            </div>
+            {(!myRec || (myRec.badges || []).length === 0) ? (
+              <div className="text-[12px] text-slate-400 py-2">No badges yet — keep up the great work! 🌟</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {(myRec.badges || []).slice(0, 8).map((b, i) => (
+                  <div key={i} className="text-center" style={{ width: 52 }} title={`${b.name}${b.by ? ` · ${b.by}` : ''}`}>
+                    <div className="w-11 h-11 mx-auto rounded-xl border flex items-center justify-center text-xl" style={{ background: (b.color || '#EA580C') + '14', borderColor: (b.color || '#EA580C') + '44' }}>{b.icon}</div>
+                    <div className="text-[8px] font-bold text-slate-500 mt-1 leading-tight truncate">{b.name}</div>
+                  </div>
+                ))}
+                {(myRec.badges || []).length > 8 && <div className="self-center text-[11px] text-slate-400">+{(myRec.badges || []).length - 8}</div>}
+              </div>
             )}
           </div>
 
@@ -1839,6 +2002,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
       {lateItem && <LateCheckModal item={lateItem} onClose={() => setLateItem(null)} onSave={(updates) => saveLateCheck(lateItem.date, updates)} />}
       {lateHrItem && <LateCheckHrModal item={lateHrItem} onClose={() => setLateHrItem(null)} onSave={(updates) => saveLateCheckHr(lateHrItem.date, updates)} />}
       {orgOpen && <EmployeeOrgChartModal onClose={() => setOrgOpen(false)} />}
+      {myRecOpen && <MyRecognitionModal data={myRec} onClose={() => setMyRecOpen(false)} />}
       {claimOpen && <EmployeeClaimModal onClose={() => setClaimOpen(false)} onSaved={() => { setClaimOpen(false); loadClaims(); }} />}
       {claimHistOpen && <ClaimHistoryModal claims={claims} onClose={() => setClaimHistOpen(false)} onNew={() => { setClaimHistOpen(false); setClaimOpen(true); }} />}
     </div>
@@ -7790,8 +7954,8 @@ export default function HrApp() {
   const canPostJobs = isAdmin || isHrDept || ['hr', 'recruiter'].includes(user.type);
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'recognition', label: 'Recognition' },
     { id: 'tasks', label: 'Task' },
+    { id: 'recognition', label: 'Recognition' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
