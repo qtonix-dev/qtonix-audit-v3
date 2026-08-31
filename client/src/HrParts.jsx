@@ -338,6 +338,7 @@ export function ProfilePage({ me, targetId }) {
 
   const canEditLocked = !!(row && row.canEditLocked); // HR/Admin viewing
   const canEditPayroll = !!(row && row.canEditPayroll); // Admin or HR Manager only
+  const canReview = !!(row && (row.canReview || row.canEditPayroll)); // HR/admin OR the department head
   const isSelf = !targetId;
 
   const reload = () => hrApi(`/profile/${id}`).then((r) => { setRow(r); setP(r.profile || {}); setAvatar(r.avatar || ''); }).catch((e) => setErr(e.message));
@@ -383,6 +384,7 @@ export function ProfilePage({ me, targetId }) {
   const perfCards = () => (p.performanceCards || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const addPerfCard = (card) => setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] }));
   const delPerfCard = (id) => setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== id) }));
+  const delPerf = async (cardId) => { if (!window.confirm('Remove this note?')) return; try { await hrApi(`/employees/${id}/performance/${cardId}`, { method: 'DELETE' }); setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== cardId) })); } catch (e) { alert(e.message); } };
 
   const save = async (overrideProfile) => {
     setSaving(true); setMsg(''); setErr('');
@@ -645,22 +647,59 @@ export function ProfilePage({ me, targetId }) {
 
                 {/* Performance history */}
                 <div>
-                  <div className="flex items-center justify-between mb-3">
+                  {/* Badges & Recognition showcase */}
+                  {(() => {
+                    const badgeCards = (p.performanceCards || []).filter((c) => c.badge || c.kind === 'praise');
+                    return (
+                      <div className="mb-5">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <div className="text-sm font-extrabold text-[#050A1F] flex items-center gap-2">🏅 Badges &amp; Recognition</div>
+                            <div className="text-xs text-slate-400">Awarded by seniors, or automatically for milestones.</div>
+                          </div>
+                          {canReview && <button onClick={() => setPerfModal({ kind: 'praise' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}>+ Give appreciation</button>}
+                        </div>
+                        {badgeCards.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-400">No badges yet. {canReview ? 'Be the first to appreciate this person!' : ''}</div>
+                        ) : (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            {badgeCards.map((c) => {
+                              const bd = c.badge || { icon: '🌟', name: c.title || 'Appreciation', color: '#EA580C' };
+                              return (
+                                <div key={c.id} className="relative rounded-xl border p-3 text-center" style={{ background: (bd.color || '#EA580C') + '14', borderColor: (bd.color || '#EA580C') + '44' }}>
+                                  {c.auto && <span className="absolute top-1.5 right-1.5 text-[8px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+                                  <div className="text-2xl leading-none">{bd.icon}</div>
+                                  <div className="text-[11px] font-extrabold mt-1.5" style={{ color: '#334155' }}>{bd.name}</div>
+                                  <div className="text-[9px] text-slate-400 mt-0.5">{c.auto ? 'Auto' : (c.by || '')} · {fmtLong(c.date)}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  <div className="flex items-center justify-between mb-3 pt-4 border-t border-slate-100">
                     <div>
                       <div className="text-sm font-extrabold text-[#050A1F]">Performance history</div>
-                      <div className="text-xs text-slate-400">Reviews and conduct notes. Yellow = minor issue, Red = major issue.</div>
+                      <div className="text-xs text-slate-400">Appreciations, reviews and conduct flags. Yellow = minor issue, Red = major issue.</div>
                     </div>
-                    {canEditPayroll && <button onClick={() => setPerfModal({ kind: 'praise' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add review</button>}
+                    {canReview && <button onClick={() => setPerfModal({ kind: 'review' })} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: '#0A1F44' }}><Icon.Plus size={13} /> Add review</button>}
                   </div>
                   {(() => {
-                    const yellow = (p.performanceCards || []).filter((c) => c.kind === 'yellow').length;
-                    const red = (p.performanceCards || []).filter((c) => c.kind === 'red').length;
-                    return (yellow || red) ? (
-                      <div className="flex gap-2 mb-3">
-                        {yellow > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-700"><span className="w-3 h-4 rounded-sm bg-amber-400" /> {yellow} yellow card{yellow === 1 ? '' : 's'}</span>}
-                        {red > 0 && <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700"><span className="w-3 h-4 rounded-sm bg-red-500" /> {red} red card{red === 1 ? '' : 's'}</span>}
+                    const c = (k) => (p.performanceCards || []).filter((x) => x.kind === k).length;
+                    const stats = [['praise', 'Appreciations', '#15803D', '#DCFCE7'], ['review', 'Reviews', '#2563EB', '#EFF6FF'], ['yellow', 'Yellow', '#CA8A04', '#FEF9C3'], ['red', 'Red', '#DC2626', '#FEE2E2']];
+                    return (
+                      <div className="grid grid-cols-4 gap-2 mb-4">
+                        {stats.map(([k, label, fg, bg]) => (
+                          <div key={k} className="rounded-xl border p-2.5 text-center" style={{ background: bg, borderColor: fg + '33' }}>
+                            <div className="text-xl font-extrabold" style={{ color: fg }}>{c(k)}</div>
+                            <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: fg }}>{label}</div>
+                          </div>
+                        ))}
                       </div>
-                    ) : null;
+                    );
                   })()}
                   {perfCards().length === 0 ? (
                     <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No performance notes yet.</div>
@@ -668,24 +707,25 @@ export function ProfilePage({ me, targetId }) {
                     <div className="space-y-2">
                       {perfCards().map((c) => {
                         const meta = PERF_KINDS[c.kind] || PERF_KINDS.review;
+                        const icon = c.badge ? c.badge.icon : meta.icon;
                         return (
                           <div key={c.id} className="bg-white rounded-xl border p-3 flex items-start gap-3" style={{ borderColor: meta.border }}>
-                            <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: meta.bg }}>{meta.icon}</span>
+                            <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: c.badge ? (c.badge.color + '22') : meta.bg }}>{icon}</span>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-bold text-[#050A1F]">{meta.label}</span>
-                                {c.title && <span className="text-sm text-slate-600">· {c.title}</span>}
-                                <span className="text-[11px] text-slate-400">{fmtLong(c.date)}{c.by ? ` · ${c.by}` : ''}</span>
+                                <span className="text-sm font-bold text-[#050A1F]">{c.title || meta.label}</span>
+                                <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: meta.bg, color: meta.border === '#BBF7D0' ? '#15803D' : (c.kind === 'yellow' ? '#CA8A04' : c.kind === 'red' ? '#DC2626' : '#2563EB') }}>{meta.label.toUpperCase()}</span>
+                                {c.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
                               </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5">by {c.by || 'HR'}{c.byRole ? ` (${c.byRole})` : ''} · {fmtLong(c.date)}</div>
                               {c.note && <div className="text-sm text-slate-500 mt-1 whitespace-pre-wrap">{c.note}</div>}
                             </div>
-                            {canEditPayroll && <button onClick={() => delPerfCard(c.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={15} /></button>}
+                            {canReview && !c.auto && <button onClick={() => delPerf(c.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={15} /></button>}
                           </div>
                         );
                       })}
                     </div>
                   )}
-                  {canEditPayroll && perfCards().length > 0 && <div className="flex justify-end mt-2"><button onClick={() => save()} disabled={saving} className="rounded-lg px-5 py-2 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>}
                 </div>
               </div>
             )}
@@ -774,7 +814,7 @@ export function ProfilePage({ me, targetId }) {
       </div>
       {resetOpen && <ResetPasswordModal user={{ _id: id, name: row.name }} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); setMsg('Password reset.'); }} />}
       {payModal && <SalaryRecordModal initial={payModal} onClose={() => setPayModal(null)} onSave={async (entry) => { const next = { ...p, payrollHistory: [...(p.payrollHistory || []), entry] }; setP(next); setPayModal(null); await save(next); }} />}
-      {perfModal && <PerformanceCardModal by={me?.name} onClose={() => setPerfModal(null)} onSave={async (card) => { const next = { ...p, performanceCards: [...(p.performanceCards || []), card] }; setP(next); setPerfModal(null); await save(next); }} />}
+      {perfModal && <PerformanceCardModal by={me?.name} kindInit={perfModal.kind} employeeId={id} onClose={() => setPerfModal(null)} onSaved={(card) => { setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] })); setPerfModal(null); }} />}
     </div>
   );
 }
@@ -807,17 +847,33 @@ function SalaryRecordModal({ initial, onClose, onSave }) {
   );
 }
 
-// Modal: add a performance card — appreciation, review, or yellow/red conduct flag.
-function PerformanceCardModal({ by, onClose, onSave }) {
-  const [kind, setKind] = useState('praise');
+// Modal: give a performance card — appreciation (with a badge), review, or a
+// yellow/red conduct flag. Posts to the server, which handles notifications.
+function PerformanceCardModal({ by, kindInit, employeeId, onClose, onSaved }) {
+  const [kind, setKind] = useState(kindInit || 'praise');
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [badgeId, setBadgeId] = useState('');
+  const [announce, setAnnounce] = useState(false);
+  const [badges, setBadges] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); }, []);
+  const submit = async () => {
+    if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await hrApi(`/employees/${employeeId}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) });
+      onSaved(r.card);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Add performance note</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Give recognition</div><button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button></div>
         <div className="p-6 space-y-4">
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           <div>
             <div className="text-xs font-bold text-slate-500 mb-2">Type</div>
             <div className="grid grid-cols-2 gap-2">
@@ -826,15 +882,35 @@ function PerformanceCardModal({ by, onClose, onSave }) {
               ))}
             </div>
           </div>
+          {kind === 'praise' && (
+            <div>
+              <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
+              <div className="grid grid-cols-4 gap-2">
+                {badges.map((b) => (
+                  <button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}>
+                    <div className="text-xl leading-none">{b.icon}</div>
+                    <div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Title"><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short summary" /></Field>
+            <Field label={kind === 'praise' ? 'Title (optional)' : 'Title'}><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'praise' ? 'e.g. Great client save' : 'Short summary'} /></Field>
             <Field label="Date"><input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
           </div>
-          <Field label="Details"><textarea className={inputCls} rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened / feedback…" /></Field>
+          <Field label="Details"><textarea className={inputCls} rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'praise' ? 'What did they do well?' : 'What happened / feedback…'} /></Field>
+          {kind === 'praise' && (
+            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="w-4 h-4 accent-orange-500" />
+              📣 Announce to the whole branch (posts a celebratory announcement everyone sees)
+            </label>
+          )}
+          <div className="text-[11px] text-slate-400">{kind === 'praise' ? 'The team, HR & admin are notified automatically.' : 'HR & admin can see this on the record.'}</div>
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={() => { if (!title.trim() && !note.trim()) return; onSave({ id: `perf${Date.now()}`, kind, title: title.trim(), note: note.trim(), date, by: by || '' }); }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: ORANGE }}>Add note</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (kind === 'praise' ? 'Give appreciation 🎉' : 'Add note')}</button>
         </div>
       </div>
     </div>

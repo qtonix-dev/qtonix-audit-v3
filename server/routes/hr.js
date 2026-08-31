@@ -613,16 +613,19 @@ router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
     const id = Number(req.params.id);
     const isSelf = req.hrUser && req.hrUser.id === id;
     const canEditLocked = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
-    if (!canEditLocked && !isSelf) {
-      return res.status(403).json({ error: 'You can only view your own profile.' });
-    }
     const row = await HrUser.findByPk(id);
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
+    // A department head (manager/TL) may view profiles of people in their own
+    // department, so they can give recognition/reviews.
+    const canReviewThis = canReviewEmployee(req, row);
+    if (!canEditLocked && !isSelf && !canReviewThis) {
+      return res.status(403).json({ error: 'You can only view your own profile.' });
+    }
     const shift = row.shiftId ? await HrShift.findByPk(row.shiftId) : null;
     // Payroll/compensation may be edited by Admin, HR staff (hr/recruiter), and
     // HR Managers WITHIN THEIR BRANCH SCOPE (all-branch managers → everyone).
     const canEditPayroll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
-    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll, canEditSelf: isSelf || canEditLocked, shift: shift ? shift.toJSON() : null });
+    res.json({ ...row.toJSON(), completion: profileCompletion(row), canEditLocked, canEditPayroll, canReview: canReviewThis, canEditSelf: isSelf || canEditLocked, shift: shift ? shift.toJSON() : null });
   } catch (e) { next(e); }
 });
 
@@ -683,9 +686,133 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== Badges & Performance recognition =====
+// Named appreciation badges a senior can award. Auto-badge ids (tenure/
+// punctuality milestones) are defined in jobs/badges.js and share this shape.
+const BADGE_CATALOG = [
+  { id: 'customer_hero', name: 'Customer Hero', icon: '⭐', color: '#F59E0B', desc: 'Outstanding customer care' },
+  { id: 'above_beyond', name: 'Above & Beyond', icon: '🚀', color: '#2563EB', desc: 'Went the extra mile' },
+  { id: 'team_player', name: 'Team Player', icon: '🤝', color: '#0EA5E9', desc: 'Great collaboration & support' },
+  { id: 'innovator', name: 'Innovator', icon: '💡', color: '#7C3AED', desc: 'Fresh ideas that made a difference' },
+  { id: 'problem_solver', name: 'Problem Solver', icon: '🧩', color: '#16A34A', desc: 'Cracked a tough problem' },
+  { id: 'quick_learner', name: 'Quick Learner', icon: '📚', color: '#DB2777', desc: 'Picked things up fast' },
+  { id: 'reliable', name: 'Ever Reliable', icon: '🛡️', color: '#475569', desc: 'Consistently dependable' },
+  { id: 'star_performer', name: 'Star Performer', icon: '🌟', color: '#EA580C', desc: 'Standout results this period' },
+];
+function badgeById(id) { return BADGE_CATALOG.find((b) => b.id === id) || null; }
+
+// Can this actor give a performance card to `emp`? HR staff/admins always can.
+// A department head — a manager or TL — can review anyone in their OWN
+// department (strict department match).
+function canReviewEmployee(req, emp) {
+  if (req.isHrAdmin || req.isHrManager) return true;
+  const actor = req.hrUser;
+  if (!actor || !emp) return false;
+  if (HR_STAFF_TYPES.includes(actor.type)) return true; // hr / recruiter
+  const isHead = actor.type === 'manager' || actor.type === 'tl';
+  if (!isHead) return false;
+  const aDept = String(actor.department || '').trim().toLowerCase();
+  const eDept = String(emp.department || '').trim().toLowerCase();
+  return !!aDept && aDept === eDept;
+}
+
+// GET the badge catalog (for the "give appreciation" picker).
+router.get('/badges/catalog', requireHrAccess, async (req, res) => {
+  res.json({ badges: BADGE_CATALOG });
+});
+
+// POST a performance card (appreciation / review / yellow / red). Department
+// heads may card their own department; HR/admin anyone. Appreciations may carry
+// a badge and fire team + HR/Admin notifications (with an optional announcement).
+router.post('/employees/:id/performance', requireHrAccess, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!canReviewEmployee(req, emp)) return res.status(403).json({ error: 'You can only review employees in your own department.' });
+    const b = req.body || {};
+    const kind = ['praise', 'review', 'yellow', 'red'].includes(b.kind) ? b.kind : null;
+    if (!kind) return res.status(400).json({ error: 'Invalid review type.' });
+    const note = String(b.note || '').slice(0, 2000).trim();
+    let title = String(b.title || '').slice(0, 160).trim();
+    const badge = (kind === 'praise' && b.badgeId) ? badgeById(String(b.badgeId)) : null;
+    if (badge && !title) title = badge.name;
+    if (!title && !note) return res.status(400).json({ error: 'Add a title or a note.' });
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? b.date : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const byName = req.hrActor.name || (req.hrUser && req.hrUser.name) || 'HR';
+    const actorRole = req.isHrAdmin ? 'Admin' : (req.hrUser && (req.hrUser.type === 'manager' ? 'Manager' : req.hrUser.type === 'tl' ? 'Team Lead' : (HR_STAFF_TYPES.includes(req.hrUser.type) ? 'HR' : 'HR')));
+    const card = {
+      id: `perf${Date.now()}${Math.random().toString(36).slice(2, 5)}`,
+      kind, title, note, date: dateStr,
+      by: byName, byRole: actorRole, byId: req.hrActor.id || null,
+      badgeId: badge ? badge.id : null, badge: badge ? { id: badge.id, name: badge.name, icon: badge.icon, color: badge.color } : null,
+      auto: false, createdAt: new Date().toISOString(),
+    };
+    const profile = emp.profile || {};
+    profile.performanceCards = [...(profile.performanceCards || []), card];
+    emp.profile = profile; emp.changed('profile', true);
+    await emp.save();
+
+    // Notify on appreciation: the joiner's team (same department) + HR & Admin.
+    let notified = 0;
+    if (kind === 'praise') {
+      const badgeText = badge ? ` and earned the “${badge.name}” badge ${badge.icon}` : '';
+      const msg = `🎉 ${emp.name} received an appreciation from ${byName}${badgeText}.`;
+      try {
+        const dept = String(emp.department || '').trim().toLowerCase();
+        const team = await HrUser.findAll({ where: { active: true } });
+        const recipients = new Set();
+        for (const u of team) {
+          if (u.id === emp.id) continue; // the person themselves is notified separately
+          const sameDept = dept && String(u.department || '').trim().toLowerCase() === dept;
+          const isHrStaff = HR_STAFF_TYPES.includes(u.type) || u.isHrManager;
+          if (sameDept || isHrStaff) recipients.add(u.id);
+        }
+        for (const uid of recipients) { try { await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: msg }); notified++; } catch {} }
+        // The recipient of the praise gets a personal note.
+        try { await HrNotification.create({ userId: emp.id, actorKind: 'hr', type: 'info', text: `🎉 You received an appreciation from ${byName}${badgeText}!` }); } catch {}
+        // Notify CRM admins too.
+        try { const admins = await User.findAll({ where: { role: 'admin', active: true } }); for (const a of admins) { await HrNotification.create({ userId: a.id, actorKind: 'admin', type: 'info', text: msg }); } } catch {}
+      } catch {}
+
+      // Optional celebratory announcement to the whole branch.
+      if (b.announce) {
+        try {
+          await HrAnnouncement.create({
+            title: `👏 Kudos to ${emp.name}!`,
+            body: `${emp.name}${emp.department ? ` (${emp.department})` : ''} was recognized by ${byName}${badge ? ` with the <strong>${badge.name}</strong> badge ${badge.icon}` : ''}.${note ? ` "${note}"` : ''} Well done! 🎉`,
+            pinned: false, audience: emp.branch || 'all',
+            authorId: req.hrActor.id, authorName: byName,
+          });
+        } catch {}
+      }
+    }
+    res.json({ ok: true, card, notified });
+  } catch (e) { next(e); }
+});
+
+// DELETE a performance card (HR/admin, or the department head who gave it).
+router.delete('/employees/:id/performance/:cardId', requireHrAccess, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const profile = emp.profile || {};
+    const cards = profile.performanceCards || [];
+    const card = cards.find((c) => c.id === req.params.cardId);
+    if (!card) return res.status(404).json({ error: 'Note not found.' });
+    if (card.auto) return res.status(400).json({ error: 'Automatic badges can’t be removed.' });
+    const canDelete = req.isHrAdmin || req.isHrManager || (req.hrActor.id && card.byId === req.hrActor.id);
+    if (!canDelete) return res.status(403).json({ error: 'Only HR, an admin, or the person who gave it can remove this.' });
+    profile.performanceCards = cards.filter((c) => c.id !== req.params.cardId);
+    emp.profile = profile; emp.changed('profile', true);
+    await emp.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 /** POST /api/hr/profile/:id/timeline — HR/Admin adds a note to the record. */
 router.post('/profile/:id/timeline', requireHrAccess, async (req, res, next) => {
   try {
+    const id = Number(req.params.id);
     const canEdit = req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
     if (!canEdit) return res.status(403).json({ error: 'Only HR or admin can add timeline notes.' });
     const row = await HrUser.findByPk(Number(req.params.id));
