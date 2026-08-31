@@ -131,6 +131,8 @@ async function tick(models) {
       // Reward Points auto-rewards (idempotent via dedupeKey): birthday, joining, anniversary.
       try { awarded += await autoRewardPoints(models, emp, today); } catch (e) { /* per-employee, keep going */ }
     }
+    // Expire old points once per run.
+    try { const R = require('../services/rewards'); const exp = await R.expirePoints(models); if (exp) console.log(`[badges-job] expired ${exp} points`); } catch (e) { console.error('[badges-job] expiry failed:', e.message); }
     if (awarded) console.log(`[badges-job] processed ${awarded} auto-award(s)`);
   } catch (e) { console.error('[badges-job] tick failed:', e.message); }
   finally { running = false; }

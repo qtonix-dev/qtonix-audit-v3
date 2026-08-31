@@ -104,7 +104,7 @@ const BASE_RULES = [
 ];
 
 async function seed(models) {
-  const { RewardRule } = models;
+  const { RewardRule, RewardCatalogueItem } = models;
   let created = 0;
   const rows = [
     ...BADGES.map((b, i) => ({
@@ -123,6 +123,25 @@ async function seed(models) {
     if (made) created++;
   }
   if (created) console.log(`[reward-seed] created ${created} reward rule(s)`);
+
+  // Seed a starter reward-store catalogue (idempotent by name).
+  const STORE = [
+    { name: 'Amazon Voucher ₹250', vendor: 'Amazon', category: 'voucher', icon: '🛒', cost: 500, rupeeValue: 250 },
+    { name: 'Amazon Voucher ₹500', vendor: 'Amazon', category: 'voucher', icon: '🛒', cost: 1000, rupeeValue: 500 },
+    { name: 'Amazon Voucher ₹1000', vendor: 'Amazon', category: 'voucher', icon: '🛒', cost: 2000, rupeeValue: 1000 },
+    { name: 'Swiggy Voucher ₹500', vendor: 'Swiggy', category: 'food', icon: '🍔', cost: 1000, rupeeValue: 500 },
+    { name: 'Zomato Voucher ₹500', vendor: 'Zomato', category: 'food', icon: '🍕', cost: 1000, rupeeValue: 500 },
+    { name: 'Zomato Voucher ₹1000', vendor: 'Zomato', category: 'food', icon: '🍕', cost: 2000, rupeeValue: 1000 },
+    { name: 'Team Lunch', vendor: 'Company', category: 'perk', icon: '🍽️', cost: 2500, rupeeValue: 0, description: 'A sponsored lunch with your team.' },
+    { name: 'Half-day Off', vendor: 'Company', category: 'perk', icon: '🏖️', cost: 3000, rupeeValue: 0, description: 'Redeem for a half-day of paid time off (HR approval).' },
+  ];
+  let storeCreated = 0;
+  for (let i = 0; i < STORE.length; i++) {
+    const s = STORE[i];
+    const [, made] = await RewardCatalogueItem.findOrCreate({ where: { name: s.name }, defaults: { ...s, sortOrder: i, active: true } });
+    if (made) storeCreated++;
+  }
+  if (storeCreated) console.log(`[reward-seed] created ${storeCreated} store item(s)`);
   return created;
 }
 

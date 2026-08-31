@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
@@ -1092,6 +1092,219 @@ router.post('/rewards/award', requireHrAccess, requireHrManager, async (req, res
     if (!aw.ok) return res.status(400).json({ error: aw.notLive ? 'Rewards are paused.' : 'Could not award.' });
     try { await HrNotification.create({ userId: emp.id, actorKind: 'hr', type: 'info', text: `🎯 You received "${title}" (+${resolved.points} pts)!` }); } catch {}
     res.json({ ok: true, points: resolved.points });
+  } catch (e) { next(e); }
+});
+
+// ===== REWARD STORE (Module 3) =====
+
+// Public catalogue for employees (active items only) + the viewer's balance.
+router.get('/store/catalogue', requireHrAccess, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const items = await RewardCatalogueItem.findAll({ where: { active: true }, order: [['sortOrder', 'ASC'], ['cost', 'ASC']] });
+    const wallet = req.hrUser ? await R.walletFor(models, req.hrUser.id) : { balance: 0, rupeeValue: 0 };
+    res.json({ items: items.map((i) => i.toJSON()), wallet });
+  } catch (e) { next(e); }
+});
+
+// Redeem: reserve points now, create a 'requested' redemption for HR to fulfil.
+router.post('/store/redeem/:itemId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can redeem.' });
+    const R = require('../services/rewards');
+    if (!(await R.rewardsLive(models))) return res.status(400).json({ error: 'Rewards are paused.' });
+    const item = await RewardCatalogueItem.findByPk(Number(req.params.itemId));
+    if (!item || !item.active) return res.status(404).json({ error: 'Reward not available.' });
+    if (item.stock != null && item.stock <= 0) return res.status(400).json({ error: 'This reward is out of stock.' });
+    // Reserve first (atomic; fails if insufficient balance).
+    const red = await Redemption.create({ employeeId: req.hrUser.id, employeeName: req.hrUser.name, department: req.hrUser.department || '', branch: req.hrUser.branch || '', itemId: item.id, itemName: item.name, vendor: item.vendor, cost: item.cost, rupeeValue: item.rupeeValue, status: 'requested' });
+    const rsv = await R.reserve(models, req.hrUser.id, item.cost, { title: `Redeem: ${item.name}`, refId: `redemption:${red.id}` });
+    if (!rsv.ok) { await red.destroy(); return res.status(400).json({ error: rsv.error === 'Not enough points.' ? 'You don’t have enough points for this reward.' : rsv.error }); }
+    red.reserveLedgerId = rsv.ledger.id; await red.save();
+    // Notify HR/admins to fulfil.
+    try { const mgrs = await HrUser.findAll({ where: { active: true } }); for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `🎁 ${req.hrUser.name} redeemed "${item.name}" (${item.cost} pts) — fulfilment pending.` }); } } catch {}
+    res.json({ ok: true, redemption: red.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// My redemptions.
+router.get('/store/my-redemptions', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ redemptions: [] });
+    const rows = await Redemption.findAll({ where: { employeeId: req.hrUser.id }, order: [['createdAt', 'DESC']] });
+    res.json({ redemptions: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Admin: catalogue CRUD.
+router.get('/store/admin/catalogue', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try { const items = await RewardCatalogueItem.findAll({ order: [['sortOrder', 'ASC'], ['cost', 'ASC']] }); res.json({ items: items.map((i) => i.toJSON()) }); } catch (e) { next(e); }
+});
+router.post('/store/admin/catalogue', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.name || '').trim() || !Number(b.cost)) return res.status(400).json({ error: 'Name and cost are required.' });
+    const item = await RewardCatalogueItem.create({ name: String(b.name).trim(), vendor: b.vendor || '', category: b.category || 'voucher', icon: b.icon || '🎁', cost: Math.round(Number(b.cost)), rupeeValue: Math.round(Number(b.rupeeValue) || 0), description: String(b.description || '').slice(0, 300), stock: b.stock === '' || b.stock == null ? null : Math.round(Number(b.stock)), active: b.active !== false, sortOrder: Number(b.sortOrder) || 0 });
+    res.status(201).json(item.toJSON());
+  } catch (e) { next(e); }
+});
+router.put('/store/admin/catalogue/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const item = await RewardCatalogueItem.findByPk(Number(req.params.id));
+    if (!item) return res.status(404).json({ error: 'Item not found.' });
+    const b = req.body || {};
+    ['name', 'vendor', 'category', 'icon', 'description'].forEach((k) => { if (b[k] !== undefined) item[k] = b[k]; });
+    if (b.cost !== undefined) item.cost = Math.round(Number(b.cost) || 0);
+    if (b.rupeeValue !== undefined) item.rupeeValue = Math.round(Number(b.rupeeValue) || 0);
+    if (b.stock !== undefined) item.stock = b.stock === '' || b.stock == null ? null : Math.round(Number(b.stock));
+    if (b.active !== undefined) item.active = !!b.active;
+    if (b.sortOrder !== undefined) item.sortOrder = Number(b.sortOrder) || 0;
+    await item.save();
+    res.json(item.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/store/admin/catalogue/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try { const item = await RewardCatalogueItem.findByPk(Number(req.params.id)); if (!item) return res.status(404).json({ error: 'Not found.' }); await item.destroy(); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+// Admin: redemption queue + fulfil/reject.
+router.get('/store/admin/redemptions', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const scopedBranch = (!req.isHrAdmin && !req.hrManagerAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
+    const where = {}; if (req.query.status) where.status = req.query.status; if (scopedBranch) where.branch = scopedBranch;
+    const rows = await Redemption.findAll({ where, order: [['createdAt', 'DESC']], limit: 200 });
+    res.json({ redemptions: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+router.post('/store/admin/redemptions/:id/decide', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const red = await Redemption.findByPk(Number(req.params.id));
+    if (!red) return res.status(404).json({ error: 'Redemption not found.' });
+    if (!['requested', 'approved'].includes(red.status)) return res.status(400).json({ error: 'Already finalised.' });
+    const b = req.body || {};
+    const decision = String(b.decision || ''); // 'deliver' | 'reject'
+    red.decidedByName = req.hrActor.name; red.decidedAt = new Date(); if (b.note !== undefined) red.note = String(b.note).slice(0, 300);
+    if (decision === 'deliver') {
+      await R.fulfilReserved(models, red.employeeId, red.cost);
+      red.status = 'delivered'; red.voucherCode = String(b.voucherCode || '').slice(0, 120);
+      // Decrement stock if tracked.
+      try { if (red.itemId) { const it = await RewardCatalogueItem.findByPk(red.itemId); if (it && it.stock != null) { it.stock = Math.max(0, it.stock - 1); await it.save(); } } } catch {}
+      try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `🎁 Your "${red.itemName}" reward is ready!${red.voucherCode ? ` Code: ${red.voucherCode}` : ''}` }); } catch {}
+    } else if (decision === 'reject') {
+      await R.refundReserved(models, red.employeeId, red.cost, { title: `Refund: ${red.itemName}`, refId: `redemption:${red.id}` });
+      red.status = 'rejected';
+      try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `Your "${red.itemName}" redemption was declined — ${red.cost} points refunded.` }); } catch {}
+    } else return res.status(400).json({ error: 'Invalid decision.' });
+    await red.save();
+    res.json({ ok: true, status: red.status });
+  } catch (e) { next(e); }
+});
+
+// Admin: run point expiry now.
+router.post('/rewards/run-expiry', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try { const R = require('../services/rewards'); const n = await R.expirePoints(models); res.json({ ok: true, expired: n }); } catch (e) { next(e); }
+});
+
+// ===== MODULE 4: Clubs, Analytics & Management Intelligence =====
+
+// Reward clubs an employee qualifies for (by lifetime earned) + progress to next.
+const REWARD_CLUBS = [
+  { key: '1k', name: '1K Club', icon: '🥉', need: 1000, color: '#CD7F32' },
+  { key: '5k', name: '5K Club', icon: '🥈', need: 5000, color: '#94A3B8' },
+  { key: '10k', name: '10K Club', icon: '🥇', need: 10000, color: '#F59E0B' },
+  { key: '25k', name: '25K Club', icon: '💎', need: 25000, color: '#7C3AED' },
+  { key: 'legend', name: 'Legend', icon: '👑', need: 50000, color: '#B45309' },
+];
+router.get('/rewards/my-club', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ club: null, next: null, lifetime: 0 });
+    const R = require('../services/rewards');
+    const w = await R.walletFor(models, req.hrUser.id);
+    const lifetime = w.lifetimeEarned || 0;
+    let current = null, next = null;
+    for (const c of REWARD_CLUBS) { if (lifetime >= c.need) current = c; else { next = c; break; } }
+    const prevNeed = current ? current.need : 0;
+    const progress = next ? Math.round(((lifetime - prevNeed) / (next.need - prevNeed)) * 100) : 100;
+    res.json({ club: current, next, lifetime, progress, allClubs: REWARD_CLUBS });
+  } catch (e) { next(e); }
+});
+
+// Management analytics dashboard (admins / HR managers). Liability, department
+// comparison, category breakdown, trend, and under-recognised teams.
+router.get('/rewards/analytics', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const emps = await HrUser.findAll({ where: { active: true } });
+    const byId = {}; emps.forEach((e) => { byId[e.id] = e; });
+    const ledger = await RewardLedger.findAll();
+    const wallets = await RewardWallet.findAll();
+    const ratio = await R.pointRatio(models);
+
+    // Totals.
+    let issued = 0, redeemed = 0, expired = 0;
+    const byCategory = {}; const byMonth = {};
+    for (const l of ledger) {
+      if (l.points > 0) { issued += l.points; byCategory[l.category || 'other'] = (byCategory[l.category || 'other'] || 0) + l.points; const mk = new Date(l.createdAt).toISOString().slice(0, 7); byMonth[mk] = (byMonth[mk] || 0) + l.points; }
+      else if (l.kind === 'redeem' || l.kind === 'reserve') redeemed += -l.points;
+      else if (l.kind === 'expire') expired += -l.points;
+    }
+    const outstanding = wallets.reduce((a, w) => a + w.balance + w.reserved, 0);
+
+    // Department comparison: points received + recognitions given per dept.
+    const deptStats = {};
+    for (const l of ledger) {
+      if (l.points <= 0) continue;
+      const emp = byId[l.employeeId]; if (!emp) continue;
+      const d = emp.department || 'Unassigned';
+      (deptStats[d] = deptStats[d] || { department: d, points: 0, recognitions: 0, employees: 0 });
+      deptStats[d].points += l.points; if (l.source === 'recognition') deptStats[d].recognitions += 1;
+    }
+    // Headcount + recognised-count per dept for "under-recognised" flags.
+    const deptHead = {}; const recognisedByDept = {};
+    for (const e of emps) { const d = e.department || 'Unassigned'; deptHead[d] = (deptHead[d] || 0) + 1; }
+    const recognisedEmp = new Set(ledger.filter((l) => l.points > 0 && l.source === 'recognition').map((l) => l.employeeId));
+    for (const e of emps) { if (recognisedEmp.has(e.id)) { const d = e.department || 'Unassigned'; recognisedByDept[d] = (recognisedByDept[d] || 0) + 1; } }
+    const departments = Object.values(deptStats).map((d) => ({ ...d, headcount: deptHead[d.department] || 0, recognisedPct: deptHead[d.department] ? Math.round(((recognisedByDept[d.department] || 0) / deptHead[d.department]) * 100) : 0 })).sort((a, b) => b.points - a.points);
+    // Under-recognised: departments where <50% of staff got any recognition.
+    const underRecognised = departments.filter((d) => d.headcount >= 2 && d.recognisedPct < 50).map((d) => ({ department: d.department, recognisedPct: d.recognisedPct, headcount: d.headcount }));
+
+    // Recent 6 months trend.
+    const now = new Date(); const trend = [];
+    for (let i = 5; i >= 0; i--) { const dt = new Date(now.getFullYear(), now.getMonth() - i, 1); const mk = dt.toISOString().slice(0, 7); trend.push({ month: dt.toLocaleString('en-US', { month: 'short' }), points: byMonth[mk] || 0 }); }
+
+    res.json({
+      totals: { issued, redeemed, expired, outstanding, liabilityRupees: Math.round((outstanding / ratio) * 100) / 100, employeesRewarded: wallets.filter((w) => w.lifetimeEarned > 0).length, totalEmployees: emps.length },
+      byCategory: Object.entries(byCategory).map(([k, v]) => ({ category: k, points: v })).sort((a, b) => b.points - a.points),
+      departments, underRecognised, trend,
+    });
+  } catch (e) { next(e); }
+});
+
+// Smart recommendations: employees who did notable work but weren't recognised
+// recently. Heuristic (never auto-awards): active, no recognition in 60 days,
+// and either a recent innovation or helping activity.
+router.get('/rewards/recommendations', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const emps = await HrUser.findAll({ where: { active: true } });
+    const byId = {}; emps.forEach((e) => { byId[e.id] = e; });
+    const ledger = await RewardLedger.findAll();
+    const cutoff = Date.now() - 60 * 86400000;
+    const lastRecognition = {};
+    for (const l of ledger) { if (l.points > 0 && l.source === 'recognition') { const t = new Date(l.createdAt).getTime(); if (!lastRecognition[l.employeeId] || t > lastRecognition[l.employeeId]) lastRecognition[l.employeeId] = t; } }
+    // Signals of contribution: approved innovations or helping recs in last 60d.
+    const recentInnov = await Innovation.findAll({ where: { status: { [Op.in]: ['approved', 'implemented', 'rewarded'] } } });
+    const recentHelp = await HelpingRecommendation.findAll({ where: { status: 'approved' } });
+    const contributors = new Set();
+    for (const i of recentInnov) { if (new Date(i.updatedAt).getTime() > cutoff) contributors.add(i.authorId); }
+    for (const h of recentHelp) { if (new Date(h.updatedAt).getTime() > cutoff) contributors.add(h.beneficiaryId); }
+    const recs = [];
+    for (const id of contributors) {
+      const emp = byId[id]; if (!emp) continue;
+      const last = lastRecognition[id];
+      if (!last || last < cutoff) recs.push({ id: emp.id, name: emp.name, department: emp.department || '', reason: 'Contributed recently (idea/helping) but hasn’t been recognised in 60+ days.' });
+    }
+    res.json({ recommendations: recs.slice(0, 20) });
   } catch (e) { next(e); }
 });
 

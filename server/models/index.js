@@ -2215,6 +2215,50 @@ const Innovation = sequelize.define('Innovation', {
 ] });
 Innovation.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== Reward Store (Module 3) =====
+// A catalogue item employees can redeem points for (vouchers + non-cash perks).
+const RewardCatalogueItem = sequelize.define('RewardCatalogueItem', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(140), allowNull: false },
+  vendor: { type: DataTypes.STRING(80), defaultValue: '' },        // Amazon, Swiggy, Zomato, Company…
+  category: { type: DataTypes.STRING(40), defaultValue: 'voucher' },// voucher|food|experience|perk
+  icon: { type: DataTypes.STRING(16), defaultValue: '🎁' },
+  cost: { type: DataTypes.INTEGER, allowNull: false },             // points to redeem
+  rupeeValue: { type: DataTypes.INTEGER, defaultValue: 0 },        // display ₹ value (0 = non-cash)
+  description: { type: DataTypes.STRING(300), defaultValue: '' },
+  stock: { type: DataTypes.INTEGER, allowNull: true },             // null = unlimited
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  sortOrder: { type: DataTypes.INTEGER, defaultValue: 0 },
+}, { tableName: 'reward_catalogue', indexes: [{ name: 'idx_catalogue_active', fields: ['active'] }] });
+RewardCatalogueItem.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// A redemption request. Points are RESERVED on request (moved out of spendable),
+// deducted on fulfilment, and refunded on rejection — so they can't be double
+// spent while a request is pending.
+const Redemption = sequelize.define('Redemption', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  employeeName: { type: DataTypes.STRING(120), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  itemId: { type: DataTypes.INTEGER, allowNull: true },
+  itemName: { type: DataTypes.STRING(140), defaultValue: '' },
+  vendor: { type: DataTypes.STRING(80), defaultValue: '' },
+  cost: { type: DataTypes.INTEGER, allowNull: false },
+  rupeeValue: { type: DataTypes.INTEGER, defaultValue: 0 },
+  status: { type: DataTypes.STRING(12), defaultValue: 'requested' }, // requested|approved|delivered|rejected|cancelled
+  voucherCode: { type: DataTypes.STRING(120), defaultValue: '' },    // filled on delivery
+  note: { type: DataTypes.STRING(300), defaultValue: '' },
+  decidedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  decidedAt: { type: DataTypes.DATE, allowNull: true },
+  reserveLedgerId: { type: DataTypes.INTEGER, allowNull: true },     // the -cost reserve entry
+}, { tableName: 'redemptions', indexes: [
+  { name: 'idx_redemption_emp', fields: ['employeeId'] },
+  { name: 'idx_redemption_status', fields: ['status'] },
+] });
+Redemption.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
@@ -2332,7 +2376,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
-  RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation,
+  RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

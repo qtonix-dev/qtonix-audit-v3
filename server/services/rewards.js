@@ -177,4 +177,77 @@ function needsApproval(giver, points, rule) {
   return points > 500;
 }
 
-module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval };
+// ===== Redemption engine =====
+// Reserve points for a pending redemption: moves `cost` from spendable balance
+// into `reserved` and writes a -cost 'reserve' ledger row, atomically. Fails if
+// the balance is insufficient (prevents double-spend across pending requests).
+async function reserve(models, employeeId, cost, meta) {
+  const { sequelize, RewardLedger } = models;
+  const pts = Math.round(Number(cost) || 0);
+  if (pts <= 0) return { ok: false, error: 'Invalid cost.' };
+  return await sequelize.transaction(async (t) => {
+    const w = await getWallet(models, employeeId, t);
+    if (w.balance < pts) return { ok: false, error: 'Not enough points.' };
+    const led = await RewardLedger.create({ employeeId, points: -pts, kind: 'reserve', category: 'store', title: meta.title || 'Redemption reserved', reason: meta.reason || '', source: 'store', refId: meta.refId || '' }, { transaction: t });
+    w.balance -= pts; w.reserved += pts;
+    await w.save({ transaction: t });
+    return { ok: true, ledger: led };
+  });
+}
+// Fulfil a reserved redemption: reserved → redeemed (lifetime), no balance
+// change (already moved out on reserve). The reserve ledger row stays as the
+// spend record; we just flip the wallet's reserved/redeemed counters.
+async function fulfilReserved(models, employeeId, cost) {
+  const { sequelize } = models;
+  const pts = Math.round(Number(cost) || 0);
+  return await sequelize.transaction(async (t) => {
+    const w = await getWallet(models, employeeId, t);
+    w.reserved = Math.max(0, w.reserved - pts); w.lifetimeRedeemed += pts;
+    await w.save({ transaction: t });
+    return { ok: true };
+  });
+}
+// Refund a reserved redemption (rejected/cancelled): reserved → balance, and a
+// +cost 'refund' ledger row so the ledger nets to zero for this redemption.
+async function refundReserved(models, employeeId, cost, meta) {
+  const { sequelize, RewardLedger } = models;
+  const pts = Math.round(Number(cost) || 0);
+  return await sequelize.transaction(async (t) => {
+    const w = await getWallet(models, employeeId, t);
+    w.reserved = Math.max(0, w.reserved - pts); w.balance += pts;
+    await w.save({ transaction: t });
+    await RewardLedger.create({ employeeId, points: pts, kind: 'refund', category: 'store', title: meta.title || 'Redemption refunded', reason: meta.reason || '', source: 'store', refId: meta.refId || '' }, { transaction: t });
+    return { ok: true };
+  });
+}
+
+// Expire old unspent points. For each employee, sum earns whose expiresOn has
+// passed and that haven't been marked expired, capped at their current balance,
+// and write a single 'expire' ledger row. Idempotent-ish: marks the source
+// earns expired so they're not counted twice.
+async function expirePoints(models) {
+  const { RewardLedger } = models;
+  const today = istToday();
+  const due = await RewardLedger.findAll({ where: { points: { [require('sequelize').Op.gt]: 0 }, expired: false, expiresOn: { [require('sequelize').Op.ne]: null, [require('sequelize').Op.lte]: today } } });
+  const byEmp = {}; for (const r of due) { (byEmp[r.employeeId] = byEmp[r.employeeId] || []).push(r); }
+  let total = 0;
+  for (const [empId, rows] of Object.entries(byEmp)) {
+    const w = await getWallet(models, Number(empId), null);
+    let expireAmt = rows.reduce((a, r) => a + r.points, 0);
+    expireAmt = Math.min(expireAmt, w.balance); // never expire more than they hold
+    for (const r of rows) { r.expired = true; await r.save(); }
+    if (expireAmt > 0) {
+      const { sequelize } = models;
+      await sequelize.transaction(async (t) => {
+        const ww = await getWallet(models, Number(empId), t);
+        ww.balance = Math.max(0, ww.balance - expireAmt); ww.lifetimeExpired += expireAmt;
+        await ww.save({ transaction: t });
+        await RewardLedger.create({ employeeId: Number(empId), points: -expireAmt, kind: 'expire', category: 'expiry', title: 'Points expired', source: 'auto' }, { transaction: t });
+      });
+      total += expireAmt;
+    }
+  }
+  return total;
+}
+
+module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval, reserve, fulfilReserved, refundReserved, expirePoints };

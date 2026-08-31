@@ -377,8 +377,9 @@ const REC_BADGE_FALLBACK = { icon: '🌟', color: '#EA580C' };
 // ===== My Rewards — the employee's reward wallet, points & history =====
 function MyRewardsPage({ user, embedded }) {
   const [data, setData] = useState(null);
+  const [club, setClub] = useState(null);
   const [tab, setTab] = useState('wallet');
-  useEffect(() => { hrApi('/me/rewards').then(setData).catch(() => setData({ wallet: {}, ledger: [] })); }, []);
+  useEffect(() => { hrApi('/me/rewards').then(setData).catch(() => setData({ wallet: {}, ledger: [] })); hrApi('/rewards/my-club').then(setClub).catch(() => {}); }, []);
   if (!data) return <div className={embedded ? 'text-slate-400 text-sm py-8' : 'max-w-4xl mx-auto px-4 py-8 text-slate-400 text-sm'}>Loading…</div>;
   const w = data.wallet || {};
   const fmt = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
@@ -387,10 +388,11 @@ function MyRewardsPage({ user, embedded }) {
     <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 py-6'}>
       {!embedded && <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>}
       <div className="flex gap-1 border-b border-slate-200 mb-5">
-        {[['wallet', 'Wallet'], ['helping', '🤝 Helping Hand'], ['ideas', '💡 Ideas'], ['leaderboards', '🏆 Leaderboards']].map(([id, label]) => (
+        {[['wallet', 'Wallet'], ['store', '🎁 Store'], ['helping', '🤝 Helping Hand'], ['ideas', '💡 Ideas'], ['leaderboards', '🏆 Leaderboards']].map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
         ))}
       </div>
+      {tab === 'store' && <RewardStoreView />}
       {tab === 'helping' && <HelpingHandView />}
       {tab === 'ideas' && <MyIdeasView />}
       {tab === 'leaderboards' && <LeaderboardsView onOpenEmployee={() => {}} />}
@@ -414,6 +416,24 @@ function MyRewardsPage({ user, embedded }) {
           <div className="text-[11px] text-slate-400 mt-2">Expired: {(w.lifetimeExpired || 0).toLocaleString('en-IN')}</div>
         </div>
       </div>
+      {club && (club.club || club.next) && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 mb-5">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-3xl">{club.club ? club.club.icon : '🎯'}</span>
+            <div className="flex-1">
+              <div className="text-[15px] font-extrabold text-[#050A1F]">{club.club ? club.club.name : 'On your way to your first club'}</div>
+              <div className="text-[12px] text-slate-400">{(club.lifetime || 0).toLocaleString('en-IN')} lifetime points earned</div>
+            </div>
+            {club.next && <span className="text-[11px] font-bold text-slate-400">Next: {club.next.icon} {club.next.name}</span>}
+          </div>
+          {club.next && (
+            <>
+              <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${club.progress}%`, background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} /></div>
+              <div className="text-[10px] text-slate-400 mt-1">{(club.lifetime || 0).toLocaleString('en-IN')} / {club.next.need.toLocaleString('en-IN')} — {(club.next.need - club.lifetime).toLocaleString('en-IN')} points to {club.next.name}</div>
+            </>
+          )}
+        </div>
+      )}
       {data.expiringSoon > 0 && (
         <div className="rounded-xl px-4 py-3 mb-5 text-sm font-semibold" style={{ background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9a3412' }}>⚠️ {data.expiringSoon.toLocaleString('en-IN')} points expire in the next 90 days.</div>
       )}
@@ -556,6 +576,57 @@ function MyIdeasView() {
   );
 }
 
+// Employee reward store: browse + redeem.
+function RewardStoreView() {
+  const [data, setData] = useState(null);
+  const [mine, setMine] = useState([]);
+  const [busy, setBusy] = useState('');
+  const load = () => { hrApi('/store/catalogue').then(setData).catch(() => setData({ items: [], wallet: {} })); hrApi('/store/my-redemptions').then((r) => setMine(r.redemptions || [])).catch(() => {}); };
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const bal = (data.wallet || {}).balance || 0;
+  const redeem = async (item) => { if (!window.confirm(`Redeem "${item.name}" for ${item.cost} points?`)) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); alert('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { alert(e.message); } setBusy(''); };
+  const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'], cancelled: ['Cancelled', '#64748B', '#F1F5F9'] }[s] || ['—', '#64748B', '#F1F5F9']);
+  return (
+    <div>
+      <div className="rounded-2xl p-4 mb-4 text-white flex items-center justify-between" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
+        <div className="text-[15px] font-extrabold">🎁 Reward Store</div>
+        <div className="text-sm font-bold" style={{ color: '#ffd9b8' }}>⭐ {bal.toLocaleString('en-IN')} points available</div>
+      </div>
+      <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+        {(data.items || []).map((it) => {
+          const afford = bal >= it.cost;
+          return (
+            <div key={it.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+              <div className="h-20 flex items-center justify-center text-4xl" style={{ background: it.category === 'food' ? '#FDECEA' : it.category === 'perk' ? '#EDE9FE' : '#FFF3E0' }}>{it.icon}</div>
+              <div className="p-3.5">
+                <div className="text-sm font-extrabold text-[#050A1F]">{it.name}</div>
+                <div className="text-[11px] text-slate-400">{it.vendor}{it.stock != null ? ` · ${it.stock} left` : ''}</div>
+                <div className="text-[15px] font-extrabold mt-1.5" style={{ color: '#0435AC' }}>{it.cost.toLocaleString('en-IN')} pts</div>
+                {it.rupeeValue > 0 && <div className="text-[11px] text-slate-400">≈ ₹{it.rupeeValue.toLocaleString('en-IN')} value</div>}
+                {it.description && <div className="text-[11px] text-slate-500 mt-1">{it.description}</div>}
+                <button onClick={() => redeem(it)} disabled={!afford || busy === it.id || (it.stock != null && it.stock <= 0)} className="mt-2.5 w-full rounded-lg py-2 text-[13px] font-bold text-white disabled:bg-slate-200 disabled:text-slate-400" style={afford ? { background: ORANGE } : {}}>{busy === it.id ? '…' : (it.stock != null && it.stock <= 0) ? 'Out of stock' : afford ? 'Redeem' : `Need ${it.cost - bal} more`}</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {mine.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 mt-4">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">My redemptions</div>
+          {mine.map((r) => { const st = statusPill(r.status); return (
+            <div key={r.id} className="flex items-center gap-2 py-1.5 text-[13px] border-t border-slate-50 first:border-0">
+              <span className="font-bold">{r.itemName}</span><span className="text-slate-400 text-[11px]">−{r.cost} pts</span>
+              <span className="ml-auto text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ background: st[2], color: st[1] }}>{st[0]}</span>
+              {r.voucherCode && <span className="text-[11px] font-mono text-slate-500">{r.voucherCode}</span>}
+            </div>
+          ); })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Achievement leaderboards (never shows bottom performers; no balances).
 function LeaderboardsView() {
   const [data, setData] = useState(null);
@@ -628,7 +699,7 @@ function RewardsAdmin() {
       )}
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-slate-200">
-        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals'], ['helping', 'Helping Hand'], ['innovation', 'Innovation']].map(([id, label]) => (
+        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals'], ['helping', 'Helping Hand'], ['innovation', 'Innovation'], ['store', 'Store'], ['analytics', 'Analytics']].map(([id, label]) => (
           <button key={id} onClick={() => setSub(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
         ))}
       </div>
@@ -636,6 +707,8 @@ function RewardsAdmin() {
       {sub === 'approvals' && <RewardApprovals />}
       {sub === 'helping' && <HelpingQueue />}
       {sub === 'innovation' && <InnovationQueue />}
+      {sub === 'store' && <StoreAdmin />}
+      {sub === 'analytics' && <RewardAnalytics />}
       {sub === 'rules' && <>
       <div className="text-[12px] text-slate-500">Conversion: <b>{cfg.pointsPerRupee || 2} points = ₹1</b> · Points expire after <b>{cfg.expiryMonths || 24} months</b>. Edit a badge's points below — the value applies the next time it's awarded.</div>
       {Object.entries(cats).map(([cat, rules]) => (
@@ -841,6 +914,164 @@ function InnovationManage({ idea, onDone }) {
         <button onClick={save} disabled={busy || (status === 'rewarded' && !impact)} className="text-[12px] font-bold rounded-lg px-3.5 py-1.5 text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? '…' : 'Update'}</button>
       </div>
       {status === 'rewarded' && !impact && <div className="text-[11px] text-amber-600">Pick an impact level to award points.</div>}
+    </div>
+  );
+}
+
+// Admin: reward analytics & management intelligence.
+function RewardAnalytics() {
+  const [data, setData] = useState(null);
+  const [recs, setRecs] = useState([]);
+  useEffect(() => { hrApi('/rewards/analytics').then(setData).catch(() => setData(null)); hrApi('/rewards/recommendations').then((r) => setRecs(r.recommendations || [])).catch(() => {}); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const t = data.totals || {};
+  const maxDept = Math.max(1, ...(data.departments || []).map((d) => d.points));
+  const maxTrend = Math.max(1, ...(data.trend || []).map((m) => m.points));
+  const catColor = { badge: '#F59E0B', appreciation: '#DC2626', automatic: '#16A34A', anniversary: '#7C3AED', attendance: '#0EA5E9', helping: '#DB2777', innovation: '#6D28D9', performance: '#EA580C' };
+  return (
+    <div className="space-y-4">
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-green-600">{(t.issued || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Points issued</div></div>
+        <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-blue-600">{(t.redeemed || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Redeemed</div></div>
+        <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-orange-600">{(t.outstanding || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Outstanding</div></div>
+        <div className="rounded-xl p-3 text-white" style={{ background: 'linear-gradient(120deg,#7C2D12,#B45309)' }}><div className="text-xl font-extrabold">₹{(t.liabilityRupees || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase" style={{ color: '#ffe4d3' }}>Liability</div></div>
+      </div>
+      <div className="text-[12px] text-slate-500">{t.employeesRewarded || 0} of {t.totalEmployees || 0} employees have earned points · {t.expired ? `${t.expired.toLocaleString('en-IN')} expired` : 'none expired'}.</div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* 6-month trend */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="text-sm font-extrabold mb-3">Points issued — last 6 months</div>
+          <div className="flex items-end gap-2 h-32">
+            {(data.trend || []).map((m) => (
+              <div key={m.month} className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full rounded-t" style={{ height: `${Math.max(4, (m.points / maxTrend) * 100)}%`, background: 'linear-gradient(180deg,#FF6A00,#FF4500)' }} title={m.points} />
+                <div className="text-[10px] text-slate-400">{m.month}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Category breakdown */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="text-sm font-extrabold mb-3">By category</div>
+          <div className="space-y-1.5">
+            {(data.byCategory || []).slice(0, 8).map((c) => (
+              <div key={c.category} className="flex items-center gap-2 text-[12px]">
+                <span className="w-24 capitalize text-slate-500 truncate">{c.category}</span>
+                <div className="flex-1 h-3 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(c.points / (data.byCategory[0]?.points || 1)) * 100}%`, background: catColor[c.category] || '#94A3B8' }} /></div>
+                <span className="font-bold w-16 text-right">{c.points.toLocaleString('en-IN')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Department comparison */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="text-sm font-extrabold mb-3">Department comparison</div>
+        <div className="space-y-2">
+          {(data.departments || []).map((d) => (
+            <div key={d.department} className="flex items-center gap-3 text-[12px]">
+              <span className="w-28 font-bold truncate">{d.department}</span>
+              <div className="flex-1 h-4 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(d.points / maxDept) * 100}%`, background: 'linear-gradient(90deg,#0435AC,#2563EB)' }} /></div>
+              <span className="w-20 text-right font-bold">{d.points.toLocaleString('en-IN')}</span>
+              <span className="w-24 text-right text-slate-400">{d.recognisedPct}% recognised</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Under-recognised + smart recommendations */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {(data.underRecognised || []).length > 0 && (
+          <div className="rounded-2xl p-4" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+            <div className="text-sm font-extrabold mb-2" style={{ color: '#9a3412' }}>⚠️ Under-recognised teams</div>
+            {data.underRecognised.map((d) => (
+              <div key={d.department} className="text-[12px] py-1" style={{ color: '#9a3412' }}>{d.department} — only {d.recognisedPct}% of {d.headcount} people recognised</div>
+            ))}
+          </div>
+        )}
+        {recs.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-4">
+            <div className="text-sm font-extrabold mb-2">💡 Smart recommendations</div>
+            {recs.map((r) => (
+              <div key={r.id} className="text-[12px] py-1.5 border-t border-slate-50 first:border-0"><span className="font-bold">{r.name}</span> <span className="text-slate-400">({r.department})</span><div className="text-[11px] text-slate-400">{r.reason}</div></div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Admin: reward store — catalogue management + redemption fulfilment.
+function StoreAdmin() {
+  const [sub, setSub] = useState('redemptions');
+  const [items, setItems] = useState(null);
+  const [reds, setReds] = useState(null);
+  const [f, setF] = useState({ name: '', vendor: '', category: 'voucher', icon: '🎁', cost: '', rupeeValue: '', stock: '', description: '' });
+  const [busy, setBusy] = useState('');
+  const load = () => { hrApi('/store/admin/catalogue').then((r) => setItems(r.items || [])).catch(() => setItems([])); hrApi('/store/admin/redemptions').then((r) => setReds(r.redemptions || [])).catch(() => setReds([])); };
+  useEffect(() => { load(); }, []);
+  const addItem = async () => { if (!f.name.trim() || !Number(f.cost)) { alert('Name and cost required.'); return; } setBusy('add'); try { await hrApi('/store/admin/catalogue', { method: 'POST', body: JSON.stringify(f) }); setF({ name: '', vendor: '', category: 'voucher', icon: '🎁', cost: '', rupeeValue: '', stock: '', description: '' }); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const toggle = async (it) => { try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'PUT', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { alert(e.message); } };
+  const del = async (it) => { if (!window.confirm(`Delete "${it.name}"?`)) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = window.prompt('Voucher code / fulfilment note (optional):') || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const inp = 'rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]';
+  const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'] }[s] || ['—', '#64748B', '#F1F5F9']);
+  return (
+    <div>
+      <div className="flex gap-1 mb-3">
+        {[['redemptions', 'Redemptions'], ['catalogue', 'Catalogue']].map(([id, label]) => (
+          <button key={id} onClick={() => setSub(id)} className="px-3 py-1 text-[12px] font-bold rounded-lg" style={sub === id ? { background: '#FFF1E6', color: '#EA580C' } : { color: '#94A3B8' }}>{label}</button>
+        ))}
+      </div>
+      {sub === 'redemptions' && (
+        (!reds || reds.length === 0) ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No redemptions yet.</div> : (
+          <div className="space-y-2">
+            {reds.map((r) => { const st = statusPill(r.status); return (
+              <div key={r.id} className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
+                <div className="flex-1 min-w-0"><div className="text-[13px] font-bold text-[#050A1F]">{r.itemName} <span className="text-slate-400 font-normal">−{r.cost} pts</span></div><div className="text-[11px] text-slate-400">{r.employeeName} · {[r.department, r.branch].filter(Boolean).join(' · ')}</div></div>
+                <span className="text-[10px] font-extrabold rounded-full px-2.5 py-1" style={{ background: st[2], color: st[1] }}>{st[0]}</span>
+                {r.status === 'requested' && <div className="flex gap-2"><button onClick={() => decide(r, 'reject')} disabled={busy === r.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 border border-slate-300 text-slate-600">Reject</button><button onClick={() => decide(r, 'deliver')} disabled={busy === r.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === r.id ? '…' : 'Deliver'}</button></div>}
+                {r.voucherCode && <span className="text-[11px] font-mono text-slate-500">{r.voucherCode}</span>}
+              </div>
+            ); })}
+          </div>
+        )
+      )}
+      {sub === 'catalogue' && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="text-sm font-extrabold mb-2">Catalogue</div>
+            {(items || []).map((it) => (
+              <div key={it.id} className="flex items-center gap-2 py-1.5 border-t border-slate-50 first:border-0">
+                <span className="text-lg">{it.icon}</span>
+                <div className="flex-1 min-w-0"><div className="text-[13px] font-bold truncate">{it.name}</div><div className="text-[11px] text-slate-400">{it.cost} pts{it.rupeeValue ? ` · ₹${it.rupeeValue}` : ''}{it.stock != null ? ` · ${it.stock} left` : ''}</div></div>
+                <button onClick={() => toggle(it)} className="text-[11px] font-bold rounded px-2 py-0.5" style={it.active ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#94A3B8' }}>{it.active ? 'On' : 'Off'}</button>
+                <button onClick={() => del(it)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={13} /></button>
+              </div>
+            ))}
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="text-sm font-extrabold mb-2">Add reward</div>
+            <div className="space-y-2">
+              <input className={inp + ' w-full'} placeholder="Name (e.g. Amazon ₹500)" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+              <div className="grid grid-cols-2 gap-2">
+                <input className={inp} placeholder="Vendor" value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })} />
+                <input className={inp} placeholder="Icon 🎁" value={f.icon} onChange={(e) => setF({ ...f, icon: e.target.value })} />
+                <input className={inp} type="number" placeholder="Cost (points)" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
+                <input className={inp} type="number" placeholder="₹ value" value={f.rupeeValue} onChange={(e) => setF({ ...f, rupeeValue: e.target.value })} />
+                <select className={inp} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}><option value="voucher">Voucher</option><option value="food">Food</option><option value="perk">Perk</option><option value="experience">Experience</option></select>
+                <input className={inp} type="number" placeholder="Stock (blank=∞)" value={f.stock} onChange={(e) => setF({ ...f, stock: e.target.value })} />
+              </div>
+              <input className={inp + ' w-full'} placeholder="Description (optional)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
+              <button onClick={addItem} disabled={busy === 'add'} className="w-full rounded-lg py-2 text-[13px] font-bold text-white" style={{ background: ORANGE }}>{busy === 'add' ? '…' : 'Add reward'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
