@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval } = require('../models');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
@@ -732,7 +732,92 @@ async function canReviewEmployee(req, emp) {
 }
 
 // ===== Reward Wallet & Ledger =====
-// The logged-in employee's wallet + point history, for the My Rewards dashboard.
+
+// A senior's own monthly recognition budget (limit / spent / remaining).
+router.get('/rewards/my-budget', requireHrAccess, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const giver = req.hrUser || { id: null, isHrAdmin: req.isHrAdmin, type: 'admin' };
+    const exempt = giver.isHrAdmin || giver.isHrManager || ['hr', 'recruiter'].includes(giver.type) || giver.type === 'admin';
+    if (exempt) return res.json({ exempt: true, unlimited: true });
+    const limit = await R.monthlyLimitFor(models, giver);
+    const spent = await R.spentThisMonth(models, giver.id);
+    res.json({ limit, spent, remaining: Math.max(0, limit - spent), exempt: false });
+  } catch (e) { next(e); }
+});
+
+// Admin: every senior with their effective monthly budget (override or role default).
+router.get('/rewards/budgets', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const seniors = await HrUser.findAll({ where: { active: true, type: { [Op.in]: ['manager', 'tl', 'senior'] } }, order: [['name', 'ASC']] });
+    const overrides = await RewardBudget.findAll();
+    const ovById = {}; overrides.forEach((o) => { ovById[o.giverId] = o; });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const roleDefaults = (s && s.rewardConfig && s.rewardConfig.budgets) || {};
+    const out = [];
+    for (const u of seniors) {
+      const ov = ovById[u.id];
+      const limit = await R.monthlyLimitFor(models, u);
+      const spent = await R.spentThisMonth(models, u.id);
+      out.push({ id: u.id, name: u.name, type: u.type, department: u.department || '', branch: u.branch || '', limit, override: ov ? ov.monthlyLimit : null, spent, remaining: Math.max(0, limit - spent) });
+    }
+    res.json({ seniors: out, roleDefaults });
+  } catch (e) { next(e); }
+});
+
+// Admin: set/clear a per-senior monthly budget override.
+router.put('/rewards/budgets/:giverId', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const giverId = Number(req.params.giverId);
+    const emp = await HrUser.findByPk(giverId);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const b = req.body || {};
+    if (b.limit === null || b.limit === '' || b.clear) { await RewardBudget.destroy({ where: { giverId } }); return res.json({ ok: true, cleared: true }); }
+    const limit = Math.max(0, Math.round(Number(b.limit) || 0));
+    const [row] = await RewardBudget.findOrCreate({ where: { giverId }, defaults: { giverId, monthlyLimit: limit, setByName: req.hrActor.name } });
+    row.monthlyLimit = limit; row.setByName = req.hrActor.name; if (b.note !== undefined) row.note = String(b.note).slice(0, 200);
+    await row.save();
+    res.json({ ok: true, budget: row.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// Approval queue — pending high-value awards. Branch HR managers see their branch.
+router.get('/rewards/approvals', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const scopedBranch = (!req.isHrAdmin && !req.hrManagerAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
+    const where = { status: req.query.status && ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending' };
+    if (scopedBranch) where.branch = scopedBranch;
+    const rows = await RewardApproval.findAll({ where, order: [['createdAt', 'DESC']], limit: 100 });
+    res.json({ approvals: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Approve/reject a pending award. On approve, points are awarded now.
+router.post('/rewards/approvals/:id/decide', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const appr = await RewardApproval.findByPk(Number(req.params.id));
+    if (!appr) return res.status(404).json({ error: 'Approval not found.' });
+    if (appr.status !== 'pending') return res.status(400).json({ error: 'Already decided.' });
+    const b = req.body || {};
+    const approve = !!b.approve;
+    appr.status = approve ? 'approved' : 'rejected';
+    appr.decidedByName = req.hrActor.name; appr.decidedAt = new Date(); appr.decisionNote = String(b.note || '').slice(0, 300);
+    if (approve) {
+      const res2 = await R.award(models, appr.employeeId, { points: appr.points, category: appr.category, ruleKey: appr.ruleKey, badgeId: appr.badgeId, title: appr.title, reason: appr.reason, byName: appr.byName, byRole: appr.byRole, byId: appr.byId, approvedByName: req.hrActor.name, source: 'recognition', refId: appr.refId });
+      if (res2.ok) appr.ledgerId = res2.ledger.id;
+      try { const emp = await HrUser.findByPk(appr.employeeId); if (emp && emp.profile && Array.isArray(emp.profile.performanceCards)) { emp.profile.performanceCards = emp.profile.performanceCards.map((c) => c.id === appr.refId ? { ...c, pendingApproval: false, points: appr.points } : c); emp.changed('profile', true); await emp.save(); } } catch {}
+      try { await HrNotification.create({ userId: appr.employeeId, actorKind: 'hr', type: 'info', text: `🎉 Your ${appr.title} recognition (+${appr.points} pts) was approved!` }); } catch {}
+    } else {
+      try { const emp = await HrUser.findByPk(appr.employeeId); if (emp && emp.profile && Array.isArray(emp.profile.performanceCards)) { emp.profile.performanceCards = emp.profile.performanceCards.map((c) => c.id === appr.refId ? { ...c, pendingApproval: false } : c); emp.changed('profile', true); await emp.save(); } } catch {}
+    }
+    if (appr.byId) { try { await HrNotification.create({ userId: appr.byId, actorKind: 'hr', type: 'info', text: `${approve ? '✅ Approved' : '❌ Rejected'}: your ${appr.title} recognition for ${appr.employeeName}.` }); } catch {} }
+    await appr.save();
+    res.json({ ok: true, status: appr.status });
+  } catch (e) { next(e); }
+});
+
 router.get('/me/rewards', requireHrAccess, async (req, res, next) => {
   try {
     if (!req.hrUser) return res.json({ wallet: { balance: 0, rupeeValue: 0 }, ledger: [], thisYear: {} });
@@ -978,41 +1063,78 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
     if (!kind) return res.status(400).json({ error: 'Invalid review type.' });
     const note = String(b.note || '').slice(0, 2000).trim();
     let title = String(b.title || '').slice(0, 160).trim();
-    const badge = (kind === 'praise' && b.badgeId) ? badgeById(String(b.badgeId)) : null;
+    // Resolve the badge from the full library (rules table), not just the
+    // original 8, so all ~34 badges award correctly.
+    let badge = null;
+    if (kind === 'praise' && b.badgeId) {
+      const local = badgeById(String(b.badgeId));
+      if (local) badge = { id: local.id, name: local.name, icon: local.icon, color: local.color };
+      else { const rule = await RewardRule.findOne({ where: { key: `badge_${b.badgeId}`, active: true } }); if (rule) badge = { id: b.badgeId, name: rule.name, icon: rule.icon, color: rule.color }; }
+    }
     if (badge && !title) title = badge.name;
     if (!title && !note) return res.status(400).json({ error: 'Add a title or a note.' });
     const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? b.date : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const byName = req.hrActor.name || (req.hrUser && req.hrUser.name) || 'HR';
     const actorRole = req.isHrAdmin ? 'Admin' : (req.hrUser && (req.hrUser.type === 'manager' ? 'Manager' : req.hrUser.type === 'tl' ? 'Team Lead' : (HR_STAFF_TYPES.includes(req.hrUser.type) ? 'HR' : 'HR')));
+
+    // ===== Budget + approval gate (only for point-earning appreciations while
+    // Rewards are live). Resolve the points first, block if over the giver's
+    // monthly budget, and route high-value awards to the approval queue. =====
+    const R = require('../services/rewards');
+    let resolvedPoints = 0, resolvedRuleKey = '', pendingApproval = false;
+    if (kind === 'praise' && await R.rewardsLive(models)) {
+      const resolved = badge ? await R.pointsForBadge(models, badge.id) : await R.pointsForRule(models, 'appreciation_plain');
+      resolvedPoints = resolved.points || 0; resolvedRuleKey = badge ? `badge_${badge.id}` : 'appreciation_plain';
+      if (resolvedPoints > 0) {
+        // Budget: block the whole action if the giver is over their cap.
+        const bud = await R.budgetCheck(models, req.hrUser || { isHrAdmin: req.isHrAdmin }, resolvedPoints);
+        if (!bud.ok) {
+          if (bud.reason === 'no_budget') return res.status(403).json({ error: 'You don’t have a monthly recognition budget set. Ask HR/Admin to assign one.' });
+          return res.status(403).json({ error: `Over budget: this award is ${resolvedPoints} points but you have only ${Math.max(0, bud.remaining)} of your ${bud.limit} monthly points left.`, budget: bud });
+        }
+        // Approval: high-value awards are parked, not awarded immediately.
+        pendingApproval = R.needsApproval(req.hrUser || { isHrAdmin: req.isHrAdmin }, resolvedPoints, resolved.rule);
+      }
+    }
+
     const card = {
       id: `perf${Date.now()}${Math.random().toString(36).slice(2, 5)}`,
       kind, title, note, date: dateStr,
       by: byName, byRole: actorRole, byId: req.hrActor.id || null,
       badgeId: badge ? badge.id : null, badge: badge ? { id: badge.id, name: badge.name, icon: badge.icon, color: badge.color } : null,
       auto: false, createdAt: new Date().toISOString(),
+      pendingApproval: pendingApproval || undefined,
     };
     const profile = emp.profile || {};
     profile.performanceCards = [...(profile.performanceCards || []), card];
     emp.profile = profile; emp.changed('profile', true);
     await emp.save();
 
+    // High-value → park for approval; points are NOT awarded until approved.
+    if (pendingApproval) {
+      const { RewardApproval } = models;
+      await RewardApproval.create({
+        employeeId: emp.id, employeeName: emp.name, department: emp.department || '', branch: emp.branch || '',
+        points: resolvedPoints, category: 'badge', ruleKey: resolvedRuleKey, badgeId: badge ? badge.id : '',
+        title: badge ? badge.name : 'Appreciation', reason: note || '',
+        requiredLevel: R.approvalTier(resolvedPoints),
+        byId: req.hrActor.id || null, byName, byRole: actorRole, source: 'recognition', refId: card.id,
+      });
+      return res.json({ ok: true, card, notified: 0, pointsAwarded: 0, pendingApproval: true, pointsPending: resolvedPoints });
+    }
+
     // Award Reward Points for appreciations (Review/Yellow/Red never earn points).
-    // Points come from the rule for the chosen badge, or the plain-appreciation
-    // rule when no badge is picked. The card records the points for the ledger
-    // trail. Manager never types the number — it's resolved from the rule.
+    // Points were resolved + budget-checked above; award now (approval already
+    // handled via the early return).
     let pointsAwarded = 0;
-    if (kind === 'praise') {
+    if (kind === 'praise' && resolvedPoints > 0) {
       try {
-        const R = require('../services/rewards');
-        const resolved = badge ? await R.pointsForBadge(models, badge.id) : await R.pointsForRule(models, 'appreciation_plain');
-        if (resolved.points > 0) {
-          const res = await R.award(models, emp.id, {
-            points: resolved.points, category: 'badge', ruleKey: badge ? `badge_${badge.id}` : 'appreciation_plain',
-            badgeId: badge ? badge.id : '', title: badge ? badge.name : 'Appreciation', reason: note || '',
-            byName, byRole: actorRole, byId: req.hrActor.id || null, source: 'recognition', refId: card.id,
-          });
-          if (res.ok) { pointsAwarded = resolved.points; card.points = pointsAwarded; emp.profile.performanceCards = emp.profile.performanceCards.map((c) => c.id === card.id ? { ...c, points: pointsAwarded } : c); emp.changed('profile', true); await emp.save(); }
-        }
+        const res = await R.award(models, emp.id, {
+          points: resolvedPoints, category: 'badge', ruleKey: resolvedRuleKey,
+          badgeId: badge ? badge.id : '', title: badge ? badge.name : 'Appreciation', reason: note || '',
+          byName, byRole: actorRole, byId: req.hrActor.id || null, source: 'recognition', refId: card.id,
+        });
+        if (res.ok) { pointsAwarded = resolvedPoints; card.points = pointsAwarded; emp.profile.performanceCards = emp.profile.performanceCards.map((c) => c.id === card.id ? { ...c, points: pointsAwarded } : c); emp.changed('profile', true); await emp.save(); }
       } catch (e) { console.error('[rewards] award on recognition failed:', e.message); }
     }
 

@@ -435,6 +435,7 @@ function RewardsAdmin() {
   const [ov, setOv] = useState(null);
   const [edits, setEdits] = useState({});
   const [busy, setBusy] = useState('');
+  const [sub, setSub] = useState('rules'); // rules | budgets | approvals
   const load = () => { hrApi('/rewards/rules').then(setData).catch(() => {}); hrApi('/rewards/overview').then(setOv).catch(() => {}); };
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
@@ -461,6 +462,15 @@ function RewardsAdmin() {
           <div className="rounded-xl p-3 text-white" style={{ background: 'linear-gradient(120deg,#7C2D12,#B45309)' }}><div className="text-xl font-extrabold">₹{(ov.liabilityRupees || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase" style={{ color: '#ffe4d3' }}>Reward liability</div></div>
         </div>
       )}
+      {/* Sub-tabs */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals']].map(([id, label]) => (
+          <button key={id} onClick={() => setSub(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
+        ))}
+      </div>
+      {sub === 'budgets' && <RewardBudgets />}
+      {sub === 'approvals' && <RewardApprovals />}
+      {sub === 'rules' && <>
       <div className="text-[12px] text-slate-500">Conversion: <b>{cfg.pointsPerRupee || 2} points = ₹1</b> · Points expire after <b>{cfg.expiryMonths || 24} months</b>. Edit a badge's points below — the value applies the next time it's awarded.</div>
       {Object.entries(cats).map(([cat, rules]) => (
         <div key={cat} className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -484,6 +494,87 @@ function RewardsAdmin() {
           </div>
         </div>
       ))}
+      </>}
+    </div>
+  );
+}
+
+// Admin: per-senior monthly budget manager. Role default shown; override editable.
+function RewardBudgets() {
+  const [data, setData] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [busy, setBusy] = useState('');
+  const [q, setQ] = useState('');
+  const load = () => hrApi('/rewards/budgets').then(setData).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const save = async (id, limit) => { setBusy('b' + id); try { await hrApi(`/rewards/budgets/${id}`, { method: 'PUT', body: JSON.stringify(limit === '' ? { clear: true } : { limit: Number(limit) }) }); await load(); setEdits((e) => { const n = { ...e }; delete n[id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
+  const rows = (data.seniors || []).filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.department || '').toLowerCase().includes(q.toLowerCase()));
+  const rd = data.roleDefaults || {};
+  return (
+    <div>
+      <div className="text-[12px] text-slate-500 mb-2">Role defaults — TL {(rd.tl || 0).toLocaleString('en-IN')} · PM {(rd.pm || 0).toLocaleString('en-IN')} · HOD {(rd.hod || 0).toLocaleString('en-IN')} · HR {(rd.hr || 0).toLocaleString('en-IN')}/month. Set a number below to override an individual senior; clear it to fall back to the role default.</div>
+      <div className="mb-2"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search seniors…" className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm w-52" /></div>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead><tr className="text-[10px] font-extrabold uppercase text-slate-400 bg-slate-50"><th className="text-left px-4 py-2.5">Senior</th><th className="text-left px-4 py-2.5">Role</th><th className="text-left px-4 py-2.5">Spent</th><th className="text-left px-4 py-2.5">Monthly limit</th></tr></thead>
+          <tbody>
+            {rows.map((s) => {
+              const pending = edits[s.id] !== undefined;
+              const val = pending ? edits[s.id] : (s.override != null ? s.override : '');
+              return (
+                <tr key={s.id} className="border-t border-slate-50">
+                  <td className="px-4 py-2.5"><div className="font-bold text-[#0A0E28]">{s.name}</div><div className="text-[11px] text-slate-400">{[s.department, s.branch].filter(Boolean).join(' · ')}</div></td>
+                  <td className="px-4 py-2.5 text-slate-500">{s.type === 'manager' ? 'Manager' : s.type === 'tl' ? 'Team Lead' : 'Senior'}</td>
+                  <td className="px-4 py-2.5 text-slate-500">{s.spent.toLocaleString('en-IN')} / {s.limit.toLocaleString('en-IN')}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <input type="number" value={val} placeholder={`default ${s.limit}`} onChange={(e) => setEdits((x) => ({ ...x, [s.id]: e.target.value }))} className="w-28 rounded-lg border border-slate-300 px-2 py-1 text-[13px]" />
+                      {pending && <button onClick={() => save(s.id, val)} disabled={busy === 'b' + s.id} className="text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: ORANGE }}>{busy === 'b' + s.id ? '…' : 'Save'}</button>}
+                      {!pending && s.override != null && <span className="text-[10px] font-bold text-orange-600">override</span>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Admin: approve/reject pending high-value awards.
+function RewardApprovals() {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => hrApi('/rewards/approvals').then(setData).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/rewards/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const rows = data.approvals || [];
+  const tierLabel = { manager: 'Manager', hod_hr: 'HOD + HR', senior_mgmt: 'Senior Mgmt' };
+  return (
+    <div>
+      {rows.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No pending approvals. High-value awards (over 500 points) appear here for sign-off.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((a) => (
+            <div key={a.id} className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-bold text-[#050A1F]">{a.title} <span className="font-extrabold" style={{ color: '#0435AC' }}>+{a.points.toLocaleString('en-IN')}</span></div>
+                <div className="text-[11px] text-slate-400">For <b>{a.employeeName}</b> ({[a.department, a.branch].filter(Boolean).join(' · ')}) · by {a.byName}{a.byRole ? ` (${a.byRole})` : ''} · needs {tierLabel[a.requiredLevel] || a.requiredLevel}</div>
+                {a.reason && <div className="text-[12px] text-slate-500 mt-1">"{a.reason}"</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => decide(a.id, false)} disabled={busy === a.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 border border-slate-300 text-slate-600">Reject</button>
+                <button onClick={() => decide(a.id, true)} disabled={busy === a.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === a.id ? '…' : 'Approve'}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -638,16 +729,20 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   const [badgeId, setBadgeId] = useState('');
   const [announce, setAnnounce] = useState(false);
   const [badges, setBadges] = useState([]);
+  const [budget, setBudget] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); hrApi('/rewards/my-budget').then(setBudget).catch(() => {}); }, []);
   const pick = async (m) => { setEmp(m); setOpen(false); setQ(''); setSummary(null); try { setSummary(await hrApi(`/employees/${m.id}/recognition-summary`)); } catch {} };
   const submit = async () => {
     if (!emp) { setErr('Select an employee first.'); return; }
     if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); return; }
     setBusy(true); setErr('');
-    try { await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) }); onSaved(); }
-    catch (e) { setErr(e.message); setBusy(false); }
+    try {
+      const r = await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) });
+      if (r.pendingApproval) alert(`Sent for approval — this ${r.pointsPending}-point award needs HR/senior sign-off before the points are credited.`);
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
   };
   const ic = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   const shown = team.filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase()) || (m.department || '').toLowerCase().includes(q.toLowerCase()));
@@ -687,6 +782,12 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
               </div>
             )}
           </div>
+          {/* Budget banner (seniors only — HR/admin are exempt). */}
+          {emp && budget && !budget.exempt && (
+            <div className="rounded-lg px-3 py-2 text-[12px] font-semibold" style={budget.remaining > 0 ? { background: '#EFF6FF', color: '#2563EB' } : { background: '#FEE2E2', color: '#DC2626' }}>
+              💳 Monthly budget: {budget.remaining.toLocaleString('en-IN')} of {budget.limit.toLocaleString('en-IN')} points left
+            </div>
+          )}
           {/* Selected employee context */}
           {emp && summary && (
             <>
@@ -722,7 +823,7 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                 <div>
                   <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
                   <div className="grid grid-cols-4 gap-2">
-                    {badges.map((b) => (<button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div></button>))}
+                    {badges.map((b) => (<button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-bold mt-0.5" style={{ color: '#0435AC' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
                   </div>
                 </div>
               )}

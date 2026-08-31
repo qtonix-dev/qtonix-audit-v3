@@ -2104,6 +2104,53 @@ const RewardWallet = sequelize.define('RewardWallet', {
 ] });
 RewardWallet.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Per-senior monthly budget override. If a row exists for a giver, its limit
+// wins over the role default in Settings.rewardConfig.budgets. Lets the admin
+// set a specific cap for an individual TL/PM/HOD regardless of department.
+const RewardBudget = sequelize.define('RewardBudget', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  giverId: { type: DataTypes.INTEGER, allowNull: false, unique: true }, // HrUser id
+  monthlyLimit: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  note: { type: DataTypes.STRING(200), defaultValue: '' },
+  setByName: { type: DataTypes.STRING(120), defaultValue: '' },
+}, { tableName: 'reward_budgets', indexes: [
+  { name: 'idx_reward_budget_giver', unique: true, fields: ['giverId'] },
+] });
+RewardBudget.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// High-value recognition awaiting approval. A recognition/reward that needs sign
+// off (by its point tier) is parked here as `pending`; the ledger entry is only
+// written once approved. Keeps big awards out of wallets until authorized.
+const RewardApproval = sequelize.define('RewardApproval', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },     // beneficiary
+  employeeName: { type: DataTypes.STRING(120), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  points: { type: DataTypes.INTEGER, allowNull: false },
+  category: { type: DataTypes.STRING(40), defaultValue: 'badge' },
+  ruleKey: { type: DataTypes.STRING(60), defaultValue: '' },
+  badgeId: { type: DataTypes.STRING(60), defaultValue: '' },
+  title: { type: DataTypes.STRING(160), defaultValue: '' },
+  reason: { type: DataTypes.STRING(500), defaultValue: '' },
+  requiredLevel: { type: DataTypes.STRING(20), defaultValue: 'manager' }, // manager|hod_hr|senior_mgmt
+  // Requester (the senior who gave it).
+  byId: { type: DataTypes.INTEGER, allowNull: true },
+  byName: { type: DataTypes.STRING(120), defaultValue: '' },
+  byRole: { type: DataTypes.STRING(40), defaultValue: '' },
+  status: { type: DataTypes.STRING(12), defaultValue: 'pending' },  // pending|approved|rejected
+  decidedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  decidedAt: { type: DataTypes.DATE, allowNull: true },
+  decisionNote: { type: DataTypes.STRING(300), defaultValue: '' },
+  source: { type: DataTypes.STRING(40), defaultValue: 'recognition' },
+  refId: { type: DataTypes.STRING(60), defaultValue: '' },
+  ledgerId: { type: DataTypes.INTEGER, allowNull: true },           // set once approved & awarded
+}, { tableName: 'reward_approvals', indexes: [
+  { name: 'idx_reward_appr_status', fields: ['status'] },
+  { name: 'idx_reward_appr_branch', fields: ['branch'] },
+] });
+RewardApproval.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
 // team. Same shape as the HR survey so the shared AI service works unchanged. =====
@@ -2220,7 +2267,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
-  RewardRule, RewardLedger, RewardWallet,
+  RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

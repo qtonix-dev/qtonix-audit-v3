@@ -130,4 +130,51 @@ async function walletFor(models, employeeId) {
   return { balance: w.balance, reserved: w.reserved, lifetimeEarned: w.lifetimeEarned, lifetimeRedeemed: w.lifetimeRedeemed, lifetimeExpired: w.lifetimeExpired, rupeeValue: value };
 }
 
-module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive };
+// ===== Monthly budgets =====
+const ROLE_BUDGET_KEY = { tl: 'tl', manager: 'pm', senior: 'tl' };
+async function monthlyLimitFor(models, giver) {
+  const { RewardBudget, Settings } = models;
+  if (!giver) return 0;
+  const override = await RewardBudget.findOne({ where: { giverId: giver.id } });
+  if (override) return override.monthlyLimit;
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  const budgets = (s && s.rewardConfig && s.rewardConfig.budgets) || {};
+  if (giver.isHrAdmin || giver.type === 'admin') return budgets.senior_mgmt || 10000;
+  if (giver.isHrManager || ['hr', 'recruiter'].includes(giver.type)) return budgets.hr || 5000;
+  const key = ROLE_BUDGET_KEY[giver.type] || 'tl';
+  return budgets[key] || 0;
+}
+
+async function spentThisMonth(models, giverId) {
+  const { RewardLedger } = models;
+  const now = Date.now();
+  let startMs;
+  try { const SP = require('./salesPeriod'); startMs = SP.boundaries(now, 6).startOfMonthMs; }
+  catch { const d = new Date(); startMs = new Date(d.getFullYear(), d.getMonth(), 1).getTime(); }
+  const rows = await RewardLedger.findAll({ where: { byId: giverId, source: 'recognition' } });
+  return rows.filter((r) => r.points > 0 && new Date(r.createdAt).getTime() >= startMs).reduce((a, r) => a + r.points, 0);
+}
+
+async function budgetCheck(models, giver, points) {
+  if (!giver) return { ok: true };
+  const exempt = giver.isHrAdmin || giver.isHrManager || ['hr', 'recruiter'].includes(giver.type) || giver.type === 'admin';
+  if (exempt) return { ok: true, exempt: true };
+  const limit = await monthlyLimitFor(models, giver);
+  if (!limit) return { ok: false, limit: 0, spent: 0, remaining: 0, reason: 'no_budget' };
+  const spent = await spentThisMonth(models, giver.id);
+  const remaining = limit - spent;
+  return { ok: points <= remaining, limit, spent, remaining };
+}
+
+function approvalTier(points) {
+  if (points <= 500) return 'manager';
+  if (points <= 2500) return 'hod_hr';
+  return 'senior_mgmt';
+}
+function needsApproval(giver, points, rule) {
+  if (giver && (giver.isHrAdmin || giver.isHrManager || ['hr', 'recruiter'].includes(giver.type) || giver.type === 'admin')) return false;
+  if (rule && rule.requiresApproval) return true;
+  return points > 500;
+}
+
+module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval };
