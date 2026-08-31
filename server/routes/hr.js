@@ -5740,16 +5740,19 @@ router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (r
       const mailbox = mailboxEmail(s);
       if (!token || !mailbox) return res.status(400).json({ error: 'No recruitment mailbox is linked. Connect one in Admin → Email.' });
       const hrEmail = require('../services/hrEmailTemplate');
-      const { Op } = require('../models');
-      const dept = (job && job.department) || row.department || '';
-      const all = await HrUser.findAll({ where: { active: true, type: { [Op.in]: ['manager', 'tl'] } } });
-      const seniors = all.filter((u) => u.email && (u.type === 'manager' || (u.type === 'tl' && dept && String(u.department || '').trim().toLowerCase() === String(dept).trim().toLowerCase())));
-      if (!seniors.length) return res.status(400).json({ error: 'No Project Managers or Team Leads found to notify.' });
+      const dept = String((job && job.department) || row.department || '').trim().toLowerCase();
+      const active = await HrUser.findAll({ where: { active: true } });
+      const sameDept = (u) => dept && String(u.department || '').trim().toLowerCase() === dept;
+      // Strictly the joiner's OWN department: PMs (managers) + TLs in that dept.
+      const seniors = active.filter((u) => u.email && (u.type === 'manager' || u.type === 'tl') && sameDept(u));
+      if (!seniors.length) return res.status(400).json({ error: `No Project Manager or Team Lead found in the ${(job && job.department) || row.department || 'candidate\'s'} department to notify.` });
+      // Keep HR & HR-managers in copy.
+      const ccEmails = active.filter((u) => u.email && (['hr', 'recruiter'].includes(u.type) || u.isHrManager)).map((u) => u.email);
       const joiningDateText = row.offer && row.offer.joiningDate ? new Date(String(row.offer.joiningDate).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
       const sentTo = [];
       for (const mgr of seniors) {
-        const bodyHtml = hrEmail.onboardingSeniorNotice({ managerName: mgr.name, candidateName: row.name, role: job ? job.title : '', department: dept, joiningDateText, signature: null });
-        try { await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: mgr.email, toName: mgr.name, subject: `New joiner: ${row.name}${job ? ` (${job.title})` : ''}`, bodyHtml }, { type: 'onboarding_senior', userId: mgr.id }); sentTo.push({ name: mgr.name, email: mgr.email }); } catch {}
+        const bodyHtml = hrEmail.onboardingSeniorNotice({ managerName: mgr.name, candidateName: row.name, role: job ? job.title : '', department: (job && job.department) || row.department || '', joiningDateText, signature: null });
+        try { await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: mgr.email, toName: mgr.name, cc: ccEmails, subject: `New joiner: ${row.name}${job ? ` (${job.title})` : ''}`, bodyHtml }, { type: 'onboarding_senior', userId: mgr.id }); sentTo.push({ name: mgr.name, email: mgr.email }); } catch {}
       }
       if (!sentTo.length) return res.status(502).json({ error: 'Could not send the notification. Please try again.' });
       onb.seniorNotifiedAt = nowIso;

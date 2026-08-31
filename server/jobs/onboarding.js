@@ -56,14 +56,21 @@ async function hrContactFor(models, cand, job) {
   return null;
 }
 
-// Project Manager(s) + Team Leads of the joiner's department.
+// Recipients of the "new joiner" notice: the Project Manager(s) and Team
+// Lead(s) of the joiner's OWN department only — a manager or TL in a different
+// department must NOT be notified. Returns { to: [...], cc: [...] } where `to`
+// is the department PMs/TLs and `cc` is HR staff (HR/recruiter/HR-managers) so
+// HR & admin are always kept in the loop.
 async function seniorsFor(models, job, cand) {
   const { HrUser, Op } = models;
-  const dept = (job && job.department) || cand.department || '';
-  const where = { active: true, type: { [Op.in]: ['manager', 'tl'] } };
-  const all = await HrUser.findAll({ where });
-  // PMs (managers) company-wide + TLs in the same department.
-  return all.filter((u) => u.type === 'manager' || (u.type === 'tl' && dept && String(u.department || '').trim().toLowerCase() === String(dept).trim().toLowerCase()));
+  const dept = String((job && job.department) || cand.department || '').trim().toLowerCase();
+  const active = await HrUser.findAll({ where: { active: true } });
+  const sameDept = (u) => dept && String(u.department || '').trim().toLowerCase() === dept;
+  // PMs (managers) and TLs — strictly within the joiner's department.
+  const to = active.filter((u) => u.email && (u.type === 'manager' || u.type === 'tl') && sameDept(u));
+  // HR staff kept in copy: HR/recruiter roles and anyone flagged as an HR manager.
+  const cc = active.filter((u) => u.email && (['hr', 'recruiter'].includes(u.type) || u.isHrManager));
+  return { to, cc };
 }
 
 async function tick(models) {
@@ -111,27 +118,32 @@ async function tick(models) {
       // 2 days before → notify seniors (once), + reporting details if docs done.
       if (jd === d2) {
         if (!onb.seniorNotifiedAt) {
-          const seniors = await seniorsFor(models, job, cand);
-          let anySent = false;
-          const sentTo = [];
-          for (const mgr of seniors) {
-            if (!mgr.email) continue;
-            const bodyHtml = tpl.onboardingSeniorNotice({ managerName: mgr.name, candidateName: cand.name, role: job ? job.title : '', department: job ? job.department : '', joiningDateText, signature: hrSig });
-            const okSent = await sendOnce(models, s, sender, { dedupeKey: `onbsenior:${cand.id}:${jd}:${mgr.email}`, type: 'onboarding_senior', to: mgr.email, toName: mgr.name, subject: `New joiner: ${cand.name}${job ? ` (${job.title})` : ''}`, bodyHtml });
-            if (okSent) sentTo.push({ name: mgr.name, email: mgr.email });
-            anySent = anySent || okSent;
-          }
-          if (anySent) {
-            const sentAt = new Date().toISOString();
-            onb.seniorNotifiedAt = sentAt;
-            // Auto-complete the "Email department PM & Team Leads" checklist task
-            // and record exactly who it went to + when, so HR can see it's done.
-            if (Array.isArray(onb.hrTasks)) {
-              onb.hrTasks = onb.hrTasks.map((t) => t.id === 'notify_seniors'
-                ? { ...t, done: true, doneAt: sentAt, meta: { ...(t.meta || {}), autoSent: true, sentAt, recipients: sentTo } }
-                : t);
+          const { to: deptSeniors, cc: hrCc } = await seniorsFor(models, job, cand);
+          // No PM/TL in the joiner's department → don't fire (avoids emailing the
+          // wrong people). HR still sees the joiner via the onboarding board.
+          if (deptSeniors.length) {
+            let anySent = false;
+            const sentTo = [];
+            const ccEmails = hrCc.map((u) => u.email).filter(Boolean);
+            for (const mgr of deptSeniors) {
+              if (!mgr.email) continue;
+              const bodyHtml = tpl.onboardingSeniorNotice({ managerName: mgr.name, candidateName: cand.name, role: job ? job.title : '', department: job ? job.department : '', joiningDateText, signature: hrSig });
+              const okSent = await sendOnce(models, s, sender, { dedupeKey: `onbsenior:${cand.id}:${jd}:${mgr.email}`, type: 'onboarding_senior', to: mgr.email, toName: mgr.name, subject: `New joiner: ${cand.name}${job ? ` (${job.title})` : ''}`, bodyHtml, cc: ccEmails });
+              if (okSent) sentTo.push({ name: mgr.name, email: mgr.email });
+              anySent = anySent || okSent;
             }
-            dirty = true; acted++;
+            if (anySent) {
+              const sentAt = new Date().toISOString();
+              onb.seniorNotifiedAt = sentAt;
+              // Auto-complete the "Email department PM & Team Leads" checklist task
+              // and record exactly who it went to + when, so HR can see it's done.
+              if (Array.isArray(onb.hrTasks)) {
+                onb.hrTasks = onb.hrTasks.map((t) => t.id === 'notify_seniors'
+                  ? { ...t, done: true, doneAt: sentAt, meta: { ...(t.meta || {}), autoSent: true, sentAt, recipients: sentTo, ccHr: hrCc.map((u) => u.name) } }
+                  : t);
+              }
+              dirty = true; acted++;
+            }
           }
         }
         if ((onb.status === 'submitted' || onb.docsComplete) && !onb.reportingSentAt) {
