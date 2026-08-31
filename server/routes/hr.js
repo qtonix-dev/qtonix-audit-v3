@@ -730,6 +730,37 @@ router.get('/badges/catalog', requireHrAccess, async (req, res) => {
   res.json({ badges: BADGE_CATALOG });
 });
 
+// People the current actor may recognize/review, for the Recognition page and
+// the dashboard card. HR/admin → everyone active; a senior → their reporting
+// line (direct + indirect reports). Also returns recent recognition activity.
+router.get('/recognition/team', requireHrAccess, async (req, res, next) => {
+  try {
+    const active = await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] });
+    const canAll = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    let team = [];
+    if (canAll) {
+      team = active.filter((u) => !(req.hrUser && u.id === req.hrUser.id));
+    } else if (req.hrUser) {
+      // Build the set of everyone below this actor in the reporting tree.
+      const byManager = {};
+      for (const u of active) { if (u.reportsToId) (byManager[u.reportsToId] = byManager[u.reportsToId] || []).push(u); }
+      const out = []; const seen = new Set(); const stack = [...(byManager[req.hrUser.id] || [])];
+      while (stack.length) { const u = stack.pop(); if (seen.has(u.id)) continue; seen.add(u.id); out.push(u); (byManager[u.id] || []).forEach((c) => stack.push(c)); }
+      team = out;
+    }
+    const teamOut = team.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', avatar: u.avatar || '', badges: ((u.profile || {}).performanceCards || []).filter((c) => c.kind === 'praise').length }));
+    // Recent recognition across the visible team (last 20 appreciations).
+    const recent = [];
+    for (const u of team) {
+      for (const c of ((u.profile || {}).performanceCards || [])) {
+        if (c.kind === 'praise') recent.push({ employeeId: u.id, employeeName: u.name, badge: c.badge || null, title: c.title || '', by: c.by || '', byRole: c.byRole || '', date: c.date, auto: !!c.auto });
+      }
+    }
+    recent.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    res.json({ canReviewAnyone: canAll, team: teamOut, recent: recent.slice(0, 20) });
+  } catch (e) { next(e); }
+});
+
 // POST a performance card (appreciation / review / yellow / red). Department
 // heads may card their own department; HR/admin anyone. Appreciations may carry
 // a badge and fire team + HR/Admin notifications (with an optional announcement).
