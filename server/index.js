@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v370';
+const APP_VERSION = 'v372';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -935,6 +935,10 @@ connectWithRetry()
       catch (e) { console.error('[payment-reminder] not started:', e.message); }
       try { require('./jobs/onboarding').start(require('./models')); }
       catch (e) { console.error('[onboarding-job] not started:', e.message); }
+      try { require('./jobs/badges').start(require('./models')); }
+      catch (e) { console.error('[badges-job] not started:', e.message); }
+      try { require('./services/rewardSeed').seed(require('./models')); }
+      catch (e) { console.error('[reward-seed] failed:', e.message); }
     });
   })
   .catch((e) => {

@@ -4,7 +4,8 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet } = require('../models');
+const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
 const { resolveHolidayEmojis } = require('../services/holidayEmoji');
@@ -730,9 +731,126 @@ async function canReviewEmployee(req, emp) {
   return false;
 }
 
-// GET the badge catalog (for the "give appreciation" picker).
-router.get('/badges/catalog', requireHrAccess, async (req, res) => {
-  res.json({ badges: BADGE_CATALOG });
+// ===== Reward Wallet & Ledger =====
+// The logged-in employee's wallet + point history, for the My Rewards dashboard.
+router.get('/me/rewards', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ wallet: { balance: 0, rupeeValue: 0 }, ledger: [], thisYear: {} });
+    const R = require('../services/rewards');
+    const wallet = await R.walletFor(models, req.hrUser.id);
+    const rows = await RewardLedger.findAll({ where: { employeeId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 200 });
+    const year = new Date().getFullYear();
+    let earnedYr = 0, redeemedYr = 0;
+    for (const r of rows) { const y = new Date(r.createdAt).getFullYear(); if (y === year) { if (r.points > 0) earnedYr += r.points; else if (r.kind === 'redeem') redeemedYr += -r.points; } }
+    // Points expiring in the next 90 days (unspent earns).
+    const soon = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const expiring = rows.filter((r) => r.points > 0 && !r.expired && r.expiresOn && r.expiresOn > today && r.expiresOn <= soon).reduce((a, r) => a + r.points, 0);
+    res.json({
+      wallet,
+      thisYear: { earned: earnedYr, redeemed: redeemedYr },
+      expiringSoon: expiring,
+      ledger: rows.map((r) => ({ id: r.id, points: r.points, kind: r.kind, category: r.category, title: r.title, badgeId: r.badgeId, by: r.byName, byRole: r.byRole, date: r.createdAt, reason: r.reason })),
+    });
+  } catch (e) { next(e); }
+});
+
+// ===== Admin: reward rules (view + edit points/active) =====
+router.get('/rewards/rules', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const rules = await RewardRule.findAll({ order: [['category', 'ASC'], ['sortOrder', 'ASC'], ['name', 'ASC']] });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ rules: rules.map((r) => r.toJSON()), config: (s && s.rewardConfig) || {} });
+  } catch (e) { next(e); }
+});
+
+router.put('/rewards/rules/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const rule = await RewardRule.findByPk(Number(req.params.id));
+    if (!rule) return res.status(404).json({ error: 'Rule not found.' });
+    const b = req.body || {};
+    if (b.points !== undefined) { const n = Number(b.points); if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Points must be a non-negative number.' }); rule.points = Math.round(n); }
+    if (b.pointsMax !== undefined) rule.pointsMax = b.pointsMax === null || b.pointsMax === '' ? null : Math.max(0, Math.round(Number(b.pointsMax) || 0));
+    if (b.active !== undefined) rule.active = !!b.active;
+    if (b.frequency !== undefined) rule.frequency = String(b.frequency).slice(0, 30);
+    if (b.approvalLevel !== undefined) rule.approvalLevel = String(b.approvalLevel).slice(0, 20);
+    await rule.save();
+    res.json(rule.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Admin: reward config (point ratio, expiry, budgets).
+router.put('/rewards/config', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const cfg = { ...(s.rewardConfig || {}) };
+    const b = req.body || {};
+    if (b.pointsPerRupee !== undefined) { const n = Number(b.pointsPerRupee); if (n > 0) cfg.pointsPerRupee = n; }
+    if (b.expiryMonths !== undefined) { const n = Number(b.expiryMonths); if (n > 0) cfg.expiryMonths = Math.round(n); }
+    if (b.budgets) cfg.budgets = { ...(cfg.budgets || {}), ...b.budgets };
+    if (b.attendancePointsEnabled !== undefined) cfg.attendancePointsEnabled = !!b.attendancePointsEnabled;
+    s.rewardConfig = cfg; s.changed('rewardConfig', true); await s.save();
+    res.json({ config: cfg });
+  } catch (e) { next(e); }
+});
+
+// Admin: reward overview KPIs (issued / redeemed / outstanding / liability).
+router.get('/rewards/overview', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const rows = await RewardLedger.findAll();
+    let issued = 0, redeemed = 0, expired = 0, reversed = 0;
+    for (const r of rows) { if (r.points > 0) issued += r.points; else if (r.kind === 'redeem') redeemed += -r.points; else if (r.kind === 'expire') expired += -r.points; else if (r.kind === 'reversal') reversed += -r.points; }
+    const wallets = await RewardWallet.findAll();
+    const outstanding = wallets.reduce((a, w) => a + w.balance, 0);
+    const ratio = await R.pointRatio(models);
+    res.json({
+      issued, redeemed, expired, outstanding,
+      liabilityRupees: Math.round((outstanding / ratio) * 100) / 100,
+      employeesRewarded: wallets.filter((w) => w.lifetimeEarned > 0).length,
+      recognitionCount: rows.filter((r) => r.source === 'recognition').length,
+    });
+  } catch (e) { next(e); }
+});
+
+// Admin: run auto-rewards now (birthday/joining/anniversary + attendance).
+router.post('/rewards/run-auto', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try { await require('../jobs/badges').tick(require('../models')); res.json({ ok: true }); }
+  catch (e) { next(e); }
+});
+
+// Admin: reverse a ledger transaction (never deletes — creates a -N entry).
+router.post('/rewards/ledger/:id/reverse', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const out = await R.reverse(models, Number(req.params.id), { reason: String((req.body && req.body.reason) || '').slice(0, 500), byName: req.hrActor.name, byRole: req.isHrAdmin ? 'Admin' : 'HR', byId: req.hrActor.id });
+    if (!out.ok) return res.status(400).json({ error: out.error || 'Could not reverse.' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+
+router.get('/badges/catalog', requireHrAccess, async (req, res, next) => {
+  try {
+    const rules = await RewardRule.findAll({ where: { category: 'badge', active: true } });
+    const ptsByBadge = {};
+    for (const r of rules) { const id = r.key.replace(/^badge_/, ''); ptsByBadge[id] = { points: r.points, pointsMax: r.pointsMax }; }
+    const badges = BADGE_CATALOG.map((b) => ({ ...b, points: (ptsByBadge[b.id] || {}).points || 0, pointsMax: (ptsByBadge[b.id] || {}).pointsMax || null }));
+    // Include the full seeded badge library (beyond the original 8) so the picker
+    // can offer all of them — sourced from the rules table.
+    const known = new Set(BADGE_CATALOG.map((b) => b.id));
+    for (const r of rules) { const id = r.key.replace(/^badge_/, ''); if (!known.has(id)) badges.push({ id, name: r.name, icon: r.icon, color: r.color, desc: r.description, points: r.points, pointsMax: r.pointsMax }); }
+    res.json({ badges, appreciationPoints: (await RewardRule.findOne({ where: { key: 'appreciation_plain' } }))?.points || 0 });
+  } catch (e) { next(e); }
+});
+
+// Admin: run the auto-badge check immediately (instead of waiting for the
+// scheduled job) — useful after importing attendance or to backfill milestones.
+router.post('/badges/run-auto', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    await require('../jobs/badges').tick(require('../models'));
+    res.json({ ok: true });
+  } catch (e) { next(e); }
 });
 
 // People the current actor may recognize/review, for the Recognition page and
@@ -877,6 +995,26 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
     emp.profile = profile; emp.changed('profile', true);
     await emp.save();
 
+    // Award Reward Points for appreciations (Review/Yellow/Red never earn points).
+    // Points come from the rule for the chosen badge, or the plain-appreciation
+    // rule when no badge is picked. The card records the points for the ledger
+    // trail. Manager never types the number — it's resolved from the rule.
+    let pointsAwarded = 0;
+    if (kind === 'praise') {
+      try {
+        const R = require('../services/rewards');
+        const resolved = badge ? await R.pointsForBadge(models, badge.id) : await R.pointsForRule(models, 'appreciation_plain');
+        if (resolved.points > 0) {
+          const res = await R.award(models, emp.id, {
+            points: resolved.points, category: 'badge', ruleKey: badge ? `badge_${badge.id}` : 'appreciation_plain',
+            badgeId: badge ? badge.id : '', title: badge ? badge.name : 'Appreciation', reason: note || '',
+            byName, byRole: actorRole, byId: req.hrActor.id || null, source: 'recognition', refId: card.id,
+          });
+          if (res.ok) { pointsAwarded = resolved.points; card.points = pointsAwarded; emp.profile.performanceCards = emp.profile.performanceCards.map((c) => c.id === card.id ? { ...c, points: pointsAwarded } : c); emp.changed('profile', true); await emp.save(); }
+        }
+      } catch (e) { console.error('[rewards] award on recognition failed:', e.message); }
+    }
+
     // Notify on appreciation: the joiner's team (same department) + HR & Admin.
     let notified = 0;
     if (kind === 'praise') {
@@ -911,7 +1049,7 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
         } catch {}
       }
     }
-    res.json({ ok: true, card, notified });
+    res.json({ ok: true, card, notified, pointsAwarded });
   } catch (e) { next(e); }
 });
 

@@ -373,6 +373,62 @@ function MyRecognitionModal({ data, onClose }) {
 }
 
 const REC_BADGE_FALLBACK = { icon: '🌟', color: '#EA580C' };
+
+// ===== My Rewards — the employee's reward wallet, points & history =====
+function MyRewardsPage({ user }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { hrApi('/me/rewards').then(setData).catch(() => setData({ wallet: {}, ledger: [] })); }, []);
+  if (!data) return <div className="max-w-4xl mx-auto px-4 py-8 text-slate-400 text-sm">Loading…</div>;
+  const w = data.wallet || {};
+  const fmt = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
+  const catIcon = { badge: '🏅', automatic: '🎁', anniversary: '🎊', attendance: '📅', appreciation: '❤️' };
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-6">
+      <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>
+      <div className="grid md:grid-cols-3 gap-4 mb-5">
+        <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
+          <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9fb4dd' }}>Reward Wallet</div>
+          <div className="text-4xl font-extrabold mt-1 leading-none">{(w.balance || 0).toLocaleString('en-IN')}</div>
+          <div className="text-sm font-bold mt-2" style={{ color: '#ffd9b8' }}>💰 ₹{(w.rupeeValue || 0).toLocaleString('en-IN')} reward value</div>
+          {w.reserved > 0 && <div className="text-[11px] mt-1" style={{ color: '#9fb4dd' }}>{w.reserved} reserved for pending redemptions</div>}
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <div className="text-2xl font-extrabold text-green-600">{((data.thisYear || {}).earned || 0).toLocaleString('en-IN')}</div>
+          <div className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Earned this year</div>
+          <div className="text-[11px] text-slate-400 mt-2">Lifetime earned: {(w.lifetimeEarned || 0).toLocaleString('en-IN')}</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <div className="text-2xl font-extrabold text-blue-600">{(w.lifetimeRedeemed || 0).toLocaleString('en-IN')}</div>
+          <div className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Redeemed</div>
+          <div className="text-[11px] text-slate-400 mt-2">Expired: {(w.lifetimeExpired || 0).toLocaleString('en-IN')}</div>
+        </div>
+      </div>
+      {data.expiringSoon > 0 && (
+        <div className="rounded-xl px-4 py-3 mb-5 text-sm font-semibold" style={{ background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9a3412' }}>⚠️ {data.expiringSoon.toLocaleString('en-IN')} points expire in the next 90 days.</div>
+      )}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="text-sm font-extrabold text-[#050A1F] mb-3">📒 Point Ledger</div>
+        {(data.ledger || []).length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No reward points yet. Earn points through recognition, badges and milestones!</div>
+        ) : (
+          <div className="space-y-1">
+            {(data.ledger || []).map((l) => (
+              <div key={l.id} className="flex items-center gap-3 py-2.5 border-t border-slate-50 first:border-0">
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: l.points > 0 ? '#DCFCE7' : '#FEE2E2' }}>{catIcon[l.category] || (l.points > 0 ? '➕' : '➖')}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-bold text-[#0A0E28]">{l.title || l.category || 'Reward'}</div>
+                  <div className="text-[11px] text-slate-400">{fmt(l.date)}{l.by && l.by !== 'System' ? ` · by ${l.by}${l.byRole ? ` (${l.byRole})` : ''}` : (l.kind === 'reversal' ? ' · Reversal' : ' · Automatic')}</div>
+                </div>
+                <span className={`font-extrabold text-sm shrink-0 ${l.points > 0 ? 'text-green-600' : 'text-red-600'}`}>{l.points > 0 ? '+' : ''}{l.points.toLocaleString('en-IN')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RecognitionPage({ user, onOpenEmployee }) {
   const canSeeAll = !!(user && (user.isAdmin || user.hrManagerAll || user.hrManagerScope || user.isHrManager));
   const [tab, setTab] = useState('give');
@@ -448,8 +504,14 @@ function AllRecognition({ onOpenEmployee }) {
   const filt = (data && data.filters) || { branches: [], departments: [], givers: [] };
   const sel = 'border border-slate-300 rounded-lg px-2.5 py-1.5 text-[13px]';
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const [autoBusy, setAutoBusy] = useState(false);
+  const runAuto = async () => { setAutoBusy(true); try { await hrApi('/badges/run-auto', { method: 'POST', body: '{}' }); await load(); alert('Milestone badges updated.'); } catch (e) { alert(e.message); } setAutoBusy(false); };
   return (
     <div>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="text-[12px] text-slate-400">Every appreciation, review and conduct flag given across {data && data.scopedBranch ? 'your branch' : 'the company'}. Auto badges (attendance milestones) are awarded automatically.</div>
+        <button onClick={runAuto} disabled={autoBusy} className="text-[12px] font-bold rounded-lg px-3 py-1.5 disabled:opacity-50" style={{ background: '#EDE9FE', color: '#7C3AED' }}>{autoBusy ? 'Checking…' : '⚡ Run milestone check'}</button>
+      </div>
       <div className="bg-white border border-slate-200 rounded-xl p-3 mb-3 flex flex-wrap gap-2 items-center">
         <select className={sel} value={f.type} onChange={(e) => set('type', e.target.value)}><option value="">All types</option><option value="praise">Appreciation</option><option value="review">Review</option><option value="yellow">Yellow card</option><option value="red">Red card</option></select>
         {data && data.scopedBranch ? (
@@ -7882,7 +7944,7 @@ export default function HrApp() {
   const location = useLocation();
   // Derive the current view from the URL path (/hr/<view>) so refresh and deep
   // links keep the user on the same page. Falls back to dashboard.
-  const VALID_VIEWS = ['dashboard', 'recognition', 'tasks', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
+  const VALID_VIEWS = ['dashboard', 'recognition', 'rewards', 'tasks', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
     'corehr_attendance', 'corehr_leave', 'corehr_payroll', 'corehr_expenses', 'corehr_stock', 'corehr_onboarding'];
   // Clean-URL slugs for the Core HR sub-pages: the internal view id keeps its
   // underscore (used all over the component tree), but the URL uses a tidy
@@ -7968,6 +8030,7 @@ export default function HrApp() {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Task' },
     ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
+    { id: 'rewards', label: 'My Rewards' },
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
@@ -8069,6 +8132,7 @@ export default function HrApp() {
           </div>
         ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onNav={setView} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'recognition' && <RecognitionPage user={user} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
+        {effectiveView === 'rewards' && <MyRewardsPage user={user} />}
         {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}

@@ -503,6 +503,13 @@ const Settings = sequelize.define(
     // emits (share links, OG tags, onboarding/report emails, QR codes).
     // { hrms, careers, crm, reports } — each a bare host or full origin.
     publicDomains: { type: DataTypes.JSON, defaultValue: { hrms: '', careers: '', crm: '', reports: '' } },
+    // Rewards & recognition config: points↔rupee ratio, expiry window, and the
+    // per-role monthly discretionary budgets. All admin-editable.
+    rewardConfig: { type: DataTypes.JSON, defaultValue: {
+      pointsPerRupee: 2, expiryMonths: 24,
+      budgets: { tl: 2500, pm: 3500, hod: 5000, hr: 5000, senior_mgmt: 10000 },
+      attendancePoints: { d30: 50, d60: 100, d100: 250 }, attendancePointsEnabled: false,
+    } },
 
     pricing: { type: DataTypes.JSON },
     // CRM dropdown configuration — admin-editable so new sources/services/stages
@@ -2008,6 +2015,91 @@ const HrDailyReport = sequelize.define('HrDailyReport', {
 ] });
 HrDailyReport.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===========================================================================
+// ===== REWARDS & RECOGNITION SYSTEM ========================================
+// A configurable points economy layered on the existing recognition system.
+// Core principle: NOTHING hardcodes points — a Rules table drives values, and
+// an immutable Ledger records every point movement. The Wallet is a cached
+// running balance kept in lock-step with the ledger inside a transaction.
+// ===========================================================================
+
+// Reward Rules — the single source of truth for "what earns how many points".
+// Every award looks up its points here (badges reference a rule by badgeId).
+const RewardRule = sequelize.define('RewardRule', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  key: { type: DataTypes.STRING(60), allowNull: false, unique: true }, // stable id e.g. 'badge_customer_hero', 'auto_birthday'
+  name: { type: DataTypes.STRING(120), allowNull: false },
+  category: { type: DataTypes.STRING(40), defaultValue: 'badge' },     // badge|appreciation|automatic|attendance|innovation|helping|performance|learning|mentoring|customer|award|referral|anniversary
+  points: { type: DataTypes.INTEGER, defaultValue: 0 },                // fixed award value (min of a range)
+  pointsMax: { type: DataTypes.INTEGER, allowNull: true },             // optional upper bound for ranged rewards
+  icon: { type: DataTypes.STRING(16), defaultValue: '' },
+  color: { type: DataTypes.STRING(16), defaultValue: '' },
+  description: { type: DataTypes.STRING(300), defaultValue: '' },
+  frequency: { type: DataTypes.STRING(30), defaultValue: 'unlimited' },// unlimited|once|yearly|quarterly|monthly|per_item
+  approvalLevel: { type: DataTypes.STRING(20), defaultValue: 'auto' }, // auto|manager|hod_hr|senior_mgmt
+  // Eligibility scoping (empty = everyone).
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  designation: { type: DataTypes.STRING(80), defaultValue: '' },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  requiresApproval: { type: DataTypes.BOOLEAN, defaultValue: false },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  effectiveFrom: { type: DataTypes.DATEONLY, allowNull: true },
+  effectiveTo: { type: DataTypes.DATEONLY, allowNull: true },
+  sortOrder: { type: DataTypes.INTEGER, defaultValue: 0 },
+}, { tableName: 'reward_rules', indexes: [
+  { name: 'idx_reward_rule_cat', fields: ['category'] },
+  { name: 'idx_reward_rule_active', fields: ['active'] },
+] });
+RewardRule.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Point Ledger — IMMUTABLE. Every earn / redeem / expire / reversal is one row.
+// The balance is never edited directly; it's derived by summing `points`.
+// `dedupeKey` makes automatic awards idempotent (birthday:emp:2026 etc.).
+const RewardLedger = sequelize.define('RewardLedger', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  points: { type: DataTypes.INTEGER, allowNull: false },            // +earn / -redeem / -expire / -reversal
+  kind: { type: DataTypes.STRING(20), defaultValue: 'earn' },       // earn|redeem|reserve|expire|reversal|refund
+  category: { type: DataTypes.STRING(40), defaultValue: '' },       // mirrors the rule category
+  ruleKey: { type: DataTypes.STRING(60), defaultValue: '' },        // which rule generated it (if any)
+  badgeId: { type: DataTypes.STRING(60), defaultValue: '' },
+  title: { type: DataTypes.STRING(160), defaultValue: '' },
+  reason: { type: DataTypes.STRING(500), defaultValue: '' },
+  // Attribution / audit.
+  byName: { type: DataTypes.STRING(120), defaultValue: 'System' },
+  byRole: { type: DataTypes.STRING(40), defaultValue: '' },
+  byId: { type: DataTypes.INTEGER, allowNull: true },
+  approvedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  source: { type: DataTypes.STRING(40), defaultValue: '' },          // recognition|auto|innovation|helping|store|admin
+  refId: { type: DataTypes.STRING(60), defaultValue: '' },           // reference to source record
+  reversalOf: { type: DataTypes.INTEGER, allowNull: true },          // ledger id this reverses
+  dedupeKey: { type: DataTypes.STRING(160), allowNull: true, unique: true },
+  // Expiry tracking (each earn carries an expiry date; expiry job consumes it).
+  expiresOn: { type: DataTypes.DATEONLY, allowNull: true },
+  expired: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, { tableName: 'reward_ledger', indexes: [
+  { name: 'idx_ledger_emp', fields: ['employeeId'] },
+  { name: 'idx_ledger_kind', fields: ['kind'] },
+  { name: 'idx_ledger_expires', fields: ['expiresOn', 'expired'] },
+] });
+RewardLedger.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Reward Wallet — cached running totals per employee (kept in step with the
+// ledger). Rebuildable from the ledger at any time, but stored for fast reads.
+const RewardWallet = sequelize.define('RewardWallet', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false, unique: true },
+  balance: { type: DataTypes.INTEGER, defaultValue: 0 },           // spendable now
+  reserved: { type: DataTypes.INTEGER, defaultValue: 0 },          // held for pending redemptions
+  lifetimeEarned: { type: DataTypes.INTEGER, defaultValue: 0 },
+  lifetimeRedeemed: { type: DataTypes.INTEGER, defaultValue: 0 },
+  lifetimeExpired: { type: DataTypes.INTEGER, defaultValue: 0 },
+}, { tableName: 'reward_wallets', indexes: [
+  { name: 'idx_wallet_emp', unique: true, fields: ['employeeId'] },
+] });
+RewardWallet.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
 // team. Same shape as the HR survey so the shared AI service works unchanged. =====
 const CrmSurvey = sequelize.define('CrmSurvey', {
@@ -2123,6 +2215,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  RewardRule, RewardLedger, RewardWallet,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
