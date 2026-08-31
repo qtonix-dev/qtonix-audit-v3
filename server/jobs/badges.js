@@ -116,17 +116,24 @@ async function tick(models) {
   try {
     const { HrUser, HrAttendance, HrLeave } = models;
     const today = istToday();
+    // Go-live date — attendance milestones only count days on/after this, so
+    // turning Rewards on doesn't instantly award "100 days" for pre-go-live
+    // attendance. Before Rewards is ever on, liveSince is null and we skip.
+    const cfgRow = await models.Settings.findOne({ where: { singleton: 'settings' } });
+    const liveSince = (cfgRow && cfgRow.rewardConfig && cfgRow.rewardConfig.liveSince) || null;
     const emps = await HrUser.findAll({ where: { active: true } });
     let awarded = 0;
     for (const emp of emps) {
-      const [attRows, leaveRows] = await Promise.all([
-        HrAttendance.findAll({ where: { employeeId: emp.id } }),
-        HrLeave.findAll({ where: { employeeId: emp.id } }),
-      ]);
-      if (attRows.length) {
-        const { noLeave, onTime } = computeStreaks(attRows, leaveRows);
-        for (const def of NO_LEAVE) { if (noLeave >= def.need) { const c = await awardBadge(models, emp, def, today); if (c) { awarded++; await notifyBadge(models, emp, def); } } }
-        for (const def of PUNCTUAL) { if (onTime >= def.need) { const c = await awardBadge(models, emp, def, today); if (c) { awarded++; await notifyBadge(models, emp, def); } } }
+      if (liveSince) {
+        const [attRows, leaveRows] = await Promise.all([
+          HrAttendance.findAll({ where: { employeeId: emp.id, date: { [require('sequelize').Op.gte]: liveSince } } }),
+          HrLeave.findAll({ where: { employeeId: emp.id, date: { [require('sequelize').Op.gte]: liveSince } } }),
+        ]);
+        if (attRows.length) {
+          const { noLeave, onTime } = computeStreaks(attRows, leaveRows);
+          for (const def of NO_LEAVE) { if (noLeave >= def.need) { const c = await awardBadge(models, emp, def, today); if (c) { awarded++; await notifyBadge(models, emp, def); } } }
+          for (const def of PUNCTUAL) { if (onTime >= def.need) { const c = await awardBadge(models, emp, def, today); if (c) { awarded++; await notifyBadge(models, emp, def); } } }
+        }
       }
       // Reward Points auto-rewards (idempotent via dedupeKey): birthday, joining, anniversary.
       try { awarded += await autoRewardPoints(models, emp, today); } catch (e) { /* per-employee, keep going */ }
@@ -152,12 +159,20 @@ function annivRuleForYears(years) {
 // Award the automatic point rewards an employee qualifies for TODAY.
 async function autoRewardPoints(models, emp, today) {
   const R = require('../services/rewards');
-  const { RewardRule } = models;
+  const { RewardRule, Settings } = models;
   let n = 0;
   const yr = today.slice(0, 4);
   const mmdd = today.slice(5); // MM-DD
 
-  // Birthday — once per calendar year, on the day.
+  // Go-live date: auto-rewards only count events on or after this. Before Rewards
+  // was ever switched on there's no liveSince and rewardsLive is false, so award()
+  // no-ops anyway — but the guard makes the intent explicit and stops the FIRST
+  // day's run from back-crediting joining/anniversary milestones already passed.
+  const s = await Settings.findOne({ where: { singleton: 'settings' } });
+  const liveSince = (s && s.rewardConfig && s.rewardConfig.liveSince) || null;
+  if (!liveSince || today < liveSince) return 0; // nothing before go-live
+
+  // Birthday — once per calendar year, on the day (never retroactive).
   if (emp.birthday) {
     const bday = String(emp.birthday).slice(5); // MM-DD
     if (bday === mmdd) {
@@ -169,11 +184,14 @@ async function autoRewardPoints(models, emp, today) {
     }
   }
 
-  // Joining reward — once, after completing 30 days.
+  // Joining reward — once, after completing 30 days — but ONLY if that 30-day
+  // mark falls on or after go-live. Someone who joined long before Rewards went
+  // live already passed day 30 in the past, so they don't get a back-dated bonus.
   if (emp.joiningDate) {
     const jd = new Date(String(emp.joiningDate).slice(0, 10) + 'T00:00:00Z');
+    const day30 = new Date(jd.getTime() + 30 * 86400000).toISOString().slice(0, 10);
     const days = Math.floor((new Date(today + 'T00:00:00Z') - jd) / 86400000);
-    if (days >= 30) {
+    if (days >= 30 && day30 >= liveSince) {
       const rule = await RewardRule.findOne({ where: { key: 'auto_joining', active: true } });
       if (rule && rule.points > 0) {
         const res = await R.award(models, emp.id, { points: rule.points, category: 'automatic', ruleKey: 'auto_joining', title: 'Joining reward', byName: 'System', byRole: 'Automatic', source: 'auto', dedupeKey: `joining:${emp.id}` });
@@ -181,7 +199,8 @@ async function autoRewardPoints(models, emp, today) {
       }
     }
 
-    // Work anniversary — on the joining month-day each year, tiered by years.
+    // Work anniversary — on the joining month-day each year (only today's, so
+    // never retroactive; the liveSince guard above already blocks pre-go-live days).
     const jMmdd = String(emp.joiningDate).slice(5);
     if (jMmdd === mmdd) {
       const years = Number(yr) - jd.getUTCFullYear();

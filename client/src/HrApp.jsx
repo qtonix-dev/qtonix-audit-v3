@@ -677,7 +677,7 @@ function RewardsAdmin() {
   const cfg = data.config || {};
   const live = !!cfg.rewardsLive;
   const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
-  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON? From now, recognition and milestones will start awarding points to employees. Make sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); } catch (e) { alert(e.message); } setBusy(''); };
+  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON? From today, recognition and milestones start awarding points. Past birthdays, joining bonuses, anniversaries and attendance streaks are NOT back-credited — only events from today forward count. Make sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); } catch (e) { alert(e.message); } setBusy(''); };
   const cats = {}; (data.rules || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
   const catLabel = { badge: '🏅 Badges', appreciation: '❤️ Appreciation', automatic: '🎁 Automatic', anniversary: '🎊 Anniversary', attendance: '📅 Attendance' };
   return (
@@ -685,7 +685,8 @@ function RewardsAdmin() {
       <div className="rounded-2xl border p-5 flex items-center justify-between gap-4 flex-wrap" style={{ background: live ? '#F0FDF4' : '#FFF7ED', borderColor: live ? '#BBF7D0' : '#FED7AA' }}>
         <div>
           <div className="text-[15px] font-extrabold" style={{ color: live ? '#15803D' : '#9a3412' }}>{live ? '✅ Rewards are LIVE' : '⏸ Rewards are paused'}</div>
-          <div className="text-[12px] mt-0.5" style={{ color: live ? '#166534' : '#9a3412' }}>{live ? 'Recognition and milestones are awarding points to employees.' : 'No points are being awarded yet. Review the point values below, then turn Rewards on.'}</div>
+          <div className="text-[12px] mt-0.5" style={{ color: live ? '#166534' : '#9a3412' }}>{live ? `Recognition and milestones are awarding points${cfg.liveSince ? ` since ${cfg.liveSince}` : ''}.` : 'No points are being awarded yet. Review the point values below, then turn Rewards on.'}</div>
+          {!live && <div className="text-[11px] mt-1" style={{ color: '#9a3412' }}>Milestones only count from the day you turn this on — past birthdays, joining bonuses and anniversaries are never back-credited.</div>}
         </div>
         <button onClick={toggleLive} disabled={busy === 'live'} className="rounded-xl px-5 py-2.5 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: live ? '#DC2626' : 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === 'live' ? '…' : (live ? 'Pause Rewards' : 'Turn Rewards ON')}</button>
       </div>

@@ -1362,7 +1362,15 @@ router.put('/rewards/config', requireHrAccess, requireHrManager, async (req, res
     const b = req.body || {};
     if (b.pointsPerRupee !== undefined) { const n = Number(b.pointsPerRupee); if (n > 0) cfg.pointsPerRupee = n; }
     if (b.expiryMonths !== undefined) { const n = Number(b.expiryMonths); if (n > 0) cfg.expiryMonths = Math.round(n); }
-    if (b.rewardsLive !== undefined) cfg.rewardsLive = !!b.rewardsLive;
+    if (b.rewardsLive !== undefined) {
+      cfg.rewardsLive = !!b.rewardsLive;
+      // Stamp the go-live date the FIRST time Rewards is switched on. Auto-rewards
+      // (joining/anniversary/birthday/attendance milestones) only count events on
+      // or after this date, so turning Rewards on never retroactively credits
+      // milestones people already passed. Kept once set (re-enabling doesn't reset
+      // it) so a pause+resume doesn't re-trigger a fresh backfill window.
+      if (cfg.rewardsLive && !cfg.liveSince) cfg.liveSince = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    }
     if (b.budgets) cfg.budgets = { ...(cfg.budgets || {}), ...b.budgets };
     if (b.attendancePointsEnabled !== undefined) cfg.attendancePointsEnabled = !!b.attendancePointsEnabled;
     s.rewardConfig = cfg; s.changed('rewardConfig', true); await s.save();
