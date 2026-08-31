@@ -2151,6 +2151,60 @@ const RewardApproval = sequelize.define('RewardApproval', {
 ] });
 RewardApproval.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Helping Hand — an employee NOMINATES a colleague (no points awarded directly).
+// A manager/HR reviews it; on approval the beneficiary gets Helping Hand points,
+// and the streak job counts approved recs toward 3/5/10/20 milestones.
+const HelpingRecommendation = sequelize.define('HelpingRecommendation', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  beneficiaryId: { type: DataTypes.INTEGER, allowNull: false },   // who helped
+  beneficiaryName: { type: DataTypes.STRING(120), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  nominatorId: { type: DataTypes.INTEGER, allowNull: false },     // who nominated
+  nominatorName: { type: DataTypes.STRING(120), defaultValue: '' },
+  reason: { type: DataTypes.STRING(600), defaultValue: '' },
+  incident: { type: DataTypes.STRING(200), defaultValue: '' },    // optional incident tag to catch dup nominations
+  status: { type: DataTypes.STRING(12), defaultValue: 'pending' }, // pending|approved|rejected
+  decidedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  decidedAt: { type: DataTypes.DATE, allowNull: true },
+  decisionNote: { type: DataTypes.STRING(300), defaultValue: '' },
+  points: { type: DataTypes.INTEGER, defaultValue: 0 },           // awarded on approval
+  ledgerId: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'helping_recommendations', indexes: [
+  { name: 'idx_helping_benef', fields: ['beneficiaryId'] },
+  { name: 'idx_helping_status', fields: ['status'] },
+] });
+HelpingRecommendation.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Innovation Center — employees submit ideas; workflow: submitted → under_review
+// → approved → implemented → rewarded. Points awarded by impact on the 'rewarded'
+// step (idempotent via the ledger).
+const Innovation = sequelize.define('Innovation', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  authorId: { type: DataTypes.INTEGER, allowNull: false },
+  authorName: { type: DataTypes.STRING(120), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  branch: { type: DataTypes.STRING(80), defaultValue: '' },
+  title: { type: DataTypes.STRING(200), allowNull: false },
+  problem: { type: DataTypes.TEXT, defaultValue: '' },
+  solution: { type: DataTypes.TEXT, defaultValue: '' },
+  benefit: { type: DataTypes.TEXT, defaultValue: '' },
+  estimatedSavings: { type: DataTypes.STRING(120), defaultValue: '' },
+  timeSaving: { type: DataTypes.STRING(120), defaultValue: '' },
+  status: { type: DataTypes.STRING(16), defaultValue: 'submitted' }, // submitted|under_review|approved|implemented|rewarded|rejected
+  impact: { type: DataTypes.STRING(16), defaultValue: '' },          // small|moderate|significant|major|exceptional
+  points: { type: DataTypes.INTEGER, defaultValue: 0 },
+  reviewNote: { type: DataTypes.STRING(500), defaultValue: '' },
+  decidedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  ledgerId: { type: DataTypes.INTEGER, allowNull: true },
+  timeline: { type: DataTypes.JSON, defaultValue: [] },             // [{status, at, by, note}]
+}, { tableName: 'innovations', indexes: [
+  { name: 'idx_innov_author', fields: ['authorId'] },
+  { name: 'idx_innov_status', fields: ['status'] },
+] });
+Innovation.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
 // team. Same shape as the HR survey so the shared AI service works unchanged. =====
@@ -2267,7 +2321,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
-  RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval,
+  RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

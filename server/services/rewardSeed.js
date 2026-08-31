@@ -76,6 +76,31 @@ const BASE_RULES = [
   { key: 'attendance_30', name: 'Attendance 30 days', category: 'attendance', icon: '📅', color: '#16A34A', points: 50, frequency: 'once', approvalLevel: 'auto', active: true },
   { key: 'attendance_60', name: 'Attendance 60 days', category: 'attendance', icon: '📆', color: '#0F9D58', points: 100, frequency: 'once', approvalLevel: 'auto', active: true },
   { key: 'attendance_100', name: 'Attendance 100 days', category: 'attendance', icon: '🗓️', color: '#15803D', points: 250, frequency: 'once', approvalLevel: 'auto', active: true },
+  // Helping Hand (awarded on approval of a recommendation) + streak milestones.
+  { key: 'helping_hand_award', name: 'Helping Hand', category: 'helping', icon: '❤️', color: '#DB2777', points: 250, frequency: 'unlimited', approvalLevel: 'manager', desc: 'Approved helping-hand recommendation' },
+  { key: 'helping_streak_3', name: 'Helping Streak · 3', category: 'helping', icon: '🔥', color: '#EA580C', points: 100, frequency: 'quarterly', approvalLevel: 'auto', desc: '3 approved helping recognitions' },
+  { key: 'helping_streak_5', name: 'Helping Streak · 5', category: 'helping', icon: '🔥', color: '#EA580C', points: 150, frequency: 'quarterly', approvalLevel: 'auto', desc: '5 approved helping recognitions' },
+  { key: 'helping_streak_10', name: 'Helping Streak · 10', category: 'helping', icon: '🔥', color: '#DC2626', points: 300, frequency: 'quarterly', approvalLevel: 'auto', desc: '10 approved helping recognitions' },
+  { key: 'helping_streak_20', name: 'Helping Streak · 20', category: 'helping', icon: '🔥', color: '#DC2626', points: 500, frequency: 'quarterly', approvalLevel: 'auto', desc: '20 approved helping recognitions' },
+  // Innovation rewards by impact (spec §19).
+  { key: 'innovation_small', name: 'Innovation · Small', category: 'innovation', icon: '💡', color: '#7C3AED', points: 250, frequency: 'per_item', approvalLevel: 'hod_hr' },
+  { key: 'innovation_moderate', name: 'Innovation · Moderate', category: 'innovation', icon: '💡', color: '#7C3AED', points: 500, frequency: 'per_item', approvalLevel: 'hod_hr' },
+  { key: 'innovation_significant', name: 'Innovation · Significant', category: 'innovation', icon: '💡', color: '#6D28D9', points: 1000, frequency: 'per_item', approvalLevel: 'hod_hr' },
+  { key: 'innovation_major', name: 'Innovation · Major', category: 'innovation', icon: '🚀', color: '#DC2626', points: 2500, frequency: 'per_item', approvalLevel: 'senior_mgmt' },
+  { key: 'innovation_exceptional', name: 'Innovation · Exceptional', category: 'innovation', icon: '🚀', color: '#B45309', points: 5000, frequency: 'per_item', approvalLevel: 'senior_mgmt' },
+  // Performance achievement (ranged) + customer appreciation + learning + mentoring.
+  { key: 'performance_achievement', name: 'Performance Achievement', category: 'performance', icon: '🎯', color: '#EA580C', points: 250, pointsMax: 2500, frequency: 'unlimited', approvalLevel: 'hod_hr', desc: 'Exceptional target/project/result' },
+  { key: 'customer_appreciation_1', name: 'Customer Appreciation · L1', category: 'customer', icon: '💬', color: '#0EA5E9', points: 500, frequency: 'unlimited', approvalLevel: 'manager' },
+  { key: 'customer_appreciation_2', name: 'Customer Appreciation · L2', category: 'customer', icon: '💬', color: '#0284C7', points: 1000, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'customer_appreciation_exceptional', name: 'Customer Appreciation · Exceptional', category: 'customer', icon: '💬', color: '#0369A1', points: 1500, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'learning_internal_training', name: 'Internal Training', category: 'learning', icon: '📖', color: '#7C3AED', points: 100, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'learning_course', name: 'Relevant Course', category: 'learning', icon: '📖', color: '#7C3AED', points: 250, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'learning_certification', name: 'Certification', category: 'learning', icon: '🎓', color: '#6D28D9', points: 500, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'learning_advanced_cert', name: 'Advanced Certification', category: 'learning', icon: '🎓', color: '#5B21B6', points: 1000, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'learning_major_cert', name: 'Major Industry Certification', category: 'learning', icon: '🏆', color: '#5B21B6', points: 1500, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'mentoring_occasional', name: 'Occasional Mentoring', category: 'mentoring', icon: '👨‍🏫', color: '#CA8A04', points: 250, frequency: 'unlimited', approvalLevel: 'manager' },
+  { key: 'mentoring_regular', name: 'Regular Mentoring', category: 'mentoring', icon: '👨‍🏫', color: '#CA8A04', points: 500, frequency: 'unlimited', approvalLevel: 'hod_hr' },
+  { key: 'mentoring_significant', name: 'Significant Mentoring', category: 'mentoring', icon: '👨‍🏫', color: '#B45309', points: 1000, frequency: 'unlimited', approvalLevel: 'hod_hr' },
 ];
 
 async function seed(models) {

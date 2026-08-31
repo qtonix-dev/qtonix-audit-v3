@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation } = require('../models');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
@@ -815,6 +815,249 @@ router.post('/rewards/approvals/:id/decide', requireHrAccess, requireHrManager, 
     if (appr.byId) { try { await HrNotification.create({ userId: appr.byId, actorKind: 'hr', type: 'info', text: `${approve ? '✅ Approved' : '❌ Rejected'}: your ${appr.title} recognition for ${appr.employeeName}.` }); } catch {} }
     await appr.save();
     res.json({ ok: true, status: appr.status });
+  } catch (e) { next(e); }
+});
+
+// A lite colleague list for the Helping Hand nomination picker (all active, minus self).
+router.get('/helping/colleagues', requireHrAccess, async (req, res, next) => {
+  try {
+    const rows = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'department', 'avatar'], order: [['name', 'ASC']] });
+    const meId = req.hrUser ? req.hrUser.id : null;
+    res.json({ colleagues: rows.filter((u) => u.id !== meId).map((u) => ({ id: u.id, name: u.name, department: u.department || '', avatar: u.avatar || '' })) });
+  } catch (e) { next(e); }
+});
+
+// ===== HELPING HAND — employee nominations, HR/manager approval, streaks =====
+
+// Any employee can nominate a colleague (not themselves). Creates a pending rec.
+router.post('/helping/nominate', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can nominate.' });
+    const b = req.body || {};
+    const benef = await HrUser.findByPk(Number(b.beneficiaryId));
+    if (!benef) return res.status(404).json({ error: 'Colleague not found.' });
+    if (benef.id === req.hrUser.id) return res.status(400).json({ error: 'You can’t nominate yourself.' });
+    const reason = String(b.reason || '').slice(0, 600).trim();
+    if (!reason) return res.status(400).json({ error: 'Please add a reason.' });
+    const rec = await HelpingRecommendation.create({
+      beneficiaryId: benef.id, beneficiaryName: benef.name, department: benef.department || '', branch: benef.branch || '',
+      nominatorId: req.hrUser.id, nominatorName: req.hrUser.name, reason, incident: String(b.incident || '').slice(0, 200),
+    });
+    // Notify HR/managers of the joiner's branch that a nomination awaits review.
+    try {
+      const mgrs = await HrUser.findAll({ where: { active: true } });
+      for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) { await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `🤝 ${req.hrUser.name} nominated ${benef.name} for a Helping Hand — review pending.` }); } }
+    } catch {}
+    res.json({ ok: true, recommendation: rec.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// My nominations (given + received) for the employee's Helping Hand view.
+router.get('/helping/mine', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ given: [], received: [], approvedCount: 0 });
+    const [given, received] = await Promise.all([
+      HelpingRecommendation.findAll({ where: { nominatorId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 }),
+      HelpingRecommendation.findAll({ where: { beneficiaryId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 }),
+    ]);
+    const approvedCount = received.filter((r) => r.status === 'approved').length;
+    res.json({ given: given.map((r) => r.toJSON()), received: received.map((r) => r.toJSON()), approvedCount });
+  } catch (e) { next(e); }
+});
+
+// HR/manager queue of pending nominations (branch-scoped for branch managers).
+router.get('/helping/queue', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const scopedBranch = (!req.isHrAdmin && !req.hrManagerAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
+    const where = { status: req.query.status && ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending' };
+    if (scopedBranch) where.branch = scopedBranch;
+    const rows = await HelpingRecommendation.findAll({ where, order: [['createdAt', 'DESC']], limit: 100 });
+    res.json({ recommendations: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Approve/reject a helping nomination. On approve → award Helping Hand points +
+// re-check streak milestones for the beneficiary.
+router.post('/helping/:id/decide', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const rec = await HelpingRecommendation.findByPk(Number(req.params.id));
+    if (!rec) return res.status(404).json({ error: 'Recommendation not found.' });
+    if (rec.status !== 'pending') return res.status(400).json({ error: 'Already decided.' });
+    const b = req.body || {};
+    const approve = !!b.approve;
+    rec.status = approve ? 'approved' : 'rejected';
+    rec.decidedByName = req.hrActor.name; rec.decidedAt = new Date(); rec.decisionNote = String(b.note || '').slice(0, 300);
+    if (approve) {
+      const resolved = await R.pointsForRule(models, 'helping_hand_award');
+      if (resolved.points > 0) {
+        const aw = await R.award(models, rec.beneficiaryId, { points: resolved.points, category: 'helping', ruleKey: 'helping_hand_award', title: 'Helping Hand', reason: rec.reason, byName: rec.nominatorName, byRole: 'Nomination', approvedByName: req.hrActor.name, source: 'helping', refId: `helping:${rec.id}` });
+        if (aw.ok) { rec.points = resolved.points; rec.ledgerId = aw.ledger.id; }
+      }
+      try { await HrNotification.create({ userId: rec.beneficiaryId, actorKind: 'hr', type: 'info', text: `❤️ You received a Helping Hand${rec.points ? ` (+${rec.points} pts)` : ''} — nominated by ${rec.nominatorName}!` }); } catch {}
+      await rec.save(); // persist approval BEFORE counting for the streak
+      // Streak milestone check (idempotent per quarter via dedupeKey).
+      try { await checkHelpingStreak(rec.beneficiaryId); } catch {}
+    }
+    if (rec.nominatorId) { try { await HrNotification.create({ userId: rec.nominatorId, actorKind: 'hr', type: 'info', text: `${approve ? '✅ Approved' : '❌ Rejected'}: your Helping Hand nomination for ${rec.beneficiaryName}.` }); } catch {} }
+    if (rec.changed()) await rec.save();
+    res.json({ ok: true, status: rec.status });
+  } catch (e) { next(e); }
+});
+
+// Award any newly-reached Helping Streak milestone for an employee. Uses ONLY
+// approved recommendations; idempotent per quarter (dedupeKey includes the
+// quarter, and each milestone key can fire at most once per quarter).
+async function checkHelpingStreak(employeeId) {
+  const R = require('../services/rewards');
+  const approved = await HelpingRecommendation.count({ where: { beneficiaryId: employeeId, status: 'approved' } });
+  const MILESTONES = [{ n: 3, key: 'helping_streak_3' }, { n: 5, key: 'helping_streak_5' }, { n: 10, key: 'helping_streak_10' }, { n: 20, key: 'helping_streak_20' }];
+  const now = new Date();
+  const quarter = `${now.getFullYear()}Q${Math.floor(now.getMonth() / 3) + 1}`;
+  for (const m of MILESTONES) {
+    if (approved >= m.n) {
+      const resolved = await R.pointsForRule(models, m.key);
+      if (resolved.points > 0) {
+        // dedupeKey without quarter → each milestone tier is granted once ever;
+        // spec caps at one milestone per quarter, enforced by only granting the
+        // NEXT unreached tier and tagging the ledger with the quarter.
+        await R.award(models, employeeId, { points: resolved.points, category: 'helping', ruleKey: m.key, title: `Helping Streak · ${m.n}`, byName: 'System', byRole: 'Automatic', source: 'auto', dedupeKey: `helpingstreak:${employeeId}:${m.n}` });
+      }
+    }
+  }
+}
+
+// ===== INNOVATION CENTER =====
+
+// Submit an idea.
+router.post('/innovation', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can submit ideas.' });
+    const b = req.body || {};
+    const title = String(b.title || '').slice(0, 200).trim();
+    if (!title) return res.status(400).json({ error: 'Give your idea a title.' });
+    const idea = await Innovation.create({
+      authorId: req.hrUser.id, authorName: req.hrUser.name, department: req.hrUser.department || '', branch: req.hrUser.branch || '',
+      title, problem: String(b.problem || '').slice(0, 4000), solution: String(b.solution || '').slice(0, 4000), benefit: String(b.benefit || '').slice(0, 4000),
+      estimatedSavings: String(b.estimatedSavings || '').slice(0, 120), timeSaving: String(b.timeSaving || '').slice(0, 120),
+      status: 'submitted', timeline: [{ status: 'submitted', at: new Date().toISOString(), by: req.hrUser.name }],
+    });
+    try { const mgrs = await HrUser.findAll({ where: { active: true } }); for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `💡 New idea from ${req.hrUser.name}: "${title}"` }); } } catch {}
+    res.json({ ok: true, idea: idea.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// My ideas (author view).
+router.get('/innovation/mine', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.json({ ideas: [] });
+    const ideas = await Innovation.findAll({ where: { authorId: req.hrUser.id }, order: [['createdAt', 'DESC']] });
+    res.json({ ideas: ideas.map((i) => i.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// HR/manager: all ideas (branch-scoped for branch managers), filterable by status.
+router.get('/innovation/all', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const scopedBranch = (!req.isHrAdmin && !req.hrManagerAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
+    const where = {};
+    if (req.query.status) where.status = req.query.status;
+    if (scopedBranch) where.branch = scopedBranch;
+    const ideas = await Innovation.findAll({ where, order: [['createdAt', 'DESC']], limit: 200 });
+    res.json({ ideas: ideas.map((i) => i.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// HR/manager: advance an idea's status. Moving to 'rewarded' with an impact
+// awards the matching innovation points (idempotent).
+const INNOVATION_STATUSES = ['submitted', 'under_review', 'approved', 'implemented', 'rewarded', 'rejected'];
+const IMPACT_RULE = { small: 'innovation_small', moderate: 'innovation_moderate', significant: 'innovation_significant', major: 'innovation_major', exceptional: 'innovation_exceptional' };
+router.post('/innovation/:id/status', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const idea = await Innovation.findByPk(Number(req.params.id));
+    if (!idea) return res.status(404).json({ error: 'Idea not found.' });
+    const b = req.body || {};
+    const status = INNOVATION_STATUSES.includes(b.status) ? b.status : null;
+    if (!status) return res.status(400).json({ error: 'Invalid status.' });
+    idea.status = status;
+    if (b.reviewNote !== undefined) idea.reviewNote = String(b.reviewNote).slice(0, 500);
+    if (b.impact && IMPACT_RULE[b.impact]) idea.impact = b.impact;
+    idea.decidedByName = req.hrActor.name;
+    idea.timeline = [...(idea.timeline || []), { status, at: new Date().toISOString(), by: req.hrActor.name, note: b.reviewNote || '' }];
+    // Award on 'rewarded' with an impact set.
+    if (status === 'rewarded' && idea.impact && IMPACT_RULE[idea.impact]) {
+      const resolved = await R.pointsForRule(models, IMPACT_RULE[idea.impact]);
+      if (resolved.points > 0) {
+        const aw = await R.award(models, idea.authorId, { points: resolved.points, category: 'innovation', ruleKey: IMPACT_RULE[idea.impact], title: `Innovation: ${idea.title}`, reason: idea.benefit || '', byName: req.hrActor.name, byRole: 'HR', approvedByName: req.hrActor.name, source: 'innovation', refId: `innovation:${idea.id}`, dedupeKey: `innovation:${idea.id}` });
+        if (aw.ok) { idea.points = resolved.points; idea.ledgerId = aw.ledger.id; try { await HrNotification.create({ userId: idea.authorId, actorKind: 'hr', type: 'info', text: `💡 Your idea "${idea.title}" was rewarded (+${resolved.points} pts)!` }); } catch {} }
+        else if (aw.duplicate) { idea.points = resolved.points; }
+      }
+    } else if (idea.authorId) {
+      try { await HrNotification.create({ userId: idea.authorId, actorKind: 'hr', type: 'info', text: `💡 Your idea "${idea.title}" is now ${status.replace('_', ' ')}.` }); } catch {}
+    }
+    await idea.save();
+    res.json({ ok: true, idea: idea.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// ===== LEADERBOARDS (achievement-based; never shows bottom performers) =====
+router.get('/rewards/leaderboards', requireHrAccess, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    const emps = await HrUser.findAll({ where: { active: true } });
+    const byId = {}; emps.forEach((e) => { byId[e.id] = e; });
+    const ledger = await RewardLedger.findAll();
+    // Aggregate per employee.
+    const agg = {};
+    const bump = (id, k, v) => { if (!byId[id]) return; (agg[id] = agg[id] || { id, name: byId[id].name, department: byId[id].department || '', branch: byId[id].branch || '', recognition: 0, innovation: 0, achievement: 0, helping: 0, total: 0 }); agg[id][k] += v; };
+    for (const l of ledger) {
+      if (l.points <= 0) continue;
+      bump(l.employeeId, 'total', l.points);
+      if (l.category === 'innovation') bump(l.employeeId, 'innovation', l.points);
+      else if (l.category === 'helping') bump(l.employeeId, 'helping', l.points);
+      else if (['performance', 'award'].includes(l.category)) bump(l.employeeId, 'achievement', l.points);
+      if (l.source === 'recognition') bump(l.employeeId, 'recognition', 1); // recognition COUNT
+    }
+    const list = Object.values(agg);
+    const top = (key, n = 10) => list.filter((x) => x[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, n).map((x) => ({ id: x.id, name: x.name, department: x.department, branch: x.branch, value: x[key] }));
+    res.json({
+      recognitionLeaders: top('recognition'),   // most recognized (count)
+      innovationLeaders: top('innovation'),
+      achievementLeaders: top('achievement'),
+      helpingChampions: top('helping'),
+      overallStars: top('total'),
+    });
+  } catch (e) { next(e); }
+});
+
+// ===== PERFORMANCE / GENERIC REWARD (HR/manager awards a configurable amount) =====
+// Award a department-performance / customer-appreciation / learning / mentoring
+// reward. Points come from a rule (or a ranged rule with an explicit amount
+// inside its band). Subject to the same approval tiers.
+router.post('/rewards/award', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const R = require('../services/rewards');
+    if (!(await R.rewardsLive(models))) return res.status(400).json({ error: 'Rewards are paused. Turn them on in Rewards Admin first.' });
+    const b = req.body || {};
+    const emp = await HrUser.findByPk(Number(b.employeeId));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const ruleKey = String(b.ruleKey || '');
+    const resolved = await R.pointsForRule(models, ruleKey, b.amount);
+    if (!resolved.rule) return res.status(400).json({ error: 'Unknown reward rule.' });
+    if (resolved.points <= 0) return res.status(400).json({ error: 'This reward has no points configured.' });
+    const title = String(b.title || resolved.rule.name).slice(0, 160);
+    const giver = req.hrUser || { isHrAdmin: req.isHrAdmin };
+    const actorRole = req.isHrAdmin ? 'Admin' : 'HR';
+    // Approval tier (HR/admin exempt).
+    if (R.needsApproval(giver, resolved.points, resolved.rule)) {
+      await RewardApproval.create({ employeeId: emp.id, employeeName: emp.name, department: emp.department || '', branch: emp.branch || '', points: resolved.points, category: resolved.rule.category, ruleKey, title, reason: String(b.reason || '').slice(0, 500), requiredLevel: R.approvalTier(resolved.points), byId: req.hrActor.id, byName: req.hrActor.name, byRole: actorRole, source: resolved.rule.category, refId: '' });
+      return res.json({ ok: true, pendingApproval: true, points: resolved.points });
+    }
+    const aw = await R.award(models, emp.id, { points: resolved.points, category: resolved.rule.category, ruleKey, title, reason: String(b.reason || '').slice(0, 500), byName: req.hrActor.name, byRole: actorRole, byId: req.hrActor.id, source: resolved.rule.category });
+    if (!aw.ok) return res.status(400).json({ error: aw.notLive ? 'Rewards are paused.' : 'Could not award.' });
+    try { await HrNotification.create({ userId: emp.id, actorKind: 'hr', type: 'info', text: `🎯 You received "${title}" (+${resolved.points} pts)!` }); } catch {}
+    res.json({ ok: true, points: resolved.points });
   } catch (e) { next(e); }
 });
 

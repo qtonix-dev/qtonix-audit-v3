@@ -377,14 +377,25 @@ const REC_BADGE_FALLBACK = { icon: '🌟', color: '#EA580C' };
 // ===== My Rewards — the employee's reward wallet, points & history =====
 function MyRewardsPage({ user, embedded }) {
   const [data, setData] = useState(null);
+  const [tab, setTab] = useState('wallet');
   useEffect(() => { hrApi('/me/rewards').then(setData).catch(() => setData({ wallet: {}, ledger: [] })); }, []);
   if (!data) return <div className={embedded ? 'text-slate-400 text-sm py-8' : 'max-w-4xl mx-auto px-4 py-8 text-slate-400 text-sm'}>Loading…</div>;
   const w = data.wallet || {};
   const fmt = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
-  const catIcon = { badge: '🏅', automatic: '🎁', anniversary: '🎊', attendance: '📅', appreciation: '❤️' };
+  const catIcon = { badge: '🏅', automatic: '🎁', anniversary: '🎊', attendance: '📅', appreciation: '❤️', helping: '❤️', innovation: '💡', performance: '🎯' };
   return (
     <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 py-6'}>
       {!embedded && <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>}
+      <div className="flex gap-1 border-b border-slate-200 mb-5">
+        {[['wallet', 'Wallet'], ['helping', '🤝 Helping Hand'], ['ideas', '💡 Ideas'], ['leaderboards', '🏆 Leaderboards']].map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
+        ))}
+      </div>
+      {tab === 'helping' && <HelpingHandView />}
+      {tab === 'ideas' && <MyIdeasView />}
+      {tab === 'leaderboards' && <LeaderboardsView onOpenEmployee={() => {}} />}
+      {tab === 'wallet' && <></>}
+      {tab === 'wallet' && <>
       <div className="grid md:grid-cols-3 gap-4 mb-5">
         <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
           <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9fb4dd' }}>Reward Wallet</div>
@@ -425,6 +436,159 @@ function MyRewardsPage({ user, embedded }) {
           </div>
         )}
       </div>
+      </>}
+    </div>
+  );
+}
+
+// Employee: nominate a colleague for a Helping Hand + see given/received.
+function HelpingHandView() {
+  const [data, setData] = useState(null);
+  const [team, setTeam] = useState([]);
+  const [show, setShow] = useState(false);
+  const [benef, setBenef] = useState(null);
+  const [reason, setReason] = useState('');
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => hrApi('/helping/mine').then(setData).catch(() => setData({ given: [], received: [] }));
+  useEffect(() => { load(); hrApi('/helping/colleagues').then((r) => setTeam(r.colleagues || [])).catch(() => {}); }, []);
+  const submit = async () => { if (!benef || !reason.trim()) return; setBusy(true); try { await hrApi('/helping/nominate', { method: 'POST', body: JSON.stringify({ beneficiaryId: benef.id, reason: reason.trim() }) }); setShow(false); setBenef(null); setReason(''); load(); } catch (e) { alert(e.message); } setBusy(false); };
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const shown = team.filter((m) => !q || (m.name || '').toLowerCase().includes(q.toLowerCase()));
+  const statusPill = (s) => s === 'approved' ? { background: '#DCFCE7', color: '#15803D' } : s === 'rejected' ? { background: '#FEE2E2', color: '#DC2626' } : { background: '#FEF9C3', color: '#CA8A04' };
+  return (
+    <div>
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <div><div className="text-[15px] font-extrabold text-[#050A1F]">🤝 Helping Hand</div><div className="text-[13px] text-slate-500 mt-0.5">Nominate a colleague who helped you. HR reviews it, and if approved they earn points.</div></div>
+        <button onClick={() => setShow(true)} className="rounded-xl px-4 py-2 text-sm font-extrabold text-white shrink-0" style={{ background: ORANGE }}>+ Nominate a colleague</button>
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-sm font-extrabold mb-2">Nominations I've given</div>
+          {(data.given || []).length === 0 ? <div className="text-[13px] text-slate-400 py-3">None yet.</div> : (data.given || []).map((r) => (
+            <div key={r.id} className="flex items-center gap-2 py-1.5 text-[13px]"><span className="font-bold">{r.beneficiaryName}</span><span className="text-[10px] font-extrabold rounded-full px-2 py-0.5 ml-auto" style={statusPill(r.status)}>{r.status}</span></div>
+          ))}
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-sm font-extrabold mb-2">Recognition I've received {data.approvedCount > 0 && <span className="text-[11px] text-slate-400">({data.approvedCount} approved)</span>}</div>
+          {(data.received || []).length === 0 ? <div className="text-[13px] text-slate-400 py-3">None yet.</div> : (data.received || []).map((r) => (
+            <div key={r.id} className="flex items-center gap-2 py-1.5 text-[13px]"><span className="text-slate-500">from {r.nominatorName}</span><span className="text-[10px] font-extrabold rounded-full px-2 py-0.5 ml-auto" style={statusPill(r.status)}>{r.status}{r.points ? ` +${r.points}` : ''}</span></div>
+          ))}
+        </div>
+      </div>
+      {show && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={() => setShow(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl my-6" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold">Nominate a colleague</div><button onClick={() => setShow(false)} className="text-slate-400 text-2xl leading-none">×</button></div>
+            <div className="p-6 space-y-3">
+              <div className="border border-slate-300 rounded-lg overflow-hidden">
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search colleague…" className="w-full px-3 py-2 text-sm border-b border-slate-100 focus:outline-none" />
+                <div className="max-h-44 overflow-auto">
+                  {shown.slice(0, 50).map((m) => (
+                    <button key={m.id} onClick={() => { setBenef(m); setQ(m.name); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-orange-50 ${benef && benef.id === m.id ? 'bg-orange-50' : ''}`}><Avatar name={m.name} size={26} /><span className="text-sm font-bold">{m.name}</span>{benef && benef.id === m.id && <span className="ml-auto text-orange-500">✓</span>}</button>
+                  ))}
+                </div>
+              </div>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="How did they help you?" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setShow(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={submit} disabled={busy || !benef || !reason.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? '…' : 'Submit nomination'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Employee: submit + track innovation ideas.
+function MyIdeasView() {
+  const [ideas, setIdeas] = useState(null);
+  const [show, setShow] = useState(false);
+  const [f, setF] = useState({ title: '', problem: '', solution: '', benefit: '', estimatedSavings: '', timeSaving: '' });
+  const [busy, setBusy] = useState(false);
+  const load = () => hrApi('/innovation/mine').then((r) => setIdeas(r.ideas || [])).catch(() => setIdeas([]));
+  useEffect(() => { load(); }, []);
+  const submit = async () => { if (!f.title.trim()) return; setBusy(true); try { await hrApi('/innovation', { method: 'POST', body: JSON.stringify(f) }); setShow(false); setF({ title: '', problem: '', solution: '', benefit: '', estimatedSavings: '', timeSaving: '' }); load(); } catch (e) { alert(e.message); } setBusy(false); };
+  if (!ideas) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const STAGE = { submitted: ['Submitted', '#94A3B8', '#F1F5F9'], under_review: ['Under review', '#CA8A04', '#FEF9C3'], approved: ['Approved', '#2563EB', '#EFF6FF'], implemented: ['Implemented', '#0891B2', '#CFFAFE'], rewarded: ['Rewarded', '#15803D', '#DCFCE7'], rejected: ['Rejected', '#DC2626', '#FEE2E2'] };
+  const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
+  return (
+    <div>
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <div><div className="text-[15px] font-extrabold text-[#050A1F]">💡 Idea & Innovation Center</div><div className="text-[13px] text-slate-500 mt-0.5">Have an idea to improve something? Submit it — approved ideas earn reward points by impact.</div></div>
+        <button onClick={() => setShow(true)} className="rounded-xl px-4 py-2 text-sm font-extrabold text-white shrink-0" style={{ background: ORANGE }}>+ Submit an idea</button>
+      </div>
+      {ideas.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No ideas yet. Share your first one!</div> : (
+        <div className="space-y-2">
+          {ideas.map((i) => { const st = STAGE[i.status] || STAGE.submitted; return (
+            <div key={i.id} className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center gap-3">
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: '#EDE9FE' }}>💡</span>
+              <div className="flex-1 min-w-0"><div className="text-[13px] font-bold text-[#050A1F]">{i.title}</div><div className="text-[11px] text-slate-400">{i.points ? `Rewarded +${i.points} pts` : 'In review'}</div></div>
+              <span className="text-[10px] font-extrabold rounded-full px-2.5 py-1" style={{ background: st[2], color: st[0] === 'Rewarded' ? '#15803D' : st[1] }}>{st[0]}</span>
+            </div>
+          ); })}
+        </div>
+      )}
+      {show && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={() => setShow(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl my-6" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold">Submit an idea</div><button onClick={() => setShow(false)} className="text-slate-400 text-2xl leading-none">×</button></div>
+            <div className="p-6 space-y-3">
+              <input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Idea title *" className={inp} />
+              <textarea value={f.problem} onChange={(e) => setF({ ...f, problem: e.target.value })} rows={2} placeholder="What problem does it solve?" className={inp} />
+              <textarea value={f.solution} onChange={(e) => setF({ ...f, solution: e.target.value })} rows={2} placeholder="Proposed solution" className={inp} />
+              <textarea value={f.benefit} onChange={(e) => setF({ ...f, benefit: e.target.value })} rows={2} placeholder="Expected benefit" className={inp} />
+              <div className="grid grid-cols-2 gap-3">
+                <input value={f.estimatedSavings} onChange={(e) => setF({ ...f, estimatedSavings: e.target.value })} placeholder="Est. savings (optional)" className={inp} />
+                <input value={f.timeSaving} onChange={(e) => setF({ ...f, timeSaving: e.target.value })} placeholder="Time saving (optional)" className={inp} />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setShow(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+              <button onClick={submit} disabled={busy || !f.title.trim()} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? '…' : 'Submit'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Achievement leaderboards (never shows bottom performers; no balances).
+function LeaderboardsView() {
+  const [data, setData] = useState(null);
+  useEffect(() => { hrApi('/rewards/leaderboards').then(setData).catch(() => setData({})); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const boards = [
+    ['🏆 Recognition Leaders', data.recognitionLeaders, 'recognitions'],
+    ['💡 Innovation Leaders', data.innovationLeaders, 'pts'],
+    ['🎯 Achievement Leaders', data.achievementLeaders, 'pts'],
+    ['🤝 Helping Champions', data.helpingChampions, 'pts'],
+    ['🌟 Overall Stars', data.overallStars, 'pts'],
+  ];
+  const medal = ['🥇', '🥈', '🥉'];
+  return (
+    <div className="grid md:grid-cols-2 gap-4">
+      {boards.map(([title, rows, unit]) => (
+        <div key={title} className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{title}</div>
+          {(!rows || rows.length === 0) ? <div className="text-[13px] text-slate-400 py-3">No entries yet.</div> : (
+            <div className="space-y-1">
+              {rows.slice(0, 8).map((r, i) => (
+                <div key={r.id} className="flex items-center gap-2 py-1.5 text-[13px] border-t border-slate-50 first:border-0">
+                  <span className="w-6 text-center">{medal[i] || (i + 1)}</span>
+                  <Avatar name={r.name} size={26} />
+                  <span className="font-bold truncate">{r.name}</span>
+                  <span className="text-[11px] text-slate-400 truncate">{r.department}</span>
+                  <span className="ml-auto font-extrabold" style={{ color: '#0435AC' }}>{r.value.toLocaleString('en-IN')}<span className="text-[10px] text-slate-400 font-normal ml-0.5">{unit}</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -464,12 +628,14 @@ function RewardsAdmin() {
       )}
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-slate-200">
-        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals']].map(([id, label]) => (
+        {[['rules', 'Point values'], ['budgets', 'Budgets'], ['approvals', 'Approvals'], ['helping', 'Helping Hand'], ['innovation', 'Innovation']].map(([id, label]) => (
           <button key={id} onClick={() => setSub(id)} className="px-3.5 py-1.5 text-[12px] font-extrabold border-b-2 -mb-px" style={{ borderColor: sub === id ? '#FF6A00' : 'transparent', color: sub === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
         ))}
       </div>
       {sub === 'budgets' && <RewardBudgets />}
       {sub === 'approvals' && <RewardApprovals />}
+      {sub === 'helping' && <HelpingQueue />}
+      {sub === 'innovation' && <InnovationQueue />}
       {sub === 'rules' && <>
       <div className="text-[12px] text-slate-500">Conversion: <b>{cfg.pointsPerRupee || 2} points = ₹1</b> · Points expire after <b>{cfg.expiryMonths || 24} months</b>. Edit a badge's points below — the value applies the next time it's awarded.</div>
       {Object.entries(cats).map(([cat, rules]) => (
@@ -575,6 +741,106 @@ function RewardApprovals() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Admin: helping-hand nomination queue.
+function HelpingQueue() {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => hrApi('/helping/queue').then(setData).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/helping/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const rows = data.recommendations || [];
+  return (
+    <div>
+      {rows.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No pending helping-hand nominations. When an employee nominates a colleague, it appears here for approval.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.id} className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
+              <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: '#FCE7F3' }}>❤️</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-bold text-[#050A1F]">{r.beneficiaryName} <span className="text-slate-400 font-normal">nominated by {r.nominatorName}</span></div>
+                <div className="text-[11px] text-slate-400">{[r.department, r.branch].filter(Boolean).join(' · ')}</div>
+                {r.reason && <div className="text-[12px] text-slate-500 mt-1">"{r.reason}"</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => decide(r.id, false)} disabled={busy === r.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 border border-slate-300 text-slate-600">Reject</button>
+                <button onClick={() => decide(r.id, true)} disabled={busy === r.id} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === r.id ? '…' : 'Approve'}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Admin: innovation idea pipeline.
+function InnovationQueue() {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(null);
+  const load = () => hrApi('/innovation/all').then(setData).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const STAGE = { submitted: ['Submitted', '#94A3B8', '#F1F5F9'], under_review: ['Under review', '#CA8A04', '#FEF9C3'], approved: ['Approved', '#2563EB', '#EFF6FF'], implemented: ['Implemented', '#0891B2', '#CFFAFE'], rewarded: ['Rewarded', '#15803D', '#DCFCE7'], rejected: ['Rejected', '#DC2626', '#FEE2E2'] };
+  const ideas = data.ideas || [];
+  return (
+    <div>
+      {ideas.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">No ideas submitted yet.</div>
+      ) : (
+        <div className="space-y-2">
+          {ideas.map((i) => { const st = STAGE[i.status] || STAGE.submitted; return (
+            <div key={i.id} className="bg-white border border-slate-200 rounded-xl p-3.5">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: '#EDE9FE' }}>💡</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-bold text-[#050A1F]">{i.title}</div>
+                  <div className="text-[11px] text-slate-400">by {i.authorName} · {[i.department, i.branch].filter(Boolean).join(' · ')}{i.points ? ` · +${i.points} pts` : ''}</div>
+                </div>
+                <span className="text-[10px] font-extrabold rounded-full px-2.5 py-1" style={{ background: st[2], color: st[0] === 'Rewarded' ? '#15803D' : st[1] }}>{st[0]}</span>
+                <button onClick={() => setOpen(open === i.id ? null : i.id)} className="text-[11px] font-bold text-orange-600">{open === i.id ? 'Close' : 'Manage'}</button>
+              </div>
+              {open === i.id && <InnovationManage idea={i} onDone={() => { setOpen(null); load(); }} />}
+            </div>
+          ); })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InnovationManage({ idea, onDone }) {
+  const [status, setStatus] = useState(idea.status);
+  const [impact, setImpact] = useState(idea.impact || '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const IMPACT_PTS = { small: 250, moderate: 500, significant: 1000, major: 2500, exceptional: 5000 };
+  const save = async () => { setBusy(true); try { await hrApi(`/innovation/${idea.id}/status`, { method: 'POST', body: JSON.stringify({ status, impact: impact || undefined, reviewNote: note }) }); onDone(); } catch (e) { alert(e.message); setBusy(false); } };
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-100 space-y-2.5">
+      {idea.problem && <div className="text-[12px]"><b className="text-slate-600">Problem:</b> <span className="text-slate-500">{idea.problem}</span></div>}
+      {idea.solution && <div className="text-[12px]"><b className="text-slate-600">Solution:</b> <span className="text-slate-500">{idea.solution}</span></div>}
+      {idea.benefit && <div className="text-[12px]"><b className="text-slate-600">Benefit:</b> <span className="text-slate-500">{idea.benefit}</span></div>}
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]">
+          {['submitted', 'under_review', 'approved', 'implemented', 'rewarded', 'rejected'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+        </select>
+        {status === 'rewarded' && (
+          <select value={impact} onChange={(e) => setImpact(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]">
+            <option value="">Impact…</option>
+            {Object.entries(IMPACT_PTS).map(([k, v]) => <option key={k} value={k}>{k} (+{v})</option>)}
+          </select>
+        )}
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px] flex-1 min-w-[120px]" />
+        <button onClick={save} disabled={busy || (status === 'rewarded' && !impact)} className="text-[12px] font-bold rounded-lg px-3.5 py-1.5 text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? '…' : 'Update'}</button>
+      </div>
+      {status === 'rewarded' && !impact && <div className="text-[11px] text-amber-600">Pick an impact level to award points.</div>}
     </div>
   );
 }
