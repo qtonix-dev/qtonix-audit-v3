@@ -239,11 +239,16 @@ router.post('/auth/logout', requireHrAccess, async (req, res) => {
 });
 
 /** GET /api/hr/me — the signed-in HR actor (staff or admin), for the greeting. */
-router.get('/me', requireHrAccess, (req, res) => {
-  if (req.hrActor.kind === 'admin') {
-    return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true, isHrManager: false });
-  }
-  res.json({ ...req.hrUser.toJSON(), isAdmin: false, isHrManager: req.isHrManager, hrManagerScope: req.hrManagerScope, hrManagerAll: req.hrManagerAll, completion: profileCompletion(req.hrUser) });
+router.get('/me', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind === 'admin') {
+      return res.json({ _id: req.adminUser.id, name: req.adminUser.name, type: 'admin', isAdmin: true, isHrManager: false, hasReports: true });
+    }
+    // hasReports → does anyone report to this user? Drives whether the
+    // Recognition menu item is shown (seniors with a team see it).
+    const reportCount = await HrUser.count({ where: { reportsToId: req.hrUser.id, active: true } });
+    res.json({ ...req.hrUser.toJSON(), isAdmin: false, isHrManager: req.isHrManager, hrManagerScope: req.hrManagerScope, hrManagerAll: req.hrManagerAll, hasReports: reportCount > 0, completion: profileCompletion(req.hrUser) });
+  } catch (e) { next(e); }
 });
 
 // --- Dashboard --------------------------------------------------------------
@@ -785,7 +790,7 @@ router.get('/employees/:id/recognition-summary', requireHrAccess, async (req, re
     const cards = ((emp.profile || {}).performanceCards || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     const counts = { praise: 0, review: 0, yellow: 0, red: 0 };
     for (const c of cards) { if (counts[c.kind] !== undefined) counts[c.kind]++; }
-    const recent = cards.slice(0, 3).map((c) => ({ kind: c.kind, title: c.title || '', badge: c.badge || null, by: c.auto ? 'Auto' : c.by, date: c.date, auto: !!c.auto }));
+    const recent = cards.slice(0, 3).map((c) => ({ kind: c.kind, title: c.title || '', badge: c.badge || null, by: c.auto ? 'System' : (c.by || 'HR'), byRole: c.auto ? 'Automatic' : (c.byRole || ''), date: c.date, auto: !!c.auto }));
     res.json({ counts, recent });
   } catch (e) { next(e); }
 });

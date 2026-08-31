@@ -566,8 +566,12 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
               {(summary.recent || []).length > 0 && (
                 <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
                   <div className="text-[11px] font-extrabold uppercase text-slate-400 mb-2">Recent recognition</div>
-                  {(summary.recent || []).map((r, i) => { const m = PERF[r.kind] || PERF.review; const icon = r.badge ? r.badge.icon : m.icon; return (
-                    <div key={i} className="flex items-center gap-2 py-1"><span className="w-6 h-6 rounded-md flex items-center justify-center text-[13px]" style={{ background: r.badge ? (r.badge.color + '22') : m.bg }}>{icon}</span><span className="text-[12px] font-bold">{r.title || m.label}</span><span className="text-[10px] text-slate-400 ml-auto">{r.auto ? 'Auto' : `by ${r.by}`}</span></div>
+                  {(summary.recent || []).map((r, i) => { const m = PERF[r.kind] || PERF.review; const icon = r.badge ? r.badge.icon : m.icon; const fmtd = (() => { try { return new Date(r.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return r.date; } })(); return (
+                    <div key={i} className="flex items-center gap-2 py-1.5">
+                      <span className="w-6 h-6 rounded-md flex items-center justify-center text-[13px] shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : m.bg }}>{icon}</span>
+                      <span className="text-[12px] font-bold truncate">{r.title || m.label}</span>
+                      <span className="text-[10px] text-slate-400 ml-auto text-right shrink-0">by {r.by}{r.byRole ? ` (${r.byRole})` : ''} · {fmtd}</span>
+                    </div>
                   ); })}
                 </div>
               )}
@@ -7937,7 +7941,7 @@ export default function HrApp() {
   }, [user && user.id]);
 
   if (checking) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading…</div>;
-  if (!user) return <HrLogin onSignIn={(u) => setUser(u)} />;
+  if (!user) return <HrLogin onSignIn={(u) => { setUser(u); hrApi('/me').then(setUser).catch(() => {}); }} />;
 
   const isAdmin = !!user.isAdmin;
   // True HR = the HR department, or the hr/recruiter roles. Generic "manager"/"tl"
@@ -7955,7 +7959,7 @@ export default function HrApp() {
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Task' },
-    { id: 'recognition', label: 'Recognition' },
+    ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
