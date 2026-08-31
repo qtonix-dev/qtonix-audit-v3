@@ -110,6 +110,11 @@ router.put('/settings', async (req, res, next) => {
     if (body.socialLinks) { s.socialLinks = { ...(s.socialLinks || {}), ...body.socialLinks }; s.changed('socialLinks', true); }
     if (body.pricing) { s.pricing = body.pricing; s.changed('pricing', true); }
     if (body.crmConfig) { s.crmConfig = body.crmConfig; s.changed('crmConfig', true); }
+    // Sales shift cutoff (night shift ends 6 AM → month/day boundary).
+    if (body.salesConfig && body.salesConfig.shiftCutoffHour !== undefined) {
+      const h = Number(body.salesConfig.shiftCutoffHour);
+      if (Number.isFinite(h) && h >= 0 && h < 24) { s.salesConfig = { ...(s.salesConfig || {}), shiftCutoffHour: Math.round(h) }; s.changed('salesConfig', true); }
+    }
 
     // Only overwrite a key if a real new value was sent — the UI shows masked
     // placeholders, and saving the form must not wipe the stored key.

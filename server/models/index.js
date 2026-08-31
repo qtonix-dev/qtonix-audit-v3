@@ -503,6 +503,10 @@ const Settings = sequelize.define(
     // emits (share links, OG tags, onboarding/report emails, QR codes).
     // { hrms, careers, crm, reports } — each a bare host or full origin.
     publicDomains: { type: DataTypes.JSON, defaultValue: { hrms: '', careers: '', crm: '', reports: '' } },
+    // Sales "business day" cutoff. The night shift ends at 6 AM, so a day/month
+    // runs until 6 AM the next calendar day — a sale at 5:59 AM on the 1st still
+    // counts toward the PREVIOUS month. shiftCutoffHour is that hour (IST).
+    salesConfig: { type: DataTypes.JSON, defaultValue: { shiftCutoffHour: 6 } },
     // Rewards & recognition config: points↔rupee ratio, expiry window, and the
     // per-role monthly discretionary budgets. All admin-editable.
     rewardConfig: { type: DataTypes.JSON, defaultValue: {

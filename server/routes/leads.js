@@ -495,9 +495,12 @@ router.get('/sales-race', requireAuth, async (req, res, next) => {
     const fx = (s && s.crmConfig && s.crmConfig.fxRates) || { USD: 1 };
     const toUsd = (amt, cur) => { const r = fx[cur] || 1; return r ? Number(amt || 0) / r : Number(amt || 0); };
 
+    const SP = require('../services/salesPeriod');
+    const cutoff = SP.cutoffHour(s);
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const bnd = SP.boundaries(now.getTime(), cutoff);
+    const startOfMonth = new Date(bnd.startOfMonthMs);
+    const period = bnd.monthKey;
 
     // Every active agent (not admins/managers) — the race is all agents.
     const agents = await User.findAll({ where: { role: 'agent', active: true }, attributes: ['id', 'name', 'avatar', 'team', 'shift', 'targets'] });
@@ -524,7 +527,7 @@ router.get('/sales-race', requireAuth, async (req, res, next) => {
           for (const it of (d.installments || [])) {
             if (it.recurring && Number(it.seq || 0) > 1) continue;
             if (it.paid && it.paidDate) {
-              const pd = new Date(it.paidDate);
+              const pd = new Date(SP.saleMs(it, d));
               if (pd >= startOfMonth) rec.achievedUsd += toUsd(it.amount, d.currency);
             }
           }
@@ -582,9 +585,12 @@ router.get('/lm-dashboard', requireAuth, async (req, res, next) => {
     const settings = await Settings.findOne({ where: { singleton: 'settings' } });
     const team = normalisePresalesTeam(settings && settings.crmConfig && settings.crmConfig.presalesTeam);
 
+    const SP = require('../services/salesPeriod');
+    const cutoff = SP.cutoffHour(settings);
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const _b = SP.boundaries(now.getTime(), cutoff);
+    const startOfDay = new Date(_b.startOfDayMs);
+    const startOfMonth = new Date(_b.startOfMonthMs);
 
     // Everything this lead manager keyed in. Admin sees all entered leads so
     // the screen is reviewable.
@@ -716,9 +722,11 @@ router.get('/email-drafts', requireAuth, async (req, res, next) => {
     }
     const scope = req.user.role === 'admin' ? {} : { enteredById: req.user.id };
 
+    const SP = require('../services/salesPeriod');
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const _b = SP.boundaries(now.getTime(), 6); // 6 AM shift cutoff
+    const startOfDay = new Date(_b.startOfDayMs);
+    const startOfMonth = new Date(_b.startOfMonthMs);
     const isToday = (d) => d && new Date(d) >= startOfDay;
     const isThisMonth = (d) => d && new Date(d) >= startOfMonth;
 
@@ -932,11 +940,13 @@ router.get('/agent-activity', requireAuth, async (req, res, next) => {
   try {
     const { User, CallLog, LeadEmail } = require('../models');
     const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+    const SP = require('../services/salesPeriod');
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const _b = SP.boundaries(now.getTime(), 6);
+    const startOfDay = new Date(_b.startOfDayMs);
     const dow = (now.getDay() + 6) % 7; // week starts Monday
     const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfMonth = new Date(_b.startOfMonthMs);
 
     const users = await User.findAll({ where: { active: true }, attributes: ['id', 'name', 'email', 'role'] });
     const scopeUsers = isManager ? users : users.filter((u) => u.id === req.user.id);
@@ -975,9 +985,14 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const where = await visibilityWhere(req.user);
     const leads = await Lead.findAll({ where });
 
+    const SP = require('../services/salesPeriod');
+    const cutoff = SP.cutoffHour(settings);
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const bnd = SP.boundaries(now.getTime(), cutoff);
+    // Business-day / business-month starts honour the 6 AM shift cutoff — a sale
+    // before 6 AM on the 1st still counts toward the previous month.
+    const startOfDay = new Date(bnd.startOfDayMs);
+    const startOfMonth = new Date(bnd.startOfMonthMs);
     const in3d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
     // Load users up-front so we know each lead owner's role while tallying.
@@ -1194,7 +1209,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
             }
             return;
           }
-          const pd = new Date(it.paidDate);
+          const pd = new Date(SP.saleMs(it, d));
           const usd = toUsd(it.amount, d.currency);
           // classify new vs cross: the very first paid installment of the first
           // deal is a new sale; all others are cross sales.
@@ -1476,9 +1491,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
     const trend = [];
     for (let i = 5; i >= 0; i--) {
-      const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      const period = `${mStart.getFullYear()}-${String(mStart.getMonth() + 1).padStart(2, '0')}`;
+      const mb = SP.monthBoundaries(now.getTime(), cutoff, i);
+      const mStart = new Date(mb.startMs);
+      const mEnd = new Date(mb.endMs);
+      const period = mb.monthKey;
       // Break each month into: team new, team cross, and per-admin totals — the
       // same classification the current-month figures use.
       let teamNew = 0, teamCross = 0; const adminByOwner = {};
@@ -1497,7 +1513,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
           const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
           for (const it of insts) {
             if (!(it.paid && it.paidDate)) continue;
-            const pd = new Date(it.paidDate);
+            const pd = new Date(SP.saleMs(it, d));
             if (!(pd >= mStart && pd < mEnd)) continue;
             // Recurring repeats (seq>1) are ongoing revenue, not fresh selling —
             // excluded from every figure, same as elsewhere.
