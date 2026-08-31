@@ -617,7 +617,7 @@ router.get('/profile/:id', requireHrAccess, async (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Profile not found.' });
     // A department head (manager/TL) may view profiles of people in their own
     // department, so they can give recognition/reviews.
-    const canReviewThis = canReviewEmployee(req, row);
+    const canReviewThis = await canReviewEmployee(req, row);
     if (!canEditLocked && !isSelf && !canReviewThis) {
       return res.status(403).json({ error: 'You can only view your own profile.' });
     }
@@ -702,18 +702,27 @@ const BADGE_CATALOG = [
 function badgeById(id) { return BADGE_CATALOG.find((b) => b.id === id) || null; }
 
 // Can this actor give a performance card to `emp`? HR staff/admins always can.
-// A department head — a manager or TL — can review anyone in their OWN
-// department (strict department match).
-function canReviewEmployee(req, emp) {
+// A senior can recognize/review only the employees who report to them —
+// directly, or anywhere down their reporting line (their reports' reports too).
+// This is async because it may walk the reporting chain upward from emp.
+async function canReviewEmployee(req, emp) {
   if (req.isHrAdmin || req.isHrManager) return true;
   const actor = req.hrUser;
   if (!actor || !emp) return false;
   if (HR_STAFF_TYPES.includes(actor.type)) return true; // hr / recruiter
-  const isHead = actor.type === 'manager' || actor.type === 'tl';
-  if (!isHead) return false;
-  const aDept = String(actor.department || '').trim().toLowerCase();
-  const eDept = String(emp.department || '').trim().toLowerCase();
-  return !!aDept && aDept === eDept;
+  if (actor.id === emp.id) return false;                // can't review yourself
+  // Walk up emp's reporting chain — if the actor is anywhere above emp, they're
+  // a senior of this employee and may review them.
+  let cur = emp; let hops = 0; const seen = new Set([emp.id]);
+  while (cur && cur.reportsToId && hops < 8) {
+    if (cur.reportsToId === actor.id) return true;      // actor is in emp's chain
+    if (seen.has(cur.reportsToId)) break;
+    seen.add(cur.reportsToId);
+    cur = await HrUser.findByPk(cur.reportsToId);
+    if (!cur) break;
+    hops += 1;
+  }
+  return false;
 }
 
 // GET the badge catalog (for the "give appreciation" picker).
@@ -728,7 +737,7 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
   try {
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canReviewEmployee(req, emp)) return res.status(403).json({ error: 'You can only review employees in your own department.' });
+    if (!(await canReviewEmployee(req, emp))) return res.status(403).json({ error: 'You can only review employees who report to you.' });
     const b = req.body || {};
     const kind = ['praise', 'review', 'yellow', 'red'].includes(b.kind) ? b.kind : null;
     if (!kind) return res.status(400).json({ error: 'Invalid review type.' });
