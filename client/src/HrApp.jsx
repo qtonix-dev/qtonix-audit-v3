@@ -534,26 +534,34 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Give recognition</div><button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button></div>
         <div className="p-6 space-y-4 overflow-auto">
           {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
-          {/* Employee picker */}
+          {/* Employee picker — an inline searchable list (not an absolute
+              dropdown, which was getting clipped by the modal's scroll area). */}
           <div>
             <div className="text-xs font-bold text-slate-500 mb-1.5">Employee <span className="font-normal text-slate-400">(your team only)</span></div>
-            <div className="relative">
-              <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-3 border border-slate-300 rounded-lg px-3 py-2 text-left">
-                {emp ? <><Avatar name={emp.name} src={emp.avatar} size={32} /><div className="min-w-0"><div className="text-sm font-bold truncate">{emp.name}</div><div className="text-[11px] text-slate-400 truncate">{[emp.designation, emp.department].filter(Boolean).join(' · ')}</div></div></> : <span className="text-sm text-slate-400">Select an employee…</span>}
-                <span className="ml-auto text-slate-400">▾</span>
+            {emp && !open ? (
+              <button onClick={() => setOpen(true)} className="w-full flex items-center gap-3 border border-slate-300 rounded-lg px-3 py-2 text-left">
+                <Avatar name={emp.name} src={emp.avatar} size={32} />
+                <div className="min-w-0"><div className="text-sm font-bold truncate">{emp.name}</div><div className="text-[11px] text-slate-400 truncate">{[emp.designation, emp.department].filter(Boolean).join(' · ')}</div></div>
+                <span className="ml-auto text-[11px] font-bold text-orange-600">Change</span>
               </button>
-              {open && (
-                <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-64 overflow-auto">
-                  <div className="p-2 sticky top-0 bg-white border-b border-slate-100"><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your team…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /></div>
-                  {shown.length === 0 ? <div className="px-3 py-4 text-sm text-slate-400 text-center">{team.length === 0 ? 'No one reports to you yet.' : 'No match.'}</div> : shown.map((m) => (
-                    <button key={m.id} onClick={() => pick(m)} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-left">
+            ) : (
+              <div className="border border-slate-300 rounded-lg overflow-hidden">
+                <div className="p-2 border-b border-slate-100">
+                  <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your team by name…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                </div>
+                <div className="max-h-52 overflow-auto">
+                  {shown.length === 0 ? (
+                    <div className="px-3 py-5 text-sm text-slate-400 text-center">{team.length === 0 ? 'No one reports to you yet.' : 'No match — try another name.'}</div>
+                  ) : shown.map((m) => (
+                    <button key={m.id} onClick={() => pick(m)} className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left ${emp && emp.id === m.id ? 'bg-orange-50' : ''}`}>
                       <Avatar name={m.name} src={m.avatar} size={28} />
-                      <div className="min-w-0"><div className="text-sm font-bold truncate">{m.name}</div><div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges ? ` · 🏅 ${m.badges}` : ''}</div></div>
+                      <div className="min-w-0 flex-1"><div className="text-sm font-bold truncate">{m.name}</div><div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges ? ` · 🏅 ${m.badges}` : ''}</div></div>
+                      {emp && emp.id === m.id && <span className="text-orange-500 text-sm shrink-0">✓</span>}
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
           {/* Selected employee context */}
           {emp && summary && (
