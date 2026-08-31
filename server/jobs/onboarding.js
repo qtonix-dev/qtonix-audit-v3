@@ -113,13 +113,26 @@ async function tick(models) {
         if (!onb.seniorNotifiedAt) {
           const seniors = await seniorsFor(models, job, cand);
           let anySent = false;
+          const sentTo = [];
           for (const mgr of seniors) {
             if (!mgr.email) continue;
             const bodyHtml = tpl.onboardingSeniorNotice({ managerName: mgr.name, candidateName: cand.name, role: job ? job.title : '', department: job ? job.department : '', joiningDateText, signature: hrSig });
             const okSent = await sendOnce(models, s, sender, { dedupeKey: `onbsenior:${cand.id}:${jd}:${mgr.email}`, type: 'onboarding_senior', to: mgr.email, toName: mgr.name, subject: `New joiner: ${cand.name}${job ? ` (${job.title})` : ''}`, bodyHtml });
+            if (okSent) sentTo.push({ name: mgr.name, email: mgr.email });
             anySent = anySent || okSent;
           }
-          if (anySent) { onb.seniorNotifiedAt = new Date().toISOString(); dirty = true; acted++; }
+          if (anySent) {
+            const sentAt = new Date().toISOString();
+            onb.seniorNotifiedAt = sentAt;
+            // Auto-complete the "Email department PM & Team Leads" checklist task
+            // and record exactly who it went to + when, so HR can see it's done.
+            if (Array.isArray(onb.hrTasks)) {
+              onb.hrTasks = onb.hrTasks.map((t) => t.id === 'notify_seniors'
+                ? { ...t, done: true, doneAt: sentAt, meta: { ...(t.meta || {}), autoSent: true, sentAt, recipients: sentTo } }
+                : t);
+            }
+            dirty = true; acted++;
+          }
         }
         if ((onb.status === 'submitted' || onb.docsComplete) && !onb.reportingSentAt) {
           const branch = (job && job.locations && job.locations[0]) || cand.branch || '';

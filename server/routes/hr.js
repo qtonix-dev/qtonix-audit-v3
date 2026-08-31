@@ -5392,6 +5392,18 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
       row.onboarding = onb; row.changed('onboarding', true);
       await row.save();
     }
+    // Self-heal: if the senior notice was already sent (seniorNotifiedAt set) but
+    // the "Email department PM & Team Leads" task wasn't marked done (older
+    // records, before auto-complete existed), mark it done now.
+    if (onb.seniorNotifiedAt && Array.isArray(onb.hrTasks)) {
+      const t = onb.hrTasks.find((x) => x.id === 'notify_seniors');
+      if (t && !t.done) {
+        onb.hrTasks = onb.hrTasks.map((x) => x.id === 'notify_seniors'
+          ? { ...x, done: true, doneAt: onb.seniorNotifiedAt, meta: { ...(x.meta || {}), autoSent: true, sentAt: onb.seniorNotifiedAt } }
+          : x);
+        row.onboarding = onb; row.changed('onboarding', true); await row.save();
+      }
+    }
     const job = row.jobPostId ? await HrJobPost.findByPk(row.jobPostId) : null;
     let hr = null;
     const ids = (job && Array.isArray(job.assignedHrIds)) ? job.assignedHrIds : [];
@@ -5699,6 +5711,30 @@ router.post('/candidates/:id/onboarding/task/:taskId', requireHrAccess, async (r
       task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
       onb.welcomeAboardSentAt = nowIso;
       pushTimeline(row, { type: 'onboarding', text: `Welcome-aboard email sent to ${empName} by ${req.hrActor.name}.`, by: req.hrActor.name });
+    } else if (b.action === 'notify_seniors') {
+      // Manually send the "new joiner" notice to the department PM & Team Leads
+      // now (instead of waiting for the automatic 2-days-before send).
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+      const mailbox = mailboxEmail(s);
+      if (!token || !mailbox) return res.status(400).json({ error: 'No recruitment mailbox is linked. Connect one in Admin → Email.' });
+      const hrEmail = require('../services/hrEmailTemplate');
+      const { Op } = require('../models');
+      const dept = (job && job.department) || row.department || '';
+      const all = await HrUser.findAll({ where: { active: true, type: { [Op.in]: ['manager', 'tl'] } } });
+      const seniors = all.filter((u) => u.email && (u.type === 'manager' || (u.type === 'tl' && dept && String(u.department || '').trim().toLowerCase() === String(dept).trim().toLowerCase())));
+      if (!seniors.length) return res.status(400).json({ error: 'No Project Managers or Team Leads found to notify.' });
+      const joiningDateText = row.offer && row.offer.joiningDate ? new Date(String(row.offer.joiningDate).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+      const sentTo = [];
+      for (const mgr of seniors) {
+        const bodyHtml = hrEmail.onboardingSeniorNotice({ managerName: mgr.name, candidateName: row.name, role: job ? job.title : '', department: dept, joiningDateText, signature: null });
+        try { await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: mgr.email, toName: mgr.name, subject: `New joiner: ${row.name}${job ? ` (${job.title})` : ''}`, bodyHtml }, { type: 'onboarding_senior', userId: mgr.id }); sentTo.push({ name: mgr.name, email: mgr.email }); } catch {}
+      }
+      if (!sentTo.length) return res.status(502).json({ error: 'Could not send the notification. Please try again.' });
+      onb.seniorNotifiedAt = nowIso;
+      task.meta = { ...(task.meta || {}), autoSent: false, sentAt: nowIso, recipients: sentTo, sentBy: req.hrActor.name };
+      task.done = true; task.doneAt = nowIso; task.doneById = req.hrActor.id;
+      pushTimeline(row, { type: 'onboarding', text: `New-joiner notice sent to ${sentTo.map((r) => r.name).join(', ')} by ${req.hrActor.name}.`, by: req.hrActor.name });
     } else {
       // Plain toggle.
       task.done = b.done !== undefined ? !!b.done : !task.done;

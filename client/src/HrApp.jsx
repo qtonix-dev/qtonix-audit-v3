@@ -4314,12 +4314,18 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
   const isKpi = task.id === 'kpi_kra';
 
   const routed = task.meta && task.meta.routedTo;
+  const isNotifySeniors = task.id === 'notify_seniors';
+  const seniorMeta = task.meta || {};
+  const fmtSentAt = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
   return (
     <div className="py-1.5 border-t border-slate-50">
       <div className="flex items-center gap-2.5 text-[13px]">
         <button onClick={toggle} disabled={busy} className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center ${task.done ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>{task.done && <span className="text-white text-[10px] font-bold leading-none">✓</span>}</button>
         <span className={task.done ? 'text-slate-400 line-through' : 'text-[#0A0E28]'}>{task.label}</span>
         {task.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+        {/* Sent / pending badge for the auto senior-notice task. */}
+        {isNotifySeniors && task.done && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#DCFCE7', color: '#15803D' }}>SENT</span>}
+        {isNotifySeniors && !task.done && <button onClick={() => call({ action: 'notify_seniors' })} disabled={busy} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ background: '#7C3AED' }}>{busy ? 'Sending…' : 'Send now ›'}</button>}
         {/* per-task action buttons */}
         {!task.done && task.route && !routed && <button onClick={() => call({ action: 'route_it' })} disabled={busy} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#0EA5E9' }}>Send to IT ›</button>}
         {!task.done && task.wantsDate && !showDate && <button onClick={() => setShowDate(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#F59E0B' }}>Set delivery date ›</button>}
@@ -4328,6 +4334,16 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
         {!task.done && isWelcomeEmail && <button onClick={() => call({ action: 'welcome_aboard' })} disabled={busy} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#0F9D58' }}>Send welcome ›</button>}
         {!task.done && isKpi && <button onClick={() => setShowKpi(true)} className="ml-auto text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: '#4338CA' }}>Draft with AI ›</button>}
       </div>
+      {/* Senior-notice sent details: when + who it went to. */}
+      {isNotifySeniors && !task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">Sends automatically 2 days before joining — or click “Send now” to notify them today.</div>}
+      {isNotifySeniors && task.done && (
+        <div className="ml-6 mt-1 text-[11px] text-green-700">
+          ✓ Emailed {seniorMeta.sentAt ? `on ${fmtSentAt(seniorMeta.sentAt)}` : (task.doneAt ? `on ${fmtSentAt(task.doneAt)}` : '')}
+          {Array.isArray(seniorMeta.recipients) && seniorMeta.recipients.length > 0 && (
+            <span className="text-slate-500"> · to {seniorMeta.recipients.map((r) => r.name).join(', ')}</span>
+          )}
+        </div>
+      )}
       {routed && <div className="ml-6 mt-1 text-[11px] text-sky-600 font-semibold">✓ Sent to {routed} — they’ll mark it done from their dashboard.</div>}
       {task.meta && task.meta.deliveryDate && task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">ID card expected by {new Date(task.meta.deliveryDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}.</div>}
       {task.meta && task.meta.meetingTime && task.done && <div className="ml-6 mt-1 text-[11px] text-slate-400">Announcement posted · {task.meta.meetingDate ? new Date(task.meta.meetingDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''} {task.meta.meetingTime} · Conference Room.</div>}
