@@ -375,16 +375,16 @@ function MyRecognitionModal({ data, onClose }) {
 const REC_BADGE_FALLBACK = { icon: '🌟', color: '#EA580C' };
 
 // ===== My Rewards — the employee's reward wallet, points & history =====
-function MyRewardsPage({ user }) {
+function MyRewardsPage({ user, embedded }) {
   const [data, setData] = useState(null);
   useEffect(() => { hrApi('/me/rewards').then(setData).catch(() => setData({ wallet: {}, ledger: [] })); }, []);
-  if (!data) return <div className="max-w-4xl mx-auto px-4 py-8 text-slate-400 text-sm">Loading…</div>;
+  if (!data) return <div className={embedded ? 'text-slate-400 text-sm py-8' : 'max-w-4xl mx-auto px-4 py-8 text-slate-400 text-sm'}>Loading…</div>;
   const w = data.wallet || {};
   const fmt = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return ''; } };
   const catIcon = { badge: '🏅', automatic: '🎁', anniversary: '🎊', attendance: '📅', appreciation: '❤️' };
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
-      <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>
+    <div className={embedded ? '' : 'max-w-4xl mx-auto px-4 py-6'}>
+      {!embedded && <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2 mb-4">⭐ My Rewards</div>}
       <div className="grid md:grid-cols-3 gap-4 mb-5">
         <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#0A0E28,#0435AC)' }}>
           <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9fb4dd' }}>Reward Wallet</div>
@@ -429,8 +429,68 @@ function MyRewardsPage({ user }) {
   );
 }
 
+// ===== Rewards Admin — rule points, master switch, and overview KPIs =====
+function RewardsAdmin() {
+  const [data, setData] = useState(null);
+  const [ov, setOv] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [busy, setBusy] = useState('');
+  const load = () => { hrApi('/rewards/rules').then(setData).catch(() => {}); hrApi('/rewards/overview').then(setOv).catch(() => {}); };
+  useEffect(() => { load(); }, []);
+  if (!data) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+  const cfg = data.config || {};
+  const live = !!cfg.rewardsLive;
+  const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
+  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON? From now, recognition and milestones will start awarding points to employees. Make sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); } catch (e) { alert(e.message); } setBusy(''); };
+  const cats = {}; (data.rules || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
+  const catLabel = { badge: '🏅 Badges', appreciation: '❤️ Appreciation', automatic: '🎁 Automatic', anniversary: '🎊 Anniversary', attendance: '📅 Attendance' };
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border p-5 flex items-center justify-between gap-4 flex-wrap" style={{ background: live ? '#F0FDF4' : '#FFF7ED', borderColor: live ? '#BBF7D0' : '#FED7AA' }}>
+        <div>
+          <div className="text-[15px] font-extrabold" style={{ color: live ? '#15803D' : '#9a3412' }}>{live ? '✅ Rewards are LIVE' : '⏸ Rewards are paused'}</div>
+          <div className="text-[12px] mt-0.5" style={{ color: live ? '#166534' : '#9a3412' }}>{live ? 'Recognition and milestones are awarding points to employees.' : 'No points are being awarded yet. Review the point values below, then turn Rewards on.'}</div>
+        </div>
+        <button onClick={toggleLive} disabled={busy === 'live'} className="rounded-xl px-5 py-2.5 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: live ? '#DC2626' : 'linear-gradient(90deg,#16A34A,#15803D)' }}>{busy === 'live' ? '…' : (live ? 'Pause Rewards' : 'Turn Rewards ON')}</button>
+      </div>
+      {ov && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-green-600">{(ov.issued || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Points issued</div></div>
+          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-blue-600">{(ov.redeemed || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Redeemed</div></div>
+          <div className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-xl font-extrabold text-orange-600">{(ov.outstanding || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase text-slate-400">Outstanding</div></div>
+          <div className="rounded-xl p-3 text-white" style={{ background: 'linear-gradient(120deg,#7C2D12,#B45309)' }}><div className="text-xl font-extrabold">₹{(ov.liabilityRupees || 0).toLocaleString('en-IN')}</div><div className="text-[10px] font-bold uppercase" style={{ color: '#ffe4d3' }}>Reward liability</div></div>
+        </div>
+      )}
+      <div className="text-[12px] text-slate-500">Conversion: <b>{cfg.pointsPerRupee || 2} points = ₹1</b> · Points expire after <b>{cfg.expiryMonths || 24} months</b>. Edit a badge's points below — the value applies the next time it's awarded.</div>
+      {Object.entries(cats).map(([cat, rules]) => (
+        <div key={cat} className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{catLabel[cat] || cat}</div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {rules.map((r) => {
+              const pending = edits[r.id] !== undefined;
+              const val = pending ? edits[r.id] : r.points;
+              return (
+                <div key={r.id} className="flex items-center gap-2.5 rounded-lg border border-slate-100 px-3 py-2">
+                  {r.icon && <span className="text-lg shrink-0">{r.icon}</span>}
+                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{r.name}</div><div className="text-[10px] text-slate-400 truncate">{r.pointsMax ? `${r.points}–${r.pointsMax} pts` : r.frequency}{r.requiresApproval ? ' · needs approval' : ''}</div></div>
+                  <input type="number" value={val} onChange={(e) => setEdits((x) => ({ ...x, [r.id]: e.target.value }))} className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-[13px] text-right" />
+                  <span className="text-[11px] text-slate-400">pts</span>
+                  {pending
+                    ? <button onClick={() => saveRule(r, { points: Number(val) })} disabled={busy === 'r' + r.id} className="text-[11px] font-bold rounded-lg px-2.5 py-1 text-white shrink-0" style={{ background: ORANGE }}>{busy === 'r' + r.id ? '…' : 'Save'}</button>
+                    : <button onClick={() => saveRule(r, { active: !r.active })} className="text-[11px] font-bold rounded-lg px-2 py-1 shrink-0" style={r.active ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#94A3B8' }}>{r.active ? 'On' : 'Off'}</button>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RecognitionPage({ user, onOpenEmployee }) {
   const canSeeAll = !!(user && (user.isAdmin || user.hrManagerAll || user.hrManagerScope || user.isHrManager));
+  const canManageRewards = !!(user && (user.isAdmin || user.hrManagerAll || user.isHrManager));
   const [tab, setTab] = useState('give');
   const [data, setData] = useState(null);
   const [give, setGive] = useState(false);
@@ -445,7 +505,7 @@ function RecognitionPage({ user, onOpenEmployee }) {
       </div>
       {canSeeAll && (
         <div className="flex gap-1 border-b border-slate-200 mb-5">
-          {[['give', 'Give recognition'], ['all', 'All recognition']].map(([id, label]) => (
+          {[['give', 'Give recognition'], ['all', 'All recognition'], ['rewards', 'My Rewards'], ...(canManageRewards ? [['admin', 'Rewards Admin']] : [])].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-[13px] font-extrabold border-b-2 -mb-px transition" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
           ))}
         </div>
@@ -483,6 +543,8 @@ function RecognitionPage({ user, onOpenEmployee }) {
         </div>
       )}
       {canSeeAll && tab === 'all' && <AllRecognition onOpenEmployee={onOpenEmployee} />}
+      {canSeeAll && tab === 'rewards' && <MyRewardsPage user={user} embedded />}
+      {canManageRewards && tab === 'admin' && <RewardsAdmin />}
       {give && <GiveRecognitionPicker onClose={() => setGive(false)} onSaved={() => { setGive(false); load(); }} />}
     </div>
   );
@@ -8030,7 +8092,7 @@ export default function HrApp() {
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Task' },
     ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
-    { id: 'rewards', label: 'My Rewards' },
+    ...(!(isAdmin || isHrStaff || isHrManager) ? [{ id: 'rewards', label: 'My Rewards' }] : []),
     { id: 'interview', label: 'Interview' },
     ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
     ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),

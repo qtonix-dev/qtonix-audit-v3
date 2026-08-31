@@ -28,6 +28,12 @@ async function expiryMonths(models) {
 function addMonths(dateStr, months) { const d = new Date(dateStr + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + months); return d.toISOString().slice(0, 10); }
 function istToday() { return new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); }
 
+// Master switch: are Reward Points live yet? Defaults OFF so no points are
+// awarded until an admin reviews the rule values and turns the system on.
+async function rewardsLive(models) {
+  try { const s = await models.Settings.findOne({ where: { singleton: 'settings' } }); return !!(s && s.rewardConfig && s.rewardConfig.rewardsLive); } catch { return false; }
+}
+
 // Fetch-or-create a wallet row for an employee (inside a txn when given).
 async function getWallet(models, employeeId, t) {
   const { RewardWallet } = models;
@@ -48,6 +54,9 @@ async function award(models, employeeId, entry) {
   const { sequelize, RewardLedger } = models;
   const points = Math.round(Number(entry.points) || 0);
   if (points <= 0) return { ok: false, error: 'Award points must be positive.' };
+  // Master switch — if Rewards aren't live yet, silently no-op (no ledger, no
+  // wallet change) so nothing accrues until the admin turns the system on.
+  if (!(await rewardsLive(models))) return { ok: false, notLive: true };
   const today = istToday();
   const months = await expiryMonths(models);
   try {
@@ -121,4 +130,4 @@ async function walletFor(models, employeeId) {
   return { balance: w.balance, reserved: w.reserved, lifetimeEarned: w.lifetimeEarned, lifetimeRedeemed: w.lifetimeRedeemed, lifetimeExpired: w.lifetimeExpired, rupeeValue: value };
 }
 
-module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday };
+module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive };

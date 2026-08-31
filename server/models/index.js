@@ -507,6 +507,7 @@ const Settings = sequelize.define(
     // per-role monthly discretionary budgets. All admin-editable.
     rewardConfig: { type: DataTypes.JSON, defaultValue: {
       pointsPerRupee: 2, expiryMonths: 24,
+      rewardsLive: false,
       budgets: { tl: 2500, pm: 3500, hod: 5000, hr: 5000, senior_mgmt: 10000 },
       attendancePoints: { d30: 50, d60: 100, d100: 250 }, attendancePointsEnabled: false,
     } },

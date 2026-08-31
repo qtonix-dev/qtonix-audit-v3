@@ -787,6 +787,7 @@ router.put('/rewards/config', requireHrAccess, requireHrManager, async (req, res
     const b = req.body || {};
     if (b.pointsPerRupee !== undefined) { const n = Number(b.pointsPerRupee); if (n > 0) cfg.pointsPerRupee = n; }
     if (b.expiryMonths !== undefined) { const n = Number(b.expiryMonths); if (n > 0) cfg.expiryMonths = Math.round(n); }
+    if (b.rewardsLive !== undefined) cfg.rewardsLive = !!b.rewardsLive;
     if (b.budgets) cfg.budgets = { ...(cfg.budgets || {}), ...b.budgets };
     if (b.attendancePointsEnabled !== undefined) cfg.attendancePointsEnabled = !!b.attendancePointsEnabled;
     s.rewardConfig = cfg; s.changed('rewardConfig', true); await s.save();
