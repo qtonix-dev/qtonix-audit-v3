@@ -5411,6 +5411,26 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
     if (!hr && row.recruiterId) hr = await HrUser.findByPk(row.recruiterId);
     const appUrl = await require('../services/publicUrl').baseFor('careers', req);
     const isSales = /sales/i.test(String((job && job.department) || '') + ' ' + String(row.stage || ''));
+    // Whether the candidate's onboarding link is currently expired — mirrors the
+    // public page's rule exactly so the drawer only offers "reactivate" when the
+    // link has actually lapsed. Rule: expires the day BEFORE joining; a manual
+    // reactivation window (reactivatedUntil) overrides that until its date; a
+    // submitted onboarding is never "expired".
+    const linkStatus = (() => {
+      const offer = row.offer || {};
+      if (onb.status === 'submitted') return { expired: false, submitted: true };
+      const jd = normalizeJoiningYmd(offer.joiningDate || '');
+      const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      const todayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
+      if (onb.reactivatedUntil) {
+        const untilMs = new Date(String(onb.reactivatedUntil).slice(0, 10) + 'T00:00:00Z').getTime();
+        return { expired: todayMs > untilMs, reactivatedUntil: String(onb.reactivatedUntil).slice(0, 10), expiryDate: String(onb.reactivatedUntil).slice(0, 10) };
+      }
+      if (!jd) return { expired: false }; // no joining date → can't be expired
+      const expiryMs = new Date(jd + 'T00:00:00Z').getTime() - 86400000; // day before joining
+      const expiryDate = new Date(expiryMs).toISOString().slice(0, 10);
+      return { expired: todayMs >= expiryMs, expiryDate };
+    })();
     res.json({
       candidate: { id: row.id, name: row.name, email: row.email, phone: row.phone },
       role: job ? job.title : '',
@@ -5419,6 +5439,7 @@ router.get('/candidates/:id/onboarding', requireHrAccess, async (req, res, next)
       offer: row.offer || {},
       onboarding: onb,
       onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '',
+      linkStatus,
       hr: hr ? { id: hr.id, name: hr.name, phone: hr.phone || '', email: hr.email || '' } : null,
       convertedEmployeeId: onb.convertedEmployeeId || null,
       queries: (onb.queries || []).map((q) => ({ id: q.id, message: q.message, at: q.at, reply: q.reply || null, repliedAt: q.repliedAt || null, repliedByName: q.repliedByName || null })),

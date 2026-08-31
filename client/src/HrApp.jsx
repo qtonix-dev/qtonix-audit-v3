@@ -4076,7 +4076,31 @@ function OnboardingPanelModal({ candidate, isAdmin, onClose, onChanged, onOpenCa
                       <button onClick={copyLink} className="rounded-lg border border-slate-300 px-3 py-2 text-[12px] font-bold text-slate-600">{busy === 'copied' ? 'Copied!' : 'Copy link'}</button>
                       <button onClick={sendWelcome} disabled={busy === 'welcome'} className="rounded-lg px-3 py-2 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy === 'welcome' ? 'Sending…' : (onb.welcomeEmailSentAt ? 'Resend welcome' : 'Send welcome email')}</button>
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-2">The link expires the day before joining. If the candidate needs more time, <button onClick={async () => { setBusy('react'); setErr(''); try { await hrApi(`/candidates/${candidate._id}/onboarding/reactivate`, { method: 'POST', body: '{}' }); await load(); } catch (e) { setErr(e.message); } setBusy(''); }} disabled={busy === 'react'} className="font-bold text-indigo-600 hover:text-indigo-700 underline disabled:opacity-50">{busy === 'react' ? 'reactivating…' : 'reactivate the link'}</button>.</div>
+                    {(() => {
+                      const ls = data.linkStatus || {};
+                      const fmtD = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
+                      if (ls.submitted || submitted) {
+                        return <div className="text-[11px] text-green-700 mt-2">✓ The candidate has already submitted their documents — the link is no longer needed.</div>;
+                      }
+                      if (ls.expired) {
+                        return (
+                          <div className="text-[11px] mt-2 rounded-lg px-3 py-2" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                            <span className="font-bold text-red-600">⚠ This link has expired.</span>
+                            <span className="text-red-500"> The candidate can no longer open it. </span>
+                            <button onClick={async () => { setBusy('react'); setErr(''); try { await hrApi(`/candidates/${candidate._id}/onboarding/reactivate`, { method: 'POST', body: '{}' }); await load(); } catch (e) { setErr(e.message); } setBusy(''); }} disabled={busy === 'react'} className="font-bold text-indigo-600 hover:text-indigo-700 underline disabled:opacity-50">{busy === 'react' ? 'reactivating…' : 'Reactivate the link →'}</button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="text-[11px] text-slate-400 mt-2">
+                          {ls.reactivatedUntil
+                            ? <>✓ Link active — reactivated until {fmtD(ls.reactivatedUntil)}.</>
+                            : ls.expiryDate
+                              ? <>✓ Link active — expires {fmtD(ls.expiryDate)} (the day before joining).</>
+                              : <>The link expires the day before joining.</>}
+                        </div>
+                      );
+                    })()}
                     {onb.welcomeEmailSentAt && onb.welcomeEmailSentAt !== 'physical' && <div className="text-[11px] text-slate-400 mt-2">Welcome email sent {new Date(onb.welcomeEmailSentAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</div>}
                     {!submitted && !showPhysForm && <div className="mt-2"><button onClick={() => { setShowPhysForm(true); setPhysBy((data.hrStaff && data.hrStaff[0] && data.hrStaff[0].id) || ''); }} disabled={busy === 'physical'} className="text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 px-3 py-1.5 hover:bg-indigo-50">Documents collected in person? Mark verified →</button><div className="text-[11px] text-slate-400 mt-1">Use this when the candidate hands over documents physically — no link or welcome email is sent, but the checklist and other emails continue.</div></div>}
                     {!submitted && showPhysForm && (
