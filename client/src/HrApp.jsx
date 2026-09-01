@@ -1665,8 +1665,11 @@ function HrTasksView({ user, isAdmin }) {
 // Right-side detail drawer: fields, subtasks, attachments, notes, activity.
 // Rich-text editor (TipTap) for task/subtask descriptions. Emits sanitized-ish
 // HTML on blur. A compact toolbar covers the Asana basics.
-function RichText({ value, onSave, placeholder }) {
+function RichText({ value, onSave, placeholder, taskTitle }) {
   const lastSaved = useRef(value || '');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiBusy, setAiBusy] = useState('');
+  const [aiResult, setAiResult] = useState(null); // { text, mode }
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: { levels: [2, 3] } }), Link.configure({ openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } })],
     content: value || '',
@@ -1678,23 +1681,78 @@ function RichText({ value, onSave, placeholder }) {
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); on(); }} className={`w-7 h-7 rounded text-xs font-bold flex items-center justify-center ${active ? 'bg-slate-200 text-[#050A1F]' : 'text-slate-500 hover:bg-slate-100'}`}>{children}</button>
   );
   const setLink = () => { const prev = editor.getAttributes('link').href; const url = window.prompt('Link URL', prev || 'https://'); if (url === null) return; if (url === '') { editor.chain().focus().unsetLink().run(); return; } editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); };
+  const runAi = async (mode) => {
+    setAiOpen(false); setAiBusy(mode); setAiResult(null);
+    try { const r = await hrApi('/tasks/ai/description', { method: 'POST', body: JSON.stringify({ title: taskTitle || '', text: editor.getHTML(), mode }) }); setAiResult({ text: r.text, mode: r.mode }); }
+    catch (e) { alert(e.message || 'AI request failed.'); }
+    setAiBusy('');
+  };
+  const acceptAi = () => { const html = aiResult.text.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join(''); editor.commands.setContent(html, false); lastSaved.current = html; if (onSave) onSave(html); setAiResult(null); };
+  const AI_MODES = [
+    { id: 'improve', icon: '✨', label: 'Improve', desc: 'Fix grammar + add detail' },
+    { id: 'rewrite', icon: '🔁', label: 'Rewrite', desc: 'Reword, keep meaning' },
+  ];
+  const AI_TONES = [{ id: 'professional', icon: '💼', label: 'Professional' }, { id: 'shorter', icon: '✂️', label: 'Shorter' }, { id: 'friendly', icon: '😊', label: 'Friendly' }];
+  const modeTag = { improve: 'IMPROVED', rewrite: 'REWRITTEN', professional: 'PROFESSIONAL', shorter: 'SHORTER', friendly: 'FRIENDLY' };
   return (
-    <div className="rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-orange-300">
-      <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1 flex-wrap">
-        <Btn title="Bold" on={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')}>B</Btn>
-        <Btn title="Italic" on={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')}><span className="italic">I</span></Btn>
-        <Btn title="Strikethrough" on={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')}><span className="line-through">S</span></Btn>
-        <span className="w-px h-4 bg-slate-200 mx-1" />
-        <Btn title="Heading" on={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })}>H</Btn>
-        <Btn title="Bullet list" on={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')}>•</Btn>
-        <Btn title="Numbered list" on={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')}>1.</Btn>
-        <Btn title="Code" on={() => editor.chain().focus().toggleCode().run()} active={editor.isActive('code')}>{'</>'}</Btn>
-        <Btn title="Link" on={setLink} active={editor.isActive('link')}>🔗</Btn>
+    <div>
+      <div className="rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-orange-300">
+        <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1 flex-wrap relative">
+          <Btn title="Bold" on={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')}>B</Btn>
+          <Btn title="Italic" on={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')}><span className="italic">I</span></Btn>
+          <Btn title="Strikethrough" on={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')}><span className="line-through">S</span></Btn>
+          <span className="w-px h-4 bg-slate-200 mx-1" />
+          <Btn title="Heading" on={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })}>H</Btn>
+          <Btn title="Bullet list" on={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')}>•</Btn>
+          <Btn title="Numbered list" on={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')}>1.</Btn>
+          <Btn title="Code" on={() => editor.chain().focus().toggleCode().run()} active={editor.isActive('code')}>{'</>'}</Btn>
+          <Btn title="Link" on={setLink} active={editor.isActive('link')}>🔗</Btn>
+          {/* AI button + popover */}
+          <div className="ml-auto relative">
+            <button type="button" onMouseDown={(e) => { e.preventDefault(); setAiOpen((o) => !o); }} disabled={!!aiBusy} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-extrabold text-white disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)', boxShadow: '0 2px 8px rgba(139,92,246,.3)' }}>{aiBusy ? '✨ Thinking…' : '✨ AI'}</button>
+            {aiOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onMouseDown={() => setAiOpen(false)} />
+                <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-56 bg-white border border-slate-100 rounded-xl p-1.5" style={{ boxShadow: '0 16px 40px rgba(2,6,23,.16)' }}>
+                  {AI_MODES.map((m) => (
+                    <button key={m.id} type="button" onMouseDown={(e) => { e.preventDefault(); runAi(m.id); }} className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-violet-50 text-left">
+                      <span className="w-6 h-6 rounded-md flex items-center justify-center text-sm" style={{ background: '#f5f3ff' }}>{m.icon}</span>
+                      <span className="flex flex-col leading-tight"><span className="text-[13px] font-bold text-slate-800">{m.label}</span><span className="text-[10px] text-slate-400">{m.desc}</span></span>
+                    </button>
+                  ))}
+                  <div className="text-[9px] font-extrabold uppercase tracking-wide text-violet-300 px-2.5 pt-2 pb-1">Change tone</div>
+                  {AI_TONES.map((m) => (
+                    <button key={m.id} type="button" onMouseDown={(e) => { e.preventDefault(); runAi(m.id); }} className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-violet-50 text-left">
+                      <span className="w-6 h-6 rounded-md flex items-center justify-center text-sm" style={{ background: '#f5f3ff' }}>{m.icon}</span>
+                      <span className="text-[13px] font-bold text-slate-800">{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        <div onBlur={() => { const html = editor.getHTML(); if (onSave && html !== lastSaved.current) { lastSaved.current = html; onSave(html); } }}>
+          <EditorContent editor={editor} />
+          {editor.isEmpty && placeholder && <div className="px-3 -mt-[60px] text-sm text-slate-400 pointer-events-none">{placeholder}</div>}
+        </div>
       </div>
-      <div onBlur={() => { const html = editor.getHTML(); if (onSave && html !== lastSaved.current) { lastSaved.current = html; onSave(html); } }}>
-        <EditorContent editor={editor} />
-        {editor.isEmpty && placeholder && <div className="px-3 -mt-[60px] text-sm text-slate-400 pointer-events-none">{placeholder}</div>}
-      </div>
+      {/* AI suggestion result — below the editor, no overlap */}
+      {aiResult && (
+        <div className="mt-3 rounded-xl border p-4" style={{ background: 'linear-gradient(135deg,#faf5ff,#fdf2f8)', borderColor: '#f0e7fb' }}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-lg flex items-center justify-center text-white text-[13px]" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>✨</span>
+            <span className="text-[12px] font-extrabold text-violet-600">AI suggestion</span>
+            <span className="text-[9px] font-extrabold rounded px-2 py-0.5" style={{ background: '#ede9fe', color: '#6d28d9' }}>{modeTag[aiResult.mode] || 'AI'}</span>
+            <button type="button" onClick={() => runAi(aiResult.mode)} className="ml-auto text-[12px] font-bold text-violet-500 hover:text-violet-700">↻ Regenerate</button>
+          </div>
+          <div className="text-[13.5px] text-slate-700 leading-relaxed whitespace-pre-wrap">{aiResult.text}</div>
+          <div className="flex gap-2 mt-3.5">
+            <button type="button" onClick={acceptAi} className="rounded-lg px-4 py-2 text-[12px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg,#10B981,#059669)', boxShadow: '0 2px 8px rgba(16,185,129,.25)' }}>✓ Accept</button>
+            <button type="button" onClick={() => setAiResult(null)} className="rounded-lg px-4 py-2 text-[12px] font-bold text-slate-500 border border-slate-200 bg-white">Discard</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1724,6 +1782,8 @@ async function uploadTaskFile(taskId, file, onDone, onErr) {
 function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle }) {
   const [data, setData] = useState(null);
   const [note, setNote] = useState('');
+  const [noteSuggestions, setNoteSuggestions] = useState([]);
+  const [noteAiBusy, setNoteAiBusy] = useState('');
   const [newSub, setNewSub] = useState('');
   const [subOpen, setSubOpen] = useState(null);   // open a subtask in its own drawer
   const [uploading, setUploading] = useState(false);
@@ -1732,7 +1792,9 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   const load = () => hrApi(`/tasks/tasks/${taskId}/detail`).then(setData).catch(() => {});
   useEffect(() => { load(); }, [taskId]);
   const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
-  const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); load(); };
+  const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); setNoteSuggestions([]); load(); };
+  const suggestNotes = async () => { setNoteAiBusy('suggest'); try { const t = data && data.task; const r = await hrApi('/tasks/ai/suggest-notes', { method: 'POST', body: JSON.stringify({ title: t && t.title, description: t && t.description, status: t && t.stage }) }); setNoteSuggestions(r.suggestions || []); } catch (e) { alert(e.message || 'AI failed'); } setNoteAiBusy(''); };
+  const retoneNote = async (mode) => { if (!note.trim()) return; setNoteAiBusy(mode); try { const r = await hrApi('/tasks/ai/retone-note', { method: 'POST', body: JSON.stringify({ text: note, mode }) }); if (r.text) setNote(r.text); } catch (e) { alert(e.message || 'AI failed'); } setNoteAiBusy(''); };
   const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
   const toggleSub = async (s) => { await hrApi(`/tasks/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
   const onPickFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; setUpErr(''); setUploading(true); uploadTaskFile(taskId, f, () => { setUploading(false); load(); }, (m) => { setUploading(false); setUpErr(m); }); e.target.value = ''; };
@@ -1767,7 +1829,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
 
           <div className="mb-5">
             <div className="text-xs font-bold text-slate-500 mb-1">Description</div>
-            <RichText value={t.description} placeholder="What is this task about?" onSave={(html) => html !== t.description && patch({ description: html })} />
+            <RichText value={t.description} taskTitle={t.name} placeholder="What is this task about?" onSave={(html) => html !== t.description && patch({ description: html })} />
           </div>
 
           <div className="mb-5">
@@ -1816,7 +1878,29 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                 </div>
               ))}
             </div>
-            <div className="flex items-stretch gap-2"><input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={addNote} className="shrink-0 rounded-lg px-3 text-xs font-bold text-white" style={{ background: ORANGE }}>Post</button></div>
+            <div className="flex items-stretch gap-2">
+              <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              <button onClick={suggestNotes} disabled={!!noteAiBusy} title="Suggest a comment" className="shrink-0 w-9 rounded-lg flex items-center justify-center text-white text-[15px] disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)', boxShadow: '0 2px 8px rgba(139,92,246,.3)' }}>{noteAiBusy === 'suggest' ? '…' : '✨'}</button>
+              <button onClick={addNote} className="shrink-0 rounded-lg px-3 text-xs font-bold text-white" style={{ background: ORANGE }}>Post</button>
+            </div>
+            {noteSuggestions.length > 0 && (
+              <div className="mt-2.5">
+                <div className="text-[11px] font-extrabold text-violet-500 mb-1.5">✨ Tap a suggestion</div>
+                <div className="flex flex-wrap gap-2">
+                  {noteSuggestions.map((s, i) => (
+                    <button key={i} onClick={() => setNote(s)} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800 hover:border-violet-300 transition" style={{ background: '#faf5ff', borderColor: '#ede9fe' }}>{s}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {note.trim() && (
+              <div className="flex flex-wrap gap-1.5 mt-2 items-center">
+                <span className="text-[11px] text-slate-400 font-bold">Make it</span>
+                {[['professional', '💼 Professional'], ['shorter', '✂️ Shorter'], ['friendly', '😊 Friendly']].map(([m, label]) => (
+                  <button key={m} onClick={() => retoneNote(m)} disabled={!!noteAiBusy} className="rounded-full border px-3 py-1 text-[11px] font-bold text-violet-700 disabled:opacity-50" style={{ background: '#fff', borderColor: '#ede9fe' }}>{noteAiBusy === m ? '…' : label}</button>
+                ))}
+              </div>
+            )}
           </div>
 
           {data.activity.length > 0 && (

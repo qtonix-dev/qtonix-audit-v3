@@ -291,4 +291,48 @@ router.get('/assigned-by-me', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- AI helpers: description rewrite/tone + note suggestions ----------------
+const { Settings } = require('../models');
+async function anthropicKey() {
+  try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; }
+}
+
+// Improve / rewrite / retone a task description. Returns the improved text.
+router.post('/ai/description', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!key) return res.status(400).json({ error: 'AI is not configured. Add an Anthropic API key in Admin → API keys.' });
+    const b = req.body || {};
+    const mode = ['improve', 'rewrite', 'professional', 'shorter', 'friendly'].includes(b.mode) ? b.mode : 'improve';
+    if (!String(b.text || '').replace(/<[^>]+>/g, '').trim() && !String(b.title || '').trim()) return res.status(400).json({ error: 'Nothing to improve yet — write a few words first.' });
+    const text = await require('../services/taskAi').rewriteDescription(key, { title: b.title, text: b.text, mode });
+    if (!text) return res.status(502).json({ error: 'The AI did not return a suggestion. Try again.' });
+    res.json({ text, mode });
+  } catch (e) { res.status(502).json({ error: 'AI request failed. Please try again.' }); }
+});
+
+// Suggest 3 contextual note options for a task's current situation.
+router.post('/ai/suggest-notes', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!key) return res.status(400).json({ error: 'AI is not configured.' });
+    const b = req.body || {};
+    const suggestions = await require('../services/taskAi').suggestNotes(key, { title: b.title, description: b.description, status: b.status });
+    res.json({ suggestions });
+  } catch (e) { res.status(502).json({ error: 'AI request failed. Please try again.' }); }
+});
+
+// Retone a typed note (professional / shorter / friendly).
+router.post('/ai/retone-note', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!key) return res.status(400).json({ error: 'AI is not configured.' });
+    const b = req.body || {};
+    const mode = ['professional', 'shorter', 'friendly'].includes(b.mode) ? b.mode : 'professional';
+    if (!String(b.text || '').trim()) return res.status(400).json({ error: 'Type a note first.' });
+    const text = await require('../services/taskAi').retoneNote(key, { text: b.text, mode });
+    res.json({ text });
+  } catch (e) { res.status(502).json({ error: 'AI request failed. Please try again.' }); }
+});
+
 module.exports = router;
