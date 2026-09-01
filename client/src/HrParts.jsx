@@ -855,6 +855,7 @@ function PerformanceCardModal({ by, kindInit, employeeId, onClose, onSaved }) {
   const [note, setNote] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [badgeId, setBadgeId] = useState('');
+  const [showAllBadges, setShowAllBadges] = useState(false);
   const [announce, setAnnounce] = useState(false);
   const [badges, setBadges] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -885,14 +886,27 @@ function PerformanceCardModal({ by, kindInit, employeeId, onClose, onSaved }) {
           {kind === 'praise' && (
             <div>
               <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
-              <div className="grid grid-cols-4 gap-2">
-                {badges.map((b) => (
-                  <button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}>
-                    <div className="text-xl leading-none">{b.icon}</div>
-                    <div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>
-                  </button>
-                ))}
-              </div>
+              {(() => {
+                const sorted = [...badges].sort((a, b) => (a.points || 0) - (b.points || 0));
+                let visible = showAllBadges ? sorted : sorted.slice(0, 8);
+                if (!showAllBadges && badgeId && !visible.some((b) => b.id === badgeId)) { const sel = sorted.find((b) => b.id === badgeId); if (sel) visible = [...visible.slice(0, 7), sel]; }
+                return (
+                  <>
+                    <div className="grid grid-cols-4 gap-2">
+                      {visible.map((b) => (
+                        <button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}>
+                          <div className="text-xl leading-none">{b.icon}</div>
+                          <div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>
+                          {b.points > 0 && <div className="text-[9px] font-bold mt-0.5" style={{ color: '#0435AC' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}
+                        </button>
+                      ))}
+                    </div>
+                    {badges.length > 8 && (
+                      <button onClick={() => setShowAllBadges((v) => !v)} className="mt-2 text-[12px] font-bold text-orange-600 hover:text-orange-700">{showAllBadges ? '▲ Show fewer badges' : `▼ Load more badges (${badges.length - 8} more)`}</button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
