@@ -24,7 +24,6 @@ const BADGES = [
   { id: 'goal_getter', name: 'Goal Getter', icon: '🔥', color: '#EA580C', points: 500, desc: 'Achieving an important business or departmental goal' },
   // Teamwork & culture
   { id: 'team_player', name: 'Team Player', icon: '🤝', color: '#0EA5E9', points: 250, desc: 'Consistently supporting the team' },
-  { id: 'helping_hand', name: 'Helping Hand', icon: '❤️', color: '#DB2777', points: 250, desc: 'Going out of the way to help another employee' },
   { id: 'collaboration_champion', name: 'Collaboration Champion', icon: '🧑‍🤝‍🧑', color: '#0284C7', points: 500, desc: 'Exceptional cross-team collaboration' },
   { id: 'culture_champion', name: 'Culture Champion', icon: '🌱', color: '#16A34A', points: 500, desc: 'Demonstrating and strengthening Qtonix culture' },
   { id: 'people_supporter', name: 'People Supporter', icon: '🫶', color: '#DB2777', points: 250, desc: 'Consistently supporting colleagues in difficult times' },
@@ -76,12 +75,20 @@ const BASE_RULES = [
   { key: 'attendance_30', name: 'Attendance 30 days', category: 'attendance', icon: '📅', color: '#16A34A', points: 50, frequency: 'once', approvalLevel: 'auto', active: true },
   { key: 'attendance_60', name: 'Attendance 60 days', category: 'attendance', icon: '📆', color: '#0F9D58', points: 100, frequency: 'once', approvalLevel: 'auto', active: true },
   { key: 'attendance_100', name: 'Attendance 100 days', category: 'attendance', icon: '🗓️', color: '#15803D', points: 250, frequency: 'once', approvalLevel: 'auto', active: true },
+  // On-time punctuality badges (came on time to office for N days).
+  { key: 'ontime_30', name: 'On-time 30 days', category: 'attendance', icon: '⏰', color: '#7C3AED', points: 50, frequency: 'once', approvalLevel: 'auto', active: true },
+  { key: 'ontime_60', name: 'On-time 60 days', category: 'attendance', icon: '⏱️', color: '#6D28D9', points: 100, frequency: 'once', approvalLevel: 'auto', active: true },
+  { key: 'ontime_100', name: 'On-time 100 days', category: 'attendance', icon: '🎯', color: '#5B21B6', points: 250, frequency: 'once', approvalLevel: 'auto', active: true },
+  // Helping Hand — a PEER TRANSFER (50 pts from giver to recipient). Milestone
+  // bonuses (3/5/10/20 received) are HR-approved, not automatic.
+  { key: 'helping_transfer', name: 'Helping Hand', category: 'helping', icon: '❤️', color: '#DB2777', points: 50, frequency: 'unlimited', approvalLevel: 'auto', desc: 'Peer-to-peer thank you (50 pts moved from your wallet)' },
+  { key: 'helping_bonus_3', name: 'Helping Bonus · 3', category: 'helping', icon: '🔥', color: '#EA580C', points: 100, frequency: 'quarterly', approvalLevel: 'hod_hr', desc: 'Bonus for receiving 3 helping hands' },
+  { key: 'helping_bonus_5', name: 'Helping Bonus · 5', category: 'helping', icon: '🔥', color: '#EA580C', points: 150, frequency: 'quarterly', approvalLevel: 'hod_hr', desc: 'Bonus for receiving 5 helping hands' },
+  { key: 'helping_bonus_10', name: 'Helping Bonus · 10', category: 'helping', icon: '🔥', color: '#DC2626', points: 300, frequency: 'quarterly', approvalLevel: 'hod_hr', desc: 'Bonus for receiving 10 helping hands' },
+  { key: 'helping_bonus_20', name: 'Helping Bonus · 20', category: 'helping', icon: '🔥', color: '#DC2626', points: 500, frequency: 'quarterly', approvalLevel: 'hod_hr', desc: 'Bonus for receiving 20 helping hands' },
   // Helping Hand (awarded on approval of a recommendation) + streak milestones.
-  { key: 'helping_hand_award', name: 'Helping Hand', category: 'helping', icon: '❤️', color: '#DB2777', points: 250, frequency: 'unlimited', approvalLevel: 'manager', desc: 'Approved helping-hand recommendation' },
-  { key: 'helping_streak_3', name: 'Helping Streak · 3', category: 'helping', icon: '🔥', color: '#EA580C', points: 100, frequency: 'quarterly', approvalLevel: 'auto', desc: '3 approved helping recognitions' },
-  { key: 'helping_streak_5', name: 'Helping Streak · 5', category: 'helping', icon: '🔥', color: '#EA580C', points: 150, frequency: 'quarterly', approvalLevel: 'auto', desc: '5 approved helping recognitions' },
-  { key: 'helping_streak_10', name: 'Helping Streak · 10', category: 'helping', icon: '🔥', color: '#DC2626', points: 300, frequency: 'quarterly', approvalLevel: 'auto', desc: '10 approved helping recognitions' },
-  { key: 'helping_streak_20', name: 'Helping Streak · 20', category: 'helping', icon: '🔥', color: '#DC2626', points: 500, frequency: 'quarterly', approvalLevel: 'auto', desc: '20 approved helping recognitions' },
+  // Helping Hand (peer transfer + milestone bonuses) are defined further below
+  // in the on-time/helping block; the old award/streak rules are removed.
   // Innovation rewards by impact (spec §19).
   { key: 'innovation_small', name: 'Innovation · Small', category: 'innovation', icon: '💡', color: '#7C3AED', points: 250, frequency: 'per_item', approvalLevel: 'hod_hr' },
   { key: 'innovation_moderate', name: 'Innovation · Moderate', category: 'innovation', icon: '💡', color: '#7C3AED', points: 500, frequency: 'per_item', approvalLevel: 'hod_hr' },

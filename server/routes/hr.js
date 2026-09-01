@@ -727,19 +727,17 @@ router.put('/profile/:id', requireHrAccess, async (req, res, next) => {
 });
 
 // ===== Badges & Performance recognition =====
-// Named appreciation badges a senior can award. Auto-badge ids (tenure/
-// punctuality milestones) are defined in jobs/badges.js and share this shape.
-const BADGE_CATALOG = [
-  { id: 'customer_hero', name: 'Customer Hero', icon: '⭐', color: '#F59E0B', desc: 'Outstanding customer care' },
-  { id: 'above_beyond', name: 'Above & Beyond', icon: '🚀', color: '#2563EB', desc: 'Went the extra mile' },
-  { id: 'team_player', name: 'Team Player', icon: '🤝', color: '#0EA5E9', desc: 'Great collaboration & support' },
-  { id: 'innovator', name: 'Innovator', icon: '💡', color: '#7C3AED', desc: 'Fresh ideas that made a difference' },
-  { id: 'problem_solver', name: 'Problem Solver', icon: '🧩', color: '#16A34A', desc: 'Cracked a tough problem' },
-  { id: 'quick_learner', name: 'Quick Learner', icon: '📚', color: '#DB2777', desc: 'Picked things up fast' },
-  { id: 'reliable', name: 'Ever Reliable', icon: '🛡️', color: '#475569', desc: 'Consistently dependable' },
-  { id: 'star_performer', name: 'Star Performer', icon: '🌟', color: '#EA580C', desc: 'Standout results this period' },
-];
-function badgeById(id) { return BADGE_CATALOG.find((b) => b.id === id) || null; }
+// Badges are defined ONLY in the RewardRule table (seeded + admin-managed).
+// Categories that only Admin / HR Managers may give from (not regular seniors).
+const ADMIN_ONLY_CATEGORIES = ['learning', 'mentoring', 'performance', 'innovation', 'customer'];
+// Categories a regular senior (TL/manager) may give from.
+const SENIOR_CATEGORIES = ['badge', 'appreciation', 'helping'];
+
+// Resolve a badge (or any rule) by its badge id → the rule row. Async: reads
+// the single source of truth.
+async function badgeRuleById(id) {
+  return RewardRule.findOne({ where: { key: `badge_${id}`, active: true } });
+}
 
 // Can this actor give a performance card to `emp`? HR staff/admins always can.
 // A senior can recognize/review only the employees who report to them —
@@ -864,100 +862,87 @@ router.get('/helping/colleagues', requireHrAccess, async (req, res, next) => {
 // ===== HELPING HAND — employee nominations, HR/manager approval, streaks =====
 
 // Any employee can nominate a colleague (not themselves). Creates a pending rec.
+// Give a Helping Hand: transfer 50 pts from the giver's own wallet to a
+// colleague (immediate, no approval). If the recipient reaches 3/5/10/20
+// received, queue an HR bonus-approval for them.
 router.post('/helping/nominate', requireHrAccess, async (req, res, next) => {
   try {
-    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can nominate.' });
+    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can give a Helping Hand.' });
+    const R = require('../services/rewards');
     const b = req.body || {};
     const benef = await HrUser.findByPk(Number(b.beneficiaryId));
     if (!benef) return res.status(404).json({ error: 'Colleague not found.' });
-    if (benef.id === req.hrUser.id) return res.status(400).json({ error: 'You can’t nominate yourself.' });
+    if (benef.id === req.hrUser.id) return res.status(400).json({ error: 'You can’t give a Helping Hand to yourself.' });
     const reason = String(b.reason || '').slice(0, 600).trim();
     if (!reason) return res.status(400).json({ error: 'Please add a reason.' });
+    if (!(await R.rewardsLive(models))) return res.status(400).json({ error: 'Rewards are paused.' });
+    // Fixed transfer amount from the helping_transfer rule (default 50).
+    const resolved = await R.pointsForRule(models, 'helping_transfer');
+    const amount = resolved.points || 50;
+    // Record the helping event (approved by definition — it's a peer transfer).
     const rec = await HelpingRecommendation.create({
       beneficiaryId: benef.id, beneficiaryName: benef.name, department: benef.department || '', branch: benef.branch || '',
       nominatorId: req.hrUser.id, nominatorName: req.hrUser.name, reason, incident: String(b.incident || '').slice(0, 200),
+      status: 'approved', points: amount, decidedAt: new Date(), decidedByName: 'Peer transfer',
     });
-    // Notify HR/managers of the joiner's branch that a nomination awaits review.
-    try {
-      const mgrs = await HrUser.findAll({ where: { active: true } });
-      for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) { await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `🤝 ${req.hrUser.name} nominated ${benef.name} for a Helping Hand — review pending.` }); } }
-    } catch {}
-    res.json({ ok: true, recommendation: rec.toJSON() });
+    // Transfer the points (deducts from giver, credits recipient).
+    const tr = await R.transfer(models, req.hrUser.id, benef.id, amount, { ruleKey: 'helping_transfer', fromName: req.hrUser.name, reason, refId: `helping:${rec.id}`, fromTitle: `Helping Hand to ${benef.name}`, toTitle: `Helping Hand from ${req.hrUser.name}` });
+    if (!tr.ok) { await rec.destroy(); return res.status(400).json({ error: tr.error === 'Not enough points to give.' ? 'You don’t have enough points to give a Helping Hand (need ' + amount + ').' : (tr.error || 'Could not transfer.') }); }
+    rec.ledgerId = tr.ledger.id; await rec.save();
+    try { await HrNotification.create({ userId: benef.id, actorKind: 'hr', type: 'info', text: `❤️ ${req.hrUser.name} gave you a Helping Hand (+${amount} pts)!` }); } catch {}
+    // Milestone: if recipient now has 3/5/10/20 received, queue an HR bonus.
+    try { await checkHelpingMilestone(benef); } catch {}
+    res.json({ ok: true, recommendation: rec.toJSON(), transferred: amount });
   } catch (e) { next(e); }
 });
 
-// My nominations (given + received) for the employee's Helping Hand view.
+// My Helping Hands (given + received) + my current point balance for the UI.
 router.get('/helping/mine', requireHrAccess, async (req, res, next) => {
   try {
-    if (!req.hrUser) return res.json({ given: [], received: [], approvedCount: 0 });
+    if (!req.hrUser) return res.json({ given: [], received: [], approvedCount: 0, balance: 0 });
+    const R = require('../services/rewards');
     const [given, received] = await Promise.all([
       HelpingRecommendation.findAll({ where: { nominatorId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 }),
-      HelpingRecommendation.findAll({ where: { beneficiaryId: req.hrUser.id }, order: [['createdAt', 'DESC']], limit: 50 }),
+      HelpingRecommendation.findAll({ where: { beneficiaryId: req.hrUser.id, status: 'approved' }, order: [['createdAt', 'DESC']], limit: 50 }),
     ]);
-    const approvedCount = received.filter((r) => r.status === 'approved').length;
-    res.json({ given: given.map((r) => r.toJSON()), received: received.map((r) => r.toJSON()), approvedCount });
+    const w = await R.walletFor(models, req.hrUser.id);
+    res.json({ given: given.map((r) => r.toJSON()), received: received.map((r) => r.toJSON()), approvedCount: received.length, balance: w.balance });
   } catch (e) { next(e); }
 });
 
-// HR/manager queue of pending nominations (branch-scoped for branch managers).
+// HR/manager: the queue of Helping BONUS approvals (milestone bonuses awaiting
+// sign-off). The peer transfers themselves are immediate and not queued.
 router.get('/helping/queue', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const scopedBranch = (!req.isHrAdmin && !req.hrManagerAll && req.isHrManager) ? (req.hrManagerScope && req.hrManagerScope !== 'all' ? req.hrManagerScope : req.hrBranch) : '';
-    const where = { status: req.query.status && ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending' };
+    const where = { status: 'pending', category: 'helping' };
     if (scopedBranch) where.branch = scopedBranch;
-    const rows = await HelpingRecommendation.findAll({ where, order: [['createdAt', 'DESC']], limit: 100 });
+    const rows = await RewardApproval.findAll({ where, order: [['createdAt', 'DESC']], limit: 100 });
     res.json({ recommendations: rows.map((r) => r.toJSON()) });
   } catch (e) { next(e); }
 });
 
-// Approve/reject a helping nomination. On approve → award Helping Hand points +
-// re-check streak milestones for the beneficiary.
-router.post('/helping/:id/decide', requireHrAccess, requireHrManager, async (req, res, next) => {
-  try {
-    const R = require('../services/rewards');
-    const rec = await HelpingRecommendation.findByPk(Number(req.params.id));
-    if (!rec) return res.status(404).json({ error: 'Recommendation not found.' });
-    if (rec.status !== 'pending') return res.status(400).json({ error: 'Already decided.' });
-    const b = req.body || {};
-    const approve = !!b.approve;
-    rec.status = approve ? 'approved' : 'rejected';
-    rec.decidedByName = req.hrActor.name; rec.decidedAt = new Date(); rec.decisionNote = String(b.note || '').slice(0, 300);
-    if (approve) {
-      const resolved = await R.pointsForRule(models, 'helping_hand_award');
-      if (resolved.points > 0) {
-        const aw = await R.award(models, rec.beneficiaryId, { points: resolved.points, category: 'helping', ruleKey: 'helping_hand_award', title: 'Helping Hand', reason: rec.reason, byName: rec.nominatorName, byRole: 'Nomination', approvedByName: req.hrActor.name, source: 'helping', refId: `helping:${rec.id}` });
-        if (aw.ok) { rec.points = resolved.points; rec.ledgerId = aw.ledger.id; }
-      }
-      try { await HrNotification.create({ userId: rec.beneficiaryId, actorKind: 'hr', type: 'info', text: `❤️ You received a Helping Hand${rec.points ? ` (+${rec.points} pts)` : ''} — nominated by ${rec.nominatorName}!` }); } catch {}
-      await rec.save(); // persist approval BEFORE counting for the streak
-      // Streak milestone check (idempotent per quarter via dedupeKey).
-      try { await checkHelpingStreak(rec.beneficiaryId); } catch {}
-    }
-    if (rec.nominatorId) { try { await HrNotification.create({ userId: rec.nominatorId, actorKind: 'hr', type: 'info', text: `${approve ? '✅ Approved' : '❌ Rejected'}: your Helping Hand nomination for ${rec.beneficiaryName}.` }); } catch {} }
-    if (rec.changed()) await rec.save();
-    res.json({ ok: true, status: rec.status });
-  } catch (e) { next(e); }
-});
-
-// Award any newly-reached Helping Streak milestone for an employee. Uses ONLY
-// approved recommendations; idempotent per quarter (dedupeKey includes the
-// quarter, and each milestone key can fire at most once per quarter).
-async function checkHelpingStreak(employeeId) {
-  const R = require('../services/rewards');
-  const approved = await HelpingRecommendation.count({ where: { beneficiaryId: employeeId, status: 'approved' } });
-  const MILESTONES = [{ n: 3, key: 'helping_streak_3' }, { n: 5, key: 'helping_streak_5' }, { n: 10, key: 'helping_streak_10' }, { n: 20, key: 'helping_streak_20' }];
-  const now = new Date();
-  const quarter = `${now.getFullYear()}Q${Math.floor(now.getMonth() / 3) + 1}`;
+// When a recipient reaches a helping-received milestone (3/5/10/20), queue an HR
+// bonus approval (once per tier, via a dedupe check on existing approvals).
+async function checkHelpingMilestone(emp) {
+  const received = await HelpingRecommendation.count({ where: { beneficiaryId: emp.id, status: 'approved' } });
+  const MILESTONES = [{ n: 3, key: 'helping_bonus_3' }, { n: 5, key: 'helping_bonus_5' }, { n: 10, key: 'helping_bonus_10' }, { n: 20, key: 'helping_bonus_20' }];
   for (const m of MILESTONES) {
-    if (approved >= m.n) {
-      const resolved = await R.pointsForRule(models, m.key);
-      if (resolved.points > 0) {
-        // dedupeKey without quarter → each milestone tier is granted once ever;
-        // spec caps at one milestone per quarter, enforced by only granting the
-        // NEXT unreached tier and tagging the ledger with the quarter.
-        await R.award(models, employeeId, { points: resolved.points, category: 'helping', ruleKey: m.key, title: `Helping Streak · ${m.n}`, byName: 'System', byRole: 'Automatic', source: 'auto', dedupeKey: `helpingstreak:${employeeId}:${m.n}` });
-      }
-    }
+    if (received < m.n) continue;
+    // Already queued/awarded this tier? (refId marks the tier for this employee.)
+    const ref = `helpingbonus:${emp.id}:${m.n}`;
+    const exists = await RewardApproval.findOne({ where: { refId: ref } });
+    if (exists) continue;
+    const rule = await RewardRule.findOne({ where: { key: m.key, active: true } });
+    if (!rule || rule.points <= 0) continue;
+    await RewardApproval.create({
+      employeeId: emp.id, employeeName: emp.name, department: emp.department || '', branch: emp.branch || '',
+      points: rule.points, category: 'helping', ruleKey: m.key, title: `Helping Bonus (${m.n} received)`,
+      reason: `Reached ${m.n} Helping Hands received`, requiredLevel: 'hod_hr',
+      byName: 'System', byRole: 'Automatic', source: 'helping', refId: ref,
+    });
+    // Notify HR/managers.
+    try { const mgrs = await HrUser.findAll({ where: { active: true } }); for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `🔥 ${emp.name} reached ${m.n} Helping Hands — approve a +${rule.points} bonus?` }); } } catch {}
   }
 }
 
@@ -1144,7 +1129,7 @@ router.post('/store/admin/catalogue', requireHrAccess, requireHrManager, async (
   try {
     const b = req.body || {};
     if (!String(b.name || '').trim() || !Number(b.cost)) return res.status(400).json({ error: 'Name and cost are required.' });
-    const item = await RewardCatalogueItem.create({ name: String(b.name).trim(), vendor: b.vendor || '', category: b.category || 'voucher', icon: b.icon || '🎁', cost: Math.round(Number(b.cost)), rupeeValue: Math.round(Number(b.rupeeValue) || 0), description: String(b.description || '').slice(0, 300), stock: b.stock === '' || b.stock == null ? null : Math.round(Number(b.stock)), active: b.active !== false, sortOrder: Number(b.sortOrder) || 0 });
+    const item = await RewardCatalogueItem.create({ name: String(b.name).trim(), vendor: b.vendor || '', category: b.category || 'voucher', icon: b.icon || '🎁', imageUrl: String(b.imageUrl || '').slice(0, 500), cost: Math.round(Number(b.cost)), rupeeValue: Math.round(Number(b.rupeeValue) || 0), description: String(b.description || '').slice(0, 300), stock: b.stock === '' || b.stock == null ? null : Math.round(Number(b.stock)), active: b.active !== false, sortOrder: Number(b.sortOrder) || 0 });
     res.status(201).json(item.toJSON());
   } catch (e) { next(e); }
 });
@@ -1153,7 +1138,7 @@ router.put('/store/admin/catalogue/:id', requireHrAccess, requireHrManager, asyn
     const item = await RewardCatalogueItem.findByPk(Number(req.params.id));
     if (!item) return res.status(404).json({ error: 'Item not found.' });
     const b = req.body || {};
-    ['name', 'vendor', 'category', 'icon', 'description'].forEach((k) => { if (b[k] !== undefined) item[k] = b[k]; });
+    ['name', 'vendor', 'category', 'icon', 'description', 'imageUrl'].forEach((k) => { if (b[k] !== undefined) item[k] = b[k]; });
     if (b.cost !== undefined) item.cost = Math.round(Number(b.cost) || 0);
     if (b.rupeeValue !== undefined) item.rupeeValue = Math.round(Number(b.rupeeValue) || 0);
     if (b.stock !== undefined) item.stock = b.stock === '' || b.stock == null ? null : Math.round(Number(b.stock));
@@ -1339,6 +1324,42 @@ router.get('/rewards/rules', requireHrAccess, requireHrManager, async (req, res,
   } catch (e) { next(e); }
 });
 
+// Admin: create a new reward rule / badge in a category.
+router.post('/rewards/rules', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const category = String(b.category || 'badge');
+    if (!name) return res.status(400).json({ error: 'Name is required.' });
+    // Build a stable unique key from the name (badges get a badge_ prefix).
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'rule';
+    let key = (category === 'badge' ? `badge_${slug}` : `${category}_${slug}`);
+    // Ensure uniqueness.
+    let n = 1; while (await RewardRule.findOne({ where: { key } })) { key = `${(category === 'badge' ? `badge_${slug}` : `${category}_${slug}`)}_${n++}`; }
+    const rule = await RewardRule.create({
+      key, name, category, points: Math.max(0, Math.round(Number(b.points) || 0)),
+      pointsMax: b.pointsMax ? Math.max(0, Math.round(Number(b.pointsMax))) : null,
+      icon: String(b.icon || '🏅').slice(0, 16), color: String(b.color || '#7C3AED').slice(0, 16),
+      description: String(b.description || '').slice(0, 300), frequency: b.frequency || 'unlimited',
+      approvalLevel: b.approvalLevel || 'manager', requiresApproval: !!b.requiresApproval, active: true, sortOrder: Number(b.sortOrder) || 50,
+    });
+    res.status(201).json(rule.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Admin: delete a reward rule / badge.
+router.delete('/rewards/rules/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const rule = await RewardRule.findByPk(Number(req.params.id));
+    if (!rule) return res.status(404).json({ error: 'Rule not found.' });
+    // Protect the core automatic rules that the jobs rely on by key.
+    const PROTECTED = ['auto_birthday', 'auto_joining', 'helping_transfer', 'appreciation_plain', 'thank_you'];
+    if (PROTECTED.includes(rule.key) || /^auto_anniversary_/.test(rule.key)) return res.status(400).json({ error: 'This is a core rule and can’t be deleted (you can turn it off instead).' });
+    await rule.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.put('/rewards/rules/:id', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const rule = await RewardRule.findByPk(Number(req.params.id));
@@ -1416,15 +1437,26 @@ router.post('/rewards/ledger/:id/reverse', requireHrAccess, requireHrManager, as
 
 router.get('/badges/catalog', requireHrAccess, async (req, res, next) => {
   try {
-    const rules = await RewardRule.findAll({ where: { category: 'badge', active: true } });
-    const ptsByBadge = {};
-    for (const r of rules) { const id = r.key.replace(/^badge_/, ''); ptsByBadge[id] = { points: r.points, pointsMax: r.pointsMax }; }
-    const badges = BADGE_CATALOG.map((b) => ({ ...b, points: (ptsByBadge[b.id] || {}).points || 0, pointsMax: (ptsByBadge[b.id] || {}).pointsMax || null }));
-    // Include the full seeded badge library (beyond the original 8) so the picker
-    // can offer all of them — sourced from the rules table.
-    const known = new Set(BADGE_CATALOG.map((b) => b.id));
-    for (const r of rules) { const id = r.key.replace(/^badge_/, ''); if (!known.has(id)) badges.push({ id, name: r.name, icon: r.icon, color: r.color, desc: r.description, points: r.points, pointsMax: r.pointsMax }); }
-    res.json({ badges, appreciationPoints: (await RewardRule.findOne({ where: { key: 'appreciation_plain' } }))?.points || 0 });
+    // Only Admin / HR (managers or hr staff) may give the restricted categories.
+    const isAdminOrHr = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+    const allowedCats = isAdminOrHr ? [...SENIOR_CATEGORIES, ...ADMIN_ONLY_CATEGORIES] : SENIOR_CATEGORIES;
+    const rules = await RewardRule.findAll({ where: { active: true }, order: [['category', 'ASC'], ['points', 'ASC'], ['sortOrder', 'ASC']] });
+    // Badges = all active rules in an allowed category, MINUS the automatic/
+    // attendance/anniversary/streak rules (those aren't manually giveable).
+    const AUTO_CATS = ['automatic', 'anniversary', 'attendance'];
+    const badges = rules
+      .filter((r) => r.category === 'badge' && allowedCats.includes('badge'))
+      .map((r) => ({ id: r.key.replace(/^badge_/, ''), name: r.name, icon: r.icon, color: r.color, desc: r.description, points: r.points, pointsMax: r.pointsMax, category: 'badge' }));
+    // Extra manual reward categories (learning/mentoring/etc.) exposed as
+    // "specials" so admin/HR can give them with a chosen amount if ranged.
+    const specials = rules
+      .filter((r) => ADMIN_ONLY_CATEGORIES.includes(r.category) && allowedCats.includes(r.category))
+      .map((r) => ({ key: r.key, name: r.name, icon: r.icon, color: r.color, desc: r.description, points: r.points, pointsMax: r.pointsMax, category: r.category }));
+    // Appreciation quick-options (Appreciation + Thank You).
+    const appreciation = rules
+      .filter((r) => r.category === 'appreciation')
+      .map((r) => ({ key: r.key, name: r.name, icon: r.icon, color: r.color, points: r.points }));
+    res.json({ badges, specials, appreciation, isAdminOrHr });
   } catch (e) { next(e); }
 });
 
@@ -1561,13 +1593,11 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
     if (!kind) return res.status(400).json({ error: 'Invalid review type.' });
     const note = String(b.note || '').slice(0, 2000).trim();
     let title = String(b.title || '').slice(0, 160).trim();
-    // Resolve the badge from the full library (rules table), not just the
-    // original 8, so all ~34 badges award correctly.
+    // Resolve the badge from the rules table (single source of truth).
     let badge = null;
     if (kind === 'praise' && b.badgeId) {
-      const local = badgeById(String(b.badgeId));
-      if (local) badge = { id: local.id, name: local.name, icon: local.icon, color: local.color };
-      else { const rule = await RewardRule.findOne({ where: { key: `badge_${b.badgeId}`, active: true } }); if (rule) badge = { id: b.badgeId, name: rule.name, icon: rule.icon, color: rule.color }; }
+      const rule = await badgeRuleById(String(b.badgeId));
+      if (rule) badge = { id: b.badgeId, name: rule.name, icon: rule.icon, color: rule.color };
     }
     if (badge && !title) title = badge.name;
     if (!title && !note) return res.status(400).json({ error: 'Add a title or a note.' });
@@ -1575,23 +1605,25 @@ router.post('/employees/:id/performance', requireHrAccess, async (req, res, next
     const byName = req.hrActor.name || (req.hrUser && req.hrUser.name) || 'HR';
     const actorRole = req.isHrAdmin ? 'Admin' : (req.hrUser && (req.hrUser.type === 'manager' ? 'Manager' : req.hrUser.type === 'tl' ? 'Team Lead' : (HR_STAFF_TYPES.includes(req.hrUser.type) ? 'HR' : 'HR')));
 
-    // ===== Budget + approval gate (only for point-earning appreciations while
-    // Rewards are live). Resolve the points first, block if over the giver's
-    // monthly budget, and route high-value awards to the approval queue. =====
+    // ===== Budget + approval gate. Resolve points, block if over budget, and —
+    // per policy — route EVERY senior-given reward to HR/Admin approval before it
+    // credits. HR/Admin awards credit directly (they are the approvers). =====
     const R = require('../services/rewards');
+    // Support "thank you" as an appreciation option via b.appreciationKey.
+    const apprKey = (kind === 'praise' && !badge && b.appreciationKey && ['appreciation_plain', 'thank_you'].includes(b.appreciationKey)) ? b.appreciationKey : 'appreciation_plain';
     let resolvedPoints = 0, resolvedRuleKey = '', pendingApproval = false;
     if (kind === 'praise' && await R.rewardsLive(models)) {
-      const resolved = badge ? await R.pointsForBadge(models, badge.id) : await R.pointsForRule(models, 'appreciation_plain');
-      resolvedPoints = resolved.points || 0; resolvedRuleKey = badge ? `badge_${badge.id}` : 'appreciation_plain';
+      const resolved = badge ? await R.pointsForBadge(models, badge.id) : await R.pointsForRule(models, apprKey);
+      resolvedPoints = resolved.points || 0; resolvedRuleKey = badge ? `badge_${badge.id}` : apprKey;
       if (resolvedPoints > 0) {
-        // Budget: block the whole action if the giver is over their cap.
         const bud = await R.budgetCheck(models, req.hrUser || { isHrAdmin: req.isHrAdmin }, resolvedPoints);
         if (!bud.ok) {
           if (bud.reason === 'no_budget') return res.status(403).json({ error: 'You don’t have a monthly recognition budget set. Ask HR/Admin to assign one.' });
           return res.status(403).json({ error: `Over budget: this award is ${resolvedPoints} points but you have only ${Math.max(0, bud.remaining)} of your ${bud.limit} monthly points left.`, budget: bud });
         }
-        // Approval: high-value awards are parked, not awarded immediately.
-        pendingApproval = R.needsApproval(req.hrUser || { isHrAdmin: req.isHrAdmin }, resolvedPoints, resolved.rule);
+        // ALL senior awards need approval; HR/Admin are exempt (they approve).
+        const isAdminHr = req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type));
+        pendingApproval = !isAdminHr;
       }
     }
 

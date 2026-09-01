@@ -250,4 +250,26 @@ async function expirePoints(models) {
   return total;
 }
 
-module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval, reserve, fulfilReserved, refundReserved, expirePoints };
+// Peer-to-peer transfer: move `points` from `fromId`'s spendable balance to
+// `toId`, atomically. Two ledger rows (−from, +to). Fails if from is short.
+async function transfer(models, fromId, toId, points, meta) {
+  const { sequelize, RewardLedger } = models;
+  const pts = Math.round(Number(points) || 0);
+  if (pts <= 0) return { ok: false, error: 'Invalid amount.' };
+  if (fromId === toId) return { ok: false, error: 'Cannot transfer to yourself.' };
+  if (!(await rewardsLive(models))) return { ok: false, notLive: true };
+  return await sequelize.transaction(async (t) => {
+    const wf = await getWallet(models, fromId, t);
+    if (wf.balance < pts) return { ok: false, error: 'Not enough points to give.' };
+    // Deduct from giver.
+    await RewardLedger.create({ employeeId: fromId, points: -pts, kind: 'redeem', category: 'helping', ruleKey: meta.ruleKey || 'helping_transfer', title: meta.fromTitle || 'Helping Hand given', reason: meta.reason || '', byName: meta.fromName || '', source: 'helping', refId: meta.refId || '' }, { transaction: t });
+    wf.balance -= pts; wf.lifetimeRedeemed += pts; await wf.save({ transaction: t });
+    // Credit recipient.
+    const led = await RewardLedger.create({ employeeId: toId, points: pts, kind: 'earn', category: 'helping', ruleKey: meta.ruleKey || 'helping_transfer', title: meta.toTitle || 'Helping Hand received', reason: meta.reason || '', byName: meta.fromName || '', byRole: 'Peer', source: 'helping', refId: meta.refId || '', expiresOn: addMonths(istToday(), await expiryMonths(models)) }, { transaction: t });
+    const wt = await getWallet(models, toId, t);
+    wt.balance += pts; wt.lifetimeEarned += pts; await wt.save({ transaction: t });
+    return { ok: true, ledger: led };
+  });
+}
+
+module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval, reserve, fulfilReserved, refundReserved, expirePoints, transfer };

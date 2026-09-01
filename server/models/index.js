@@ -2223,6 +2223,7 @@ const RewardCatalogueItem = sequelize.define('RewardCatalogueItem', {
   vendor: { type: DataTypes.STRING(80), defaultValue: '' },        // Amazon, Swiggy, Zomato, Company…
   category: { type: DataTypes.STRING(40), defaultValue: 'voucher' },// voucher|food|experience|perk
   icon: { type: DataTypes.STRING(16), defaultValue: '🎁' },
+  imageUrl: { type: DataTypes.STRING(500), defaultValue: '' },     // optional product image (ImageKit)
   cost: { type: DataTypes.INTEGER, allowNull: false },             // points to redeem
   rupeeValue: { type: DataTypes.INTEGER, defaultValue: 0 },        // display ₹ value (0 = non-cash)
   description: { type: DataTypes.STRING(300), defaultValue: '' },

@@ -479,8 +479,8 @@ function HelpingHandView() {
   return (
     <div>
       <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <div><div className="text-[15px] font-extrabold text-[#050A1F]">🤝 Helping Hand</div><div className="text-[13px] text-slate-500 mt-0.5">Nominate a colleague who helped you. HR reviews it, and if approved they earn points.</div></div>
-        <button onClick={() => setShow(true)} className="rounded-xl px-4 py-2 text-sm font-extrabold text-white shrink-0" style={{ background: ORANGE }}>+ Nominate a colleague</button>
+        <div><div className="text-[15px] font-extrabold text-[#050A1F]">🤝 Helping Hand</div><div className="text-[13px] text-slate-500 mt-0.5">Thank a colleague who helped you — <b>50 points move from your wallet to theirs</b>. You have <b>{(data.balance || 0).toLocaleString('en-IN')}</b> points.</div></div>
+        <button onClick={() => setShow(true)} disabled={(data.balance || 0) < 50} className="rounded-xl px-4 py-2 text-sm font-extrabold text-white shrink-0 disabled:bg-slate-200 disabled:text-slate-400" style={(data.balance || 0) >= 50 ? { background: ORANGE } : {}}>+ Give a Helping Hand</button>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -671,9 +671,13 @@ function RewardsAdmin() {
   const [edits, setEdits] = useState({});
   const [busy, setBusy] = useState('');
   const [sub, setSub] = useState('rules'); // rules | budgets | approvals
+  const [addCat, setAddCat] = useState('');
+  const [newBadge, setNewBadge] = useState({ icon: '🏅', name: '', points: '' });
   const load = () => { hrApi('/rewards/rules').then(setData).catch(() => {}); hrApi('/rewards/overview').then(setOv).catch(() => {}); };
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
+  const addBadge = async (cat) => { if (!newBadge.name.trim()) { alert('Name required'); return; } setBusy('add'); try { await hrApi('/rewards/rules', { method: 'POST', body: JSON.stringify({ name: newBadge.name, category: cat, points: Number(newBadge.points) || 0, icon: newBadge.icon }) }); setNewBadge({ icon: '🏅', name: '', points: '' }); setAddCat(''); await load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const delRule = async (r) => { if (!window.confirm(`Delete "${r.name}"?`)) return; try { await hrApi(`/rewards/rules/${r.id}`, { method: 'DELETE' }); await load(); } catch (e) { alert(e.message); } };
   const cfg = data.config || {};
   const live = !!cfg.rewardsLive;
   const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
@@ -714,11 +718,23 @@ function RewardsAdmin() {
       <div className="text-[12px] text-slate-500">Conversion: <b>{cfg.pointsPerRupee || 2} points = ₹1</b> · Points expire after <b>{cfg.expiryMonths || 24} months</b>. Edit a badge's points below — the value applies the next time it's awarded.</div>
       {Object.entries(cats).map(([cat, rules]) => (
         <div key={cat} className="bg-white border border-slate-200 rounded-2xl p-4">
-          <div className="text-sm font-extrabold text-[#050A1F] mb-2">{catLabel[cat] || cat}</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-extrabold text-[#050A1F]">{catLabel[cat] || cat}</div>
+            <button onClick={() => setAddCat(addCat === cat ? '' : cat)} className="text-[11px] font-bold text-orange-600">{addCat === cat ? 'Cancel' : '+ Add badge'}</button>
+          </div>
+          {addCat === cat && (
+            <div className="flex items-center gap-2 mb-2 rounded-lg bg-slate-50 border border-slate-100 p-2">
+              <input value={newBadge.icon} onChange={(e) => setNewBadge({ ...newBadge, icon: e.target.value })} placeholder="🏅" className="w-12 rounded border border-slate-300 px-2 py-1 text-[13px] text-center" />
+              <input value={newBadge.name} onChange={(e) => setNewBadge({ ...newBadge, name: e.target.value })} placeholder="Badge name" className="flex-1 rounded border border-slate-300 px-2 py-1 text-[13px]" />
+              <input type="number" value={newBadge.points} onChange={(e) => setNewBadge({ ...newBadge, points: e.target.value })} placeholder="pts" className="w-20 rounded border border-slate-300 px-2 py-1 text-[13px]" />
+              <button onClick={() => addBadge(cat)} disabled={busy === 'add'} className="text-[11px] font-bold rounded-lg px-2.5 py-1 text-white" style={{ background: ORANGE }}>{busy === 'add' ? '…' : 'Add'}</button>
+            </div>
+          )}
           <div className="grid sm:grid-cols-2 gap-2">
             {rules.map((r) => {
               const pending = edits[r.id] !== undefined;
               const val = pending ? edits[r.id] : r.points;
+              const core = ['auto_birthday', 'auto_joining', 'helping_transfer', 'appreciation_plain', 'thank_you'].includes(r.key) || /^auto_anniversary_/.test(r.key);
               return (
                 <div key={r.id} className="flex items-center gap-2.5 rounded-lg border border-slate-100 px-3 py-2">
                   {r.icon && <span className="text-lg shrink-0">{r.icon}</span>}
@@ -728,6 +744,7 @@ function RewardsAdmin() {
                   {pending
                     ? <button onClick={() => saveRule(r, { points: Number(val) })} disabled={busy === 'r' + r.id} className="text-[11px] font-bold rounded-lg px-2.5 py-1 text-white shrink-0" style={{ background: ORANGE }}>{busy === 'r' + r.id ? '…' : 'Save'}</button>
                     : <button onClick={() => saveRule(r, { active: !r.active })} className="text-[11px] font-bold rounded-lg px-2 py-1 shrink-0" style={r.active ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#94A3B8' }}>{r.active ? 'On' : 'Off'}</button>}
+                  {!core && <button onClick={() => delRule(r)} className="text-slate-300 hover:text-red-500 shrink-0"><Icon.Trash size={13} /></button>}
                 </div>
               );
             })}
@@ -1011,11 +1028,16 @@ function StoreAdmin() {
   const [sub, setSub] = useState('redemptions');
   const [items, setItems] = useState(null);
   const [reds, setReds] = useState(null);
-  const [f, setF] = useState({ name: '', vendor: '', category: 'voucher', icon: '🎁', cost: '', rupeeValue: '', stock: '', description: '' });
+  const blank = { name: '', vendor: '', category: 'voucher', icon: '🎁', imageUrl: '', cost: '', rupeeValue: '', stock: '', description: '' };
+  const [f, setF] = useState(blank);
+  const [editing, setEditing] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState('');
   const load = () => { hrApi('/store/admin/catalogue').then((r) => setItems(r.items || [])).catch(() => setItems([])); hrApi('/store/admin/redemptions').then((r) => setReds(r.redemptions || [])).catch(() => setReds([])); };
   useEffect(() => { load(); }, []);
-  const addItem = async () => { if (!f.name.trim() || !Number(f.cost)) { alert('Name and cost required.'); return; } setBusy('add'); try { await hrApi('/store/admin/catalogue', { method: 'POST', body: JSON.stringify(f) }); setF({ name: '', vendor: '', category: 'voucher', icon: '🎁', cost: '', rupeeValue: '', stock: '', description: '' }); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const saveItem = async () => { if (!f.name.trim() || !Number(f.cost)) { alert('Name and cost required.'); return; } setBusy('add'); try { if (editing) await hrApi(`/store/admin/catalogue/${editing}`, { method: 'PUT', body: JSON.stringify(f) }); else await hrApi('/store/admin/catalogue', { method: 'POST', body: JSON.stringify(f) }); setF(blank); setEditing(null); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const startEdit = (it) => { setEditing(it.id); setF({ name: it.name, vendor: it.vendor || '', category: it.category || 'voucher', icon: it.icon || '🎁', imageUrl: it.imageUrl || '', cost: it.cost, rupeeValue: it.rupeeValue || '', stock: it.stock == null ? '' : it.stock, description: it.description || '' }); };
+  const uploadImg = async (file) => { if (!file) return; setUploading(true); try { const url = await uploadToImageKit(file); setF((s) => ({ ...s, imageUrl: url })); } catch (e) { alert('Upload failed: ' + e.message); } setUploading(false); };
   const toggle = async (it) => { try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'PUT', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { alert(e.message); } };
   const del = async (it) => { if (!window.confirm(`Delete "${it.name}"?`)) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
   const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = window.prompt('Voucher code / fulfilment note (optional):') || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { alert(e.message); } setBusy(''); };
@@ -1048,27 +1070,36 @@ function StoreAdmin() {
             <div className="text-sm font-extrabold mb-2">Catalogue</div>
             {(items || []).map((it) => (
               <div key={it.id} className="flex items-center gap-2 py-1.5 border-t border-slate-50 first:border-0">
-                <span className="text-lg">{it.icon}</span>
+                {it.imageUrl ? <img src={it.imageUrl} alt="" className="w-8 h-8 rounded object-cover" /> : <span className="text-lg">{it.icon}</span>}
                 <div className="flex-1 min-w-0"><div className="text-[13px] font-bold truncate">{it.name}</div><div className="text-[11px] text-slate-400">{it.cost} pts{it.rupeeValue ? ` · ₹${it.rupeeValue}` : ''}{it.stock != null ? ` · ${it.stock} left` : ''}</div></div>
+                <button onClick={() => startEdit(it)} className="text-slate-400 hover:text-orange-600"><Icon.Pencil size={13} /></button>
                 <button onClick={() => toggle(it)} className="text-[11px] font-bold rounded px-2 py-0.5" style={it.active ? { background: '#DCFCE7', color: '#15803D' } : { background: '#F1F5F9', color: '#94A3B8' }}>{it.active ? 'On' : 'Off'}</button>
                 <button onClick={() => del(it)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={13} /></button>
               </div>
             ))}
           </div>
           <div className="bg-white border border-slate-200 rounded-xl p-4">
-            <div className="text-sm font-extrabold mb-2">Add reward</div>
+            <div className="text-sm font-extrabold mb-2 flex items-center justify-between">{editing ? 'Edit reward' : 'Add reward'}{editing && <button onClick={() => { setEditing(null); setF(blank); }} className="text-[11px] font-bold text-slate-400">Cancel</button>}</div>
             <div className="space-y-2">
               <input className={inp + ' w-full'} placeholder="Name (e.g. Amazon ₹500)" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+              {/* Image: upload or emoji */}
+              <div className="flex items-center gap-2">
+                {f.imageUrl ? <img src={f.imageUrl} alt="" className="w-12 h-12 rounded object-cover border border-slate-200" /> : <span className="w-12 h-12 rounded border border-slate-200 flex items-center justify-center text-2xl">{f.icon}</span>}
+                <div className="flex-1">
+                  <label className="text-[12px] font-bold text-orange-600 cursor-pointer">{uploading ? 'Uploading…' : '⬆ Upload image'}<input type="file" accept="image/*" className="hidden" onChange={(e) => uploadImg(e.target.files?.[0])} /></label>
+                  {f.imageUrl && <button onClick={() => setF({ ...f, imageUrl: '' })} className="text-[11px] text-slate-400 ml-3">remove</button>}
+                  <input className={inp + ' w-full mt-1'} placeholder="…or emoji 🎁" value={f.icon} onChange={(e) => setF({ ...f, icon: e.target.value })} />
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <input className={inp} placeholder="Vendor" value={f.vendor} onChange={(e) => setF({ ...f, vendor: e.target.value })} />
-                <input className={inp} placeholder="Icon 🎁" value={f.icon} onChange={(e) => setF({ ...f, icon: e.target.value })} />
+                <select className={inp} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}><option value="voucher">Voucher</option><option value="food">Food</option><option value="perk">Perk</option><option value="experience">Experience</option></select>
                 <input className={inp} type="number" placeholder="Cost (points)" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} />
                 <input className={inp} type="number" placeholder="₹ value" value={f.rupeeValue} onChange={(e) => setF({ ...f, rupeeValue: e.target.value })} />
-                <select className={inp} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}><option value="voucher">Voucher</option><option value="food">Food</option><option value="perk">Perk</option><option value="experience">Experience</option></select>
                 <input className={inp} type="number" placeholder="Stock (blank=∞)" value={f.stock} onChange={(e) => setF({ ...f, stock: e.target.value })} />
               </div>
               <input className={inp + ' w-full'} placeholder="Description (optional)" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-              <button onClick={addItem} disabled={busy === 'add'} className="w-full rounded-lg py-2 text-[13px] font-bold text-white" style={{ background: ORANGE }}>{busy === 'add' ? '…' : 'Add reward'}</button>
+              <button onClick={saveItem} disabled={busy === 'add'} className="w-full rounded-lg py-2 text-[13px] font-bold text-white" style={{ background: ORANGE }}>{busy === 'add' ? '…' : (editing ? 'Save changes' : 'Add reward')}</button>
             </div>
           </div>
         </div>
@@ -1228,17 +1259,19 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   const [showAllBadges, setShowAllBadges] = useState(false);
   const [announce, setAnnounce] = useState(false);
   const [badges, setBadges] = useState([]);
+  const [appreciationOpts, setAppreciationOpts] = useState([]);
+  const [appreciationKey, setAppreciationKey] = useState('appreciation_plain');
   const [budget, setBudget] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => setBadges(r.badges || [])).catch(() => {}); hrApi('/rewards/my-budget').then(setBudget).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => { setBadges(r.badges || []); setAppreciationOpts(r.appreciation || []); }).catch(() => {}); hrApi('/rewards/my-budget').then(setBudget).catch(() => {}); }, []);
   const pick = async (m) => { setEmp(m); setOpen(false); setQ(''); setSummary(null); try { setSummary(await hrApi(`/employees/${m.id}/recognition-summary`)); } catch {} };
   const submit = async () => {
     if (!emp) { setErr('Select an employee first.'); return; }
     if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); return; }
     setBusy(true); setErr('');
     try {
-      const r = await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, announce: kind === 'praise' ? announce : false }) });
+      const r = await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, appreciationKey: (kind === 'praise' && !badgeId) ? appreciationKey : undefined, announce: kind === 'praise' ? announce : false }) });
       if (r.pendingApproval) alert(`Sent for approval — this ${r.pointsPending}-point award needs HR/senior sign-off before the points are credited.`);
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -1339,6 +1372,16 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                       </>
                     );
                   })()}
+                </div>
+              )}
+              {kind === 'praise' && !badgeId && appreciationOpts.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold text-slate-500 mb-2">Or a quick appreciation <span className="font-normal text-slate-400">(no badge)</span></div>
+                  <div className="flex gap-2">
+                    {appreciationOpts.map((a) => (
+                      <button key={a.key} onClick={() => setAppreciationKey(a.key)} className={`flex-1 rounded-lg border px-3 py-2 text-[13px] font-bold ${appreciationKey === a.key ? 'ring-2 ring-orange-300' : ''}`} style={{ background: (a.color || '#DC2626') + '14', borderColor: (a.color || '#DC2626') + '44', color: '#334155' }}>{a.icon} {a.name} <span className="text-[10px]" style={{ color: '#0435AC' }}>+{a.points}</span></button>
+                    ))}
+                  </div>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
