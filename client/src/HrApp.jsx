@@ -1259,18 +1259,29 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   const [showAllBadges, setShowAllBadges] = useState(false);
   const [announce, setAnnounce] = useState(false);
   const [badges, setBadges] = useState([]);
+  const [specials, setSpecials] = useState([]);
+  const [specialKey, setSpecialKey] = useState('');
+  const [specialAmount, setSpecialAmount] = useState('');
   const [appreciationOpts, setAppreciationOpts] = useState([]);
   const [appreciationKey, setAppreciationKey] = useState('appreciation_plain');
   const [budget, setBudget] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => { setBadges(r.badges || []); setAppreciationOpts(r.appreciation || []); }).catch(() => {}); hrApi('/rewards/my-budget').then(setBudget).catch(() => {}); }, []);
+  useEffect(() => { hrApi('/recognition/team').then((r) => setTeam(r.team || [])).catch(() => {}); hrApi('/badges/catalog').then((r) => { setBadges(r.badges || []); setAppreciationOpts(r.appreciation || []); setSpecials(r.specials || []); }).catch(() => {}); hrApi('/rewards/my-budget').then(setBudget).catch(() => {}); }, []);
   const pick = async (m) => { setEmp(m); setOpen(false); setQ(''); setSummary(null); try { setSummary(await hrApi(`/employees/${m.id}/recognition-summary`)); } catch {} };
   const submit = async () => {
     if (!emp) { setErr('Select an employee first.'); return; }
-    if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); return; }
     setBusy(true); setErr('');
     try {
+      // Special reward (learning/mentoring/performance/innovation/customer) →
+      // the generic award endpoint (admin/HR only; may carry an amount if ranged).
+      if (kind === 'praise' && specialKey) {
+        const sp = specials.find((s) => s.key === specialKey);
+        const r = await hrApi('/rewards/award', { method: 'POST', body: JSON.stringify({ employeeId: emp.id, ruleKey: specialKey, amount: (sp && sp.pointsMax && specialAmount) ? Number(specialAmount) : undefined, title: title.trim() || (sp && sp.name), reason: note.trim() }) });
+        if (r.pendingApproval) alert(`Sent for approval — this ${r.points}-point reward needs sign-off.`);
+        onSaved(); return;
+      }
+      if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); setBusy(false); return; }
       const r = await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, appreciationKey: (kind === 'praise' && !badgeId) ? appreciationKey : undefined, announce: kind === 'praise' ? announce : false }) });
       if (r.pendingApproval) alert(`Sent for approval — this ${r.pointsPending}-point award needs HR/senior sign-off before the points are credited.`);
       onSaved();
@@ -1364,7 +1375,7 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                     return (
                       <>
                         <div className="grid grid-cols-4 gap-2">
-                          {visible.map((b) => (<button key={b.id} onClick={() => setBadgeId(badgeId === b.id ? '' : b.id)} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-bold mt-0.5" style={{ color: '#0435AC' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
+                          {visible.map((b) => (<button key={b.id} onClick={() => { setBadgeId(badgeId === b.id ? '' : b.id); setSpecialKey(''); }} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-bold mt-0.5" style={{ color: '#0435AC' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
                         </div>
                         {badges.length > 8 && (
                           <button onClick={() => setShowAllBadges((v) => !v)} className="mt-2 text-[12px] font-bold text-orange-600 hover:text-orange-700">{showAllBadges ? '▲ Show fewer badges' : `▼ Load more badges (${badges.length - 8} more)`}</button>
@@ -1374,7 +1385,27 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                   })()}
                 </div>
               )}
-              {kind === 'praise' && !badgeId && appreciationOpts.length > 0 && (
+              {kind === 'praise' && specials.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold text-slate-500 mb-2">Special rewards <span className="font-normal text-slate-400">(Learning · Mentoring · Performance · Innovation · Customer)</span></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {specials.map((s) => (
+                      <button key={s.key} onClick={() => { setSpecialKey(specialKey === s.key ? '' : s.key); setSpecialAmount(''); if (specialKey !== s.key) { setBadgeId(''); } }} className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left ${specialKey === s.key ? 'ring-2 ring-orange-400' : ''}`} style={{ background: (s.color || '#7C3AED') + '12', borderColor: (s.color || '#7C3AED') + '44' }}>
+                        <span className="text-base shrink-0">{s.icon}</span>
+                        <span className="min-w-0 flex-1"><span className="block text-[12px] font-bold text-slate-700 truncate">{s.name}</span><span className="block text-[10px] font-bold" style={{ color: '#0435AC' }}>{s.pointsMax ? `${s.points}–${s.pointsMax}` : `+${s.points}`} pts</span></span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Amount input for ranged specials. */}
+                  {(() => { const sp = specials.find((s) => s.key === specialKey); return sp && sp.pointsMax ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[12px] text-slate-500">Points ({sp.points}–{sp.pointsMax}):</span>
+                      <input type="number" min={sp.points} max={sp.pointsMax} value={specialAmount} onChange={(e) => setSpecialAmount(e.target.value)} placeholder={`${sp.points}`} className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-[13px]" />
+                    </div>
+                  ) : null; })()}
+                </div>
+              )}
+              {kind === 'praise' && !badgeId && !specialKey && appreciationOpts.length > 0 && (
                 <div>
                   <div className="text-xs font-bold text-slate-500 mb-2">Or a quick appreciation <span className="font-normal text-slate-400">(no badge)</span></div>
                   <div className="flex gap-2">
