@@ -1291,94 +1291,101 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   const shown = team.filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase()) || (m.department || '').toLowerCase().includes(q.toLowerCase()));
   const REC = { praise: ['#15803D', '#DCFCE7', 'Praise'], review: ['#2563EB', '#EFF6FF', 'Reviews'], yellow: ['#CA8A04', '#FEF9C3', 'Yellow'], red: ['#DC2626', '#FEE2E2', 'Red'] };
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl my-6 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-lg font-extrabold text-[#050A1F]">Give recognition</div><button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button></div>
-        <div className="p-6 space-y-4 overflow-auto">
-          {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
-          {/* Employee picker — an inline searchable list (not an absolute
-              dropdown, which was getting clipped by the modal's scroll area). */}
-          <div>
-            <div className="text-xs font-bold text-slate-500 mb-1.5">Employee <span className="font-normal text-slate-400">(your team only)</span></div>
-            {emp && !open ? (
-              <button onClick={() => setOpen(true)} className="w-full flex items-center gap-3 border border-slate-300 rounded-lg px-3 py-2 text-left">
-                <Avatar name={emp.name} src={emp.avatar} size={32} />
-                <div className="min-w-0"><div className="text-sm font-bold truncate">{emp.name}</div><div className="text-[11px] text-slate-400 truncate">{[emp.designation, emp.department].filter(Boolean).join(' · ')}</div></div>
-                <span className="ml-auto text-[11px] font-bold text-orange-600">Change</span>
-              </button>
-            ) : (
-              <div className="border border-slate-300 rounded-lg overflow-hidden">
-                <div className="p-2 border-b border-slate-100">
-                  <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your team by name…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
-                </div>
-                <div className="max-h-52 overflow-auto">
-                  {shown.length === 0 ? (
-                    <div className="px-3 py-5 text-sm text-slate-400 text-center">{team.length === 0 ? 'No one reports to you yet.' : 'No match — try another name.'}</div>
-                  ) : shown.map((m) => (
-                    <button key={m.id} onClick={() => pick(m)} className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left ${emp && emp.id === m.id ? 'bg-orange-50' : ''}`}>
-                      <Avatar name={m.name} src={m.avatar} size={28} />
-                      <div className="min-w-0 flex-1"><div className="text-sm font-bold truncate">{m.name}</div><div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges ? ` · 🏅 ${m.badges}` : ''}</div></div>
-                      {emp && emp.id === m.id && <span className="text-orange-500 text-sm shrink-0">✓</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+    <div className="fixed inset-0 bg-slate-900/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={onClose}>
+      <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl my-6 flex flex-col max-h-[92vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* Gradient header */}
+        <div className="px-6 py-4 flex items-center justify-between text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>
+          <div className="flex items-center gap-3">
+            <span className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: 'rgba(255,255,255,.2)' }}>🏅</span>
+            <div><div className="text-[18px] font-extrabold leading-tight">Give recognition</div><div className="text-[12px]" style={{ color: '#ffe4d3' }}>Celebrate great work — points are awarded automatically</div></div>
           </div>
-          {/* Budget banner (seniors only — HR/admin are exempt). */}
-          {emp && budget && !budget.exempt && (
-            <div className="rounded-lg px-3 py-2 text-[12px] font-semibold" style={budget.remaining > 0 ? { background: '#EFF6FF', color: '#2563EB' } : { background: '#FEE2E2', color: '#DC2626' }}>
-              💳 Monthly budget: {budget.remaining.toLocaleString('en-IN')} of {budget.limit.toLocaleString('en-IN')} points left
-            </div>
-          )}
-          {/* Selected employee context */}
-          {emp && summary && (
-            <>
-              <div className="grid grid-cols-4 gap-2">
-                {Object.entries(REC).map(([k, [fg, bg, label]]) => (
-                  <div key={k} className="rounded-lg border p-2 text-center" style={{ background: bg, borderColor: fg + '33' }}><div className="text-lg font-extrabold" style={{ color: fg }}>{(summary.counts || {})[k] || 0}</div><div className="text-[9px] font-bold uppercase" style={{ color: fg }}>{label}</div></div>
+          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-xl" style={{ background: 'rgba(255,255,255,.15)' }}>×</button>
+        </div>
+
+        {!emp ? (
+          /* Employee picker (full-width until someone is chosen) */
+          <div className="p-6 overflow-auto">
+            {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>}
+            <div className="text-xs font-bold text-slate-500 mb-2">Who are you recognizing? <span className="font-normal text-slate-400">(your team only)</span></div>
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="p-2.5 border-b border-slate-100"><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your team by name…" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /></div>
+              <div className="max-h-80 overflow-auto">
+                {shown.length === 0 ? (
+                  <div className="px-3 py-8 text-sm text-slate-400 text-center">{team.length === 0 ? 'No one reports to you yet.' : 'No match — try another name.'}</div>
+                ) : shown.map((m) => (
+                  <button key={m.id} onClick={() => pick(m)} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-orange-50 text-left border-b border-slate-50 last:border-0">
+                    <Avatar name={m.name} src={m.avatar} size={34} />
+                    <div className="min-w-0 flex-1"><div className="text-sm font-bold truncate">{m.name}</div><div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}{m.badges ? ` · 🏅 ${m.badges}` : ''}</div></div>
+                    <span className="text-orange-400 text-lg shrink-0">›</span>
+                  </button>
                 ))}
               </div>
-              {(summary.recent || []).length > 0 && (
-                <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-                  <div className="text-[11px] font-extrabold uppercase text-slate-400 mb-2">Recent recognition</div>
-                  {(summary.recent || []).map((r, i) => { const m = PERF[r.kind] || PERF.review; const icon = r.badge ? r.badge.icon : m.icon; const fmtd = (() => { try { return new Date(r.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return r.date; } })(); return (
-                    <div key={i} className="flex items-center gap-2 py-1.5">
-                      <span className="w-6 h-6 rounded-md flex items-center justify-center text-[13px] shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : m.bg }}>{icon}</span>
-                      <span className="text-[12px] font-bold truncate">{r.title || m.label}</span>
-                      <span className="text-[10px] text-slate-400 ml-auto text-right shrink-0">by {r.by}{r.byRole ? ` (${r.byRole})` : ''} · {fmtd}</span>
+            </div>
+          </div>
+        ) : (
+          /* Two-column: left = who/context, right = what */
+          <div className="grid md:grid-cols-[290px_1fr] overflow-hidden flex-1 min-h-0">
+            {/* LEFT rail */}
+            <div className="p-5 overflow-auto border-r border-slate-100" style={{ background: 'linear-gradient(180deg,#fafbfc,#f5f7fa)' }}>
+              <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide mb-2">Recognizing</div>
+              <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+                <Avatar name={emp.name} src={emp.avatar} size={44} />
+                <div className="min-w-0 flex-1"><div className="text-sm font-extrabold truncate">{emp.name}</div><div className="text-[11px] text-slate-400 truncate">{[emp.designation, emp.department].filter(Boolean).join(' · ')}</div></div>
+                <button onClick={() => { setEmp(null); setSummary(null); setQ(''); }} className="text-[11px] font-extrabold text-orange-600 bg-orange-50 rounded-lg px-2.5 py-1.5 shrink-0">Change</button>
+              </div>
+              {summary && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    {Object.entries(REC).map(([k, [fg, bg, label]]) => (
+                      <div key={k} className="rounded-xl p-2.5 text-center" style={{ background: bg }}><div className="text-xl font-extrabold leading-none" style={{ color: fg }}>{(summary.counts || {})[k] || 0}</div><div className="text-[9px] font-extrabold uppercase mt-1" style={{ color: fg }}>{label}</div></div>
+                    ))}
+                  </div>
+                  {(summary.recent || []).length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wide mb-1.5">Recent recognition</div>
+                      {(summary.recent || []).map((r, i) => { const m = PERF[r.kind] || PERF.review; const icon = r.badge ? r.badge.icon : m.icon; const fmtd = (() => { try { return new Date(r.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); } catch { return r.date; } })(); return (
+                        <div key={i} className="flex items-center gap-2 py-1.5 border-t border-slate-100 first:border-0">
+                          <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[13px] shrink-0" style={{ background: r.badge ? (r.badge.color + '22') : m.bg }}>{icon}</span>
+                          <span className="text-[12px] font-bold truncate">{r.title || m.label}</span>
+                          <span className="text-[10px] text-slate-400 ml-auto shrink-0">{r.by} · {fmtd}</span>
+                        </div>
+                      ); })}
                     </div>
-                  ); })}
+                  )}
+                </>
+              )}
+              {budget && !budget.exempt && (
+                <div className="mt-4 rounded-xl p-3" style={{ background: 'linear-gradient(135deg,#EFF6FF,#DBEAFE)', border: '1px solid #BFDBFE' }}>
+                  <div className="text-[10px] font-extrabold uppercase" style={{ color: '#60a5fa' }}>Your monthly budget</div>
+                  <div className="text-sm font-extrabold mt-0.5" style={{ color: '#2563EB' }}>{budget.remaining.toLocaleString('en-IN')} <span className="font-semibold text-[11px]" style={{ color: '#60a5fa' }}>of {budget.limit.toLocaleString('en-IN')} left</span></div>
+                  <div className="h-1.5 rounded-full mt-1.5 overflow-hidden" style={{ background: '#bfdbfe' }}><div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, (budget.remaining / (budget.limit || 1)) * 100))}%`, background: '#2563EB' }} /></div>
                 </div>
               )}
-            </>
-          )}
-          {/* Recognition form (once an employee is chosen) */}
-          {emp && (
-            <>
-              <div>
-                <div className="text-xs font-bold text-slate-500 mb-2">Type</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(PERF).map(([k, m]) => (<button key={k} onClick={() => setKind(k)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${kind === k ? 'ring-2 ring-orange-300' : ''}`} style={{ background: m.bg, borderColor: m.border, color: '#334155' }}><span>{m.icon}</span>{m.label}</button>))}
+            </div>
+
+            {/* RIGHT panel */}
+            <div className="p-6 overflow-auto">
+              {err && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-4">{err}</div>}
+              <div className="mb-5">
+                <div className="text-xs font-extrabold text-slate-600 mb-2.5">Recognition type</div>
+                <div className="grid grid-cols-4 gap-2">
+                  {Object.entries(PERF).map(([k, m]) => (<button key={k} onClick={() => setKind(k)} className={`rounded-xl border-[1.5px] px-2 py-2.5 text-center text-[12px] font-bold transition ${kind === k ? 'text-slate-700' : 'text-slate-500 border-slate-100'}`} style={kind === k ? { background: m.bg, borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: m.bg + '80' }}><span className="block text-lg mb-0.5">{m.icon}</span>{m.label}</button>))}
                 </div>
               </div>
               {kind === 'praise' && (
-                <div>
-                  <div className="text-xs font-bold text-slate-500 mb-2">Pick a badge <span className="font-normal text-slate-400">(optional)</span></div>
+                <div className="mb-5">
+                  <div className="text-xs font-extrabold text-slate-600 mb-2.5">Pick a badge <span className="font-normal text-slate-400">optional</span></div>
                   {(() => {
-                    // Show the 8 lowest-point badges first (the everyday ones), with
-                    // "Load more" to reveal the rest. A selected-but-hidden badge is
-                    // always kept visible so the choice never disappears.
                     const sorted = [...badges].sort((a, b) => (a.points || 0) - (b.points || 0));
                     let visible = showAllBadges ? sorted : sorted.slice(0, 8);
                     if (!showAllBadges && badgeId && !visible.some((b) => b.id === badgeId)) { const sel = sorted.find((b) => b.id === badgeId); if (sel) visible = [...visible.slice(0, 7), sel]; }
                     return (
                       <>
                         <div className="grid grid-cols-4 gap-2">
-                          {visible.map((b) => (<button key={b.id} onClick={() => { setBadgeId(badgeId === b.id ? '' : b.id); setSpecialKey(''); }} title={b.desc} className={`rounded-xl border p-2.5 text-center ${badgeId === b.id ? 'ring-2 ring-orange-400' : ''}`} style={{ background: b.color + '14', borderColor: b.color + '44' }}><div className="text-xl leading-none">{b.icon}</div><div className="text-[9px] font-extrabold mt-1" style={{ color: '#334155' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-bold mt-0.5" style={{ color: '#0435AC' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
+                          {visible.map((b) => (<button key={b.id} onClick={() => { setBadgeId(badgeId === b.id ? '' : b.id); setSpecialKey(''); }} title={b.desc} className={`rounded-2xl border-[1.5px] p-2.5 text-center transition ${badgeId === b.id ? '' : 'border-slate-100'}`} style={badgeId === b.id ? { background: b.color + '14', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: b.color + '0c' }}><div className="text-2xl leading-none">{b.icon}</div><div className="text-[8.5px] font-extrabold mt-1.5 leading-tight" style={{ color: '#475569' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-extrabold mt-1 rounded" style={{ color: '#7C3AED', background: '#f5f3ff' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
                         </div>
                         {badges.length > 8 && (
-                          <button onClick={() => setShowAllBadges((v) => !v)} className="mt-2 text-[12px] font-bold text-orange-600 hover:text-orange-700">{showAllBadges ? '▲ Show fewer badges' : `▼ Load more badges (${badges.length - 8} more)`}</button>
+                          <button onClick={() => setShowAllBadges((v) => !v)} className="mt-2.5 text-[12px] font-extrabold text-orange-600 bg-orange-50 rounded-lg px-3 py-1.5">{showAllBadges ? '▲ Show fewer badges' : `▼ Load more badges (${badges.length - 8} more)`}</button>
                         )}
                       </>
                     );
@@ -1386,47 +1393,50 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                 </div>
               )}
               {kind === 'praise' && specials.length > 0 && (
-                <div>
-                  <div className="text-xs font-bold text-slate-500 mb-2">Special rewards <span className="font-normal text-slate-400">(Learning · Mentoring · Performance · Innovation · Customer)</span></div>
+                <div className="mb-5">
+                  <div className="text-xs font-extrabold text-slate-600 mb-2.5">✦ Special rewards <span className="font-normal text-slate-400">Admin / HR only</span></div>
                   <div className="grid grid-cols-2 gap-2">
                     {specials.map((s) => (
-                      <button key={s.key} onClick={() => { setSpecialKey(specialKey === s.key ? '' : s.key); setSpecialAmount(''); if (specialKey !== s.key) { setBadgeId(''); } }} className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left ${specialKey === s.key ? 'ring-2 ring-orange-400' : ''}`} style={{ background: (s.color || '#7C3AED') + '12', borderColor: (s.color || '#7C3AED') + '44' }}>
-                        <span className="text-base shrink-0">{s.icon}</span>
-                        <span className="min-w-0 flex-1"><span className="block text-[12px] font-bold text-slate-700 truncate">{s.name}</span><span className="block text-[10px] font-bold" style={{ color: '#0435AC' }}>{s.pointsMax ? `${s.points}–${s.pointsMax}` : `+${s.points}`} pts</span></span>
+                      <button key={s.key} onClick={() => { setSpecialKey(specialKey === s.key ? '' : s.key); setSpecialAmount(''); if (specialKey !== s.key) setBadgeId(''); }} className={`flex items-center gap-2.5 rounded-xl border-[1.5px] px-3 py-2.5 text-left transition ${specialKey === s.key ? '' : 'border-slate-100'}`} style={specialKey === s.key ? { background: (s.color || '#7C3AED') + '10', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: (s.color || '#7C3AED') + '08' }}>
+                        <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: (s.color || '#7C3AED') + '1a' }}>{s.icon}</span>
+                        <span className="min-w-0 flex-1"><span className="block text-[12px] font-extrabold text-slate-700 truncate">{s.name}</span><span className="block text-[10px] font-extrabold" style={{ color: '#7C3AED' }}>{s.pointsMax ? `${s.points}–${s.pointsMax}` : `+${s.points}`} pts</span></span>
                       </button>
                     ))}
                   </div>
-                  {/* Amount input for ranged specials. */}
                   {(() => { const sp = specials.find((s) => s.key === specialKey); return sp && sp.pointsMax ? (
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-[12px] text-slate-500">Points ({sp.points}–{sp.pointsMax}):</span>
-                      <input type="number" min={sp.points} max={sp.pointsMax} value={specialAmount} onChange={(e) => setSpecialAmount(e.target.value)} placeholder={`${sp.points}`} className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-[13px]" />
+                    <div className="mt-2.5 flex items-center gap-2">
+                      <span className="text-[12px] font-semibold text-slate-500">Points ({sp.points}–{sp.pointsMax}):</span>
+                      <input type="number" min={sp.points} max={sp.pointsMax} value={specialAmount} onChange={(e) => setSpecialAmount(e.target.value)} placeholder={`${sp.points}`} className="w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" />
                     </div>
                   ) : null; })()}
                 </div>
               )}
               {kind === 'praise' && !badgeId && !specialKey && appreciationOpts.length > 0 && (
-                <div>
-                  <div className="text-xs font-bold text-slate-500 mb-2">Or a quick appreciation <span className="font-normal text-slate-400">(no badge)</span></div>
+                <div className="mb-5">
+                  <div className="text-xs font-extrabold text-slate-600 mb-2.5">Or a quick appreciation <span className="font-normal text-slate-400">no badge</span></div>
                   <div className="flex gap-2">
                     {appreciationOpts.map((a) => (
-                      <button key={a.key} onClick={() => setAppreciationKey(a.key)} className={`flex-1 rounded-lg border px-3 py-2 text-[13px] font-bold ${appreciationKey === a.key ? 'ring-2 ring-orange-300' : ''}`} style={{ background: (a.color || '#DC2626') + '14', borderColor: (a.color || '#DC2626') + '44', color: '#334155' }}>{a.icon} {a.name} <span className="text-[10px]" style={{ color: '#0435AC' }}>+{a.points}</span></button>
+                      <button key={a.key} onClick={() => setAppreciationKey(a.key)} className={`flex-1 rounded-xl border-[1.5px] px-3 py-2.5 text-[13px] font-bold transition ${appreciationKey === a.key ? '' : 'border-slate-100'}`} style={appreciationKey === a.key ? { background: (a.color || '#DC2626') + '14', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00', color: '#334155' } : { background: (a.color || '#DC2626') + '0c', color: '#334155' }}>{a.icon} {a.name} <span className="text-[10px]" style={{ color: '#7C3AED' }}>+{a.points}</span></button>
                     ))}
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3">
-                <div><div className="text-xs font-bold text-slate-500 mb-1">{kind === 'praise' ? 'Title (optional)' : 'Title'}</div><input className={ic} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'praise' ? 'e.g. Great client save' : 'Short summary'} /></div>
-                <div><div className="text-xs font-bold text-slate-500 mb-1">Date</div><input type="date" className={ic} value={date} onChange={(e) => setDate(e.target.value)} /></div>
+              <div className="mb-4">
+                <div className="text-xs font-extrabold text-slate-600 mb-2">Add a note <span className="font-normal text-slate-400">optional</span></div>
+                <textarea className="w-full rounded-xl border-[1.5px] border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'praise' ? 'What did they do well?' : 'What happened / feedback…'} />
               </div>
-              <div><div className="text-xs font-bold text-slate-500 mb-1">Details</div><textarea className={ic} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={kind === 'praise' ? 'What did they do well?' : 'What happened / feedback…'} /></div>
-              {kind === 'praise' && <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer"><input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="w-4 h-4 accent-orange-500" />📣 Announce to the whole branch</label>}
-            </>
-          )}
-        </div>
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={submit} disabled={busy || !emp} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : (kind === 'praise' ? 'Give appreciation 🎉' : 'Add note')}</button>
+              {kind === 'praise' && (
+                <label className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 text-[13px] font-semibold cursor-pointer" style={{ background: '#faf5ff', border: '1px solid #f0e7fb', color: '#6d28d9' }}><input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="w-4 h-4 accent-violet-500" />📣 Announce to the whole branch — everyone sees this celebration</label>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center gap-3" style={{ background: '#fafbfc' }}>
+          {emp && kind === 'praise' && <span className="text-[11px] text-slate-400">✓ The team, HR &amp; admin are notified automatically</span>}
+          <button onClick={onClose} className="ml-auto rounded-xl border-[1.5px] border-slate-200 px-5 py-2.5 text-sm font-bold text-slate-500 bg-white">Cancel</button>
+          <button onClick={submit} disabled={busy || !emp} className="rounded-xl px-6 py-2.5 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)', boxShadow: '0 6px 18px rgba(255,106,0,.35)' }}>{busy ? 'Saving…' : (kind === 'praise' ? 'Give appreciation 🎉' : 'Add note')}</button>
         </div>
       </div>
     </div>
