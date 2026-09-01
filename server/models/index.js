@@ -2247,7 +2247,8 @@ const Redemption = sequelize.define('Redemption', {
   vendor: { type: DataTypes.STRING(80), defaultValue: '' },
   cost: { type: DataTypes.INTEGER, allowNull: false },
   rupeeValue: { type: DataTypes.INTEGER, defaultValue: 0 },
-  status: { type: DataTypes.STRING(12), defaultValue: 'requested' }, // requested|approved|delivered|rejected|cancelled
+  kind: { type: DataTypes.STRING(12), defaultValue: 'reward' },      // reward | encash
+  status: { type: DataTypes.STRING(12), defaultValue: 'requested' }, // requested|approved|delivered|paid|rejected|cancelled
   voucherCode: { type: DataTypes.STRING(120), defaultValue: '' },    // filled on delivery
   note: { type: DataTypes.STRING(300), defaultValue: '' },
   decidedByName: { type: DataTypes.STRING(120), defaultValue: '' },

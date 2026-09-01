@@ -1112,6 +1112,30 @@ router.post('/store/redeem/:itemId', requireHrAccess, async (req, res, next) => 
   } catch (e) { next(e); }
 });
 
+// Encash points for cash — reserves the points and creates an 'encash'
+// redemption for HR to approve and pay with the next salary. No amount limits.
+router.post('/store/encash', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.hrUser) return res.status(403).json({ error: 'Only employees can encash.' });
+    const R = require('../services/rewards');
+    if (!(await R.rewardsLive(models))) return res.status(400).json({ error: 'Rewards are paused.' });
+    const points = Math.round(Number((req.body || {}).points) || 0);
+    if (points <= 0) return res.status(400).json({ error: 'Enter how many points to encash.' });
+    const wallet = await R.walletFor(models, req.hrUser.id);
+    if (points > wallet.balance) return res.status(400).json({ error: `You only have ${wallet.balance.toLocaleString('en-IN')} points available.` });
+    const rupees = await R.rupeeValue(models, points);
+    const red = await Redemption.create({
+      employeeId: req.hrUser.id, employeeName: req.hrUser.name, department: req.hrUser.department || '', branch: req.hrUser.branch || '',
+      itemName: `Cash encashment — ₹${rupees.toLocaleString('en-IN')}`, kind: 'encash', cost: points, rupeeValue: Math.round(rupees), status: 'requested',
+    });
+    const rsv = await R.reserve(models, req.hrUser.id, points, { title: `Encash ${points} pts → ₹${rupees}`, refId: `encash:${red.id}` });
+    if (!rsv.ok) { await red.destroy(); return res.status(400).json({ error: rsv.error === 'Not enough points.' ? 'Not enough points.' : rsv.error }); }
+    red.reserveLedgerId = rsv.ledger.id; await red.save();
+    try { const mgrs = await HrUser.findAll({ where: { active: true } }); for (const u of mgrs) { if (u.isHrManager || ['hr', 'recruiter'].includes(u.type)) await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: `💰 ${req.hrUser.name} requested to encash ${points} pts (₹${rupees.toLocaleString('en-IN')}) — approve for next salary.` }); } } catch {}
+    res.json({ ok: true, redemption: red.toJSON() });
+  } catch (e) { next(e); }
+});
+
 // My redemptions.
 router.get('/store/my-redemptions', requireHrAccess, async (req, res, next) => {
   try {
@@ -1172,14 +1196,19 @@ router.post('/store/admin/redemptions/:id/decide', requireHrAccess, requireHrMan
     red.decidedByName = req.hrActor.name; red.decidedAt = new Date(); if (b.note !== undefined) red.note = String(b.note).slice(0, 300);
     if (decision === 'deliver') {
       await R.fulfilReserved(models, red.employeeId, red.cost);
-      red.status = 'delivered'; red.voucherCode = String(b.voucherCode || '').slice(0, 120);
-      // Decrement stock if tracked.
-      try { if (red.itemId) { const it = await RewardCatalogueItem.findByPk(red.itemId); if (it && it.stock != null) { it.stock = Math.max(0, it.stock - 1); await it.save(); } } } catch {}
-      try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `🎁 Your "${red.itemName}" reward is ready!${red.voucherCode ? ` Code: ${red.voucherCode}` : ''}` }); } catch {}
+      if (red.kind === 'encash') {
+        red.status = 'paid';
+        try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `💰 Your encashment of ${red.cost} pts (₹${(red.rupeeValue || 0).toLocaleString('en-IN')}) is approved — it will be paid with your next salary.` }); } catch {}
+      } else {
+        red.status = 'delivered'; red.voucherCode = String(b.voucherCode || '').slice(0, 120);
+        // Decrement stock if tracked.
+        try { if (red.itemId) { const it = await RewardCatalogueItem.findByPk(red.itemId); if (it && it.stock != null) { it.stock = Math.max(0, it.stock - 1); await it.save(); } } } catch {}
+        try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `🎁 Your "${red.itemName}" reward is ready!${red.voucherCode ? ` Code: ${red.voucherCode}` : ''}` }); } catch {}
+      }
     } else if (decision === 'reject') {
       await R.refundReserved(models, red.employeeId, red.cost, { title: `Refund: ${red.itemName}`, refId: `redemption:${red.id}` });
       red.status = 'rejected';
-      try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `Your "${red.itemName}" redemption was declined — ${red.cost} points refunded.` }); } catch {}
+      try { await HrNotification.create({ userId: red.employeeId, actorKind: 'hr', type: 'info', text: `Your ${red.kind === 'encash' ? 'encashment' : `"${red.itemName}" redemption`} was declined — ${red.cost} points refunded.` }); } catch {}
     } else return res.status(400).json({ error: 'Invalid decision.' });
     await red.save();
     res.json({ ok: true, status: red.status });
