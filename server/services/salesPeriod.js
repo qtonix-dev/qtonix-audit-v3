@@ -84,9 +84,15 @@ function monthBoundaries(nowMs, hour, offset) {
 // paidAt, fall back to paidDate (date-only → treated as noon so it lands
 // squarely inside its own day regardless of cutoff).
 function saleMs(inst, deal) {
+  // Precise timestamp of the payment wins.
   if (inst && inst.paidAt) { const t = new Date(inst.paidAt).getTime(); if (!Number.isNaN(t)) return t; }
-  if (deal && deal.wonAt) { const t = new Date(deal.wonAt).getTime(); if (!Number.isNaN(t)) return t; }
+  // The installment's OWN paid date is what determines when the money counts —
+  // this is critical for later installments (cross-sales). Falling back to the
+  // deal's wonAt here would wrongly attribute a 2nd installment paid this month
+  // to the month the deal was first won, dropping it from this month's figures.
   if (inst && inst.paidDate) { const t = new Date(`${inst.paidDate}T12:00:00`).getTime(); if (!Number.isNaN(t)) return t; }
+  // Only when there's no payment date at all do we fall back to when it was won.
+  if (deal && deal.wonAt) { const t = new Date(deal.wonAt).getTime(); if (!Number.isNaN(t)) return t; }
   return 0;
 }
 
