@@ -581,6 +581,7 @@ function RewardStoreView() {
   const [data, setData] = useState(null);
   const [mine, setMine] = useState([]);
   const [busy, setBusy] = useState('');
+  const [encashOpen, setEncashOpen] = useState(false);
   const [encashPts, setEncashPts] = useState('');
   const load = () => { hrApi('/store/catalogue').then(setData).catch(() => setData({ items: [], wallet: {} })); hrApi('/store/my-redemptions').then((r) => setMine(r.redemptions || [])).catch(() => {}); };
   useEffect(() => { load(); }, []);
@@ -589,7 +590,7 @@ function RewardStoreView() {
   const ratio = (data.wallet || {}).rupeeValue && bal ? (bal / data.wallet.rupeeValue) : 2; // pts per ₹
   const encashRupees = encashPts ? Math.round((Number(encashPts) / ratio) * 100) / 100 : 0;
   const redeem = async (item) => { if (!window.confirm(`Redeem "${item.name}" for ${item.cost} points?`)) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); alert('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { alert(e.message); } setBusy(''); };
-  const doEncash = async () => { const p = Number(encashPts); if (!p || p <= 0) return; if (p > bal) { alert('You don’t have that many points.'); return; } if (!window.confirm(`Encash ${p.toLocaleString('en-IN')} points for ₹${encashRupees.toLocaleString('en-IN')}? This will be paid with your next salary after HR approval.`)) return; setBusy('encash'); try { await hrApi('/store/encash', { method: 'POST', body: JSON.stringify({ points: p }) }); setEncashPts(''); load(); alert('Encashment requested! HR will approve it for your next salary.'); } catch (e) { alert(e.message); } setBusy(''); };
+  const doEncash = async () => { const p = Number(encashPts); if (!p || p <= 0) return; if (p > bal) { alert('You don’t have that many points.'); return; } setBusy('encash'); try { await hrApi('/store/encash', { method: 'POST', body: JSON.stringify({ points: p }) }); setEncashPts(''); setEncashOpen(false); load(); alert('Encashment requested! HR will approve it for your next salary.'); } catch (e) { alert(e.message); } setBusy(''); };
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], paid: ['Paid w/ salary', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'], cancelled: ['Cancelled', '#64748B', '#F1F5F9'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
     <div>
@@ -597,38 +598,12 @@ function RewardStoreView() {
         <div className="text-[15px] font-extrabold">🎁 Reward Store</div>
         <div className="text-sm font-bold" style={{ color: '#ffd9b8' }}>⭐ {bal.toLocaleString('en-IN')} points available</div>
       </div>
-      {/* Encash card */}
-      <div className="rounded-2xl border p-5 mb-5" style={{ background: 'linear-gradient(135deg,#F0FDF4,#DCFCE7)', borderColor: '#BBF7D0' }}>
-        <div className="flex items-center gap-3 mb-3">
-          <span className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl" style={{ background: '#16A34A22' }}>💰</span>
-          <div><div className="text-[15px] font-extrabold" style={{ color: '#15803D' }}>Encash your points</div><div className="text-[12px]" style={{ color: '#166534' }}>Convert points to cash — credited with your next salary.</div></div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 mb-1">Points to encash</div>
-            <input type="number" min="1" max={bal} value={encashPts} onChange={(e) => setEncashPts(e.target.value)} placeholder="0" className="w-full rounded-xl border border-green-200 bg-white px-3 py-2.5 text-lg font-extrabold focus:outline-none focus:ring-2 focus:ring-green-300" style={{ color: '#15803D' }} />
-          </div>
-          <div>
-            <div className="text-[11px] font-bold text-slate-500 mb-1">You'll receive</div>
-            <div className="w-full rounded-xl bg-white border border-green-200 px-3 py-2.5 text-lg font-extrabold flex items-center" style={{ color: '#15803D' }}>₹{encashRupees.toLocaleString('en-IN')}</div>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2 mb-3">
-          {[1000, 2000, 5000].filter((n) => n <= bal).map((n) => (
-            <button key={n} onClick={() => setEncashPts(String(n))} className="text-[11px] font-bold rounded-lg px-3 py-1.5" style={Number(encashPts) === n ? { background: '#16A34A', color: '#fff' } : { background: '#fff', color: '#15803D', border: '1px solid #BBF7D0' }}>{n.toLocaleString('en-IN')} pts</button>
-          ))}
-          {bal > 0 && <button onClick={() => setEncashPts(String(bal))} className="text-[11px] font-bold rounded-lg px-3 py-1.5" style={{ background: '#fff', color: '#15803D', border: '1px solid #BBF7D0' }}>Max ({bal.toLocaleString('en-IN')})</button>}
-        </div>
-        <div className="text-[11px] mb-3" style={{ color: '#166534' }}>Rate: {Math.round(ratio)} points = ₹1 · HR approves encashments before payout · Points are held until paid.</div>
-        <button onClick={doEncash} disabled={busy === 'encash' || !encashPts || Number(encashPts) <= 0 || Number(encashPts) > bal} className="w-full rounded-xl py-3 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 6px 18px rgba(22,163,74,.3)' }}>{busy === 'encash' ? 'Requesting…' : `Request ₹${encashRupees.toLocaleString('en-IN')} encashment →`}</button>
-      </div>
-      <div className="text-[12px] font-bold text-slate-400 mb-2 px-1">OR REDEEM FOR REWARDS</div>
       <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
         {(data.items || []).map((it) => {
           const afford = bal >= it.cost;
           return (
             <div key={it.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-              <div className="h-20 flex items-center justify-center text-4xl" style={{ background: it.category === 'food' ? '#FDECEA' : it.category === 'perk' ? '#EDE9FE' : '#FFF3E0' }}>{it.icon}</div>
+              <div className="h-20 flex items-center justify-center text-4xl overflow-hidden" style={{ background: it.category === 'food' ? '#FDECEA' : it.category === 'perk' ? '#EDE9FE' : '#FFF3E0' }}>{it.imageUrl ? <img src={it.imageUrl} alt="" className="w-full h-full object-cover" /> : it.icon}</div>
               <div className="p-3.5">
                 <div className="text-sm font-extrabold text-[#050A1F]">{it.name}</div>
                 <div className="text-[11px] text-slate-400">{it.vendor}{it.stock != null ? ` · ${it.stock} left` : ''}</div>
@@ -640,7 +615,49 @@ function RewardStoreView() {
             </div>
           );
         })}
+        {/* Encash-for-cash card — last in the grid, styled like a product. */}
+        <div className="rounded-2xl overflow-hidden" style={{ border: '2px solid #BBF7D0' }}>
+          <div className="h-20 flex items-center justify-center text-4xl" style={{ background: 'linear-gradient(135deg,#F0FDF4,#DCFCE7)' }}>💰</div>
+          <div className="p-3.5">
+            <div className="text-sm font-extrabold" style={{ color: '#15803D' }}>Encash for cash</div>
+            <div className="text-[11px] text-slate-400">Paid with next salary</div>
+            <div className="text-[15px] font-extrabold mt-1.5" style={{ color: '#15803D' }}>{Math.round(ratio)} pts = ₹1</div>
+            <button onClick={() => { setEncashPts(''); setEncashOpen(true); }} disabled={bal <= 0} className="mt-2.5 w-full rounded-lg py-2 text-[13px] font-bold text-white disabled:bg-slate-200 disabled:text-slate-400" style={bal > 0 ? { background: 'linear-gradient(135deg,#16A34A,#15803D)' } : {}}>{bal > 0 ? 'Encash →' : 'No points yet'}</button>
+          </div>
+        </div>
       </div>
+
+      {/* Encash dialog */}
+      {encashOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={() => setEncashOpen(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 flex items-center justify-between text-white" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}>
+              <div className="flex items-center gap-2.5"><span className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: 'rgba(255,255,255,.2)' }}>💰</span><div><div className="text-[16px] font-extrabold leading-tight">Encash points</div><div className="text-[11px]" style={{ color: '#bbf7d0' }}>Credited with your next salary</div></div></div>
+              <button onClick={() => setEncashOpen(false)} className="w-8 h-8 rounded-lg text-xl" style={{ background: 'rgba(255,255,255,.15)' }}>×</button>
+            </div>
+            <div className="p-6">
+              <div className="text-[11px] font-bold text-slate-500 mb-1.5">Points to encash</div>
+              <input autoFocus type="number" min="1" max={bal} value={encashPts} onChange={(e) => setEncashPts(e.target.value)} placeholder="0" className="w-full rounded-xl border border-slate-200 px-3 py-3 text-2xl font-extrabold text-center focus:outline-none focus:ring-2 focus:ring-green-300" style={{ color: '#15803D' }} />
+              <div className="flex gap-2 mt-2.5 justify-center flex-wrap">
+                {[1000, 2000, 5000].filter((n) => n <= bal).map((n) => (
+                  <button key={n} onClick={() => setEncashPts(String(n))} className="text-[11px] font-bold rounded-lg px-3 py-1.5" style={Number(encashPts) === n ? { background: '#16A34A', color: '#fff' } : { background: '#f0fdf4', color: '#15803D', border: '1px solid #BBF7D0' }}>{n.toLocaleString('en-IN')}</button>
+                ))}
+                <button onClick={() => setEncashPts(String(bal))} className="text-[11px] font-bold rounded-lg px-3 py-1.5" style={{ background: '#f0fdf4', color: '#15803D', border: '1px solid #BBF7D0' }}>Max</button>
+              </div>
+              <div className="rounded-2xl mt-4 p-4 text-center" style={{ background: '#F0FDF4', border: '1px solid #DCFCE7' }}>
+                <div className="text-[11px] font-bold text-slate-500">You'll receive</div>
+                <div className="text-3xl font-extrabold" style={{ color: '#15803D' }}>₹{encashRupees.toLocaleString('en-IN')}</div>
+                <div className="text-[11px] text-slate-400 mt-1">{Math.round(ratio)} points = ₹1 · you have {bal.toLocaleString('en-IN')} pts</div>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-3 text-center">HR approves before payout · points are held until paid</div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-2">
+              <button onClick={() => setEncashOpen(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-bold text-slate-500 bg-white">Cancel</button>
+              <button onClick={doEncash} disabled={busy === 'encash' || !encashPts || Number(encashPts) <= 0 || Number(encashPts) > bal} className="flex-1 rounded-xl py-2.5 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}>{busy === 'encash' ? '…' : `Request ₹${encashRupees.toLocaleString('en-IN')}`}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {mine.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 mt-4">
           <div className="text-sm font-extrabold text-[#050A1F] mb-2">My redemptions</div>
