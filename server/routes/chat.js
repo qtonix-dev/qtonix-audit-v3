@@ -7,6 +7,17 @@ const router = express.Router();
 const { Op, HrUser, ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember } = require('../models');
 const { requireHrAccess } = require('../middleware/hrAuth');
 
+// ===== Phase 3: in-memory presence + typing (no DB writes on heartbeat) =====
+// presence: userId -> last-seen epoch ms. Considered online if seen < 40s ago.
+const presence = new Map();
+// typing: conversationId -> Map(userId -> expiresAt). Auto-expires after ~6s.
+const typingByConv = new Map();
+const ONLINE_MS = 40000;
+function markSeen(uid) { if (uid) presence.set(uid, Date.now()); }
+function isOnline(uid) { const t = presence.get(uid); return !!t && (Date.now() - t) < ONLINE_MS; }
+function setTyping(convId, uid) { let m = typingByConv.get(convId); if (!m) { m = new Map(); typingByConv.set(convId, m); } m.set(uid, Date.now() + 6000); }
+function typingUsers(convId, exceptUid) { const m = typingByConv.get(convId); if (!m) return []; const now = Date.now(); const out = []; for (const [uid, exp] of m) { if (exp < now) m.delete(uid); else if (uid !== exceptUid) out.push(uid); } return out; }
+
 // The chat identity is the logged-in HR user.
 function meId(req) { return req.hrUser ? req.hrUser.id : null; }
 function dmKeyFor(a, b) { const [x, y] = [Number(a), Number(b)].sort((m, n) => m - n); return `${x}-${y}`; }
@@ -106,12 +117,22 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
     const body = String(b.body || '').slice(0, 8000).trim();
     const hasFile = !!(b.fileUrl && b.fileName);
     if (!body && !hasFile) return res.status(400).json({ error: 'Nothing to send.' });
+    // Resolve @mentions: match "@Name" against conversation members.
+    let mentions = [];
+    if (body.includes('@')) {
+      const memRows = await ChatMembership.findAll({ where: { conversationId: convId } });
+      const us = await HrUser.findAll({ where: { id: { [Op.in]: memRows.map((m) => m.userId) } }, attributes: ['id', 'name'] });
+      const low = body.toLowerCase();
+      for (const u of us) { if (u.id !== me && low.includes('@' + u.name.toLowerCase())) mentions.push(u.id); }
+    }
     const msg = await ChatMessage.create({
       conversationId: convId, senderId: me, senderName: req.hrUser.name, body,
       fileUrl: hasFile ? String(b.fileUrl).slice(0, 600) : '', fileName: hasFile ? String(b.fileName).slice(0, 200) : '',
       fileType: hasFile ? String(b.fileType || '').slice(0, 60) : '', fileSize: hasFile ? Math.max(0, Number(b.fileSize) || 0) : 0,
-      isImage: hasFile ? !!b.isImage : false,
+      isImage: hasFile ? !!b.isImage : false, mentions,
     });
+    // Notify @mentioned people via the HRMS notification bell.
+    if (mentions.length) { try { const { HrNotification } = require('../models'); for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: `💬 ${req.hrUser.name} mentioned you in chat` }); } catch {} }
     // Update the conversation's last-message summary + un-hide for everyone.
     const summary = body ? body.slice(0, 200) : (hasFile ? `📎 ${msg.fileName}` : '');
     await ChatConversation.update({ lastMessageAt: msg.createdAt, lastMessageText: summary, lastMessageBy: me }, { where: { id: convId } });
@@ -147,6 +168,7 @@ router.post('/conversations/:id/hide', requireHrAccess, async (req, res, next) =
 router.get('/poll', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
+    markSeen(me); // heartbeat — any poll keeps me "online"
     if (!me) return res.json({ totalUnread: 0, messages: [] });
     const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
     let totalUnread = 0;
@@ -155,6 +177,8 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
       totalUnread += n;
     }
     let messages = [];
+    let typing = [];
+    let reactions = [];
     const convId = Number(req.query.conversationId) || null;
     const after = Number(req.query.after) || null;
     if (convId) {
@@ -164,9 +188,15 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
         if (after) where.id = { [Op.gt]: after };
         const rows = await ChatMessage.findAll({ where, order: [['id', 'ASC']], limit: 60 });
         messages = rows.map((r) => r.toJSON());
+        // Reaction/edit deltas for the recent window so others' reactions appear.
+        const recent = await ChatMessage.findAll({ where: { conversationId: convId }, order: [['id', 'DESC']], limit: 30 });
+        reactions = recent.map((r) => ({ id: r.id, reactions: r.reactions || {}, deleted: r.deleted }));
+        // Who's typing here (names, excluding me).
+        const t = typingUsers(convId, me);
+        if (t.length) { const us = await HrUser.findAll({ where: { id: { [Op.in]: t } }, attributes: ['name'] }); typing = us.map((u) => u.name); }
       }
     }
-    res.json({ totalUnread, messages });
+    res.json({ totalUnread, messages, typing, reactions });
   } catch (e) { next(e); }
 });
 
@@ -266,6 +296,67 @@ router.get('/channels/:id/info', requireHrAccess, async (req, res, next) => {
     const memRows = await ChatMembership.findAll({ where: { conversationId: convId } });
     const users = await HrUser.findAll({ where: { id: { [Op.in]: memRows.map((m) => m.userId) } } });
     res.json({ id: conv.id, title: conv.title, team: team ? { id: team.id, name: team.name, icon: team.icon, color: team.color } : null, members: users.map(pubUser) });
+  } catch (e) { next(e); }
+});
+
+// ===== Phase 3: reactions, typing, search, @mention members =====
+
+// Add / toggle a reaction on a message.
+router.post('/messages/:id/react', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const msg = await ChatMessage.findByPk(Number(req.params.id));
+    if (!msg) return res.status(404).json({ error: 'Message not found.' });
+    const mem = await ChatMembership.findOne({ where: { conversationId: msg.conversationId, userId: me } });
+    if (!mem) return res.status(403).json({ error: 'Not your conversation.' });
+    const emoji = String((req.body || {}).emoji || '').slice(0, 8);
+    if (!emoji) return res.status(400).json({ error: 'No emoji.' });
+    const r = { ...(msg.reactions || {}) };
+    const arr = new Set(r[emoji] || []);
+    if (arr.has(me)) arr.delete(me); else arr.add(me);       // toggle
+    if (arr.size) r[emoji] = [...arr]; else delete r[emoji];
+    msg.reactions = r; msg.changed('reactions', true); await msg.save();
+    res.json({ reactions: msg.reactions });
+  } catch (e) { next(e); }
+});
+
+// Typing heartbeat.
+router.post('/conversations/:id/typing', requireHrAccess, async (req, res, next) => {
+  try { const me = meId(req); markSeen(me); setTyping(Number(req.params.id), me); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+// Search my messages (simple LIKE), labelled by conversation.
+router.get('/search', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const term = String(req.query.q || '').trim();
+    if (term.length < 2) return res.json({ results: [] });
+    const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
+    const convIds = mems.map((m) => m.conversationId);
+    if (!convIds.length) return res.json({ results: [] });
+    const rows = await ChatMessage.findAll({ where: { conversationId: { [Op.in]: convIds }, deleted: false, body: { [Op.like]: `%${term}%` } }, order: [['id', 'DESC']], limit: 30 });
+    const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: [...new Set(rows.map((r) => r.conversationId))].length ? [...new Set(rows.map((r) => r.conversationId))] : [0] } } });
+    const convById = {}; convs.forEach((c) => { convById[c.id] = c; });
+    const dmConvIds = convs.filter((c) => c.kind === 'dm').map((c) => c.id);
+    const dmMems = await ChatMembership.findAll({ where: { conversationId: { [Op.in]: dmConvIds.length ? dmConvIds : [0] }, userId: { [Op.ne]: me } } });
+    const otherByConv = {}; dmMems.forEach((m) => { if (!otherByConv[m.conversationId]) otherByConv[m.conversationId] = m.userId; });
+    const others = await HrUser.findAll({ where: { id: { [Op.in]: Object.values(otherByConv).length ? Object.values(otherByConv) : [0] } }, attributes: ['id', 'name'] });
+    const otherName = {}; others.forEach((u) => { otherName[u.id] = u.name; });
+    const results = rows.map((r) => { const c = convById[r.conversationId]; const label = c && c.kind === 'channel' ? `#${c.title}` : (otherName[otherByConv[r.conversationId]] || 'Direct message'); return { id: r.id, conversationId: r.conversationId, body: r.body, senderName: r.senderName, createdAt: r.createdAt, label, kind: c ? c.kind : 'dm', other: c && c.kind === 'dm' ? { id: otherByConv[r.conversationId], name: otherName[otherByConv[r.conversationId]] } : null }; });
+    res.json({ results });
+  } catch (e) { next(e); }
+});
+
+// Members of a conversation (for @mention autocomplete) + online status.
+router.get('/conversations/:id/members', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const convId = Number(req.params.id);
+    const mem = await ChatMembership.findOne({ where: { conversationId: convId, userId: me } });
+    if (!mem) return res.status(403).json({ error: 'Not your conversation.' });
+    const rows = await ChatMembership.findAll({ where: { conversationId: convId } });
+    const users = await HrUser.findAll({ where: { id: { [Op.in]: rows.map((m) => m.userId) } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
+    res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id) })) });
   } catch (e) { next(e); }
 });
 

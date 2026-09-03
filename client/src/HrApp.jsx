@@ -1539,6 +1539,13 @@ function ChatView({ user, onUnread }) {
   const [q, setQ] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [typing, setTyping] = useState([]);
+  const [reactPickerFor, setReactPickerFor] = useState(null);
+  const [searchQ, setSearchQ] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [mention, setMention] = useState(null); // {q} while typing @
+  const typingSentRef = useRef(0);
   const fileRef = useRef(null);
   const scrollRef = useRef(null);
   const lastMsgId = useRef(0);
@@ -1585,6 +1592,24 @@ function ChatView({ user, onUnread }) {
   };
   const joinTeam = async (teamId) => { try { await hrApi(`/chat/teams/${teamId}/join`, { method: 'POST', body: '{}' }); loadTeams(); } catch (e) { alert(e.message); } };
 
+  // Phase 3: react to a message (optimistic toggle).
+  const react = async (msgId, emoji) => {
+    setReactPickerFor(null);
+    try { const r = await hrApi(`/chat/messages/${msgId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }); setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, reactions: r.reactions } : m)); } catch (e) { alert(e.message); }
+  };
+  // Send a typing heartbeat (throttled to once per 3s).
+  const pingTyping = () => { if (!active) return; const now = Date.now(); if (now - typingSentRef.current > 3000) { typingSentRef.current = now; hrApi(`/chat/conversations/${active.id}/typing`, { method: 'POST', body: '{}' }).catch(() => {}); } };
+  // Load members (for @mention) when a conversation opens.
+  useEffect(() => { if (active) hrApi(`/chat/conversations/${active.id}/members`).then((r) => setMembers(r.members || [])).catch(() => setMembers([])); else setMembers([]); }, [active && active.id]);
+  // Run a search.
+  const runSearch = async (term) => { setSearchQ(term); if (term.trim().length < 2) { setSearchResults(null); return; } try { const r = await hrApi(`/chat/search?q=${encodeURIComponent(term.trim())}`); setSearchResults(r.results || []); } catch { setSearchResults([]); } };
+  // Open a search result → open its conversation.
+  const openResult = async (res) => {
+    setSearchQ(''); setSearchResults(null);
+    if (res.kind === 'dm' && res.other) { const r = await hrApi(`/chat/dm/${res.other.id}`, { method: 'POST', body: '{}' }); openConv({ id: r.conversation.id, other: r.conversation.other }); }
+    else { await loadTeams(); openConv({ id: res.conversationId, channel: res.label.replace(/^#/, ''), team: null }); }
+  };
+
   // Poll for new messages in the open conversation + refresh list/unread.
   useEffect(() => {
     let alive = true;
@@ -1594,6 +1619,11 @@ function ChatView({ user, onUnread }) {
         const r = await hrApi(`/chat/poll${qs}`);
         if (!alive) return;
         if (onUnread) onUnread(r.totalUnread || 0);
+        if (active) setTyping(r.typing || []);
+        // Merge reaction updates into existing messages.
+        if (active && (r.reactions || []).length) {
+          setMessages((prev) => prev.map((m) => { const rx = r.reactions.find((x) => x.id === m.id); return rx ? { ...m, reactions: rx.reactions } : m; }));
+        }
         if (active && (r.messages || []).length) {
           setMessages((prev) => { const have = new Set(prev.map((m) => m.id)); const add = r.messages.filter((m) => !have.has(m.id)); if (!add.length) return prev; lastMsgId.current = Math.max(lastMsgId.current, ...add.map((m) => m.id)); return [...prev, ...add]; });
           // Mark read since the conversation is open.
@@ -1645,6 +1675,22 @@ function ChatView({ user, onUnread }) {
           <div className="text-xl font-extrabold">Chat</div>
           <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
         </div>
+        {/* Message search */}
+        <div className="px-3 mb-2">
+          <input value={searchQ} onChange={(e) => runSearch(e.target.value)} placeholder="🔍 Search messages…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
+        </div>
+        {searchResults !== null && (
+          <div className="px-2 pb-2">
+            <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1">Search results</div>
+            {searchResults.length === 0 ? <div className="px-3 py-3 text-[13px] text-slate-400">No messages found.</div> : searchResults.map((r) => (
+              <button key={r.id} onClick={() => openResult(r)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100">
+                <div className="text-[12px] font-bold text-slate-600">{r.label} · <span className="font-normal text-slate-400">{r.senderName}</span></div>
+                <div className="text-[12px] text-slate-500 truncate">{r.body}</div>
+              </button>
+            ))}
+          </div>
+        )}
+        {searchResults === null && (<>
         {showNew && (
           <div className="mx-3 mb-2 rounded-xl border border-slate-200 bg-white overflow-hidden">
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full px-3 py-2 text-sm border-b border-slate-100 focus:outline-none" />
@@ -1710,6 +1756,7 @@ function ChatView({ user, onUnread }) {
             </button>
           ))}
         </div>
+        </>)}
       </div>
 
       {/* Conversation panel */}
@@ -1739,7 +1786,7 @@ function ChatView({ user, onUnread }) {
               const mine = m.senderId === me.id;
               const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
               return (
-                <div key={m.id} className={`flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
+                <div key={m.id} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
                   {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
                   <div className={`max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
                     {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
@@ -1753,6 +1800,23 @@ function ChatView({ user, onUnread }) {
                         <span className="text-orange-500">⬇</span>
                       </a>
                     ))}
+                    {/* Reactions row */}
+                    {m.reactions && Object.keys(m.reactions).length > 0 && (
+                      <div className={`flex flex-wrap gap-1 mt-1 ${mine ? 'justify-end' : ''}`}>
+                        {Object.entries(m.reactions).map(([emoji, users]) => (
+                          <button key={emoji} onClick={() => react(m.id, emoji)} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold border" style={(users || []).includes(me.id) ? { background: '#fff3ec', borderColor: '#ffd9c2', color: '#c2410c' } : { background: '#fff', borderColor: '#e8eaf0', color: '#64748b' }}>{emoji} {(users || []).length}</button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Hover: add-reaction trigger */}
+                    <div className={`relative ${mine ? 'self-end' : ''}`}>
+                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} className="opacity-0 group-hover:opacity-100 transition text-[13px] text-slate-300 hover:text-slate-500 mt-0.5">😊 react</button>
+                      {reactPickerFor === m.id && (
+                        <div className="absolute z-20 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
+                          {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1760,11 +1824,29 @@ function ChatView({ user, onUnread }) {
             {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">Say hello 👋</div>}
           </div>
           <div className="px-5 py-4">
-            <div className="flex items-end gap-2 border-[1.5px] border-slate-200 rounded-2xl px-3 py-2 focus-within:border-orange-400">
-              <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach file" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0">{uploading ? '…' : '📎'}</button>
-              <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
-              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
-              <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+            {typing.length > 0 && <div className="text-[12px] text-slate-400 italic mb-1.5 ml-1">{typing.join(', ')} {typing.length === 1 ? 'is' : 'are'} typing…</div>}
+            <div className="relative">
+              {/* @mention autocomplete */}
+              {mention && members.length > 0 && (() => {
+                const cands = members.filter((u) => u.id !== me.id && u.name.toLowerCase().includes((mention.q || '').toLowerCase())).slice(0, 6);
+                return cands.length ? (
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-20">
+                    {cands.map((u) => (
+                      <button key={u.id} onClick={() => { const base = text.replace(/@(\w*)$/, ''); setText(`${base}@${u.name} `); setMention(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left">
+                        <Avatar name={u.name} src={u.avatar} size={26} />
+                        <span className="text-[13px] font-bold">{u.name}</span>
+                        {u.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500" />}
+                      </button>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              <div className="flex items-end gap-2 border-[1.5px] border-slate-200 rounded-2xl px-3 py-2 focus-within:border-orange-400">
+                <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach file" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0">{uploading ? '…' : '📎'}</button>
+                <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
+                <textarea value={text} onChange={(e) => { const v = e.target.value; setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } }} rows={1} placeholder={active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
+                <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+              </div>
             </div>
           </div>
         </div>

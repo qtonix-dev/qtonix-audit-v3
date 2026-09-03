@@ -2308,6 +2308,9 @@ const ChatMessage = sequelize.define('ChatMessage', {
   fileType: { type: DataTypes.STRING(60), defaultValue: '' },      // mime or ext
   fileSize: { type: DataTypes.INTEGER, defaultValue: 0 },          // bytes
   isImage: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Phase 3: reactions {emoji: [userId,...]} and @mentioned user ids.
+  reactions: { type: DataTypes.JSON, defaultValue: {} },
+  mentions: { type: DataTypes.JSON, defaultValue: [] },
   editedAt: { type: DataTypes.DATE, allowNull: true },
   deleted: { type: DataTypes.BOOLEAN, defaultValue: false },
 }, { tableName: 'chat_messages', indexes: [
