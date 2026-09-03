@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { Op, HrUser, ChatConversation, ChatMembership, ChatMessage } = require('../models');
+const { Op, HrUser, ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember } = require('../models');
 const { requireHrAccess } = require('../middleware/hrAuth');
 
 // The chat identity is the logged-in HR user.
@@ -167,6 +167,105 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
       }
     }
     res.json({ totalUnread, messages });
+  } catch (e) { next(e); }
+});
+
+// ===== TEAMS + CHANNELS (Phase 2) =====
+// Only admins & HR may create teams. Anyone in a team can create channels.
+function isAdminOrHr(req) { return req.isHrAdmin || req.isHrManager || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)); }
+
+// List teams I'm in (or all public teams), each with its channels + unread.
+router.get('/teams', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const myTeamRows = await ChatTeamMember.findAll({ where: { userId: me } });
+    const myTeamIds = new Set(myTeamRows.map((r) => r.teamId));
+    // Show teams I'm a member of + public teams I could join.
+    const teams = await ChatTeam.findAll({ where: { archived: false, [Op.or]: [{ id: { [Op.in]: myTeamIds.size ? [...myTeamIds] : [0] } }, { visibility: 'public' }] }, order: [['name', 'ASC']] });
+    const out = [];
+    for (const t of teams) {
+      const member = myTeamIds.has(t.id);
+      // Channels = channel conversations for this team that I'm a member of.
+      const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId: t.id }, order: [['createdAt', 'ASC']] });
+      const chanOut = [];
+      for (const c of chans) {
+        const cm = await ChatMembership.findOne({ where: { conversationId: c.id, userId: me } });
+        if (!cm && t.visibility === 'private') continue; // private team channels only if member
+        let unread = 0;
+        if (cm) { unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(cm.lastReadAt ? { createdAt: { [Op.gt]: cm.lastReadAt } } : {}) } }); }
+        chanOut.push({ id: c.id, title: c.title, member: !!cm, unread, lastMessageAt: c.lastMessageAt });
+      }
+      out.push({ id: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color, visibility: t.visibility, member, channels: chanOut });
+    }
+    res.json({ teams: out, canCreateTeam: isAdminOrHr(req) });
+  } catch (e) { next(e); }
+});
+
+// Admin/HR: create a team (+ a default #general channel, creator joins).
+router.post('/teams', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can create teams.' });
+    const b = req.body || {};
+    const name = String(b.name || '').slice(0, 80).trim();
+    if (!name) return res.status(400).json({ error: 'Team name is required.' });
+    const team = await ChatTeam.create({ name, icon: String(b.icon || name.charAt(0).toUpperCase()).slice(0, 8), color: String(b.color || '#FF6A00').slice(0, 20), description: String(b.description || '').slice(0, 300), visibility: b.visibility === 'private' ? 'private' : 'public', createdById: meId(req) });
+    await ChatTeamMember.create({ teamId: team.id, userId: meId(req), role: 'owner' });
+    // Optionally add initial members.
+    const memberIds = Array.isArray(b.memberIds) ? b.memberIds.map(Number).filter((x) => x && x !== meId(req)) : [];
+    for (const uid of memberIds) { try { await ChatTeamMember.findOrCreate({ where: { teamId: team.id, userId: uid }, defaults: { teamId: team.id, userId: uid } }); } catch {} }
+    // Default #general channel with all current team members.
+    const conv = await ChatConversation.create({ kind: 'channel', teamId: team.id, title: 'general' });
+    const allMembers = [meId(req), ...memberIds];
+    await ChatMembership.bulkCreate(allMembers.map((uid) => ({ conversationId: conv.id, userId: uid })));
+    res.status(201).json({ team: team.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// Create a channel in a team (any team member can).
+router.post('/teams/:teamId/channels', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const teamId = Number(req.params.teamId);
+    const mem = await ChatTeamMember.findOne({ where: { teamId, userId: me } });
+    if (!mem && !isAdminOrHr(req)) return res.status(403).json({ error: 'Join the team first to add a channel.' });
+    const name = String((req.body || {}).name || '').slice(0, 60).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase();
+    if (!name) return res.status(400).json({ error: 'Channel name is required.' });
+    const conv = await ChatConversation.create({ kind: 'channel', teamId, title: name });
+    // Add all current team members to the channel.
+    const teamMembers = await ChatTeamMember.findAll({ where: { teamId } });
+    await ChatMembership.bulkCreate(teamMembers.map((tm) => ({ conversationId: conv.id, userId: tm.userId })));
+    res.status(201).json({ channel: { id: conv.id, title: name } });
+  } catch (e) { next(e); }
+});
+
+// Join a public team (adds me to the team + all its channels).
+router.post('/teams/:teamId/join', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const teamId = Number(req.params.teamId);
+    const team = await ChatTeam.findByPk(teamId);
+    if (!team || team.archived) return res.status(404).json({ error: 'Team not found.' });
+    if (team.visibility === 'private' && !isAdminOrHr(req)) return res.status(403).json({ error: 'This team is private.' });
+    await ChatTeamMember.findOrCreate({ where: { teamId, userId: me }, defaults: { teamId, userId: me } });
+    const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId } });
+    for (const c of chans) { await ChatMembership.findOrCreate({ where: { conversationId: c.id, userId: me }, defaults: { conversationId: c.id, userId: me } }); }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Channel info (title, team, members) for the conversation header.
+router.get('/channels/:id/info', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const convId = Number(req.params.id);
+    const conv = await ChatConversation.findByPk(convId);
+    if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Channel not found.' });
+    const mem = await ChatMembership.findOne({ where: { conversationId: convId, userId: me } });
+    if (!mem) return res.status(403).json({ error: 'Not a member.' });
+    const team = conv.teamId ? await ChatTeam.findByPk(conv.teamId) : null;
+    const memRows = await ChatMembership.findAll({ where: { conversationId: convId } });
+    const users = await HrUser.findAll({ where: { id: { [Op.in]: memRows.map((m) => m.userId) } } });
+    res.json({ id: conv.id, title: conv.title, team: team ? { id: team.id, name: team.name, icon: team.icon, color: team.color } : null, members: users.map(pubUser) });
   } catch (e) { next(e); }
 });
 

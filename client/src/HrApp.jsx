@@ -1490,31 +1490,32 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   );
 }
 
-// ===== WORKSPACE — Chat + Tasks under one section with a switch sidebar =====
+// ===== WORKSPACE — Task + Buzz (chat) under one section with top tabs =====
 function WorkspaceView({ user, isAdmin }) {
-  const [pane, setPane] = useState('chat'); // chat | tasks
+  const [pane, setPane] = useState('tasks'); // tasks | chat
   const [chatUnread, setChatUnread] = useState(0);
-  // Lightweight unread poll so the Chat tab shows a badge even from Tasks.
   useEffect(() => {
     let alive = true;
     const tick = () => hrApi('/chat/poll').then((r) => { if (alive) setChatUnread(r.totalUnread || 0); }).catch(() => {});
     tick(); const iv = setInterval(tick, 8000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
-  const Tab = ({ id, icon, label, badge }) => (
-    <button onClick={() => setPane(id)} className="relative w-16 h-16 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition" style={pane === id ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff', boxShadow: '0 6px 16px rgba(255,106,0,.4)' } : { color: 'rgba(255,255,255,.55)' }}>
-      <span className="text-[22px] leading-none">{icon}</span>
-      <span className="text-[10px] font-bold">{label}</span>
-      {badge > 0 && <span className="absolute top-1.5 right-2.5 text-[9px] font-extrabold rounded-full px-1.5" style={{ background: pane === id ? '#fff' : '#FF4500', color: pane === id ? '#FF4500' : '#fff', border: `2px solid ${pane === id ? '#FF6A00' : '#0f1528'}` }}>{badge}</span>}
+  const Tab = ({ id, icon, label, badge, dot }) => (
+    <button onClick={() => setPane(id)} className="relative flex items-center gap-2.5 px-5 font-bold text-[15px] transition" style={{ height: 52, color: pane === id ? '#0A0E28' : '#94a3b8' }}>
+      <span className="w-[30px] h-[30px] rounded-lg flex items-center justify-center text-[15px]" style={{ background: pane === id ? '#fff3ec' : '#f1f5f9' }}>{icon}</span>
+      {label}
+      {badge > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{badge}</span>}
+      {dot && !badge && <span className="w-2 h-2 rounded-full" style={{ background: '#22c55e' }} />}
+      {pane === id && <span className="absolute left-5 right-5 -bottom-px h-[3px] rounded" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }} />}
     </button>
   );
   return (
-    <div className="flex" style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex flex-col items-center py-4 gap-1.5 shrink-0" style={{ background: '#0f1528', width: 88 }}>
-        <Tab id="chat" icon="💬" label="Chat" badge={chatUnread} />
-        <Tab id="tasks" icon="✅" label="Tasks" badge={0} />
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
+      <div className="flex items-center gap-1 px-5 bg-white border-b border-slate-100 shrink-0">
+        <Tab id="tasks" icon="✅" label="Task" badge={0} />
+        <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-h-0">
         {pane === 'chat' ? <ChatView user={user} onUnread={setChatUnread} /> : <HrTasksView user={user} isAdmin={isAdmin} embedded />}
       </div>
     </div>
@@ -1525,10 +1526,16 @@ function WorkspaceView({ user, isAdmin }) {
 function ChatView({ user, onUnread }) {
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
-  const [active, setActive] = useState(null);   // { id, other }
+  const [teams, setTeams] = useState([]);
+  const [canCreateTeam, setCanCreateTeam] = useState(false);
+  const [active, setActive] = useState(null);   // { id, other } for DM OR { id, channel, team } for channel
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [showNewTeam, setShowNewTeam] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newChanFor, setNewChanFor] = useState(null); // teamId to add channel to
+  const [newChanName, setNewChanName] = useState('');
   const [q, setQ] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1538,7 +1545,8 @@ function ChatView({ user, onUnread }) {
   const me = user;
 
   const loadConversations = () => hrApi('/chat/conversations').then((r) => setConversations(r.conversations || [])).catch(() => {});
-  useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); }, []);
+  const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); }).catch(() => {});
+  useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); loadTeams(); }, []);
 
   // Open a conversation: load its messages + mark read.
   const openConv = async (conv) => {
@@ -1551,11 +1559,31 @@ function ChatView({ user, onUnread }) {
       loadConversations();
     } catch {}
   };
+  // Open a channel conversation.
+  const openChannel = async (teamName, chan, teamMeta) => {
+    setActive({ id: chan.id, channel: chan.title, team: teamMeta }); setMessages([]);
+    try {
+      const r = await hrApi(`/chat/conversations/${chan.id}/messages`);
+      setMessages(r.messages || []);
+      lastMsgId.current = (r.messages || []).reduce((mx, m) => Math.max(mx, m.id), 0);
+      await hrApi(`/chat/conversations/${chan.id}/read`, { method: 'POST', body: '{}' });
+      loadTeams();
+    } catch {}
+  };
   // Start (or open) a DM with someone from the directory.
   const startDm = async (u) => {
     setShowNew(false); setQ('');
     try { const r = await hrApi(`/chat/dm/${u.id}`, { method: 'POST', body: '{}' }); await openConv({ id: r.conversation.id, other: r.conversation.other }); loadConversations(); } catch (e) { alert(e.message); }
   };
+  const createTeam = async () => {
+    if (!newTeamName.trim()) return;
+    try { await hrApi('/chat/teams', { method: 'POST', body: JSON.stringify({ name: newTeamName.trim() }) }); setNewTeamName(''); setShowNewTeam(false); loadTeams(); } catch (e) { alert(e.message); }
+  };
+  const createChannel = async (teamId) => {
+    if (!newChanName.trim()) return;
+    try { await hrApi(`/chat/teams/${teamId}/channels`, { method: 'POST', body: JSON.stringify({ name: newChanName.trim() }) }); setNewChanName(''); setNewChanFor(null); loadTeams(); } catch (e) { alert(e.message); }
+  };
+  const joinTeam = async (teamId) => { try { await hrApi(`/chat/teams/${teamId}/join`, { method: 'POST', body: '{}' }); loadTeams(); } catch (e) { alert(e.message); } };
 
   // Poll for new messages in the open conversation + refresh list/unread.
   useEffect(() => {
@@ -1570,8 +1598,8 @@ function ChatView({ user, onUnread }) {
           setMessages((prev) => { const have = new Set(prev.map((m) => m.id)); const add = r.messages.filter((m) => !have.has(m.id)); if (!add.length) return prev; lastMsgId.current = Math.max(lastMsgId.current, ...add.map((m) => m.id)); return [...prev, ...add]; });
           // Mark read since the conversation is open.
           hrApi(`/chat/conversations/${active.id}/read`, { method: 'POST', body: '{}' }).catch(() => {});
-          loadConversations();
-        } else if (!active) { loadConversations(); }
+          loadConversations(); loadTeams();
+        } else if (!active) { loadConversations(); loadTeams(); }
       } catch {}
     };
     const iv = setInterval(tick, 4000);
@@ -1631,7 +1659,40 @@ function ChatView({ user, onUnread }) {
             </div>
           </div>
         )}
-        <div className="px-4 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
+        {/* Teams + channels */}
+        <div className="px-4 pt-1 pb-1 flex items-center justify-between">
+          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Teams</span>
+          {canCreateTeam && <button onClick={() => setShowNewTeam((v) => !v)} className="text-orange-500 text-base font-bold">+</button>}
+        </div>
+        {showNewTeam && (
+          <div className="mx-3 mb-2 flex gap-1.5">
+            <input autoFocus value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createTeam()} placeholder="New team name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] focus:outline-none" />
+            <button onClick={createTeam} className="rounded-lg px-2.5 text-[12px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Add</button>
+          </div>
+        )}
+        {teams.map((t) => (
+          <div key={t.id} className="px-2 mb-1">
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <span className="w-6 h-6 rounded-md flex items-center justify-center text-[12px] font-extrabold text-white shrink-0" style={{ background: t.color || '#FF6A00' }}>{t.icon}</span>
+              <span className="text-[14px] font-bold truncate flex-1">{t.name}</span>
+              {!t.member && <button onClick={() => joinTeam(t.id)} className="text-[10px] font-bold text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">Join</button>}
+              {t.member && <button onClick={() => { setNewChanFor(newChanFor === t.id ? null : t.id); setNewChanName(''); }} className="text-slate-300 hover:text-orange-500 text-sm">+</button>}
+            </div>
+            {t.member && t.channels.map((c) => (
+              <button key={c.id} onClick={() => openChannel(t.name, c, { id: t.id, name: t.name, icon: t.icon, color: t.color })} className={`w-full flex items-center gap-1.5 pl-10 pr-3 py-1.5 rounded-lg text-[13.5px] ${active && active.id === c.id ? 'font-bold' : 'text-slate-500 hover:bg-slate-100'}`} style={active && active.id === c.id ? { background: '#fff3ec', color: '#c2410c' } : {}}>
+                <span className="text-slate-300">#</span> <span className="truncate flex-1 text-left">{c.title}</span>
+                {c.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{c.unread}</span>}
+              </button>
+            ))}
+            {newChanFor === t.id && (
+              <div className="flex gap-1.5 pl-10 pr-2 mt-1">
+                <input autoFocus value={newChanName} onChange={(e) => setNewChanName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createChannel(t.id)} placeholder="new-channel" className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-[12px] focus:outline-none" />
+                <button onClick={() => createChannel(t.id)} className="rounded-lg px-2 text-[11px] font-bold text-white" style={{ background: '#FF6A00' }}>Add</button>
+              </div>
+            )}
+          </div>
+        ))}
+        <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
         <div className="flex-1 overflow-auto pb-2">
           {conversations.length === 0 ? (
             <div className="px-4 py-8 text-center text-[13px] text-slate-400">No conversations yet.<br />Tap ✏️ to message a colleague.</div>
@@ -1661,8 +1722,17 @@ function ChatView({ user, onUnread }) {
       ) : (
         <div className="flex-1 flex flex-col min-w-0" style={{ background: '#fdfdfe' }}>
           <div className="border-b border-slate-100 px-6 py-3 flex items-center gap-3 bg-white">
-            <Avatar name={active.other ? active.other.name : '?'} src={active.other && active.other.avatar} size={38} />
-            <div><div className="text-[16px] font-extrabold">{active.other ? active.other.name : 'Unknown'}</div><div className="text-[12px] text-slate-400">{active.other ? [active.other.designation, active.other.department].filter(Boolean).join(' · ') : ''}</div></div>
+            {active.channel ? (
+              <>
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base font-extrabold" style={{ background: (active.team && active.team.color) || '#FF6A00' }}>#</span>
+                <div><div className="text-[16px] font-extrabold">{active.channel}</div><div className="text-[12px] text-slate-400">{active.team ? active.team.name : ''}</div></div>
+              </>
+            ) : (
+              <>
+                <Avatar name={active.other ? active.other.name : '?'} src={active.other && active.other.avatar} size={38} />
+                <div><div className="text-[16px] font-extrabold">{active.other ? active.other.name : 'Unknown'}</div><div className="text-[12px] text-slate-400">{active.other ? [active.other.designation, active.other.department].filter(Boolean).join(' · ') : ''}</div></div>
+              </>
+            )}
           </div>
           <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-5">
             {messages.map((m, i) => {
@@ -1693,7 +1763,7 @@ function ChatView({ user, onUnread }) {
             <div className="flex items-end gap-2 border-[1.5px] border-slate-200 rounded-2xl px-3 py-2 focus-within:border-orange-400">
               <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach file" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0">{uploading ? '…' : '📎'}</button>
               <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
-              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={`Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
+              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
               <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
             </div>
           </div>

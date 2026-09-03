@@ -2315,6 +2315,35 @@ const ChatMessage = sequelize.define('ChatMessage', {
 ] });
 ChatMessage.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== Chat Teams + Channels (Phase 2) =====
+// A team groups people (created by admin/HR). Channels are conversations
+// (kind='channel') that belong to a team. Team membership is tracked here;
+// channel membership reuses ChatMembership (rows per user per channel-conv).
+const ChatTeam = sequelize.define('ChatTeam', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(80), allowNull: false },
+  icon: { type: DataTypes.STRING(8), defaultValue: '' },           // single letter/emoji
+  color: { type: DataTypes.STRING(20), defaultValue: '#FF6A00' },
+  description: { type: DataTypes.STRING(300), defaultValue: '' },
+  visibility: { type: DataTypes.STRING(10), defaultValue: 'public' }, // public | private
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  archived: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, { tableName: 'chat_teams', indexes: [{ name: 'idx_chat_team_arch', fields: ['archived'] }] });
+ChatTeam.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const ChatTeamMember = sequelize.define('ChatTeamMember', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  teamId: { type: DataTypes.INTEGER, allowNull: false },
+  userId: { type: DataTypes.INTEGER, allowNull: false },
+  role: { type: DataTypes.STRING(10), defaultValue: 'member' },    // owner | member
+}, { tableName: 'chat_team_members', indexes: [
+  { name: 'idx_ctm_team', fields: ['teamId'] },
+  { name: 'idx_ctm_user', fields: ['userId'] },
+  { name: 'idx_ctm_pair', unique: true, fields: ['teamId', 'userId'] },
+] });
+ChatTeamMember.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 
 
@@ -2435,7 +2464,7 @@ module.exports = {
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
-  ChatConversation, ChatMembership, ChatMessage,
+  ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
