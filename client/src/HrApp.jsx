@@ -1511,7 +1511,7 @@ function WorkspaceView({ user, isAdmin }) {
   );
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex items-center gap-1 px-5 bg-white border-b border-slate-100 shrink-0 mb-3">
+      <div className="flex items-center gap-1 px-5 bg-white border-b border-slate-100 shrink-0" style={{ marginBottom: 25 }}>
         <Tab id="tasks" icon="✅" label="Task" badge={0} />
         <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
       </div>
@@ -2004,7 +2004,7 @@ function HrTasksView({ user, isAdmin }) {
 
   return (
     <div className="max-w-6xl">
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginBottom: 20 }}>
         <div className="flex items-center gap-3">
           <TAvatar person={board.viewer} size={36} />
           <div>
