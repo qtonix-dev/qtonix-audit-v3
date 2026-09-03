@@ -19,11 +19,31 @@ function setTyping(convId, uid) { let m = typingByConv.get(convId); if (!m) { m 
 function typingUsers(convId, exceptUid) { const m = typingByConv.get(convId); if (!m) return []; const now = Date.now(); const out = []; for (const [uid, exp] of m) { if (exp < now) m.delete(uid); else if (uid !== exceptUid) out.push(uid); } return out; }
 
 // The chat identity is the logged-in HR user.
-function meId(req) { return req.hrUser ? req.hrUser.id : null; }
+// The chat identity is an HrUser id. HR employees have req.hrUser directly.
+// A CRM admin has req.adminUser (a separate User row) — we resolve them to
+// their matching HrUser by email so they chat as their real profile. Cached on
+// req to avoid repeat lookups.
+async function resolveMe(req) {
+  if (req._chatMeId !== undefined) return req._chatMeId;
+  let id = null, name = null;
+  if (req.hrUser) { id = req.hrUser.id; name = req.hrUser.name; }
+  else if (req.adminUser) {
+    const hr = await HrUser.findOne({ where: { email: req.adminUser.email } });
+    if (hr) { id = hr.id; name = hr.name; }
+  }
+  req._chatMeId = id; req._chatMeName = name || (req.adminUser && req.adminUser.name) || 'User';
+  return id;
+}
+function meId(req) { return req._chatMeId != null ? req._chatMeId : (req.hrUser ? req.hrUser.id : null); }
+function meName(req) { return req._chatMeName || (req.hrUser && req.hrUser.name) || 'User'; }
 function dmKeyFor(a, b) { const [x, y] = [Number(a), Number(b)].sort((m, n) => m - n); return `${x}-${y}`; }
 
 // Small helper: shape a user for the client (id, name, avatar, role bits).
 function pubUser(u) { return u ? { id: u.id, name: u.name, avatar: u.avatar || '', department: u.department || '', designation: u.designation || '' } : null; }
+
+// Router-wide: require HR access, then resolve the caller's HrUser id (works for
+// HR staff and CRM admins). Runs before every chat handler.
+router.use(requireHrAccess, async (req, res, next) => { try { await resolveMe(req); next(); } catch (e) { next(e); } });
 
 // ---- Directory: everyone you can message (all active users minus yourself) --
 router.get('/directory', requireHrAccess, async (req, res, next) => {
@@ -73,7 +93,7 @@ router.post('/dm/:userId', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
     const other = Number(req.params.userId);
-    if (!me) return res.status(403).json({ error: 'Sign in to chat.' });
+    if (!me) return res.status(403).json({ error: 'Your admin account has no matching HR profile, so chat isn’t available. Ask HR to add you as an employee to use chat.' });
     if (other === me) return res.status(400).json({ error: 'You can’t message yourself.' });
     const target = await HrUser.findByPk(other);
     if (!target || !target.active) return res.status(404).json({ error: 'Person not found.' });
@@ -126,13 +146,13 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
       for (const u of us) { if (u.id !== me && low.includes('@' + u.name.toLowerCase())) mentions.push(u.id); }
     }
     const msg = await ChatMessage.create({
-      conversationId: convId, senderId: me, senderName: req.hrUser.name, body,
+      conversationId: convId, senderId: me, senderName: meName(req), body,
       fileUrl: hasFile ? String(b.fileUrl).slice(0, 600) : '', fileName: hasFile ? String(b.fileName).slice(0, 200) : '',
       fileType: hasFile ? String(b.fileType || '').slice(0, 60) : '', fileSize: hasFile ? Math.max(0, Number(b.fileSize) || 0) : 0,
       isImage: hasFile ? !!b.isImage : false, mentions,
     });
     // Notify @mentioned people via the HRMS notification bell.
-    if (mentions.length) { try { const { HrNotification } = require('../models'); for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: `💬 ${req.hrUser.name} mentioned you in chat` }); } catch {} }
+    if (mentions.length) { try { const { HrNotification } = require('../models'); for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: `💬 ${meName(req)} mentioned you in chat` }); } catch {} }
     // Update the conversation's last-message summary + un-hide for everyone.
     const summary = body ? body.slice(0, 200) : (hasFile ? `📎 ${msg.fileName}` : '');
     await ChatConversation.update({ lastMessageAt: msg.createdAt, lastMessageText: summary, lastMessageBy: me }, { where: { id: convId } });
