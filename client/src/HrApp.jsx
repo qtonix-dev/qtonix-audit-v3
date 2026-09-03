@@ -1490,6 +1490,219 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
   );
 }
 
+// ===== WORKSPACE — Chat + Tasks under one section with a switch sidebar =====
+function WorkspaceView({ user, isAdmin }) {
+  const [pane, setPane] = useState('chat'); // chat | tasks
+  const [chatUnread, setChatUnread] = useState(0);
+  // Lightweight unread poll so the Chat tab shows a badge even from Tasks.
+  useEffect(() => {
+    let alive = true;
+    const tick = () => hrApi('/chat/poll').then((r) => { if (alive) setChatUnread(r.totalUnread || 0); }).catch(() => {});
+    tick(); const iv = setInterval(tick, 8000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+  const Tab = ({ id, icon, label, badge }) => (
+    <button onClick={() => setPane(id)} className="relative w-16 h-16 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition" style={pane === id ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff', boxShadow: '0 6px 16px rgba(255,106,0,.4)' } : { color: 'rgba(255,255,255,.55)' }}>
+      <span className="text-[22px] leading-none">{icon}</span>
+      <span className="text-[10px] font-bold">{label}</span>
+      {badge > 0 && <span className="absolute top-1.5 right-2.5 text-[9px] font-extrabold rounded-full px-1.5" style={{ background: pane === id ? '#fff' : '#FF4500', color: pane === id ? '#FF4500' : '#fff', border: `2px solid ${pane === id ? '#FF6A00' : '#0f1528'}` }}>{badge}</span>}
+    </button>
+  );
+  return (
+    <div className="flex" style={{ height: 'calc(100vh - 56px)' }}>
+      <div className="flex flex-col items-center py-4 gap-1.5 shrink-0" style={{ background: '#0f1528', width: 88 }}>
+        <Tab id="chat" icon="💬" label="Chat" badge={chatUnread} />
+        <Tab id="tasks" icon="✅" label="Tasks" badge={0} />
+      </div>
+      <div className="flex-1 min-w-0">
+        {pane === 'chat' ? <ChatView user={user} onUnread={setChatUnread} /> : <HrTasksView user={user} isAdmin={isAdmin} embedded />}
+      </div>
+    </div>
+  );
+}
+
+// ===== CHAT (Phase 1: direct messages + files) =====
+function ChatView({ user, onUnread }) {
+  const [directory, setDirectory] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [active, setActive] = useState(null);   // { id, other }
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [showNew, setShowNew] = useState(false);
+  const [q, setQ] = useState('');
+  const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  const scrollRef = useRef(null);
+  const lastMsgId = useRef(0);
+  const me = user;
+
+  const loadConversations = () => hrApi('/chat/conversations').then((r) => setConversations(r.conversations || [])).catch(() => {});
+  useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); }, []);
+
+  // Open a conversation: load its messages + mark read.
+  const openConv = async (conv) => {
+    setActive(conv); setMessages([]);
+    try {
+      const r = await hrApi(`/chat/conversations/${conv.id}/messages`);
+      setMessages(r.messages || []);
+      lastMsgId.current = (r.messages || []).reduce((mx, m) => Math.max(mx, m.id), 0);
+      await hrApi(`/chat/conversations/${conv.id}/read`, { method: 'POST', body: '{}' });
+      loadConversations();
+    } catch {}
+  };
+  // Start (or open) a DM with someone from the directory.
+  const startDm = async (u) => {
+    setShowNew(false); setQ('');
+    try { const r = await hrApi(`/chat/dm/${u.id}`, { method: 'POST', body: '{}' }); await openConv({ id: r.conversation.id, other: r.conversation.other }); loadConversations(); } catch (e) { alert(e.message); }
+  };
+
+  // Poll for new messages in the open conversation + refresh list/unread.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const qs = active ? `?conversationId=${active.id}&after=${lastMsgId.current}` : '';
+        const r = await hrApi(`/chat/poll${qs}`);
+        if (!alive) return;
+        if (onUnread) onUnread(r.totalUnread || 0);
+        if (active && (r.messages || []).length) {
+          setMessages((prev) => { const have = new Set(prev.map((m) => m.id)); const add = r.messages.filter((m) => !have.has(m.id)); if (!add.length) return prev; lastMsgId.current = Math.max(lastMsgId.current, ...add.map((m) => m.id)); return [...prev, ...add]; });
+          // Mark read since the conversation is open.
+          hrApi(`/chat/conversations/${active.id}/read`, { method: 'POST', body: '{}' }).catch(() => {});
+          loadConversations();
+        } else if (!active) { loadConversations(); }
+      } catch {}
+    };
+    const iv = setInterval(tick, 4000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [active]);
+
+  // Auto-scroll to newest.
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
+
+  const send = async () => {
+    if (!active || (!text.trim() && !sending)) return;
+    const body = text.trim(); if (!body) return;
+    setText(''); setSending(true);
+    try {
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      loadConversations();
+    } catch (e) { alert(e.message); setText(body); }
+    setSending(false);
+  };
+  const sendFile = async (file) => {
+    if (!file || !active) return;
+    setUploading(true);
+    try {
+      const url = await uploadToImageKit(file);
+      const isImage = /^image\//.test(file.type);
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: url, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage }) });
+      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      loadConversations();
+    } catch (e) { alert('Upload failed: ' + e.message); }
+    setUploading(false);
+  };
+
+  const fmtTime = (d) => { try { return new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+  const fmtSize = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b > 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
+  const dirShown = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <div className="flex h-full bg-white">
+      {/* Conversation list */}
+      <div className="flex flex-col border-r border-slate-200 shrink-0" style={{ width: 300, background: '#f8fafc' }}>
+        <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+          <div className="text-xl font-extrabold">Chat</div>
+          <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
+        </div>
+        {showNew && (
+          <div className="mx-3 mb-2 rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full px-3 py-2 text-sm border-b border-slate-100 focus:outline-none" />
+            <div className="max-h-56 overflow-auto">
+              {dirShown.slice(0, 40).map((u) => (
+                <button key={u.id} onClick={() => startDm(u)} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left">
+                  <Avatar name={u.name} src={u.avatar} size={30} />
+                  <div className="min-w-0"><div className="text-[13px] font-bold truncate">{u.name}</div><div className="text-[11px] text-slate-400 truncate">{[u.designation, u.department].filter(Boolean).join(' · ')}</div></div>
+                </button>
+              ))}
+              {dirShown.length === 0 && <div className="px-3 py-4 text-sm text-slate-400 text-center">No match.</div>}
+            </div>
+          </div>
+        )}
+        <div className="px-4 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
+        <div className="flex-1 overflow-auto pb-2">
+          {conversations.length === 0 ? (
+            <div className="px-4 py-8 text-center text-[13px] text-slate-400">No conversations yet.<br />Tap ✏️ to message a colleague.</div>
+          ) : conversations.map((c) => (
+            <button key={c.id} onClick={() => openConv(c)} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 my-0.5 ${active && active.id === c.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === c.id ? { background: '#fff3ec' } : {}}>
+              <Avatar name={c.other ? c.other.name : '?'} src={c.other && c.other.avatar} size={38} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-bold truncate">{c.other ? c.other.name : 'Unknown'}</div>
+                <div className="text-[12px] text-slate-400 truncate">{c.lastMessageBy === me.id ? 'You: ' : ''}{c.lastMessageText || 'No messages yet'}</div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-[10px] text-slate-300">{c.lastMessageAt ? fmtTime(c.lastMessageAt) : ''}</div>
+                {c.unread > 0 && <span className="inline-block text-[10px] font-extrabold text-white rounded-full px-1.5 mt-1" style={{ background: '#FF4500' }}>{c.unread}</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Conversation panel */}
+      {!active ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-slate-400" style={{ background: '#fdfdfe' }}>
+          <div className="text-5xl mb-3">💬</div>
+          <div className="text-sm font-semibold">Select a conversation or start a new one</div>
+          <button onClick={() => setShowNew(true)} className="mt-3 rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Message a colleague</button>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col min-w-0" style={{ background: '#fdfdfe' }}>
+          <div className="border-b border-slate-100 px-6 py-3 flex items-center gap-3 bg-white">
+            <Avatar name={active.other ? active.other.name : '?'} src={active.other && active.other.avatar} size={38} />
+            <div><div className="text-[16px] font-extrabold">{active.other ? active.other.name : 'Unknown'}</div><div className="text-[12px] text-slate-400">{active.other ? [active.other.designation, active.other.department].filter(Boolean).join(' · ') : ''}</div></div>
+          </div>
+          <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-5">
+            {messages.map((m, i) => {
+              const mine = m.senderId === me.id;
+              const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
+              return (
+                <div key={m.id} className={`flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
+                  {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
+                  <div className={`max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
+                    {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
+                    {m.body && <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }}>{m.body}</div>}
+                    {m.fileUrl && (m.isImage ? (
+                      <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 block"><img src={m.fileUrl} alt={m.fileName} className="rounded-xl max-w-[240px] max-h-[240px] object-cover border border-slate-200" /></a>
+                    ) : (
+                      <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2.5 hover:border-orange-300">
+                        <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>📄</span>
+                        <span><span className="block text-[13px] font-bold truncate max-w-[180px]">{m.fileName}</span><span className="block text-[11px] text-slate-400">{m.fileSize ? fmtSize(m.fileSize) : ''}</span></span>
+                        <span className="text-orange-500">⬇</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">Say hello 👋</div>}
+          </div>
+          <div className="px-5 py-4">
+            <div className="flex items-end gap-2 border-[1.5px] border-slate-200 rounded-2xl px-3 py-2 focus-within:border-orange-400">
+              <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach file" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0">{uploading ? '…' : '📎'}</button>
+              <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
+              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={`Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
+              <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HrTasksView({ user, isAdmin }) {
   const [board, setBoard] = useState(null);
   const [people, setPeople] = useState([]);         // for the top switcher (admin/HR)
@@ -8956,7 +9169,7 @@ export default function HrApp() {
   const canPostJobs = isAdmin || isHrDept || ['hr', 'recruiter'].includes(user.type);
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'tasks', label: 'Task' },
+    { id: 'tasks', label: 'Workspace' },
     ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
     ...(!(isAdmin || isHrStaff || isHrManager) ? [{ id: 'rewards', label: 'My Rewards' }] : []),
     { id: 'interview', label: 'Interview' },
@@ -9061,7 +9274,7 @@ export default function HrApp() {
         ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onNav={setView} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'recognition' && <RecognitionPage user={user} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'rewards' && <MyRewardsPage user={user} />}
-        {effectiveView === 'tasks' && <HrTasksView user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'tasks' && <WorkspaceView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}

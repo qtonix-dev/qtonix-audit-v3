@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v388';
+const APP_VERSION = 'v389';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -163,6 +163,7 @@ app.use('/api/hr', require('./routes/hrMail'));
 app.use('/api/hr/attendance', require('./routes/hrAttendance'));
 app.use('/api/hr/tasks', require('./routes/hrTasks'));
 app.use('/api/hr/tasks', require('./routes/tasks'));
+app.use('/api/hr/chat', require('./routes/chat'));
 app.use('/api/hr/surveys', require('./routes/hrCrmSurvey'));
 app.use('/api/careers', require('./routes/careers'));
 app.use('/api/gmail', gmailRoutes);

@@ -2260,6 +2260,62 @@ const Redemption = sequelize.define('Redemption', {
 ] });
 Redemption.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===========================================================================
+// ===== COMPANY CHAT (Workspace) — Phase 1: direct messages + files =========
+// A conversation is either a 1:1 DM (kind='dm') or, later, a channel. Messages
+// belong to a conversation; membership rows track who's in it + last-read for
+// unread counts. Built on HrUser accounts (names/avatars reused).
+// ===========================================================================
+const ChatConversation = sequelize.define('ChatConversation', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  kind: { type: DataTypes.STRING(12), defaultValue: 'dm' },        // dm | channel (channel = Phase 2)
+  // For DMs: a stable key of the two user ids ("min-max") so we never create
+  // duplicate DM threads for the same pair.
+  dmKey: { type: DataTypes.STRING(40), allowNull: true, unique: true },
+  title: { type: DataTypes.STRING(120), defaultValue: '' },        // channel name (Phase 2)
+  teamId: { type: DataTypes.INTEGER, allowNull: true },            // channel's team (Phase 2)
+  lastMessageAt: { type: DataTypes.DATE, allowNull: true },
+  lastMessageText: { type: DataTypes.STRING(200), defaultValue: '' },
+  lastMessageBy: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'chat_conversations', indexes: [
+  { name: 'idx_chat_conv_kind', fields: ['kind'] },
+  { name: 'idx_chat_conv_last', fields: ['lastMessageAt'] },
+] });
+ChatConversation.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const ChatMembership = sequelize.define('ChatMembership', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  conversationId: { type: DataTypes.INTEGER, allowNull: false },
+  userId: { type: DataTypes.INTEGER, allowNull: false },
+  lastReadAt: { type: DataTypes.DATE, allowNull: true },           // for unread counts
+  hidden: { type: DataTypes.BOOLEAN, defaultValue: false },        // user closed the DM
+}, { tableName: 'chat_memberships', indexes: [
+  { name: 'idx_chat_mem_conv', fields: ['conversationId'] },
+  { name: 'idx_chat_mem_user', fields: ['userId'] },
+  { name: 'idx_chat_mem_pair', unique: true, fields: ['conversationId', 'userId'] },
+] });
+ChatMembership.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const ChatMessage = sequelize.define('ChatMessage', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  conversationId: { type: DataTypes.INTEGER, allowNull: false },
+  senderId: { type: DataTypes.INTEGER, allowNull: false },
+  senderName: { type: DataTypes.STRING(120), defaultValue: '' },
+  body: { type: DataTypes.TEXT, defaultValue: '' },
+  // File attachment (via ImageKit). One file per message keeps it simple.
+  fileUrl: { type: DataTypes.STRING(600), defaultValue: '' },
+  fileName: { type: DataTypes.STRING(200), defaultValue: '' },
+  fileType: { type: DataTypes.STRING(60), defaultValue: '' },      // mime or ext
+  fileSize: { type: DataTypes.INTEGER, defaultValue: 0 },          // bytes
+  isImage: { type: DataTypes.BOOLEAN, defaultValue: false },
+  editedAt: { type: DataTypes.DATE, allowNull: true },
+  deleted: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, { tableName: 'chat_messages', indexes: [
+  { name: 'idx_chat_msg_conv', fields: ['conversationId', 'id'] },
+] });
+ChatMessage.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 
 
@@ -2379,6 +2435,7 @@ module.exports = {
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
+  ChatConversation, ChatMembership, ChatMessage,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };
