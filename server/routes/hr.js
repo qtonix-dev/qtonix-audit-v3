@@ -6415,6 +6415,30 @@ router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Mark an onboarding as COMPLETE → moves it to the Completed tab.
+router.post('/onboarding/:id/complete', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const onb = row.onboarding || onboardingInit();
+    onb.completed = true; onb.completedAt = new Date().toISOString(); onb.completedBy = req.hrActor.name;
+    row.onboarding = onb; row.changed('onboarding', true); await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Reopen a completed onboarding → back to the active list.
+router.post('/onboarding/:id/reopen', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const row = await HrCandidate.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Candidate not found.' });
+    const onb = row.onboarding || onboardingInit();
+    onb.completed = false; onb.completedAt = null;
+    row.onboarding = onb; row.changed('onboarding', true); await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.get('/onboarding', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrCandidate.findAll({ where: { blacklisted: false } });
@@ -6422,16 +6446,23 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
     const istTodayMs = new Date(istTodayStr + 'T00:00:00Z').getTime();
     const toYmd = normalizeJoiningYmd;
+    const view = req.query.view === 'completed' ? 'completed' : 'active';
     // First pass: keep only candidates that belong on the board (cheap checks).
     const keep = [];
     for (const c of rows) {
       const offer = c.offer || {};
-      if (offer.notJoined || offer.joinedConfirmed) continue; // joined → employee; not-joined → blacklist
+      if (offer.notJoined) continue;                               // not-joined → blacklist
+      const onbComplete = !!(c.onboarding && c.onboarding.completed);
+      // Completed view shows finished onboardings; active view hides them.
+      if (view === 'completed') { if (!onbComplete) continue; }
+      else { if (onbComplete) continue; }
       if (!isHiredCandidate(c)) continue;
-      const jd = toYmd(offer.joiningDate || '');
-      if (jd) {
-        const jdMs = new Date(jd + 'T00:00:00Z').getTime();
-        if (jdMs < istTodayMs) continue; // confidently past → drop
+      // In the ACTIVE view, only hide by past-date when they haven't joined yet
+      // (a joined-but-not-completed candidate should stay so HR can finish + mark
+      // complete). Completed view ignores the date filter entirely.
+      if (view === 'active' && !offer.joinedConfirmed) {
+        const jd = toYmd(offer.joiningDate || '');
+        if (jd) { const jdMs = new Date(jd + 'T00:00:00Z').getTime(); if (jdMs < istTodayMs) continue; }
       }
       keep.push(c);
     }
@@ -6460,6 +6491,7 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
         docsSubmittedAt: onb.submittedAt || null,
         converted: !!onb.convertedEmployeeId,
         joined: !!offer.joinedConfirmed,
+        onboardingComplete: !!onb.completed, completedAt: onb.completedAt || null,
         tasksDone: doneCount, tasksTotal: tasks.length,
       });
     }
