@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { Op, HrUser, ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember } = require('../models');
+const { Op, HrUser, User, ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember } = require('../models');
 const { requireHrAccess } = require('../middleware/hrAuth');
 
 // ===== Phase 3: in-memory presence + typing (no DB writes on heartbeat) =====
@@ -32,6 +32,12 @@ async function resolveMe(req) {
     if (hr) { id = hr.id; name = hr.name; }
   }
   req._chatMeId = id; req._chatMeName = name || (req.adminUser && req.adminUser.name) || 'User';
+  // Chat-manage privilege: a CRM admin (req.adminUser or isHrAdmin), an HR
+  // manager, or HR-department staff. A matching CRM-admin account also counts,
+  // so an admin who logged in via their HR profile keeps manage rights.
+  let canManage = !!(req.isHrAdmin || req.isHrManager || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)));
+  if (!canManage && req.hrUser) { try { const adminAcct = await User.findOne({ where: { email: req.hrUser.email, role: 'admin', active: true } }); if (adminAcct) canManage = true; } catch {} }
+  req._chatCanManage = canManage;
   return id;
 }
 function meId(req) { return req._chatMeId != null ? req._chatMeId : (req.hrUser ? req.hrUser.id : null); }
@@ -222,32 +228,33 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
 
 // ===== TEAMS + CHANNELS (Phase 2) =====
 // Only admins & HR may create teams. Anyone in a team can create channels.
-function isAdminOrHr(req) { return req.isHrAdmin || req.isHrManager || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)); }
+function isAdminOrHr(req) { return !!req._chatCanManage; }
 
 // List teams I'm in (or all public teams), each with its channels + unread.
 router.get('/teams', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
+    if (!me) return res.json({ teams: [], canCreateTeam: isAdminOrHr(req), canManage: isAdminOrHr(req) });
     const myTeamRows = await ChatTeamMember.findAll({ where: { userId: me } });
     const myTeamIds = new Set(myTeamRows.map((r) => r.teamId));
-    // Show teams I'm a member of + public teams I could join.
-    const teams = await ChatTeam.findAll({ where: { archived: false, [Op.or]: [{ id: { [Op.in]: myTeamIds.size ? [...myTeamIds] : [0] } }, { visibility: 'public' }] }, order: [['name', 'ASC']] });
+    // Every team is private — only show teams I'm a member of. (HR/Admin manage
+    // membership; there's no self-join.)
+    if (!myTeamIds.size) return res.json({ teams: [], canCreateTeam: isAdminOrHr(req), canManage: isAdminOrHr(req) });
+    const teams = await ChatTeam.findAll({ where: { archived: false, id: { [Op.in]: [...myTeamIds] } }, order: [['name', 'ASC']] });
     const out = [];
     for (const t of teams) {
-      const member = myTeamIds.has(t.id);
-      // Channels = channel conversations for this team that I'm a member of.
+      // Channels I'm a member of within this team.
       const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId: t.id }, order: [['createdAt', 'ASC']] });
       const chanOut = [];
       for (const c of chans) {
         const cm = await ChatMembership.findOne({ where: { conversationId: c.id, userId: me } });
-        if (!cm && t.visibility === 'private') continue; // private team channels only if member
-        let unread = 0;
-        if (cm) { unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(cm.lastReadAt ? { createdAt: { [Op.gt]: cm.lastReadAt } } : {}) } }); }
-        chanOut.push({ id: c.id, title: c.title, member: !!cm, unread, lastMessageAt: c.lastMessageAt });
+        if (!cm) continue; // only groups I'm in
+        const unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(cm.lastReadAt ? { createdAt: { [Op.gt]: cm.lastReadAt } } : {}) } });
+        chanOut.push({ id: c.id, title: c.title, visibility: c.visibility, unread, lastMessageAt: c.lastMessageAt });
       }
-      out.push({ id: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color, visibility: t.visibility, member, channels: chanOut });
+      out.push({ id: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color, member: true, channels: chanOut });
     }
-    res.json({ teams: out, canCreateTeam: isAdminOrHr(req) });
+    res.json({ teams: out, canCreateTeam: isAdminOrHr(req), canManage: isAdminOrHr(req) });
   } catch (e) { next(e); }
 });
 
@@ -255,18 +262,19 @@ router.get('/teams', requireHrAccess, async (req, res, next) => {
 router.post('/teams', requireHrAccess, async (req, res, next) => {
   try {
     if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can create teams.' });
+    const creator = meId(req);
+    if (!creator) return res.status(403).json({ error: 'Your admin account has no matching HR profile. Ask HR to add you as an employee first.' });
     const b = req.body || {};
     const name = String(b.name || '').slice(0, 80).trim();
     if (!name) return res.status(400).json({ error: 'Team name is required.' });
-    const team = await ChatTeam.create({ name, icon: String(b.icon || name.charAt(0).toUpperCase()).slice(0, 8), color: String(b.color || '#FF6A00').slice(0, 20), description: String(b.description || '').slice(0, 300), visibility: b.visibility === 'private' ? 'private' : 'public', createdById: meId(req) });
-    await ChatTeamMember.create({ teamId: team.id, userId: meId(req), role: 'owner' });
-    // Optionally add initial members.
-    const memberIds = Array.isArray(b.memberIds) ? b.memberIds.map(Number).filter((x) => x && x !== meId(req)) : [];
-    for (const uid of memberIds) { try { await ChatTeamMember.findOrCreate({ where: { teamId: team.id, userId: uid }, defaults: { teamId: team.id, userId: uid } }); } catch {} }
-    // Default #general channel with all current team members.
+    const team = await ChatTeam.create({ name, icon: String(b.icon || name.charAt(0).toUpperCase()).slice(0, 8), color: String(b.color || '#FF6A00').slice(0, 20), description: String(b.description || '').slice(0, 300), visibility: 'private', createdById: creator });
+    // Members = the selected employees + the creator (always). Dedupe + drop nulls.
+    const picked = Array.isArray(b.memberIds) ? b.memberIds.map(Number).filter(Boolean) : [];
+    const memberIds = [...new Set([creator, ...picked])];
+    await ChatTeamMember.bulkCreate(memberIds.map((uid) => ({ teamId: team.id, userId: uid, role: uid === creator ? 'owner' : 'member' })));
+    // Default #general channel with all the team members.
     const conv = await ChatConversation.create({ kind: 'channel', teamId: team.id, title: 'general' });
-    const allMembers = [meId(req), ...memberIds];
-    await ChatMembership.bulkCreate(allMembers.map((uid) => ({ conversationId: conv.id, userId: uid })));
+    await ChatMembership.bulkCreate(memberIds.map((uid) => ({ conversationId: conv.id, userId: uid })));
     res.status(201).json({ team: team.toJSON() });
   } catch (e) { next(e); }
 });
@@ -274,31 +282,83 @@ router.post('/teams', requireHrAccess, async (req, res, next) => {
 // Create a channel in a team (any team member can).
 router.post('/teams/:teamId/channels', requireHrAccess, async (req, res, next) => {
   try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can create groups.' });
     const me = meId(req);
+    if (!me) return res.status(403).json({ error: 'Your admin account has no matching HR profile.' });
     const teamId = Number(req.params.teamId);
-    const mem = await ChatTeamMember.findOne({ where: { teamId, userId: me } });
-    if (!mem && !isAdminOrHr(req)) return res.status(403).json({ error: 'Join the team first to add a channel.' });
-    const name = String((req.body || {}).name || '').slice(0, 60).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase();
-    if (!name) return res.status(400).json({ error: 'Channel name is required.' });
-    const conv = await ChatConversation.create({ kind: 'channel', teamId, title: name });
-    // Add all current team members to the channel.
+    const team = await ChatTeam.findByPk(teamId);
+    if (!team) return res.status(404).json({ error: 'Team not found.' });
+    const b = req.body || {};
+    const name = String(b.name || '').slice(0, 60).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase();
+    if (!name) return res.status(400).json({ error: 'Group name is required.' });
     const teamMembers = await ChatTeamMember.findAll({ where: { teamId } });
-    await ChatMembership.bulkCreate(teamMembers.map((tm) => ({ conversationId: conv.id, userId: tm.userId })));
+    const teamMemberIds = teamMembers.map((tm) => tm.userId);
+    // Team-wide = all team members; Private = only the selected ones (+creator).
+    let memberIds;
+    if (b.visibility === 'private') {
+      const picked = Array.isArray(b.memberIds) ? b.memberIds.map(Number).filter(Boolean) : [];
+      memberIds = [...new Set([me, ...picked])].filter((id) => teamMemberIds.includes(id) || id === me);
+    } else {
+      memberIds = [...new Set([me, ...teamMemberIds])];
+    }
+    const conv = await ChatConversation.create({ kind: 'channel', teamId, title: name, visibility: b.visibility === 'private' ? 'private' : 'team' });
+    await ChatMembership.bulkCreate(memberIds.map((uid) => ({ conversationId: conv.id, userId: uid })));
     res.status(201).json({ channel: { id: conv.id, title: name } });
   } catch (e) { next(e); }
 });
 
-// Join a public team (adds me to the team + all its channels).
-router.post('/teams/:teamId/join', requireHrAccess, async (req, res, next) => {
+// HR/Admin: list a team's members + who's addable (for the manage-members UI).
+router.get('/teams/:teamId/members', requireHrAccess, async (req, res, next) => {
   try {
-    const me = meId(req);
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can manage members.' });
+    const teamId = Number(req.params.teamId);
+    const rows = await ChatTeamMember.findAll({ where: { teamId } });
+    const ids = rows.map((r) => r.userId);
+    const members = await HrUser.findAll({ where: { id: { [Op.in]: ids.length ? ids : [0] } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
+    const roleById = {}; rows.forEach((r) => { roleById[r.userId] = r.role; });
+    res.json({ members: members.map((u) => ({ ...pubUser(u), role: roleById[u.id] || 'member' })) });
+  } catch (e) { next(e); }
+});
+
+// HR/Admin: add employees to a team (and its team-wide channels).
+router.post('/teams/:teamId/members', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can manage members.' });
     const teamId = Number(req.params.teamId);
     const team = await ChatTeam.findByPk(teamId);
-    if (!team || team.archived) return res.status(404).json({ error: 'Team not found.' });
-    if (team.visibility === 'private' && !isAdminOrHr(req)) return res.status(403).json({ error: 'This team is private.' });
-    await ChatTeamMember.findOrCreate({ where: { teamId, userId: me }, defaults: { teamId, userId: me } });
+    if (!team) return res.status(404).json({ error: 'Team not found.' });
+    const ids = Array.isArray((req.body || {}).userIds) ? req.body.userIds.map(Number).filter(Boolean) : [];
+    for (const uid of ids) { await ChatTeamMember.findOrCreate({ where: { teamId, userId: uid }, defaults: { teamId, userId: uid } }); }
+    // Add them to the team-wide (non-private) channels.
+    const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId, visibility: { [Op.ne]: 'private' } } });
+    for (const c of chans) for (const uid of ids) await ChatMembership.findOrCreate({ where: { conversationId: c.id, userId: uid }, defaults: { conversationId: c.id, userId: uid } });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// HR/Admin: remove an employee from a team (and all its channels).
+router.delete('/teams/:teamId/members/:userId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can manage members.' });
+    const teamId = Number(req.params.teamId);
+    const uid = Number(req.params.userId);
+    await ChatTeamMember.destroy({ where: { teamId, userId: uid } });
     const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId } });
-    for (const c of chans) { await ChatMembership.findOrCreate({ where: { conversationId: c.id, userId: me }, defaults: { conversationId: c.id, userId: me } }); }
+    for (const c of chans) await ChatMembership.destroy({ where: { conversationId: c.id, userId: uid } });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// HR/Admin: add / remove members of a specific group (channel).
+router.post('/channels/:id/members', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can manage members.' });
+    const convId = Number(req.params.id);
+    const conv = await ChatConversation.findByPk(convId);
+    if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
+    const b = req.body || {};
+    if (Array.isArray(b.add)) { for (const uid of b.add.map(Number).filter(Boolean)) { await ChatMembership.findOrCreate({ where: { conversationId: convId, userId: uid }, defaults: { conversationId: convId, userId: uid } }); await ChatTeamMember.findOrCreate({ where: { teamId: conv.teamId, userId: uid }, defaults: { teamId: conv.teamId, userId: uid } }); } }
+    if (Array.isArray(b.remove)) { for (const uid of b.remove.map(Number).filter(Boolean)) await ChatMembership.destroy({ where: { conversationId: convId, userId: uid } }); }
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

@@ -2274,6 +2274,7 @@ const ChatConversation = sequelize.define('ChatConversation', {
   dmKey: { type: DataTypes.STRING(40), allowNull: true, unique: true },
   title: { type: DataTypes.STRING(120), defaultValue: '' },        // channel name (Phase 2)
   teamId: { type: DataTypes.INTEGER, allowNull: true },            // channel's team (Phase 2)
+  visibility: { type: DataTypes.STRING(10), defaultValue: 'team' }, // team | private (channel scope)
   lastMessageAt: { type: DataTypes.DATE, allowNull: true },
   lastMessageText: { type: DataTypes.STRING(200), defaultValue: '' },
   lastMessageBy: { type: DataTypes.INTEGER, allowNull: true },

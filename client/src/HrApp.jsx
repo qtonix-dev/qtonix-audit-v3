@@ -1532,10 +1532,9 @@ function ChatView({ user, onUnread }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [showNew, setShowNew] = useState(false);
-  const [showNewTeam, setShowNewTeam] = useState(false);
-  const [newTeamName, setNewTeamName] = useState('');
-  const [newChanFor, setNewChanFor] = useState(null); // teamId to add channel to
-  const [newChanName, setNewChanName] = useState('');
+  const [canManage, setCanManage] = useState(false);
+  const [createModal, setCreateModal] = useState(null); // {type:'team'} | {type:'group',teamId,teamName}
+  const [manageFor, setManageFor] = useState(null);      // {teamId,teamName}
   const [q, setQ] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1552,7 +1551,7 @@ function ChatView({ user, onUnread }) {
   const me = user;
 
   const loadConversations = () => hrApi('/chat/conversations').then((r) => setConversations(r.conversations || [])).catch(() => {});
-  const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); }).catch(() => {});
+  const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); setCanManage(!!r.canManage); }).catch(() => {});
   useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); loadTeams(); }, []);
 
   // Open a conversation: load its messages + mark read.
@@ -1577,20 +1576,12 @@ function ChatView({ user, onUnread }) {
       loadTeams();
     } catch {}
   };
-  // Start (or open) a DM with someone from the directory.
   const startDm = async (u) => {
     setShowNew(false); setQ('');
     try { const r = await hrApi(`/chat/dm/${u.id}`, { method: 'POST', body: '{}' }); await openConv({ id: r.conversation.id, other: r.conversation.other }); loadConversations(); } catch (e) { alert(e.message); }
   };
-  const createTeam = async () => {
-    if (!newTeamName.trim()) return;
-    try { await hrApi('/chat/teams', { method: 'POST', body: JSON.stringify({ name: newTeamName.trim() }) }); setNewTeamName(''); setShowNewTeam(false); loadTeams(); } catch (e) { alert(e.message); }
-  };
-  const createChannel = async (teamId) => {
-    if (!newChanName.trim()) return;
-    try { await hrApi(`/chat/teams/${teamId}/channels`, { method: 'POST', body: JSON.stringify({ name: newChanName.trim() }) }); setNewChanName(''); setNewChanFor(null); loadTeams(); } catch (e) { alert(e.message); }
-  };
-  const joinTeam = async (teamId) => { try { await hrApi(`/chat/teams/${teamId}/join`, { method: 'POST', body: '{}' }); loadTeams(); } catch (e) { alert(e.message); } };
+  // After a team/group is created (or members changed) → refresh.
+  const afterCreate = () => { setCreateModal(null); loadTeams(); };
 
   // Phase 3: react to a message (optimistic toggle).
   const react = async (msgId, emoji) => {
@@ -1705,37 +1696,27 @@ function ChatView({ user, onUnread }) {
             </div>
           </div>
         )}
-        {/* Teams + channels */}
+        {/* Teams + groups (Slack-style). Only teams I'm a member of show. */}
         <div className="px-4 pt-1 pb-1 flex items-center justify-between">
           <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Teams</span>
-          {canCreateTeam && <button onClick={() => setShowNewTeam((v) => !v)} className="text-orange-500 text-base font-bold">+</button>}
+          {canCreateTeam && <button onClick={() => setCreateModal({ type: 'team' })} title="New team" className="text-orange-500 text-base font-bold">+</button>}
         </div>
-        {showNewTeam && (
-          <div className="mx-3 mb-2 flex gap-1.5">
-            <input autoFocus value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createTeam()} placeholder="New team name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] focus:outline-none" />
-            <button onClick={createTeam} className="rounded-lg px-2.5 text-[12px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Add</button>
-          </div>
-        )}
+        {teams.length === 0 && <div className="px-4 pb-2 text-[12px] text-slate-400">{canManage ? 'No teams yet. Tap + to create one.' : 'You’re not in any team yet.'}</div>}
         {teams.map((t) => (
           <div key={t.id} className="px-2 mb-1">
-            <div className="flex items-center gap-2 px-2 py-1.5">
+            <div className="flex items-center gap-2 px-2 py-1.5 group">
               <span className="w-6 h-6 rounded-md flex items-center justify-center text-[12px] font-extrabold text-white shrink-0" style={{ background: t.color || '#FF6A00' }}>{t.icon}</span>
               <span className="text-[14px] font-bold truncate flex-1">{t.name}</span>
-              {!t.member && <button onClick={() => joinTeam(t.id)} className="text-[10px] font-bold text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">Join</button>}
-              {t.member && <button onClick={() => { setNewChanFor(newChanFor === t.id ? null : t.id); setNewChanName(''); }} className="text-slate-300 hover:text-orange-500 text-sm">+</button>}
+              {canManage && <button onClick={() => setManageFor({ teamId: t.id, teamName: t.name })} title="Manage members" className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-orange-500 text-xs">👥</button>}
+              {canManage && <button onClick={() => setCreateModal({ type: 'group', teamId: t.id, teamName: t.name })} title="New group" className="text-slate-300 hover:text-orange-500 text-sm">+</button>}
             </div>
-            {t.member && t.channels.map((c) => (
+            {t.channels.map((c) => (
               <button key={c.id} onClick={() => openChannel(t.name, c, { id: t.id, name: t.name, icon: t.icon, color: t.color })} className={`w-full flex items-center gap-1.5 pl-10 pr-3 py-1.5 rounded-lg text-[13.5px] ${active && active.id === c.id ? 'font-bold' : 'text-slate-500 hover:bg-slate-100'}`} style={active && active.id === c.id ? { background: '#fff3ec', color: '#c2410c' } : {}}>
                 <span className="text-slate-300">#</span> <span className="truncate flex-1 text-left">{c.title}</span>
+                {c.visibility === 'private' && <span className="text-slate-300 text-[10px]">🔒</span>}
                 {c.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{c.unread}</span>}
               </button>
             ))}
-            {newChanFor === t.id && (
-              <div className="flex gap-1.5 pl-10 pr-2 mt-1">
-                <input autoFocus value={newChanName} onChange={(e) => setNewChanName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createChannel(t.id)} placeholder="new-channel" className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-[12px] focus:outline-none" />
-                <button onClick={() => createChannel(t.id)} className="rounded-lg px-2 text-[11px] font-bold text-white" style={{ background: '#FF6A00' }}>Add</button>
-              </div>
-            )}
           </div>
         ))}
         <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
@@ -1851,6 +1832,123 @@ function ChatView({ user, onUnread }) {
           </div>
         </div>
       )}
+      {createModal && <ChatGroupModal mode={createModal} directory={directory} onClose={() => setCreateModal(null)} onDone={afterCreate} />}
+      {manageFor && <ChatManageModal team={manageFor} directory={directory} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} />}
+    </div>
+  );
+}
+
+// Create a team or a group (channel), with member selection + visibility.
+function ChatGroupModal({ mode, directory, onClose, onDone }) {
+  const isTeam = mode.type === 'team';
+  const [name, setName] = useState('');
+  const [visibility, setVisibility] = useState('private'); // groups: private | team
+  const [selected, setSelected] = useState(new Set());
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toggle = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const shown = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+  const needMembers = isTeam || visibility === 'private';
+  const submit = async () => {
+    if (!name.trim()) { alert('Name is required.'); return; }
+    setBusy(true);
+    try {
+      const memberIds = [...selected];
+      if (isTeam) await hrApi('/chat/teams', { method: 'POST', body: JSON.stringify({ name: name.trim(), memberIds }) });
+      else await hrApi(`/chat/teams/${mode.teamId}/channels`, { method: 'POST', body: JSON.stringify({ name: name.trim(), visibility, memberIds }) });
+      onDone();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-[17px] font-extrabold">{isTeam ? 'Create a team' : `New group in ${mode.teamName}`}</div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5">
+          <div className="text-[12px] font-bold text-slate-500 mb-1.5">{isTeam ? 'Team name' : 'Group name'}</div>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={isTeam ? 'e.g. Engineering' : 'e.g. mobile-app'} className="w-full rounded-xl border-[1.5px] border-slate-200 px-3 py-2.5 text-sm mb-4 focus:outline-none focus:border-orange-400" />
+          {!isTeam && (
+            <>
+              <div className="text-[12px] font-bold text-slate-500 mb-1.5">Visibility</div>
+              <div className="flex gap-2 mb-4">
+                <button onClick={() => setVisibility('private')} className="flex-1 rounded-xl border-[1.5px] py-2.5 text-[13px] font-bold" style={visibility === 'private' ? { borderColor: '#FF6A00', background: '#fff3ec', color: '#c2410c' } : { borderColor: '#e2e8f0', color: '#64748b' }}>🔒 Private</button>
+                <button onClick={() => setVisibility('team')} className="flex-1 rounded-xl border-[1.5px] py-2.5 text-[13px] font-bold" style={visibility === 'team' ? { borderColor: '#FF6A00', background: '#fff3ec', color: '#c2410c' } : { borderColor: '#e2e8f0', color: '#64748b' }}>👥 Team-wide</button>
+              </div>
+            </>
+          )}
+          {needMembers && (
+            <>
+              <div className="text-[12px] font-bold text-slate-500 mb-1.5">Add members</div>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search employees…" className="w-full rounded-xl border-[1.5px] border-slate-200 px-3 py-2 text-[13px] mb-2 focus:outline-none" />
+              <div className="border border-slate-100 rounded-xl max-h-48 overflow-auto">
+                {shown.map((u) => {
+                  const on = selected.has(u.id);
+                  return (
+                    <button key={u.id} onClick={() => toggle(u.id)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-slate-50 text-left border-b border-slate-50 last:border-0">
+                      <span className="w-5 h-5 rounded-md flex items-center justify-center text-[11px] text-white" style={on ? { background: '#FF6A00' } : { border: '2px solid #cbd5e1' }}>{on ? '✓' : ''}</span>
+                      <Avatar name={u.name} src={u.avatar} size={28} />
+                      <span className="min-w-0"><span className="block text-[13px] font-bold truncate">{u.name}</span><span className="block text-[11px] text-slate-400 truncate">{[u.designation, u.department].filter(Boolean).join(' · ')}</span></span>
+                    </button>
+                  );
+                })}
+                {shown.length === 0 && <div className="px-3 py-4 text-sm text-slate-400 text-center">No match.</div>}
+              </div>
+              <div className="text-[12px] text-slate-500 mt-2">{selected.size} member{selected.size === 1 ? '' : 's'} selected · only they can see this {isTeam ? 'team' : 'group'}</div>
+            </>
+          )}
+          {!needMembers && <div className="text-[12px] text-slate-500">Everyone in {mode.teamName} will be added to this group.</div>}
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-500">Cancel</button>
+          <button onClick={submit} disabled={busy || !name.trim()} className="rounded-xl px-5 py-2 text-sm font-extrabold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? '…' : (isTeam ? 'Create team' : 'Create group')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// HR/Admin: manage a team's members (add/remove).
+function ChatManageModal({ team, directory, onClose, onDone }) {
+  const [members, setMembers] = useState(null);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => hrApi(`/chat/teams/${team.teamId}/members`).then((r) => setMembers(r.members || [])).catch(() => setMembers([]));
+  useEffect(() => { load(); }, []);
+  const memberIds = new Set((members || []).map((m) => m.id));
+  const addable = directory.filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
+  const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
+  const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[17px] font-extrabold">Members · {team.teamName}</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        <div className="p-5">
+          <div className="text-[12px] font-bold text-slate-500 mb-2">Current members</div>
+          <div className="border border-slate-100 rounded-xl max-h-40 overflow-auto mb-4">
+            {members === null ? <div className="px-3 py-4 text-sm text-slate-400 text-center">Loading…</div> : members.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 px-3 py-2 border-b border-slate-50 last:border-0">
+                <Avatar name={m.name} src={m.avatar} size={28} />
+                <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold truncate">{m.name} {m.role === 'owner' && <span className="text-[10px] text-orange-500">owner</span>}</span><span className="block text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</span></span>
+                {m.role !== 'owner' && <button onClick={() => remove(m)} disabled={busy} className="text-[11px] font-bold text-red-500">Remove</button>}
+              </div>
+            ))}
+          </div>
+          <div className="text-[12px] font-bold text-slate-500 mb-1.5">Add employees</div>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search…" className="w-full rounded-xl border-[1.5px] border-slate-200 px-3 py-2 text-[13px] mb-2 focus:outline-none" />
+          <div className="border border-slate-100 rounded-xl max-h-40 overflow-auto">
+            {addable.slice(0, 30).map((u) => (
+              <button key={u.id} onClick={() => add(u)} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-orange-50 text-left border-b border-slate-50 last:border-0">
+                <Avatar name={u.name} src={u.avatar} size={28} />
+                <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold truncate">{u.name}</span><span className="block text-[11px] text-slate-400 truncate">{[u.designation, u.department].filter(Boolean).join(' · ')}</span></span>
+                <span className="text-orange-500 text-lg">+</span>
+              </button>
+            ))}
+            {addable.length === 0 && <div className="px-3 py-4 text-sm text-slate-400 text-center">Everyone’s already in.</div>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
