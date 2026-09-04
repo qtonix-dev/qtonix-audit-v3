@@ -28,13 +28,29 @@ async function resolveMe(req) {
   let id = null, name = null;
   if (req.hrUser) { id = req.hrUser.id; name = req.hrUser.name; }
   else if (req.adminUser) {
-    const hr = await HrUser.findOne({ where: { email: req.adminUser.email } });
+    // Match the admin to an HR profile by email. If none exists, auto-provision
+    // one so the admin is a real, messageable chat participant (others can DM
+    // them and add them to groups). Uses the admin's User details.
+    let hr = await HrUser.findOne({ where: { email: req.adminUser.email } });
+    if (!hr) {
+      try {
+        hr = await HrUser.create({
+          name: req.adminUser.name || 'Admin',
+          email: req.adminUser.email,
+          passwordHash: req.adminUser.passwordHash || require('crypto').randomBytes(24).toString('hex'),
+          type: 'manager',
+          designation: req.adminUser.designation || 'Admin',
+          active: true, chatOnly: true,
+        });
+      } catch (e) {
+        // Race or unique conflict → re-fetch.
+        hr = await HrUser.findOne({ where: { email: req.adminUser.email } });
+      }
+    }
     if (hr) { id = hr.id; name = hr.name; }
   }
   req._chatMeId = id; req._chatMeName = name || (req.adminUser && req.adminUser.name) || 'User';
-  // Chat-manage privilege: a CRM admin (req.adminUser or isHrAdmin), an HR
-  // manager, or HR-department staff. A matching CRM-admin account also counts,
-  // so an admin who logged in via their HR profile keeps manage rights.
+  // Chat-manage privilege: CRM admin, HR manager, or HR-department staff.
   let canManage = !!(req.isHrAdmin || req.isHrManager || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)));
   if (!canManage && req.hrUser) { try { const adminAcct = await User.findOne({ where: { email: req.hrUser.email, role: 'admin', active: true } }); if (adminAcct) canManage = true; } catch {} }
   req._chatCanManage = canManage;

@@ -121,7 +121,7 @@ async function tick(models) {
     // attendance. Before Rewards is ever on, liveSince is null and we skip.
     const cfgRow = await models.Settings.findOne({ where: { singleton: 'settings' } });
     const liveSince = (cfgRow && cfgRow.rewardConfig && cfgRow.rewardConfig.liveSince) || null;
-    const emps = await HrUser.findAll({ where: { active: true } });
+    const emps = await HrUser.findAll({ where: { active: true, chatOnly: { [require('sequelize').Op.not]: true } } });
     let awarded = 0;
     for (const emp of emps) {
       if (liveSince) {

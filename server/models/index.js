@@ -1349,6 +1349,9 @@ const HrUser = sequelize.define('HrUser', {
   designation: { type: DataTypes.STRING(80), defaultValue: '' },
   // Access class within HR: hr, recruiter, manager, tl, employee.
   type: { type: DataTypes.ENUM('hr', 'recruiter', 'manager', 'tl', 'senior', 'junior', 'trainee', 'intern', 'employee'), defaultValue: 'employee' },
+  // Chat-only participants (e.g. an admin auto-added to use chat) — excluded
+  // from employee/attendance/payroll/reward lists; only visible inside chat.
+  chatOnly: { type: DataTypes.BOOLEAN, defaultValue: false },
   branch: { type: DataTypes.STRING(80), defaultValue: 'Bhubaneswar' },
   department: { type: DataTypes.STRING(80), defaultValue: '' },
   joiningDate: { type: DataTypes.DATEONLY, allowNull: true },

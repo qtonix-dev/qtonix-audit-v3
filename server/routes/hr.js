@@ -573,7 +573,7 @@ router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, nex
  */
 router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
-    const rows = await HrUser.findAll({ order: [['name', 'ASC']] });
+    const rows = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true } }, order: [['name', 'ASC']] });
     let list = rows.map((u) => ({
       _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,
@@ -782,7 +782,7 @@ router.get('/rewards/my-budget', requireHrAccess, async (req, res, next) => {
 router.get('/rewards/budgets', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const R = require('../services/rewards');
-    const seniors = await HrUser.findAll({ where: { active: true, type: { [Op.in]: ['manager', 'tl', 'senior'] } }, order: [['name', 'ASC']] });
+    const seniors = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true }, type: { [Op.in]: ['manager', 'tl', 'senior'] } }, order: [['name', 'ASC']] });
     const overrides = await RewardBudget.findAll();
     const ovById = {}; overrides.forEach((o) => { ovById[o.giverId] = o; });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
