@@ -1511,8 +1511,8 @@ function WorkspaceView({ user, isAdmin }) {
     </button>
   );
   return (
-    <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex items-center gap-1 px-5 bg-white border-b border-slate-100 shrink-0" style={{ marginBottom: 25 }}>
+    <div className="flex flex-col px-4 pt-3" style={{ height: 'calc(100vh - 56px)' }}>
+      <div className="flex items-center gap-1 px-1 bg-white border-b border-slate-100 shrink-0" style={{ marginBottom: 12 }}>
         <Tab id="tasks" icon="✅" label="Task" badge={0} />
         <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
       </div>
@@ -1731,6 +1731,14 @@ function ChatView({ user, onUnread, onOpenTask }) {
             </div>
           </div>
         )}
+        {/* #task — personal notes & task alerts, pinned at the top. */}
+        {taskChannel && (
+          <button onClick={() => openChannel('task', { id: taskChannel.id, title: 'task' }, { name: 'Your tasks & notes', color: '#0A1F44', icon: '📋', isTask: true })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 mb-1.5 ${active && active.id === taskChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === taskChannel.id ? { background: '#fff3ec' } : { background: '#f8fafc' }}>
+            <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base shrink-0" style={{ background: 'linear-gradient(135deg,#0A1F44,#1e3a8a)' }}>📋</span>
+            <div className="min-w-0 flex-1"><div className="text-[14px] font-bold">#task <span className="text-[10px] text-slate-400 font-normal">notes & alerts</span></div><div className="text-[12px] text-slate-400 truncate">{taskChannel.lastMessageText || 'Your private space'}</div></div>
+            {taskChannel.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{taskChannel.unread}</span>}
+          </button>
+        )}
         {/* Teams + groups (Slack-style). Only teams I'm a member of show. */}
         <div className="px-4 pt-1 pb-1 flex items-center justify-between">
           <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Teams</span>
@@ -1754,14 +1762,6 @@ function ChatView({ user, onUnread, onOpenTask }) {
             ))}
           </div>
         ))}
-        {/* Personal #task channel (notepad + task alerts) */}
-        {taskChannel && (
-          <button onClick={() => openChannel('task', { id: taskChannel.id, title: 'task' }, { name: 'Your tasks & notes', color: '#0A1F44', icon: '📋', isTask: true })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 my-0.5 ${active && active.id === taskChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === taskChannel.id ? { background: '#fff3ec' } : {}}>
-            <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base shrink-0" style={{ background: 'linear-gradient(135deg,#0A1F44,#1e3a8a)' }}>📋</span>
-            <div className="min-w-0 flex-1"><div className="text-[14px] font-bold">#task <span className="text-[10px] text-slate-400 font-normal">notes & alerts</span></div><div className="text-[12px] text-slate-400 truncate">{taskChannel.lastMessageText || 'Your private space'}</div></div>
-            {taskChannel.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{taskChannel.unread}</span>}
-          </button>
-        )}
         <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
         <div className="flex-1 overflow-auto pb-2">
           {conversations.length === 0 ? (
@@ -9644,6 +9644,11 @@ export default function HrApp() {
         )}
       </header>
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
+      {/* Workspace (Task + Buzz) renders full-bleed so the chat fits the screen
+          with no outer page padding forcing a scroll. */}
+      {effectiveView === 'tasks' ? (
+        <div key={`${effectiveView}-${navKey}`}><WorkspaceView user={user} isAdmin={isAdmin} /></div>
+      ) : (
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin ? (
           <div>
@@ -9661,7 +9666,6 @@ export default function HrApp() {
         ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onNav={setView} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'recognition' && <RecognitionPage user={user} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'rewards' && <MyRewardsPage user={user} />}
-        {effectiveView === 'tasks' && <WorkspaceView user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
@@ -9684,6 +9688,7 @@ export default function HrApp() {
         {effectiveView === 'admin' && isAdmin && <HrAdmin user={user} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'survey' && (isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') && <HrSurveyAdmin isAdmin={isAdmin} />}
       </main>
+      )}
       <FeedbackWidget page={effectiveView} userName={user && user.name} />
     </div>
   );
