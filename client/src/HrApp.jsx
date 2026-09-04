@@ -1901,12 +1901,16 @@ function ChatView({ user, onUnread, onOpenTask }) {
                 </div>
               )}
               <div className="border-[1.5px] border-slate-200 rounded-2xl focus-within:border-orange-400 overflow-hidden">
+                {/^[\s\S]*(\*\*[^*]+\*\*|_[^_]+_)/.test(text) && (
+                  <div className="px-3.5 pt-2 pb-1 text-[13px] text-slate-500 border-b border-slate-50"><span className="text-[10px] font-bold text-slate-300 uppercase mr-2">Preview</span><span dangerouslySetInnerHTML={{ __html: fmtBody(text) }} /></div>
+                )}
                 <div className="flex items-center gap-1 px-2.5 pt-2">
                   <button onMouseDown={(e) => { e.preventDefault(); wrapSel('**'); }} title="Bold" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 font-bold text-[13px]">B</button>
                   <button onMouseDown={(e) => { e.preventDefault(); wrapSel('_'); }} title="Italic" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 italic text-[13px]">I</button>
                   <button onClick={() => setEmojiOpen((v) => !v)} title="Emoji" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">🙂</button>
                   <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">{uploading ? '…' : '📎'}</button>
                   <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
+                  <span className="ml-auto text-[10px] text-slate-300">**bold** · _italic_</span>
                 </div>
                 <div className="flex items-end gap-2 px-3 py-2">
                   <textarea ref={taRef} value={text} onChange={(e) => { const v = e.target.value; setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } }} rows={1} placeholder={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)} className="flex-1 resize-none text-[14px] py-1 focus:outline-none max-h-32" />
