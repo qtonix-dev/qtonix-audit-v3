@@ -1511,13 +1511,17 @@ function WorkspaceView({ user, isAdmin }) {
     </button>
   );
   return (
-    <div className="flex flex-col px-4 pt-3" style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex items-center gap-1 px-1 bg-white border-b border-slate-100 shrink-0" style={{ marginBottom: 12 }}>
-        <Tab id="tasks" icon="✅" label="Task" badge={0} />
-        <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
+    <div className="flex flex-col pt-3" style={{ height: 'calc(100vh - 56px)' }}>
+      <div className="max-w-6xl w-full mx-auto px-4 shrink-0">
+        <div className="flex items-center gap-1 bg-white border-b border-slate-100" style={{ marginBottom: 12 }}>
+          <Tab id="tasks" icon="✅" label="Task" badge={0} />
+          <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
+        </div>
       </div>
-      <div className="flex-1 min-h-0">
-        {pane === 'chat' ? <ChatView user={user} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /> : <HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} />}
+      <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3">
+        {pane === 'chat'
+          ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
+          : <div className="h-full overflow-auto"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
       </div>
     </div>
   );
