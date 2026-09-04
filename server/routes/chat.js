@@ -71,7 +71,21 @@ router.use(requireHrAccess, async (req, res, next) => { try { await resolveMe(re
 router.get('/directory', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
-    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'department', 'designation'], order: [['name', 'ASC']] });
+    const users = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'avatar', 'department', 'designation', 'email'], order: [['name', 'ASC']] });
+    // Also surface CRM admins who don't yet have a chat profile — auto-provision
+    // one for each so they can be added to groups and messaged. (chatOnly = kept
+    // out of employee/reward lists.)
+    const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id', 'name', 'email', 'designation'] });
+    const haveEmail = new Set(users.map((u) => (u.email || '').toLowerCase()));
+    for (const a of admins) {
+      const em = (a.email || '').toLowerCase();
+      if (em && !haveEmail.has(em)) {
+        try {
+          const hr = await HrUser.create({ name: a.name || 'Admin', email: a.email, passwordHash: require('crypto').randomBytes(24).toString('hex'), type: 'manager', designation: a.designation || 'Admin', active: true, chatOnly: true });
+          users.push(hr); haveEmail.add(em);
+        } catch { const hr = await HrUser.findOne({ where: { email: a.email } }); if (hr) users.push(hr); }
+      }
+    }
     res.json({ users: users.filter((u) => u.id !== me).map(pubUser) });
   } catch (e) { next(e); }
 });
@@ -80,33 +94,27 @@ router.get('/directory', requireHrAccess, async (req, res, next) => {
 router.get('/conversations', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
-    if (!me) return res.json({ conversations: [] });
+    if (!me) return res.json({ conversations: [], taskChannel: null });
+    // Ensure the user's personal #task channel exists.
+    const taskConvId = await require('../services/chatTask').taskChannelFor(me);
     const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
     const convIds = mems.map((m) => m.conversationId);
-    if (!convIds.length) return res.json({ conversations: [] });
-    const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: convIds } }, order: [['lastMessageAt', 'DESC']] });
-    // Resolve the "other" member for each DM + unread counts.
-    const allMems = await ChatMembership.findAll({ where: { conversationId: { [Op.in]: convIds } } });
+    const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: convIds.length ? convIds : [0] } }, order: [['lastMessageAt', 'DESC']] });
+    const allMems = await ChatMembership.findAll({ where: { conversationId: { [Op.in]: convIds.length ? convIds : [0] } } });
     const otherByConv = {};
     for (const m of allMems) { if (m.userId !== me) otherByConv[m.conversationId] = m.userId; }
     const otherIds = [...new Set(Object.values(otherByConv))];
     const users = await HrUser.findAll({ where: { id: { [Op.in]: otherIds.length ? otherIds : [0] } } });
     const userById = {}; users.forEach((u) => { userById[u.id] = u; });
     const myMemByConv = {}; mems.forEach((m) => { myMemByConv[m.conversationId] = m; });
-    const out = [];
+    const out = []; let taskChannel = null;
     for (const c of convs) {
-      const otherId = otherByConv[c.id];
-      const other = userById[otherId];
-      // Unread = messages after my lastReadAt, not sent by me.
       const lastRead = myMemByConv[c.id] && myMemByConv[c.id].lastReadAt;
       const unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(lastRead ? { createdAt: { [Op.gt]: lastRead } } : {}) } });
-      out.push({
-        id: c.id, kind: c.kind, other: pubUser(other),
-        lastMessageText: c.lastMessageText, lastMessageAt: c.lastMessageAt, lastMessageBy: c.lastMessageBy,
-        unread,
-      });
+      const entry = { id: c.id, kind: c.kind, other: pubUser(userById[otherByConv[c.id]]), lastMessageText: c.lastMessageText, lastMessageAt: c.lastMessageAt, lastMessageBy: c.lastMessageBy, unread };
+      if (c.kind === 'task') taskChannel = entry; else out.push(entry);
     }
-    res.json({ conversations: out });
+    res.json({ conversations: out, taskChannel });
   } catch (e) { next(e); }
 });
 
@@ -167,12 +175,29 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
       const low = body.toLowerCase();
       for (const u of us) { if (u.id !== me && low.includes('@' + u.name.toLowerCase())) mentions.push(u.id); }
     }
+    // Reply-to (quoted message). Capture a snippet for display.
+    let reply = {};
+    if (b.replyToId) {
+      const rt = await ChatMessage.findByPk(Number(b.replyToId));
+      if (rt && rt.conversationId === convId) reply = { replyToId: rt.id, replyToName: rt.senderName || 'Tasks', replyToBody: String(rt.body || rt.fileName || '').slice(0, 200) };
+    }
     const msg = await ChatMessage.create({
       conversationId: convId, senderId: me, senderName: meName(req), body,
       fileUrl: hasFile ? String(b.fileUrl).slice(0, 600) : '', fileName: hasFile ? String(b.fileName).slice(0, 200) : '',
       fileType: hasFile ? String(b.fileType || '').slice(0, 60) : '', fileSize: hasFile ? Math.max(0, Number(b.fileSize) || 0) : 0,
-      isImage: hasFile ? !!b.isImage : false, mentions,
+      isImage: hasFile ? !!b.isImage : false, mentions, ...reply,
     });
+    // If this is a reply to a TASK notification, also save the text as a note on
+    // that task (keeps the task's discussion in sync with chat).
+    if (reply.replyToId && body) {
+      try {
+        const parent = await ChatMessage.findByPk(reply.replyToId);
+        if (parent && parent.kindTag && parent.taskId) {
+          const { TaskComment } = require('../models');
+          if (TaskComment) await TaskComment.create({ taskId: parent.taskId, authorId: me, authorName: meName(req), body });
+        }
+      } catch {}
+    }
     // Notify @mentioned people via the HRMS notification bell.
     if (mentions.length) { try { const { HrNotification } = require('../models'); for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: `💬 ${meName(req)} mentioned you in chat` }); } catch {} }
     // Update the conversation's last-message summary + un-hide for everyone.
@@ -454,6 +479,87 @@ router.get('/conversations/:id/members', requireHrAccess, async (req, res, next)
     const users = await HrUser.findAll({ where: { id: { [Op.in]: rows.map((m) => m.userId) } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
     res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id) })) });
   } catch (e) { next(e); }
+});
+
+// ---- Forward a message to a DM or a channel ---------------------------------
+router.post('/messages/:id/forward', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const src = await ChatMessage.findByPk(Number(req.params.id));
+    if (!src) return res.status(404).json({ error: 'Message not found.' });
+    const srcMem = await ChatMembership.findOne({ where: { conversationId: src.conversationId, userId: me } });
+    if (!srcMem) return res.status(403).json({ error: 'Not your message.' });
+    const b = req.body || {};
+    // Target: a user id (DM) or a conversation id (channel).
+    let targetConvId = null;
+    if (b.toUserId) {
+      const other = Number(b.toUserId);
+      const dmKey = dmKeyFor(me, other);
+      let conv = await ChatConversation.findOne({ where: { dmKey } });
+      if (!conv) { conv = await ChatConversation.create({ kind: 'dm', dmKey }); await ChatMembership.bulkCreate([{ conversationId: conv.id, userId: me }, { conversationId: conv.id, userId: other }]); }
+      else await ChatMembership.update({ hidden: false }, { where: { conversationId: conv.id, userId: me } });
+      targetConvId = conv.id;
+    } else if (b.toConversationId) {
+      const t = Number(b.toConversationId);
+      const tm = await ChatMembership.findOne({ where: { conversationId: t, userId: me } });
+      if (!tm) return res.status(403).json({ error: 'You’re not in that conversation.' });
+      targetConvId = t;
+    } else return res.status(400).json({ error: 'Pick where to forward.' });
+    const msg = await ChatMessage.create({
+      conversationId: targetConvId, senderId: me, senderName: meName(req),
+      body: src.body, fileUrl: src.fileUrl, fileName: src.fileName, fileType: src.fileType, fileSize: src.fileSize, isImage: src.isImage,
+      forwardedFrom: src.senderName || 'Tasks',
+    });
+    const summary = src.body ? src.body.slice(0, 200) : (src.fileName ? `📎 ${src.fileName}` : '');
+    await ChatConversation.update({ lastMessageAt: msg.createdAt, lastMessageText: summary, lastMessageBy: me }, { where: { id: targetConvId } });
+    await ChatMembership.update({ hidden: false }, { where: { conversationId: targetConvId } });
+    res.json({ ok: true, conversationId: targetConvId });
+  } catch (e) { next(e); }
+});
+
+// ---- AI reply: suggestions + tone rewrite, acting as the user's designation --
+async function anthropicKey() {
+  try { const { Settings } = require('../models'); const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; }
+}
+function myDesignation(req) { return (req.hrUser && req.hrUser.designation) || (req.adminUser && req.adminUser.designation) || 'professional'; }
+
+// Suggest 3 short replies for the current conversation, in the user's voice.
+router.post('/ai/suggest-reply', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!key) return res.status(400).json({ error: 'AI is not configured.' });
+    const { callClaude } = require('../services/aiVisibility');
+    const recent = Array.isArray((req.body || {}).recent) ? req.body.recent.slice(-8) : [];
+    const convo = recent.map((m) => `${m.me ? 'Me' : (m.name || 'Them')}: ${String(m.body || '').slice(0, 300)}`).join('\n');
+    const designation = myDesignation(req);
+    const out = await callClaude(key, {
+      system: `You draft short chat replies for a workplace messenger. Reply as an experienced ${designation} would — natural, helpful, concise. Output STRICT JSON: an array of exactly 3 short reply strings (each may start with a relevant emoji). No prose, no markdown.`,
+      maxTokens: 300,
+      messages: [{ role: 'user', content: `Conversation so far:\n${convo || '(no messages yet)'}\n\nGive 3 good reply options I could send next.` }],
+    });
+    let arr = []; try { const m = String(out).match(/\[[\s\S]*\]/); arr = JSON.parse(m ? m[0] : out); } catch { arr = []; }
+    res.json({ suggestions: (Array.isArray(arr) ? arr : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, 3).map((x) => x.trim().slice(0, 300)) });
+  } catch (e) { res.status(502).json({ error: 'AI request failed.' }); }
+});
+
+// Retone a typed message (professional / shorter / friendly), in-role.
+router.post('/ai/retone', requireHrAccess, async (req, res, next) => {
+  try {
+    const key = await anthropicKey();
+    if (!key) return res.status(400).json({ error: 'AI is not configured.' });
+    const { callClaude } = require('../services/aiVisibility');
+    const b = req.body || {};
+    const text = String(b.text || '').slice(0, 1000).trim();
+    if (!text) return res.status(400).json({ error: 'Type a message first.' });
+    const mode = ['professional', 'shorter', 'friendly'].includes(b.mode) ? b.mode : 'professional';
+    const INS = { professional: 'Rewrite in a polished, professional tone.', shorter: 'Make it shorter and crisper.', friendly: 'Rewrite in a warm, friendly tone.' };
+    const out = await callClaude(key, {
+      system: `You rewrite short workplace chat messages as an experienced ${myDesignation(req)} would. Return ONLY the rewritten message — no quotes, no preamble.`,
+      maxTokens: 200,
+      messages: [{ role: 'user', content: `Message: "${text}"\n\n${INS[mode]} Fix grammar. Keep it brief.` }],
+    });
+    res.json({ text: String(out || '').trim() });
+  } catch (e) { res.status(502).json({ error: 'AI request failed.' }); }
 });
 
 module.exports = router;

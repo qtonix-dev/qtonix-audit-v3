@@ -2312,6 +2312,13 @@ const ChatMessage = sequelize.define('ChatMessage', {
   fileType: { type: DataTypes.STRING(60), defaultValue: '' },      // mime or ext
   fileSize: { type: DataTypes.INTEGER, defaultValue: 0 },          // bytes
   isImage: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Phase-4 chat<->task + reply/forward.
+  kindTag: { type: DataTypes.STRING(16), defaultValue: '' },       // '' | task_assigned | task_status
+  taskId: { type: DataTypes.INTEGER, allowNull: true },            // linked task (for the View-task button + note-back)
+  replyToId: { type: DataTypes.INTEGER, allowNull: true },         // quoted message id
+  replyToName: { type: DataTypes.STRING(120), defaultValue: '' },
+  replyToBody: { type: DataTypes.STRING(200), defaultValue: '' },
+  forwardedFrom: { type: DataTypes.STRING(120), defaultValue: '' },// original sender name when forwarded
   // Phase 3: reactions {emoji: [userId,...]} and @mentioned user ids.
   reactions: { type: DataTypes.JSON, defaultValue: {} },
   mentions: { type: DataTypes.JSON, defaultValue: [] },

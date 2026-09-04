@@ -1494,6 +1494,7 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
 function WorkspaceView({ user, isAdmin }) {
   const [pane, setPane] = useState('tasks'); // tasks | chat
   const [chatUnread, setChatUnread] = useState(0);
+  const [openTaskId, setOpenTaskId] = useState(null);
   useEffect(() => {
     let alive = true;
     const tick = () => hrApi('/chat/poll').then((r) => { if (alive) setChatUnread(r.totalUnread || 0); }).catch(() => {});
@@ -1516,16 +1517,22 @@ function WorkspaceView({ user, isAdmin }) {
         <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
       </div>
       <div className="flex-1 min-h-0">
-        {pane === 'chat' ? <ChatView user={user} onUnread={setChatUnread} /> : <HrTasksView user={user} isAdmin={isAdmin} embedded />}
+        {pane === 'chat' ? <ChatView user={user} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /> : <HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} />}
       </div>
     </div>
   );
 }
 
 // ===== CHAT (Phase 1: direct messages + files) =====
-function ChatView({ user, onUnread }) {
+function ChatView({ user, onUnread, onOpenTask }) {
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [taskChannel, setTaskChannel] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);      // message being replied to
+  const [forwarding, setForwarding] = useState(null); // message being forwarded
+  const [aiSuggests, setAiSuggests] = useState([]);
+  const [aiBusy, setAiBusy] = useState('');
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [teams, setTeams] = useState([]);
   const [canCreateTeam, setCanCreateTeam] = useState(false);
   const [active, setActive] = useState(null);   // { id, other } for DM OR { id, channel, team } for channel
@@ -1546,11 +1553,12 @@ function ChatView({ user, onUnread }) {
   const [mention, setMention] = useState(null); // {q} while typing @
   const typingSentRef = useRef(0);
   const fileRef = useRef(null);
+  const taRef = useRef(null);
   const scrollRef = useRef(null);
   const lastMsgId = useRef(0);
   const me = user;
 
-  const loadConversations = () => hrApi('/chat/conversations').then((r) => setConversations(r.conversations || [])).catch(() => {});
+  const loadConversations = () => hrApi('/chat/conversations').then((r) => { setConversations(r.conversations || []); setTaskChannel(r.taskChannel || null); }).catch(() => {});
   const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); setCanManage(!!r.canManage); }).catch(() => {});
   useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); loadTeams(); }, []);
 
@@ -1633,13 +1641,40 @@ function ChatView({ user, onUnread }) {
   const send = async () => {
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
-    setText(''); setSending(true);
+    const rid = replyTo ? replyTo.id : undefined;
+    setText(''); setReplyTo(null); setAiSuggests([]); setSending(true);
     try {
-      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body, replyToId: rid }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { alert(e.message); setText(body); }
     setSending(false);
+  };
+  // Wrap the textarea selection with a marker (bold **, italic _).
+  const wrapSel = (mark) => {
+    const ta = taRef.current; if (!ta) { setText((t) => t + mark + mark); return; }
+    const s = ta.selectionStart, e = ta.selectionEnd; const val = text;
+    const sel = val.slice(s, e) || 'text';
+    const next = val.slice(0, s) + mark + sel + mark + val.slice(e);
+    setText(next); setTimeout(() => { ta.focus(); ta.setSelectionRange(s + mark.length, s + mark.length + sel.length); }, 0);
+  };
+  // Render **bold** / _italic_ + escape HTML.
+  const fmtBody = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>');
+  // AI: suggest 3 replies from recent messages.
+  const aiSuggestReply = async () => {
+    setAiBusy('sug');
+    try {
+      const recent = messages.slice(-8).map((m) => ({ me: m.senderId === me.id, name: m.senderName, body: m.body }));
+      const r = await hrApi('/chat/ai/suggest-reply', { method: 'POST', body: JSON.stringify({ recent }) });
+      setAiSuggests(r.suggestions || []);
+    } catch (e) { alert(e.message || 'AI failed'); }
+    setAiBusy('');
+  };
+  // AI: retone the typed message.
+  const aiRetone = async (mode) => {
+    if (!text.trim()) return; setAiBusy(mode);
+    try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setText(r.text); } catch (e) { alert(e.message || 'AI failed'); }
+    setAiBusy('');
   };
   const sendFile = async (file) => {
     if (!file || !active) return;
@@ -1719,6 +1754,14 @@ function ChatView({ user, onUnread }) {
             ))}
           </div>
         ))}
+        {/* Personal #task channel (notepad + task alerts) */}
+        {taskChannel && (
+          <button onClick={() => openChannel('task', { id: taskChannel.id, title: 'task' }, { name: 'Your tasks & notes', color: '#0A1F44', icon: '📋', isTask: true })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 my-0.5 ${active && active.id === taskChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === taskChannel.id ? { background: '#fff3ec' } : {}}>
+            <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base shrink-0" style={{ background: 'linear-gradient(135deg,#0A1F44,#1e3a8a)' }}>📋</span>
+            <div className="min-w-0 flex-1"><div className="text-[14px] font-bold">#task <span className="text-[10px] text-slate-400 font-normal">notes & alerts</span></div><div className="text-[12px] text-slate-400 truncate">{taskChannel.lastMessageText || 'Your private space'}</div></div>
+            {taskChannel.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{taskChannel.unread}</span>}
+          </button>
+        )}
         <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
         <div className="flex-1 overflow-auto pb-2">
           {conversations.length === 0 ? (
@@ -1748,7 +1791,7 @@ function ChatView({ user, onUnread }) {
           <button onClick={() => setShowNew(true)} className="mt-3 rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Message a colleague</button>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col min-w-0" style={{ background: '#fdfdfe' }}>
+        <div className="flex-1 flex flex-col min-w-0 min-h-0" style={{ background: '#fdfdfe' }}>
           <div className="border-b border-slate-100 px-6 py-3 flex items-center gap-3 bg-white">
             {active.channel ? (
               <>
@@ -1766,12 +1809,25 @@ function ChatView({ user, onUnread }) {
             {messages.map((m, i) => {
               const mine = m.senderId === me.id;
               const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
+              // Task-notification card (assignment / status change).
+              if (m.kindTag === 'task_assigned' || m.kindTag === 'task_status') {
+                return (
+                  <div key={m.id} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                    <span className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[15px] shrink-0" style={{ background: '#FF6A00' }}>{m.kindTag === 'task_assigned' ? '📋' : '🔄'}</span>
+                    <div className="flex-1 min-w-0"><div className="text-[13px] font-bold" style={{ color: '#9a3412' }}>{m.body}</div><div className="text-[11px]" style={{ color: '#c2732c' }}>{fmtTime(m.createdAt)}</div></div>
+                    {m.taskId && onOpenTask && <button onClick={() => onOpenTask(m.taskId)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: '#FF6A00' }}>View task</button>}
+                    <button onClick={() => setReplyTo(m)} title="Reply (saves as task note)" className="text-[12px] font-bold text-orange-700 shrink-0">↩</button>
+                  </div>
+                );
+              }
               return (
                 <div key={m.id} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
                   {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
                   <div className={`max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
                     {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
-                    {m.body && <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }}>{m.body}</div>}
+                    {m.forwardedFrom && <div className={`text-[10px] text-slate-400 italic mb-0.5 ${mine ? 'text-right' : ''}`}>↪ Forwarded from {m.forwardedFrom}</div>}
+                    {m.replyToId && <div className={`text-[11px] rounded-lg px-2.5 py-1 mb-0.5 border-l-2 ${mine ? 'self-end' : ''}`} style={{ background: '#f8fafc', borderColor: '#FF6A00', color: '#64748b' }}><b>{m.replyToName}</b>: {m.replyToBody}</div>}
+                    {m.body && <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }} dangerouslySetInnerHTML={{ __html: fmtBody(m.body) }} />}
                     {m.fileUrl && (m.isImage ? (
                       <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 block"><img src={m.fileUrl} alt={m.fileName} className="rounded-xl max-w-[240px] max-h-[240px] object-cover border border-slate-200" /></a>
                     ) : (
@@ -1781,7 +1837,6 @@ function ChatView({ user, onUnread }) {
                         <span className="text-orange-500">⬇</span>
                       </a>
                     ))}
-                    {/* Reactions row */}
                     {m.reactions && Object.keys(m.reactions).length > 0 && (
                       <div className={`flex flex-wrap gap-1 mt-1 ${mine ? 'justify-end' : ''}`}>
                         {Object.entries(m.reactions).map(([emoji, users]) => (
@@ -1789,11 +1844,13 @@ function ChatView({ user, onUnread }) {
                         ))}
                       </div>
                     )}
-                    {/* Hover: add-reaction trigger */}
-                    <div className={`relative ${mine ? 'self-end' : ''}`}>
-                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} className="opacity-0 group-hover:opacity-100 transition text-[13px] text-slate-300 hover:text-slate-500 mt-0.5">😊 react</button>
+                    {/* Hover actions: react / reply / forward */}
+                    <div className={`relative flex gap-2 ${mine ? 'self-end flex-row-reverse' : ''}`}>
+                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">😊</button>
+                      <button onClick={() => setReplyTo(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↩ Reply</button>
+                      <button onClick={() => setForwarding(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↪ Forward</button>
                       {reactPickerFor === m.id && (
-                        <div className="absolute z-20 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
+                        <div className="absolute z-20 top-6 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
                           {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
                         </div>
                       )}
@@ -1802,10 +1859,22 @@ function ChatView({ user, onUnread }) {
                 </div>
               );
             })}
-            {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">Say hello 👋</div>}
+            {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">{active.team && active.team.isTask ? '🔒 Your private space — task alerts land here, and you can jot notes too.' : 'Say hello 👋'}</div>}
           </div>
+          {/* Composer: reply chip, AI suggestions ABOVE, box, tone BELOW */}
           <div className="px-5 py-4">
             {typing.length > 0 && <div className="text-[12px] text-slate-400 italic mb-1.5 ml-1">{typing.join(', ')} {typing.length === 1 ? 'is' : 'are'} typing…</div>}
+            {replyTo && (
+              <div className="flex items-center gap-2 mb-2 rounded-lg px-3 py-1.5 text-[12px]" style={{ background: '#f8fafc', borderLeft: '3px solid #FF6A00' }}>
+                <span className="text-slate-500">Replying to <b>{replyTo.senderName}</b>: {String(replyTo.body || '').slice(0, 60)}{(replyTo.kindTag) && <span className="text-orange-600"> · saves as task note</span>}</span>
+                <button onClick={() => setReplyTo(null)} className="ml-auto text-slate-400">×</button>
+              </div>
+            )}
+            {aiSuggests.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {aiSuggests.map((s, i) => <button key={i} onClick={() => { setText(s); setAiSuggests([]); }} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800" style={{ background: '#faf5ff', borderColor: '#ede9fe' }}>{s}</button>)}
+              </div>
+            )}
             <div className="relative">
               {/* @mention autocomplete */}
               {mention && members.length > 0 && (() => {
@@ -1822,16 +1891,38 @@ function ChatView({ user, onUnread }) {
                   </div>
                 ) : null;
               })()}
-              <div className="flex items-end gap-2 border-[1.5px] border-slate-200 rounded-2xl px-3 py-2 focus-within:border-orange-400">
-                <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach file" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0">{uploading ? '…' : '📎'}</button>
-                <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
-                <textarea value={text} onChange={(e) => { const v = e.target.value; setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } }} rows={1} placeholder={active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`} className="flex-1 resize-none text-[14px] py-1.5 focus:outline-none max-h-32" />
-                <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+              {emojiOpen && (
+                <div className="absolute bottom-full left-0 mb-2 bg-white border border-slate-200 rounded-xl shadow-lg p-2 grid grid-cols-8 gap-1 z-20">
+                  {['😀','😂','😊','😍','🤔','👍','🙏','🎉','🔥','❤️','👀','✅','🚀','💯','🙌','😅','👏','💪','🎯','⭐','😎','🤝','📌','⏰'].map((e) => <button key={e} onClick={() => { setText((t) => t + e); setEmojiOpen(false); }} className="text-xl p-1 rounded hover:bg-slate-100">{e}</button>)}
+                </div>
+              )}
+              <div className="border-[1.5px] border-slate-200 rounded-2xl focus-within:border-orange-400 overflow-hidden">
+                <div className="flex items-center gap-1 px-2.5 pt-2">
+                  <button onMouseDown={(e) => { e.preventDefault(); wrapSel('**'); }} title="Bold" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 font-bold text-[13px]">B</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); wrapSel('_'); }} title="Italic" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 italic text-[13px]">I</button>
+                  <button onClick={() => setEmojiOpen((v) => !v)} title="Emoji" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">🙂</button>
+                  <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">{uploading ? '…' : '📎'}</button>
+                  <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
+                </div>
+                <div className="flex items-end gap-2 px-3 py-2">
+                  <textarea ref={taRef} value={text} onChange={(e) => { const v = e.target.value; setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } }} rows={1} placeholder={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)} className="flex-1 resize-none text-[14px] py-1 focus:outline-none max-h-32" />
+                  <button onClick={aiSuggestReply} disabled={aiBusy === 'sug'} title="AI reply" className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>{aiBusy === 'sug' ? '…' : '✨'}</button>
+                  <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+                </div>
               </div>
             </div>
+            {text.trim() && (
+              <div className="flex flex-wrap gap-1.5 mt-2 items-center">
+                <span className="text-[11px] text-slate-400 font-bold">Make it</span>
+                {[['professional', '💼 Professional'], ['shorter', '✂️ Shorter'], ['friendly', '😊 Friendly']].map(([mo, label]) => (
+                  <button key={mo} onClick={() => aiRetone(mo)} disabled={!!aiBusy} className="rounded-full border px-3 py-1 text-[11px] font-bold text-violet-700 disabled:opacity-50" style={{ background: '#fff', borderColor: '#ede9fe' }}>{aiBusy === mo ? '…' : label}</button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
+      {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
       {createModal && <ChatGroupModal mode={createModal} directory={directory} onClose={() => setCreateModal(null)} onDone={afterCreate} />}
       {manageFor && <ChatManageModal team={manageFor} directory={directory} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} />}
     </div>
@@ -1953,7 +2044,37 @@ function ChatManageModal({ team, directory, onClose, onDone }) {
   );
 }
 
-function HrTasksView({ user, isAdmin }) {
+// Forward a message to a person (DM) or a channel.
+function ChatForwardModal({ message, directory, conversations, onClose, onDone }) {
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fwd = async (target) => {
+    setBusy(true);
+    try { await hrApi(`/chat/messages/${message.id}/forward`, { method: 'POST', body: JSON.stringify(target) }); alert('Forwarded ✓'); onDone(); } catch (e) { alert(e.message); setBusy(false); }
+  };
+  const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">Forward to…</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        <div className="p-4">
+          <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-[12px] text-slate-500 mb-3 truncate">{message.body || (message.fileName ? `📎 ${message.fileName}` : '')}</div>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search people…" className="w-full rounded-xl border-[1.5px] border-slate-200 px-3 py-2 text-[13px] mb-2 focus:outline-none" />
+          <div className="max-h-64 overflow-auto border border-slate-100 rounded-xl">
+            {people.slice(0, 40).map((u) => (
+              <button key={u.id} onClick={() => fwd({ toUserId: u.id })} disabled={busy} className="w-full flex items-center gap-3 px-3 py-2 hover:bg-orange-50 text-left border-b border-slate-50 last:border-0">
+                <Avatar name={u.name} src={u.avatar} size={28} />
+                <span className="text-[13px] font-bold">{u.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [board, setBoard] = useState(null);
   const [people, setPeople] = useState([]);         // for the top switcher (admin/HR)
   const [myBoardId, setMyBoardId] = useState(null); // the viewer's own board id
@@ -1961,6 +2082,8 @@ function HrTasksView({ user, isAdmin }) {
   const [view, setView] = useState('list'); // list | board
   const [err, setErr] = useState('');
   const [openTask, setOpenTask] = useState(null);
+  // Deep-link from chat: open a specific task when asked.
+  useEffect(() => { if (openTaskId) { setOpenTask({ _id: openTaskId, id: openTaskId }); onTaskOpened && onTaskOpened(); } /* eslint-disable-next-line */ }, [openTaskId]);
   const [addingIn, setAddingIn] = useState(null);   // bucket key being added to
   const [newTitle, setNewTitle] = useState('');
   const [dragId, setDragId] = useState(null);

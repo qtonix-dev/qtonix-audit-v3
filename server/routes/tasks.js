@@ -124,9 +124,11 @@ router.delete('/sections/:id', requireHrAccess, async (req, res, next) => {
 });
 
 // ---- Tasks + subtasks -----------------------------------------------------
-async function notifyAssignee(assigneeId, assignerName, title, ownerId) {
+async function notifyAssignee(assigneeId, assignerName, title, ownerId, taskId) {
   if (!assigneeId) return;
   try { await HrNotification.create({ userId: assigneeId, actorKind: 'hr', type: 'task_assigned', text: `${assignerName} assigned you a task: “${String(title).slice(0, 80)}”`, read: false }); } catch {}
+  // Drop a card into the assignee's private #task chat.
+  try { await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag: 'task_assigned', taskId, body: `${assignerName} assigned you a task: "${String(title).slice(0, 120)}"` }); } catch {}
 }
 
 router.post('/', requireHrAccess, async (req, res, next) => {
@@ -175,7 +177,7 @@ router.post('/', requireHrAccess, async (req, res, next) => {
       assignedByName: isAssignedToOther ? req.hrActor.name : '',
     });
     await logActivity(row.id, req, 'created', 'created this task');
-    if (isAssignedToOther) await notifyAssignee(assigneeId, req.hrActor.name, title, boardOwnerId);
+    if (isAssignedToOther) await notifyAssignee(assigneeId, req.hrActor.name, title, boardOwnerId, row.id);
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -198,6 +200,9 @@ router.patch('/:id', requireHrAccess, async (req, res, next) => {
       row.stage = b.stage;
       row.completedAt = b.stage === 'completed' ? new Date() : null;
       await logActivity(row.id, req, b.stage === 'completed' ? 'completed' : 'stage', b.stage === 'completed' ? 'completed this task' : `moved to ${b.stage.replace('_', ' ')}`);
+      // Notify the assignee (if it's someone other than the person changing it)
+      // in their private #task chat.
+      try { if (row.assigneeId && (!actor || row.assigneeId !== actor.id)) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${b.stage.replace('_', ' ')}` }); } catch {}
     }
     if (b.assigneeId !== undefined) {
       const newId = b.assigneeId ? Number(b.assigneeId) : null;
@@ -211,7 +216,7 @@ router.patch('/:id', requireHrAccess, async (req, res, next) => {
           row.assignedById = actor && newId !== actor.id ? req.hrActor.id : null;
           row.assignedByName = actor && newId !== actor.id ? req.hrActor.name : '';
           await logActivity(row.id, req, 'assigned', 'reassigned this task');
-          if (actor && newId !== actor.id) await notifyAssignee(newId, req.hrActor.name, row.title, row.boardOwnerId);
+          if (actor && newId !== actor.id) await notifyAssignee(newId, req.hrActor.name, row.title, row.boardOwnerId, row.id);
         }
       } else { row.assigneeId = null; }
     }
