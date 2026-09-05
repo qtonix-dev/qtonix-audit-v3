@@ -203,9 +203,11 @@ router.post('/auth/login', async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
 
-    // 1) HR staff.
+    // 1) HR staff. A `chatOnly` HrUser is NOT a login account — it's an
+    //    auto-provisioned chat participant for an admin. Skip it so the admin
+    //    authenticates against their real CRM User record below.
     const hr = await HrUser.findOne({ where: { email: String(email).toLowerCase().trim() } });
-    if (hr) {
+    if (hr && !hr.chatOnly) {
       if (!hr.active) return res.status(403).json({ error: 'This account is no longer active.' });
       const ok = await bcrypt.compare(password, hr.passwordHash);
       if (!ok) return res.status(401).json({ error: 'Incorrect email or password.' });
