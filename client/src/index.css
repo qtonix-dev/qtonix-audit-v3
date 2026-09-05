@@ -58,3 +58,8 @@ a.chClickToSms { display: none !important; }
 .prose ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25em 0; }
 .prose code { background: #f1f5f9; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
 .prose a { color: #2563eb; text-decoration: underline; }
+
+/* Chat rich composer: placeholder for empty contentEditable */
+.empty-ph:empty:before { content: attr(data-ph); color: #94a3b8; pointer-events: none; }
+.empty-ph b, .empty-ph strong { font-weight: 800; }
+.empty-ph i, .empty-ph em { font-style: italic; }

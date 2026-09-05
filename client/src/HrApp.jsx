@@ -1557,7 +1557,7 @@ function ChatView({ user, onUnread, onOpenTask }) {
   const [mention, setMention] = useState(null); // {q} while typing @
   const typingSentRef = useRef(0);
   const fileRef = useRef(null);
-  const taRef = useRef(null);
+  const edRef = useRef(null);
   const scrollRef = useRef(null);
   const lastMsgId = useRef(0);
   const me = user;
@@ -1646,23 +1646,43 @@ function ChatView({ user, onUnread, onOpenTask }) {
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
     const rid = replyTo ? replyTo.id : undefined;
-    setText(''); setReplyTo(null); setAiSuggests([]); setSending(true);
+    clearEditor(); setReplyTo(null); setAiSuggests([]); setSending(true);
     try {
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body, replyToId: rid }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
-    } catch (e) { alert(e.message); setText(body); }
+    } catch (e) { alert(e.message); setEditor(body); }
     setSending(false);
   };
-  // Wrap the textarea selection with a marker (bold **, italic _).
-  const wrapSel = (mark) => {
-    const ta = taRef.current; if (!ta) { setText((t) => t + mark + mark); return; }
-    const s = ta.selectionStart, e = ta.selectionEnd; const val = text;
-    const sel = val.slice(s, e) || 'text';
-    const next = val.slice(0, s) + mark + sel + mark + val.slice(e);
-    setText(next); setTimeout(() => { ta.focus(); ta.setSelectionRange(s + mark.length, s + mark.length + sel.length); }, 0);
+  // Convert the contentEditable HTML into our storage markers (**bold**, _italic_).
+  const htmlToMarkers = (html) => {
+    let s = String(html || '');
+    // Normalize <b>/<strong> → **, <i>/<em> → _
+    s = s.replace(/<(b|strong)(\s[^>]*)?>/gi, '**').replace(/<\/(b|strong)>/gi, '**');
+    s = s.replace(/<(i|em)(\s[^>]*)?>/gi, '_').replace(/<\/(i|em)>/gi, '_');
+    s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '');
+    s = s.replace(/<[^>]+>/g, ''); // strip any other tags
+    const ta = document.createElement('textarea'); ta.innerHTML = s; s = ta.value; // decode entities
+    return s.replace(/\n{3,}/g, '\n\n').trim();
   };
-  // Render **bold** / _italic_ + escape HTML.
+  // After execCommand, re-read the editor into state.
+  const syncEditor = () => { if (edRef.current) { const v = htmlToMarkers(edRef.current.innerHTML); setText(v); } };
+  // Set the editor's content from markers (bold/italic) — used for AI results etc.
+  const setEditor = (markerText) => {
+    const html = String(markerText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>').replace(/\n/g, '<br>');
+    if (edRef.current) edRef.current.innerHTML = html;
+    setText(markerText || '');
+  };
+  const clearEditor = () => { if (edRef.current) edRef.current.innerHTML = ''; setText(''); };
+  const insertAtCursor = (frag) => {
+    const el = edRef.current; if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && el.contains(sel.anchorNode)) { const r = sel.getRangeAt(0); r.deleteContents(); r.insertNode(document.createTextNode(frag)); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); }
+    else { el.appendChild(document.createTextNode(frag)); }
+    setText(htmlToMarkers(el.innerHTML));
+  };
+  // Render **bold** / _italic_ in sent messages.
   const fmtBody = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>');
   // AI: suggest 3 replies from recent messages.
   const aiSuggestReply = async () => {
@@ -1677,7 +1697,7 @@ function ChatView({ user, onUnread, onOpenTask }) {
   // AI: retone the typed message.
   const aiRetone = async (mode) => {
     if (!text.trim()) return; setAiBusy(mode);
-    try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setText(r.text); } catch (e) { alert(e.message || 'AI failed'); }
+    try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setEditor(r.text); } catch (e) { alert(e.message || 'AI failed'); }
     setAiBusy('');
   };
   const sendFile = async (file) => {
@@ -1876,7 +1896,7 @@ function ChatView({ user, onUnread, onOpenTask }) {
             )}
             {aiSuggests.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
-                {aiSuggests.map((s, i) => <button key={i} onClick={() => { setText(s); setAiSuggests([]); }} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800" style={{ background: '#faf5ff', borderColor: '#ede9fe' }}>{s}</button>)}
+                {aiSuggests.map((s, i) => <button key={i} onClick={() => { setEditor(s); setAiSuggests([]); }} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800" style={{ background: '#faf5ff', borderColor: '#ede9fe' }}>{s}</button>)}
               </div>
             )}
             <div className="relative">
@@ -1886,7 +1906,7 @@ function ChatView({ user, onUnread, onOpenTask }) {
                 return cands.length ? (
                   <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-20">
                     {cands.map((u) => (
-                      <button key={u.id} onClick={() => { const base = text.replace(/@(\w*)$/, ''); setText(`${base}@${u.name} `); setMention(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left">
+                      <button key={u.id} onClick={() => { const base = text.replace(/@(\w*)$/, ''); setEditor(`${base}@${u.name} `); setMention(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left">
                         <Avatar name={u.name} src={u.avatar} size={26} />
                         <span className="text-[13px] font-bold">{u.name}</span>
                         {u.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500" />}
@@ -1897,23 +1917,29 @@ function ChatView({ user, onUnread, onOpenTask }) {
               })()}
               {emojiOpen && (
                 <div className="absolute bottom-full left-0 mb-2 bg-white border border-slate-200 rounded-xl shadow-lg p-2 grid grid-cols-8 gap-1 z-20">
-                  {['😀','😂','😊','😍','🤔','👍','🙏','🎉','🔥','❤️','👀','✅','🚀','💯','🙌','😅','👏','💪','🎯','⭐','😎','🤝','📌','⏰'].map((e) => <button key={e} onClick={() => { setText((t) => t + e); setEmojiOpen(false); }} className="text-xl p-1 rounded hover:bg-slate-100">{e}</button>)}
+                  {['😀','😂','😊','😍','🤔','👍','🙏','🎉','🔥','❤️','👀','✅','🚀','💯','🙌','😅','👏','💪','🎯','⭐','😎','🤝','📌','⏰'].map((e) => <button key={e} onClick={() => { insertAtCursor(e); setEmojiOpen(false); }} className="text-xl p-1 rounded hover:bg-slate-100">{e}</button>)}
                 </div>
               )}
               <div className="border-[1.5px] border-slate-200 rounded-2xl focus-within:border-orange-400 overflow-hidden">
-                {/^[\s\S]*(\*\*[^*]+\*\*|_[^_]+_)/.test(text) && (
-                  <div className="px-3.5 pt-2 pb-1 text-[13px] text-slate-500 border-b border-slate-50"><span className="text-[10px] font-bold text-slate-300 uppercase mr-2">Preview</span><span dangerouslySetInnerHTML={{ __html: fmtBody(text) }} /></div>
-                )}
                 <div className="flex items-center gap-1 px-2.5 pt-2">
-                  <button onMouseDown={(e) => { e.preventDefault(); wrapSel('**'); }} title="Bold" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 font-bold text-[13px]">B</button>
-                  <button onMouseDown={(e) => { e.preventDefault(); wrapSel('_'); }} title="Italic" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 italic text-[13px]">I</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); document.execCommand('bold'); syncEditor(); }} title="Bold (Ctrl/Cmd+B)" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 font-bold text-[13px]">B</button>
+                  <button onMouseDown={(e) => { e.preventDefault(); document.execCommand('italic'); syncEditor(); }} title="Italic (Ctrl/Cmd+I)" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 italic text-[13px]">I</button>
                   <button onClick={() => setEmojiOpen((v) => !v)} title="Emoji" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">🙂</button>
                   <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">{uploading ? '…' : '📎'}</button>
                   <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
-                  <span className="ml-auto text-[10px] text-slate-300">**bold** · _italic_</span>
                 </div>
                 <div className="flex items-end gap-2 px-3 py-2">
-                  <textarea ref={taRef} value={text} onChange={(e) => { const v = e.target.value; setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } }} rows={1} placeholder={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)} className="flex-1 resize-none text-[14px] py-1 focus:outline-none max-h-32" />
+                  <div
+                    ref={edRef}
+                    contentEditable
+                    role="textbox"
+                    data-ph={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)}
+                    onInput={(e) => { const v = htmlToMarkers(e.currentTarget.innerHTML); setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'i')) { setTimeout(syncEditor, 0); } }}
+                    className="flex-1 text-[14px] py-1 focus:outline-none max-h-32 overflow-auto empty-ph"
+                    suppressContentEditableWarning
+                    style={{ minHeight: '1.6em', wordBreak: 'break-word' }}
+                  />
                   <button onClick={aiSuggestReply} disabled={aiBusy === 'sug'} title="AI reply" className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>{aiBusy === 'sug' ? '…' : '✨'}</button>
                   <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
                 </div>
