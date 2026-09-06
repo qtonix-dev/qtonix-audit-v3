@@ -4,7 +4,7 @@
  * HR profiles (birthdays/anniversaries/joinees/photos), rewards (recognition,
  * top performers), and sales (race, counter, goal). Read-only, cache-friendly.
  */
-const { Op, HrUser, RewardLedger, RewardWallet, Lead, User, Settings, HrAttendance } = require('../models');
+const { Op, HrUser, RewardLedger, RewardWallet, Lead, User, Settings, HrAttendance, Innovation, HelpingRecommendation, TvPoll, TvCheer } = require('../models');
 
 const IST_OFFSET = 330 * 60000;
 function istNow() { return new Date(Date.now() + IST_OFFSET); }
@@ -249,12 +249,92 @@ function monthEnd() {
   return { daysLeft: daysInMonth - dayOfMonth, dayOfMonth, daysInMonth };
 }
 
+// ===== PHASE 3: interactive + smart data =====
+async function deptLeaderboard(n = 4) {
+  const now = istNow();
+  const startMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) - IST_OFFSET);
+  const rows = await RewardLedger.findAll({ where: { points: { [Op.gt]: 0 }, createdAt: { [Op.gte]: startMonth } } });
+  if (!rows.length) return [];
+  const ids = [...new Set(rows.map((r) => r.employeeId))];
+  const users = await HrUser.findAll({ where: { id: { [Op.in]: ids } }, attributes: ['id', 'department'] });
+  const deptById = {}; users.forEach((u) => { deptById[u.id] = u.department || 'Other'; });
+  const byDept = {};
+  for (const r of rows) { const d = deptById[r.employeeId] || 'Other'; byDept[d] = (byDept[d] || 0) + r.points; }
+  return Object.entries(byDept).map(([dept, points]) => ({ name: dept, points, right: `${points.toLocaleString('en-IN')} pts`, photo: '' })).sort((a, b) => b.points - a.points).slice(0, n);
+}
+async function innovationImpact() {
+  try {
+    const rows = await Innovation.findAll({ where: { status: { [Op.in]: ['implemented', 'rewarded'] } } });
+    if (!rows.length) return null;
+    const savings = rows.reduce((s, r) => s + (Number(r.estimatedSavings) || 0), 0);
+    return { count: rows.length, savings: Math.round(savings) };
+  } catch { return null; }
+}
+async function funStats() {
+  const stats = [];
+  try {
+    const now = istNow(); const monthStart = now.toISOString().slice(0, 8) + '01';
+    const att = await HrAttendance.findAll({ where: { date: { [Op.gte]: monthStart }, loginTime: { [Op.ne]: null }, status: 'present' } });
+    if (att.length) { const earliest = att.reduce((m, r) => (!m || r.loginTime < m.loginTime) ? r : m, null); if (earliest) { const u = await HrUser.findByPk(earliest.employeeId, { attributes: ['name'] }); if (u) stats.push(`🌅 Earliest bird this month: ${u.name} at ${earliest.loginTime}`); } }
+  } catch {}
+  try { const helps = await HelpingRecommendation.count({ where: { status: 'approved' } }); if (helps) stats.push(`🤝 ${helps} helping hands shared — kindness counts!`); } catch {}
+  try { const badges = await RewardLedger.count({ where: { category: 'badge', points: { [Op.gt]: 0 } } }); if (badges) stats.push(`🏆 ${badges} badges earned across the team so far!`); } catch {}
+  return stats;
+}
+async function companyMemory() {
+  try {
+    const now = istNow();
+    const lastYear = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()) - IST_OFFSET);
+    const nextDay = new Date(lastYear.getTime() + 86400000);
+    const cnt = await RewardLedger.count({ where: { createdAt: { [Op.gte]: lastYear, [Op.lt]: nextDay }, points: { [Op.gt]: 0 } } });
+    if (cnt > 0) return `📅 A year ago today, the team earned recognition ${cnt} time${cnt > 1 ? 's' : ''} — keep the momentum!`;
+  } catch {}
+  return null;
+}
+async function activePoll() {
+  try {
+    const p = await TvPoll.findOne({ where: { active: true }, order: [['createdAt', 'DESC']] });
+    if (!p) return null;
+    const opts = (p.options || []).map((o) => ({ label: o.label, votes: o.votes || 0 }));
+    const total = opts.reduce((s, o) => s + o.votes, 0);
+    return { id: p.id, question: p.question, options: opts.map((o) => ({ ...o, pct: total ? Math.round((o.votes / total) * 100) : 0 })), total };
+  } catch { return null; }
+}
+async function recentCheers(n = 12) {
+  try {
+    const hourAgo = new Date(Date.now() - 3600000);
+    const rows = await TvCheer.findAll({ where: { approved: true, createdAt: { [Op.gte]: hourAgo } }, order: [['createdAt', 'DESC']], limit: n });
+    return rows.map((r) => ({ from: r.fromName, emoji: r.emoji, message: r.message, to: r.toName }));
+  } catch { return []; }
+}
+async function helpingHand() {
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    const r = await HelpingRecommendation.findOne({ where: { status: 'approved', createdAt: { [Op.gte]: weekAgo } }, order: [['createdAt', 'DESC']] });
+    if (!r) return null;
+    const [ben, nom] = await Promise.all([HrUser.findByPk(r.beneficiaryId, { attributes: ['name', 'avatar'] }), HrUser.findByPk(r.nominatorId, { attributes: ['name', 'avatar'] })]);
+    if (!ben || !nom) return null;
+    return { helper: pfp(nom), helped: pfp(ben), reason: r.reason || '', points: r.points || 50 };
+  } catch { return null; }
+}
+function wellnessNudge() {
+  const h = istNow().getUTCHours();
+  const nudges = { 11: '🧘 Stand up & stretch — you\'ve earned a quick break!', 15: '💧 Hydration check! Grab some water', 17: '👀 Rest your eyes — look far away for 20 seconds' };
+  return nudges[h] || null;
+}
+function festivalTheme() {
+  const now = istNow(); const mmdd = `${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  const fests = { '01-01': { name: 'Happy New Year', emoji: '🎆', color: '#7C3AED' }, '01-26': { name: 'Republic Day', emoji: '🇮🇳', color: '#EA580C' }, '08-15': { name: 'Independence Day', emoji: '🇮🇳', color: '#16A34A' }, '10-31': { name: 'Happy Diwali', emoji: '🪔', color: '#CA8A04' }, '12-25': { name: 'Merry Christmas', emoji: '🎄', color: '#DC2626' } };
+  return fests[mmdd] || null;
+}
+
 async function buildPayload(kind /* 'company' | 'sales' */) {
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
   const cfg = (s && s.tvDisplayConfig) || {};
-  const [cel, rec, top, quote, featured, clubs, badges, rising, birds, strk] = await Promise.all([
+  const [cel, rec, top, quote, featured, clubs, badges, rising, birds, strk, dept, innov, fun, memory, poll, cheers, helping] = await Promise.all([
     celebrations(), recentRecognition(), topPerformers(5), dailyQuote(),
     featuredEmployee(), clubStandings(4), recentBadges(5), risingStar(), earlyBirds(3), streaks(3),
+    deptLeaderboard(4), innovationImpact(), funStats(), companyMemory(), activePoll(), recentCheers(12), helpingHand(),
   ]);
   const hour = istNow().getUTCHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -268,9 +348,11 @@ async function buildPayload(kind /* 'company' | 'sales' */) {
     celebrations: cel,
     recognition: rec,
     performers: top,
-    // Phase 2:
     featured, clubs, badges, rising, earlyBirds: birds, streaks: strk,
     monthEnd: monthEnd(),
+    // Phase 3:
+    deptLeaderboard: dept, innovation: innov, funStats: fun, memory,
+    poll, cheers, helping, wellness: wellnessNudge(), festival: festivalTheme(),
     daynight: hour >= 7 && hour < 18 ? 'day' : 'night',
   };
   if (kind === 'sales') {

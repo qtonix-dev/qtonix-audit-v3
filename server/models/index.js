@@ -604,7 +604,7 @@ const Settings = sequelize.define(
     // theme. Separate token so the display link is stable and shareable.
     tvDisplayConfig: { type: DataTypes.JSON, defaultValue: {
       welcomeMessage: '', rotateSeconds: 10, theme: 'midnight',
-      slides: { welcome: true, quote: true, birthday: true, anniversary: true, newJoinee: true, recognition: true, race: true, performers: true, counter: true, goal: true, featured: true, rising: true, badges: true, clubs: true, earlyBirds: true, streaks: true, countdown: true },
+      slides: { welcome: true, quote: true, birthday: true, anniversary: true, newJoinee: true, recognition: true, race: true, performers: true, counter: true, goal: true, featured: true, rising: true, badges: true, clubs: true, earlyBirds: true, streaks: true, countdown: true, helping: true, poll: true, cheers: true, deptLeaderboard: true, innovation: true, funStats: true, memory: true },
     } },
     tvQuoteCache: { type: DataTypes.JSON, defaultValue: { date: '', text: '' } },
     tvDisplayToken: { type: DataTypes.STRING(64) },
@@ -2365,6 +2365,29 @@ const ChatTeamMember = sequelize.define('ChatTeamMember', {
 ] });
 ChatTeamMember.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// ===== TV Display interactive (Phase 3) =====
+// Poll of the day + votes, and employee-sent "cheers" that scroll on the TV.
+const TvPoll = sequelize.define('TvPoll', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  question: { type: DataTypes.STRING(200), allowNull: false },
+  options: { type: DataTypes.JSON, defaultValue: [] },     // [{ id, label, votes }]
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  voters: { type: DataTypes.JSON, defaultValue: [] },      // employee ids who voted
+}, { tableName: 'tv_polls' });
+TvPoll.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+const TvCheer = sequelize.define('TvCheer', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  fromId: { type: DataTypes.INTEGER, allowNull: true },
+  fromName: { type: DataTypes.STRING(120), defaultValue: '' },
+  emoji: { type: DataTypes.STRING(8), defaultValue: '🎉' },
+  message: { type: DataTypes.STRING(160), defaultValue: '' },
+  toName: { type: DataTypes.STRING(120), defaultValue: '' },   // optional recipient
+  approved: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'tv_cheers', indexes: [{ name: 'idx_tv_cheer_created', fields: ['createdAt'] }] });
+TvCheer.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+
 
 
 
@@ -2487,6 +2510,7 @@ module.exports = {
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
+  TvPoll, TvCheer,
   TaskSection, Task, TaskComment, TaskAttachment, TaskActivity,
   encrypt, decrypt, initDb, defaultPricing, pruneDuplicateIndexes,
 };

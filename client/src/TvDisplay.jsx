@@ -223,6 +223,66 @@ function SlideCountdown({ me, pace }) {
 }
 
 
+function QR({ url, size = '14vh' }) {
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=1&data=${encodeURIComponent(url)}`;
+  return <img src={src} alt="scan" style={{ width: size, height: size, borderRadius: 12, background: '#fff', padding: '.8vh' }} />;
+}
+function SlidePoll({ poll, appUrl }) {
+  return (
+    <div className="tvslide tvpad" style={{ background: 'radial-gradient(circle at 30% 25%,#1e293b,#05070d 78%)' }}>
+      <div className="tvtag">🤔 Poll of the day</div>
+      <div style={{ flex: 1, display: 'flex', gap: '4vw', alignItems: 'center' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '3vw', fontWeight: 900, lineHeight: 1.2, marginBottom: '3vh' }}>{poll.question}</div>
+          {poll.options.map((o, i) => (
+            <div key={i} style={{ marginBottom: '1.4vh' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.7vw', fontWeight: 700, marginBottom: '.5vh' }}><span>{o.label}</span><span>{o.pct}%</span></div>
+              <div style={{ height: '2.2vh', borderRadius: 999, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${o.pct}%`, borderRadius: 999, background: i === 0 ? 'linear-gradient(90deg,#FF6A00,#FF4500)' : 'rgba(255,255,255,.35)', transition: 'width 1s' }} /></div>
+            </div>
+          ))}
+        </div>
+        <div style={{ textAlign: 'center' }}><QR url={appUrl} /><div style={{ fontSize: '1.2vw', opacity: .7, marginTop: '1vh' }}>📱 Scan to vote</div></div>
+      </div>
+    </div>
+  );
+}
+function SlideCheers({ cheers, appUrl }) {
+  return (
+    <div className="tvslide tvpad" style={{ background: 'radial-gradient(circle at 50% 20%,#831843,#0a0410 78%)' }}>
+      <div className="tvtag">💬 Team cheers · live</div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '1.8vh' }}>
+        {cheers.slice(0, 4).map((c, i) => (
+          <div key={i} className="tvrow"><span style={{ fontSize: '3.5vh' }}>{c.emoji}</span><span style={{ flex: 1 }}>{c.message}{c.to ? ` — for ${c.to}` : ''}</span><span style={{ fontSize: '1.4vw', opacity: .6 }}>— {c.from}</span></div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5vw', marginTop: '1vh' }}><QR url={appUrl} size="10vh" /><div style={{ fontSize: '1.5vw', opacity: .8 }}>📱 Scan to send a cheer to the screen!</div></div>
+    </div>
+  );
+}
+function SlideHelping({ h }) {
+  return (
+    <div className="tvslide tvpad" style={{ background: 'radial-gradient(circle at 50% 30%,#155e75,#04121a 78%)', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+      <div className="tvtag" style={{ marginBottom: '3vh' }}>🤝 Helping hand of the week</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '2vw', marginBottom: '3vh' }}>
+        <Pfp name={h.helper.name} photo={h.helper.photo} size={'16vh'} border="4px solid rgba(255,255,255,.6)" />
+        <span style={{ fontSize: '5vh' }}>➜</span>
+        <Pfp name={h.helped.name} photo={h.helped.photo} size={'16vh'} border="4px solid rgba(255,255,255,.6)" />
+      </div>
+      <div className="tvbig" style={{ fontSize: '3.5vw' }}>{h.helper.name} helped {h.helped.name}</div>
+      {h.reason && <div className="tvsub" style={{ marginTop: '1.5vh', opacity: .85 }}>&ldquo;{h.reason}&rdquo; · +{h.points} pts</div>}
+    </div>
+  );
+}
+function SlideStat({ icon, big, sub, bg }) {
+  return (
+    <div className="tvslide tvpad" style={{ background: bg, alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+      <div style={{ fontSize: '14vh', marginBottom: '2vh' }}>{icon}</div>
+      <div className="tvbig" style={{ fontSize: '4vw' }}>{big}</div>
+      {sub && <div className="tvsub" style={{ marginTop: '2vh', opacity: .85 }}>{sub}</div>}
+    </div>
+  );
+}
+
 function buildSlides(d, kind) {
   const on = d.slides || {};
   const out = [];
@@ -240,6 +300,15 @@ function buildSlides(d, kind) {
   if (on.clubs !== false && (d.clubs || []).length) out.push({ key: 'clubs', el: <RowList tag="💎 Closest to their next club" bg="radial-gradient(circle at 50% 20%,#312e81,#060613 75%)" rows={d.clubs.map((c) => ({ name: c.name, photo: c.photo, right: `${c.remaining.toLocaleString('en-IN')} to ${c.nextIcon} ${c.next}` }))} /> });
   if (on.earlyBirds !== false && (d.earlyBirds || []).length) out.push({ key: 'early', el: <RowList tag="🌅 Early birds today · beat the clock" bg="radial-gradient(circle at 30% 20%,#0e7490,#02141a 72%)" rows={d.earlyBirds.map((e) => ({ name: e.name, photo: e.photo, right: `⏰ ${e.time}` }))} /> });
   if (on.streaks !== false && (d.streaks || []).length) out.push({ key: 'streaks', el: <RowList tag="🔥 On fire · longest on-time streaks" bg="radial-gradient(circle at 70% 25%,#c2410c,#180702 72%)" rows={d.streaks.map((s) => ({ name: s.name, photo: s.photo, right: `${s.streak} days` }))} /> });
+  // Phase 3 slides
+  const appUrl = (typeof window !== 'undefined' ? window.location.origin : '') + '/go/hr';
+  if (on.helping !== false && d.helping) out.push({ key: 'help', el: <SlideHelping h={d.helping} /> });
+  if (on.poll !== false && d.poll) out.push({ key: 'poll', el: <SlidePoll poll={d.poll} appUrl={appUrl} /> });
+  if (on.cheers !== false && (d.cheers || []).length) out.push({ key: 'cheers', el: <SlideCheers cheers={d.cheers} appUrl={appUrl} /> });
+  if (on.deptLeaderboard !== false && (d.deptLeaderboard || []).length >= 2) out.push({ key: 'dept', el: <RowList tag="🏢 Department leaderboard · this month" bg="radial-gradient(circle at 50% 20%,#312e81,#060613 75%)" rows={d.deptLeaderboard} /> });
+  if (on.innovation !== false && d.innovation && d.innovation.savings > 0) out.push({ key: 'innov', el: <SlideStat icon="💡" big={`₹${d.innovation.savings.toLocaleString('en-IN')} saved`} sub={`${d.innovation.count} team ideas turned into real impact 🚀`} bg="radial-gradient(circle at 50% 30%,#1e40af,#040a1a 78%)" /> });
+  if (on.funStats !== false && (d.funStats || []).length) { const s = d.funStats[Math.floor(Date.now() / 60000) % d.funStats.length]; out.push({ key: 'fun', el: <SlideStat icon="✨" big="Did you know?" sub={s} bg="radial-gradient(circle at 30% 30%,#0f766e,#02120f 78%)" /> }); }
+  if (on.memory !== false && d.memory) out.push({ key: 'mem', el: <SlideStat icon="📅" big="On this day" sub={d.memory} bg="radial-gradient(circle at 50% 30%,#4338ca,#05061a 78%)" /> });
   if (kind === 'sales' && d.sales) {
     if (on.race !== false && (d.sales.racers || []).length) out.push({ key: 'race', el: <SlideRace sales={d.sales} /> });
     if (on.counter !== false) out.push({ key: 'counter', el: <SlideCounter sales={d.sales} /> });
@@ -281,7 +350,9 @@ export default function TvDisplay({ kind }) {
   return (
     <Shell>
       <style>{TV_CSS}</style>
+      {data.festival && <div style={{ position: 'fixed', top: 0, left: 0, right: 0, textAlign: 'center', padding: '1vh', fontWeight: 900, fontSize: '1.4vw', zIndex: 15, background: data.festival.color, letterSpacing: '.05em' }}>{data.festival.emoji} {data.festival.name} from all of us at Qtonix! {data.festival.emoji}</div>}
       <div key={cur.key} className="tvfade" style={{ position: 'absolute', inset: 0 }}>{cur.el}</div>
+      {data.wellness && <div style={{ position: 'fixed', bottom: '6vh', left: 0, right: 0, textAlign: 'center', zIndex: 12 }}><span style={{ background: 'rgba(255,255,255,.12)', backdropFilter: 'blur(8px)', padding: '1vh 2vw', borderRadius: 999, fontSize: '1.4vw', fontWeight: 700 }}>{data.wellness}</span></div>}
       <div style={{ position: 'fixed', bottom: '2vh', left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: '1vh', zIndex: 10 }}>
         {slides.map((s, k) => <div key={k} style={{ width: k === idx ? '3.5vh' : '1vh', height: '1vh', borderRadius: 999, background: k === idx ? '#FF6A00' : 'rgba(255,255,255,.3)', transition: '.3s', boxShadow: k === idx ? '0 0 12px #FF6A00' : 'none' }} />)}
       </div>

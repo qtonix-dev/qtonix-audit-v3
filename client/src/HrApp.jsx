@@ -8637,7 +8637,7 @@ function TvDisplayAdmin() {
   const base = (typeof window !== 'undefined' ? window.location.origin : '');
   const companyUrl = `${base}/tv/company?t=${token}`;
   const salesUrl = `${base}/tv/sales?t=${token}`;
-  const SLIDES = [['welcome', 'Welcome message'], ['quote', 'Daily quote'], ['birthday', 'Birthdays'], ['anniversary', 'Work anniversaries'], ['newJoinee', 'New joinees'], ['recognition', 'Recognition'], ['performers', 'Top performers'], ['featured', 'Featured teammate (level/XP)'], ['rising', 'Rising star'], ['badges', 'Badges unlocked'], ['clubs', 'Reward club standings'], ['earlyBirds', 'Early birds'], ['streaks', 'On-time streaks'], ['race', 'Sales race (sales only)'], ['counter', 'Live counter (sales only)'], ['goal', 'Company goal (sales only)'], ['countdown', 'Month-end countdown (sales only)']];
+  const SLIDES = [['welcome', 'Welcome message'], ['quote', 'Daily quote'], ['birthday', 'Birthdays'], ['anniversary', 'Work anniversaries'], ['newJoinee', 'New joinees'], ['recognition', 'Recognition'], ['performers', 'Top performers'], ['featured', 'Featured teammate (level/XP)'], ['rising', 'Rising star'], ['badges', 'Badges unlocked'], ['clubs', 'Reward club standings'], ['earlyBirds', 'Early birds'], ['streaks', 'On-time streaks'], ['helping', 'Helping hand'], ['poll', 'Poll of the day'], ['cheers', 'Team cheers'], ['deptLeaderboard', 'Department leaderboard'], ['innovation', 'Innovation impact'], ['funStats', 'Fun stats'], ['memory', 'On this day'], ['race', 'Sales race (sales only)'], ['counter', 'Live counter (sales only)'], ['goal', 'Company goal (sales only)'], ['countdown', 'Month-end countdown (sales only)']];
   const setSlide = (k, v) => setCfg((c) => ({ ...c, slides: { ...(c.slides || {}), [k]: v } }));
   const copy = (url) => { try { navigator.clipboard.writeText(url); alert('Link copied!'); } catch {} };
   return (
@@ -8688,9 +8688,41 @@ function TvDisplayAdmin() {
         </div>
       </div>
 
+      {/* Poll of the day manager */}
+      <TvPollManager />
+
       <div className="flex items-center gap-3">
         <button onClick={() => save(false)} disabled={saving} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button>
         {saved && <span className="text-[13px] font-bold text-green-600">✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
+
+function TvPollManager() {
+  const [q, setQ] = useState('');
+  const [opts, setOpts] = useState(['', '']);
+  const [busy, setBusy] = useState(false);
+  const authHdr = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('qtx_hr_token') || '') };
+  const create = async () => {
+    const options = opts.map((o) => o.trim()).filter(Boolean);
+    if (!q.trim() || options.length < 2) { alert('Add a question and at least 2 options.'); return; }
+    setBusy(true);
+    try { await fetch('/api/tv-display/admin/poll', { method: 'POST', headers: authHdr, body: JSON.stringify({ question: q.trim(), options }) }); setQ(''); setOpts(['', '']); alert('Poll is now live on the TV!'); } catch { alert('Failed'); }
+    setBusy(false);
+  };
+  const endPoll = async () => { if (!window.confirm('End the current poll?')) return; try { await fetch('/api/tv-display/admin/poll/end', { method: 'POST', headers: authHdr }); alert('Poll ended.'); } catch {} };
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="text-[13px] font-bold text-slate-600 mb-2">📊 Poll of the day</div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Poll question…" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2" />
+      {opts.map((o, i) => (
+        <input key={i} value={o} onChange={(e) => setOpts((a) => a.map((x, j) => j === i ? e.target.value : x))} placeholder={`Option ${i + 1}`} className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm mb-1.5" />
+      ))}
+      <div className="flex gap-2 mt-1">
+        {opts.length < 4 && <button onClick={() => setOpts((a) => [...a, ''])} className="text-[12px] font-bold text-orange-600">+ Add option</button>}
+        <button onClick={create} disabled={busy} className="ml-auto rounded-lg px-4 py-1.5 text-[13px] font-bold text-white" style={{ background: ORANGE }}>Launch poll</button>
+        <button onClick={endPoll} className="rounded-lg px-4 py-1.5 text-[13px] font-bold text-slate-600 border border-slate-300">End current</button>
       </div>
     </div>
   );
