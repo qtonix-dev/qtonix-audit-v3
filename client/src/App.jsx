@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { API_BASE } from './config.js';
 import { APP_BUILD } from './version.js';
 import { AppSwitcher } from './AppSwitcher.jsx';
+import TvDisplay from './TvDisplay.jsx';
 import Leads from './Leads.jsx';
 import { CountryCombobox, PhoneField, Pagination, Icon, MailEditor } from './Leads.jsx';
 import { formatPhone } from './countries.js';
@@ -1628,6 +1629,8 @@ export default function App() {
   // screen for an office TV, so it short-circuits the whole app shell — no
   // login, no chrome, just the board.
   if (typeof window !== 'undefined' && window.location.pathname.startsWith('/tv/')) {
+    const seg = window.location.pathname.replace(/^\/tv\//, '').split('/')[0].toLowerCase();
+    if (seg === 'company' || seg === 'sales') return <TvDisplay kind={seg} />;
     return <MotivatorTV />;
   }
 

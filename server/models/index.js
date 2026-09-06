@@ -600,6 +600,14 @@ const Settings = sequelize.define(
     tvEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
     // Ticker messages shown along the bottom of the board.
     tvAnnouncements: { type: DataTypes.JSON, defaultValue: [] },
+    // Company TV display (Phase 1): welcome text, per-slide toggles, rotation,
+    // theme. Separate token so the display link is stable and shareable.
+    tvDisplayConfig: { type: DataTypes.JSON, defaultValue: {
+      welcomeMessage: '', rotateSeconds: 10, theme: 'midnight',
+      slides: { welcome: true, quote: true, birthday: true, anniversary: true, newJoinee: true, recognition: true, race: true, performers: true, counter: true, goal: true, featured: true, rising: true, badges: true, clubs: true, earlyBirds: true, streaks: true, countdown: true },
+    } },
+    tvQuoteCache: { type: DataTypes.JSON, defaultValue: { date: '', text: '' } },
+    tvDisplayToken: { type: DataTypes.STRING(64) },
     /**
      * Training / demo mode. When an admin enables it we mint a long random
      * token; the app is then reachable at /demo-app/<token> preloaded with

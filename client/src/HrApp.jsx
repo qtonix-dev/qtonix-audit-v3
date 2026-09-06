@@ -8618,6 +8618,84 @@ function HrCareersSeo() {
   );
 }
 
+// ===== TV Display admin (Phase 1): links, welcome msg, slide toggles =====
+function TvDisplayAdmin() {
+  const [cfg, setCfg] = useState(null);
+  const [token, setToken] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { fetch('/api/tv-display/config', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('qtx_hr_token') || '') } }).then((r) => r.json()).then((j) => { setCfg(j.config || {}); setToken(j.token || ''); }).catch(() => {}); }, []);
+  const save = async (regenerate) => {
+    setSaving(true); setSaved(false);
+    try {
+      const r = await fetch('/api/tv-display/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('qtx_hr_token') || '') }, body: JSON.stringify({ config: cfg, regenerate }) });
+      const j = await r.json(); setCfg(j.config); setToken(j.token); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } catch (e) { alert('Save failed'); }
+    setSaving(false);
+  };
+  if (!cfg) return <div className="text-slate-400 text-sm py-10">Loading…</div>;
+  const base = (typeof window !== 'undefined' ? window.location.origin : '');
+  const companyUrl = `${base}/tv/company?t=${token}`;
+  const salesUrl = `${base}/tv/sales?t=${token}`;
+  const SLIDES = [['welcome', 'Welcome message'], ['quote', 'Daily quote'], ['birthday', 'Birthdays'], ['anniversary', 'Work anniversaries'], ['newJoinee', 'New joinees'], ['recognition', 'Recognition'], ['performers', 'Top performers'], ['featured', 'Featured teammate (level/XP)'], ['rising', 'Rising star'], ['badges', 'Badges unlocked'], ['clubs', 'Reward club standings'], ['earlyBirds', 'Early birds'], ['streaks', 'On-time streaks'], ['race', 'Sales race (sales only)'], ['counter', 'Live counter (sales only)'], ['goal', 'Company goal (sales only)'], ['countdown', 'Month-end countdown (sales only)']];
+  const setSlide = (k, v) => setCfg((c) => ({ ...c, slides: { ...(c.slides || {}), [k]: v } }));
+  const copy = (url) => { try { navigator.clipboard.writeText(url); alert('Link copied!'); } catch {} };
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="text-lg font-extrabold text-[#050A1F] mb-1">📺 Company TV Display</div>
+        <p className="text-[13px] text-slate-400">Open these links full-screen on an office TV. They auto-rotate and pull live data. Anyone with the link can view (no login).</p>
+      </div>
+
+      {/* Shareable links */}
+      <div className="grid md:grid-cols-2 gap-3">
+        {[['🏢 Company display', companyUrl, 'No sales data — celebrations, recognition, quotes'], ['📈 Sales display', salesUrl, 'Adds the sales race, live counter & goal']].map(([label, url, desc]) => (
+          <div key={label} className="rounded-xl border border-slate-200 p-4">
+            <div className="text-sm font-extrabold text-[#050A1F]">{label}</div>
+            <div className="text-[12px] text-slate-400 mb-2">{desc}</div>
+            <div className="flex gap-2">
+              <input readOnly value={url} className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[12px] text-slate-600" />
+              <button onClick={() => copy(url)} className="rounded-lg px-3 text-[12px] font-bold text-white" style={{ background: ORANGE }}>Copy</button>
+              <a href={url} target="_blank" rel="noreferrer" className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-slate-600 border border-slate-300">Open</a>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => { if (window.confirm('Regenerate the link? The old links will stop working.')) save(true); }} className="text-[12px] font-bold text-red-500">Regenerate link (revokes old links)</button>
+
+      {/* Welcome message + rotation */}
+      <div className="rounded-xl border border-slate-200 p-4 space-y-3">
+        <div>
+          <div className="text-[13px] font-bold text-slate-600 mb-1">Welcome message</div>
+          <input value={cfg.welcomeMessage || ''} onChange={(e) => setCfg({ ...cfg, welcomeMessage: e.target.value })} placeholder="e.g. Let's crush this month, team! 🚀" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-[13px] font-bold text-slate-600">Seconds per slide</div>
+          <input type="number" min="5" max="60" value={cfg.rotateSeconds || 10} onChange={(e) => setCfg({ ...cfg, rotateSeconds: Number(e.target.value) })} className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        </div>
+      </div>
+
+      {/* Slide toggles */}
+      <div className="rounded-xl border border-slate-200 p-4">
+        <div className="text-[13px] font-bold text-slate-600 mb-3">Slides to show</div>
+        <div className="grid sm:grid-cols-2 gap-2">
+          {SLIDES.map(([k, label]) => (
+            <label key={k} className="flex items-center gap-2.5 text-sm cursor-pointer">
+              <input type="checkbox" checked={(cfg.slides || {})[k] !== false} onChange={(e) => setSlide(k, e.target.checked)} className="w-4 h-4 accent-orange-500" />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={() => save(false)} disabled={saving} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button>
+        {saved && <span className="text-[13px] font-bold text-green-600">✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
+
 function HrAdmin({ user, onOpenCandidate }) {
   const [tab, setTab] = useState('org');
   const [users, setUsers] = useState([]);
@@ -8692,7 +8770,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
 
   return (
     <div className="max-w-5xl">
@@ -8707,6 +8785,7 @@ function HrAdmin({ user, onOpenCandidate }) {
       </div>
 
       {/* USERS TAB */}
+      {tab === 'tv' && <TvDisplayAdmin />}
       {tab === 'users' && (
         <div>
           <div className="flex justify-between items-center mb-4">
