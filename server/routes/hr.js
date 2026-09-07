@@ -599,9 +599,36 @@ router.put('/access-control/:id', requireHrAccess, async (req, res, next) => {
     if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can manage access.' });
     const row = await HrUser.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Employee not found.' });
-    row.permissions = PERMS.sanitize((req.body || {}).permissions);
+    const before = PERMS.sanitize(row.permissions);
+    const after = PERMS.sanitize((req.body || {}).permissions);
+    row.permissions = after;
     row.changed('permissions', true); await row.save();
     hrLog(req, 'access.set', `Updated access for ${row.name}`);
+
+    // Notify the employee about NEWLY granted access (added, not removed).
+    try {
+      const labelById = {}; PERMS.MODULES.forEach((m) => { labelById[m.id] = m.label; });
+      const added = []; // ["Expenses (edit)", ...]
+      for (const [mod, acts] of Object.entries(after)) {
+        for (const act of PERMS.ACTIONS) {
+          if (acts[act] && !(before[mod] && before[mod][act])) added.push(`${labelById[mod] || mod} (${act})`);
+        }
+      }
+      // Also note any access removed, so it's transparent.
+      const removed = [];
+      for (const [mod, acts] of Object.entries(before)) {
+        for (const act of PERMS.ACTIONS) {
+          if (acts[act] && !(after[mod] && after[mod][act])) removed.push(`${labelById[mod] || mod} (${act})`);
+        }
+      }
+      if (added.length) {
+        await HrNotification.create({ userId: row.id, actorKind: 'hr', type: 'info', text: `🔓 You were granted access: ${added.slice(0, 6).join(', ')}${added.length > 6 ? ` +${added.length - 6} more` : ''}. Find it in your menu.` });
+      }
+      if (removed.length && !added.length) {
+        await HrNotification.create({ userId: row.id, actorKind: 'hr', type: 'info', text: `🔒 Some access was updated: ${removed.slice(0, 6).join(', ')} was removed.` });
+      }
+    } catch {}
+
     res.json({ ok: true, permissions: row.permissions });
   } catch (e) { next(e); }
 });
