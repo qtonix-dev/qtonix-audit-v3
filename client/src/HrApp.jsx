@@ -3337,6 +3337,11 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
           {/* LEAVE BALANCE */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <h3 className={TITLE}><span className={DOT} style={{ background: '#22C55E' }} />Leave balance</h3>
+            {leave && leave.probation && leave.probation.active && (
+              <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800">
+                🔒 On probation — leave credit unlocks on <b>{leave.probation.endsOn ? new Date(leave.probation.endsOn + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</b>. Any leave taken until then is Loss of Pay (LOP).
+              </div>
+            )}
             <div className="flex gap-3.5 flex-wrap">
               {['casual', 'medical', 'privilege'].map((k) => {
                 const bal = leave ? (leave.balance[k] ?? 0) : 0; const alloc = leave ? (leave.allocation[k] ?? 0) : 0;

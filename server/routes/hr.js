@@ -1782,15 +1782,53 @@ function canManagePeople(req) { return req.isHrAdmin || req.isHrManager; }
 // via profile.leaveAllocation).
 const DEFAULT_LEAVE_ALLOCATION = { casual: 12, medical: 12, privilege: 12, wfh: 24 };
 
+// Parse an employee's joining date (defensive) → Date or null.
+function parseJoin(rawJoin) {
+  if (!rawJoin) return null;
+  const s = String(rawJoin).trim();
+  let join = null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) join = new Date(s.slice(0, 10) + 'T00:00:00');
+  else if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d, m, y] = s.split('/'); join = new Date(`${y}-${m}-${d}T00:00:00`); }
+  else { const t = new Date(s); if (!Number.isNaN(t.getTime())) join = t; }
+  return join && !Number.isNaN(join.getTime()) ? join : null;
+}
+// When does probation end for this employee? null if no valid joining date.
+function probationEndDate(emp, policy) {
+  const months = (policy && policy.leaveRules && Number(policy.leaveRules.probationMonths)) || 3;
+  const join = parseJoin(emp.joiningDate || (emp.profile && emp.profile.joiningDate));
+  if (!join || months <= 0) return null;
+  const end = new Date(join); end.setMonth(end.getMonth() + months);
+  return end;
+}
+// Is the employee currently within probation (as of `onDate`, default today)?
+function inProbation(emp, policy, onDate) {
+  const end = probationEndDate(emp, policy);
+  if (!end) return false;
+  const d = onDate ? new Date(String(onDate).slice(0, 10) + 'T00:00:00') : new Date();
+  return d < end;
+}
+
 // Is the employee within probation (first 3 months) or serving notice on `date`?
 // During these windows paid leave isn't allowed (it can still be taken, unpaid).
-function leavePaidEligibility(emp, dateStr) {
-  const date = new Date(dateStr + 'T00:00:00');
-  // Probation: first 3 months from joining date.
-  if (emp.joiningDate) {
-    const join = new Date(emp.joiningDate);
-    const probationEnd = new Date(join); probationEnd.setMonth(probationEnd.getMonth() + 3);
-    if (date < probationEnd) return { paidAllowed: false, reason: 'probation' };
+// The probation length is configurable via policy (default 3 months).
+function leavePaidEligibility(emp, dateStr, policy) {
+  const date = new Date(String(dateStr).slice(0, 10) + 'T00:00:00');
+  if (Number.isNaN(date.getTime())) return { paidAllowed: true, reason: null };
+  // Probation window from the joining date. Parse defensively — accept
+  // YYYY-MM-DD, ISO, and DD/MM/YYYY; if unparseable, DON'T withhold pay.
+  const probationMonths = (policy && policy.leaveRules && Number(policy.leaveRules.probationMonths)) || 3;
+  const rawJoin = emp.joiningDate || (emp.profile && emp.profile.joiningDate) || null;
+  if (rawJoin && probationMonths > 0) {
+    let join = null;
+    const s = String(rawJoin).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) join = new Date(s.slice(0, 10) + 'T00:00:00');
+    else if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d, m, y] = s.split('/'); join = new Date(`${y}-${m}-${d}T00:00:00`); }
+    else { const t = new Date(s); if (!Number.isNaN(t.getTime())) join = t; }
+    if (join && !Number.isNaN(join.getTime())) {
+      const probationEnd = new Date(join); probationEnd.setMonth(probationEnd.getMonth() + probationMonths);
+      // Paid only once probation is COMPLETE (date on/after probationEnd).
+      if (date < probationEnd) return { paidAllowed: false, reason: 'probation', probationEnd: probationEnd.toISOString().slice(0, 10) };
+    }
   }
   // Notice period: if a noticeStart/lastWorkingDay is recorded on the profile.
   const p = emp.profile || {};
@@ -1887,10 +1925,13 @@ router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
       const d = r.duration === 'half' ? 0.5 : 1;
       (r.paid ? usedPaid : usedUnpaid)[r.type] = ((r.paid ? usedPaid : usedUnpaid)[r.type] || 0) + d;
     });
+    const probEnd = probationEndDate(emp, policy);
+    const onProbation = inProbation(emp, policy);
     res.json({
       canManage: canManagePeople(req),
       allocation: alloc, usedPaid, usedUnpaid, leaveCategory: catId, categories: policy.categories,
       balance: Object.fromEntries(Object.keys(alloc).map((k) => [k, +(alloc[k] - (usedPaid[k] || 0)).toFixed(1)])),
+      probation: { active: onProbation, endsOn: probEnd ? probEnd.toISOString().slice(0, 10) : null },
       leaves: rows.map((r) => r.toJSON()),
     });
   } catch (e) { next(e); }
@@ -2616,15 +2657,25 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const reason = String(b.reason || '').slice(0, 300);
     const documentUrl = b.documentUrl ? String(b.documentUrl).slice(0, 500) : null;
     const created = [];
+    const _pol = getHrPolicy(s);
+    let anyLop = false;
     for (const date of dates) {
+      // During probation or notice, leave credit isn't available → the leave is
+      // reclassified as LOP (Loss of Pay). WFH is never paid leave either.
+      let rowType = type;
+      let paid = type !== 'wfh';
+      if (paid) {
+        const elig = leavePaidEligibility(emp, date, _pol);
+        if (!elig.paidAllowed) { rowType = 'lop'; paid = false; anyLop = true; }
+      }
       const row = await HrLeave.create({
-        employeeId: emp.id, type, date, duration, paid: type !== 'wfh',
+        employeeId: emp.id, type: rowType, date, duration, paid,
         reason, documentUrl, status: 'pending', groupId,
         appliedById: emp.id, approverId: approver.approverId, approverName: approver.approverName, decidedByKind: approver.kind,
       });
       created.push(row.toJSON());
     }
-    res.status(201).json({ status: 'pending', days: created.length, groupId, leaves: created });
+    res.status(201).json({ status: 'pending', days: created.length, groupId, leaves: created, lop: anyLop, lopReason: anyLop ? (inProbation(emp, _pol) ? 'probation' : 'notice') : null });
   } catch (e) { next(e); }
 });
 
@@ -4213,14 +4264,18 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const reason = String(b.reason || '').slice(0, 300);
     const actorName = req.hrActor.name;
     const now = new Date();
+    const _lset = await Settings.findOne({ where: { singleton: 'settings' } });
+    const _lpolicy = getHrPolicy(_lset);
     let anyForcedUnpaid = false; let forcedReason = null;
     const created = [];
     for (const date of dates) {
-      // LOP and WFH are never "paid leave"; others honor paid unless probation/notice.
+      // LOP and WFH are never "paid leave"; others honor paid unless probation/
+      // notice — in which case the leave is reclassified to LOP (Loss of Pay).
+      let rowType = type;
       let paid = type === 'lop' || type === 'wfh' ? false : (b.paid !== false);
-      if (paid) { const elig = leavePaidEligibility(emp, date); if (!elig.paidAllowed) { paid = false; anyForcedUnpaid = true; forcedReason = elig.reason; } }
+      if (paid) { const elig = leavePaidEligibility(emp, date, _lpolicy); if (!elig.paidAllowed) { rowType = 'lop'; paid = false; anyForcedUnpaid = true; forcedReason = elig.reason; } }
       const row = await HrLeave.create({
-        employeeId: id, type, date, duration,
+        employeeId: id, type: rowType, date, duration,
         paid, reason, status: 'approved',
         appliedById: req.hrActor.id, recordedByHr: true,
         approvedBy: actorName, approverId: req.hrActor.id, approverName: actorName,
@@ -4231,8 +4286,8 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
       // Reflect on the attendance calendar for that day.
       try {
         const [att] = await HrAttendance.findOrCreate({ where: { employeeId: id, date }, defaults: { employeeId: id, date } });
-        att.status = type === 'wfh' ? 'present' : (duration === 'half' ? 'half_day' : 'leave');
-        att.note = `${type}${paid ? '' : ' (unpaid)'}`; att.markedById = req.hrActor.id; await att.save();
+        att.status = rowType === 'wfh' ? 'present' : (duration === 'half' ? 'half_day' : 'leave');
+        att.note = `${rowType}${paid ? '' : ' (unpaid)'}`; att.markedById = req.hrActor.id; await att.save();
       } catch {}
     }
     hrLog(req, 'leave.add', `${emp.name} ${type} ${dates[0]}${dates.length > 1 ? `→${dates[dates.length - 1]}` : ''}${anyForcedUnpaid ? ' (unpaid — probation/notice)' : ''}`);
@@ -4260,7 +4315,8 @@ router.get('/employees/:id/leave-eligibility', requireHrAccess, async (req, res,
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
-    res.json(leavePaidEligibility(emp, date));
+    const _es = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json(leavePaidEligibility(emp, date, getHrPolicy(_es)));
   } catch (e) { next(e); }
 });
 
@@ -7679,10 +7735,14 @@ function isWeekOff(policy, branch, dateStr) {
   return dow === 0;
 }
 // Resolve the allocation for an employee (category on profile overrides).
+// During probation (first 3 months) the leave credit is NOT yet granted — the
+// allocation is 0 across the board; it unlocks in full once probation completes.
 function allocationFor(policy, emp) {
   const catId = (emp.profile && emp.profile.leaveCategory) || 'default';
   const cat = policy.categories.find((c) => c.id === catId) || policy.categories[0];
-  return { ...DEFAULT_LEAVE_ALLOCATION, ...((cat && cat.allocation) || {}), ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+  const full = { ...DEFAULT_LEAVE_ALLOCATION, ...((cat && cat.allocation) || {}), ...((emp.profile && emp.profile.leaveAllocation) || {}) };
+  if (inProbation(emp, policy)) { const zero = {}; for (const k of Object.keys(full)) zero[k] = 0; return zero; }
+  return full;
 }
 
 router.get('/policy', requireHrAccess, async (req, res, next) => {
