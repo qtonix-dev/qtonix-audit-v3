@@ -3494,10 +3494,12 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
 });
 router.put('/expenses/:id', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    // HR staff, HR Manager, and Admin can edit expenses.
+    const canEdit = req.isHrAdmin || req.isHrManager || req.adminUser || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)) || req.isHrRole;
+    if (!canEdit) return res.status(403).json({ error: 'Only HR or an admin can edit expenses.' });
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
-    if (row.status === 'paid') return res.status(400).json({ error: 'A paid expense cannot be edited.' });
+    if (row.status === 'paid' && !(req.isHrAdmin || req.adminUser)) return res.status(400).json({ error: 'A paid expense can only be edited by an admin.' });
     const b = req.body || {};
     if (b.title !== undefined) row.title = String(b.title).trim() || row.title;
     if (b.category !== undefined) row.category = String(b.category).trim() || null;
@@ -3824,10 +3826,10 @@ router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
 });
 router.delete('/expenses/:id', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Not allowed.' });
+    // Only an admin can delete an expense (uploaded by HR or an employee).
+    if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can delete expenses.' });
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
-    if (row.status === 'paid') return res.status(400).json({ error: 'A paid expense cannot be deleted.' });
     await row.destroy();
     res.json({ ok: true });
   } catch (e) { next(e); }

@@ -1520,7 +1520,7 @@ function WorkspaceView({ user, isAdmin }) {
       </div>
       <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3">
         {pane === 'chat'
-          ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
+          ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
           : <div className="h-full overflow-auto"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
       </div>
     </div>
@@ -1528,7 +1528,7 @@ function WorkspaceView({ user, isAdmin }) {
 }
 
 // ===== CHAT (Phase 1: direct messages + files) =====
-function ChatView({ user, onUnread, onOpenTask }) {
+function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [taskChannel, setTaskChannel] = useState(null);
@@ -1958,7 +1958,7 @@ function ChatView({ user, onUnread, onOpenTask }) {
       )}
       {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
       {createModal && <ChatGroupModal mode={createModal} directory={directory} onClose={() => setCreateModal(null)} onDone={afterCreate} />}
-      {manageFor && <ChatManageModal team={manageFor} directory={directory} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} />}
+      {manageFor && <ChatManageModal team={manageFor} directory={directory} isAdmin={isAdmin} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} onDeleted={() => { setManageFor(null); setActive(null); loadTeams(); }} />}
     </div>
   );
 }
@@ -2035,7 +2035,7 @@ function ChatGroupModal({ mode, directory, onClose, onDone }) {
 }
 
 // HR/Admin: manage a team's members (add/remove).
-function ChatManageModal({ team, directory, onClose, onDone }) {
+function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted }) {
   const [members, setMembers] = useState(null);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2045,6 +2045,11 @@ function ChatManageModal({ team, directory, onClose, onDone }) {
   const addable = directory.filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
   const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
   const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
+  const deleteTeam = async () => {
+    if (!window.confirm(`Delete the team "${team.teamName}" and ALL its groups & messages? This cannot be undone.`)) return;
+    setBusy(true);
+    try { await hrApi(`/chat/teams/${team.teamId}`, { method: 'DELETE' }); (onDeleted || onDone)(); } catch (e) { alert(e.message); setBusy(false); }
+  };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -2073,6 +2078,12 @@ function ChatManageModal({ team, directory, onClose, onDone }) {
             {addable.length === 0 && <div className="px-3 py-4 text-sm text-slate-400 text-center">Everyone’s already in.</div>}
           </div>
         </div>
+        {isAdmin && (
+          <div className="px-5 py-3 border-t border-slate-100 bg-red-50/50 flex items-center justify-between">
+            <span className="text-[12px] text-slate-500">Danger zone</span>
+            <button onClick={deleteTeam} disabled={busy} className="text-[12px] font-bold text-white rounded-lg px-3 py-1.5" style={{ background: '#DC2626' }}>🗑 Delete team</button>
+          </div>
+        )}
       </div>
     </div>
   );

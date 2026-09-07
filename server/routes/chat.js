@@ -390,6 +390,42 @@ router.delete('/teams/:teamId/members/:userId', requireHrAccess, async (req, res
   } catch (e) { next(e); }
 });
 
+// Admin-only: is the caller a real CRM admin?
+function isChatAdmin(req) { return !!(req.isHrAdmin || req.adminUser); }
+
+// Admin: delete an entire team + all its channels, memberships and messages.
+router.delete('/teams/:teamId', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isChatAdmin(req)) return res.status(403).json({ error: 'Only an admin can delete a team.' });
+    const teamId = Number(req.params.teamId);
+    const team = await ChatTeam.findByPk(teamId);
+    if (!team) return res.status(404).json({ error: 'Team not found.' });
+    const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId } });
+    for (const c of chans) {
+      await ChatMessage.destroy({ where: { conversationId: c.id } });
+      await ChatMembership.destroy({ where: { conversationId: c.id } });
+      await c.destroy();
+    }
+    await ChatTeamMember.destroy({ where: { teamId } });
+    await team.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Admin: delete a single group (channel) within a team.
+router.delete('/channels/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isChatAdmin(req)) return res.status(403).json({ error: 'Only an admin can delete a group.' });
+    const convId = Number(req.params.id);
+    const conv = await ChatConversation.findByPk(convId);
+    if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
+    await ChatMessage.destroy({ where: { conversationId: convId } });
+    await ChatMembership.destroy({ where: { conversationId: convId } });
+    await conv.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // HR/Admin: add / remove members of a specific group (channel).
 router.post('/channels/:id/members', requireHrAccess, async (req, res, next) => {
   try {

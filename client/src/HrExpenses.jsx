@@ -54,6 +54,13 @@ export default function HrExpenses({ user, isAdmin }) {
   const [rejectFor, setRejectFor] = useState(null);
   const [detail, setDetail] = useState(null);
   const [vendorEdit, setVendorEdit] = useState(null);
+  const [editExpense, setEditExpense] = useState(null);
+  // HR staff / HR Manager / Admin can edit; only Admin can delete.
+  const canEdit = isAdmin || user.isHrManager || user.hrManagerAll || ['hr', 'recruiter'].includes(user.type);
+  const deleteExpense = async (e) => {
+    if (!window.confirm(`Delete this expense (${e.title || e.category}) permanently?`)) return;
+    try { await hrApi(`/expenses/${e._id}`, { method: 'DELETE' }); load(); } catch (err) { alert(err.message); }
+  };
   const [vendorHistory, setVendorHistory] = useState(null);
   const [catOpen, setCatOpen] = useState(false);
   const [monthlyOpen, setMonthlyOpen] = useState(false);
@@ -179,6 +186,8 @@ export default function HrExpenses({ user, isAdmin }) {
                       {e.status === 'approved' && <button onClick={() => setPayFor(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#050A1F' }}>Mark paid</button>}
                       {e.status === 'paid' && <span className="text-[11px] text-slate-300">Done</span>}
                       {e.status === 'rejected' && <span className="text-[11px] text-slate-300">—</span>}
+                      {canEdit && e.status !== 'paid' && <button onClick={() => setEditExpense(e)} className="ml-2 text-[11px] font-bold text-slate-600 border border-slate-300 px-2.5 py-1 rounded">Edit</button>}
+                      {isAdmin && <button onClick={() => deleteExpense(e)} title="Delete" className="ml-2 text-[11px] font-bold text-red-500 border border-red-200 px-2 py-1 rounded">🗑</button>}
                     </td>
                   </tr>
                 ))}
@@ -224,6 +233,7 @@ export default function HrExpenses({ user, isAdmin }) {
       {approveFor && <ApproveExpenseModal expense={approveFor} onClose={() => setApproveFor(null)} onConfirm={(payDueDate) => decide(approveFor, 'approve', '', payDueDate)} />}
       {detail && <ExpenseDrawer expense={detail} onClose={() => setDetail(null)} />}
       {vendorEdit && <VendorModal vendor={vendorEdit} cats={cats} onClose={() => setVendorEdit(null)} onSaved={() => { setVendorEdit(null); load(); }} setErr={setErr} />}
+      {editExpense && <EditExpenseModal expense={editExpense} cats={cats} onClose={() => setEditExpense(null)} onSaved={() => { setEditExpense(null); load(); }} />}
       {vendorHistory && <VendorHistoryDrawer vendor={vendorHistory} onClose={() => setVendorHistory(null)} />}
       {catOpen && <CategoryModal cats={cats} onClose={() => setCatOpen(false)} onSaved={(list) => { setCats(list); setCatOpen(false); }} setErr={setErr} />}
       {monthlyOpen && <MonthlyTotalsModal onClose={() => setMonthlyOpen(false)} />}
@@ -266,6 +276,36 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function EditExpenseModal({ expense, cats, onClose, onSaved }) {
+  const [title, setTitle] = useState(expense.title || '');
+  const [amount, setAmount] = useState(expense.amount || '');
+  const [category, setCategory] = useState(expense.category || (cats[0] && cats[0].id) || '');
+  const [notes, setNotes] = useState(expense.notes || expense.description || '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!amount || Number(amount) <= 0) { alert('Enter a valid amount.'); return; }
+    setBusy(true);
+    try { await hrApi(`/expenses/${expense._id}`, { method: 'PUT', body: JSON.stringify({ title, amount: Number(amount), category, notes }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">Edit expense</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        <div className="p-5 space-y-3">
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Title</div><input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Amount (₹)</div><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          {cats.length > 0 && <div><div className="text-[12px] font-bold text-slate-500 mb-1">Category</div><select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">{cats.map((c) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}</select></div>}
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Notes</div><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
     </div>
   );
 }
