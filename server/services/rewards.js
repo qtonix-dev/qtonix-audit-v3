@@ -272,4 +272,53 @@ async function transfer(models, fromId, toId, points, meta) {
   });
 }
 
-module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval, reserve, fulfilReserved, refundReserved, expirePoints, transfer };
+// Fresh activation: wipe all existing points (clean slate) then retro-credit
+// ONLY birthdays & work anniversaries that fell within the last 30 days.
+// Everything else accrues from `liveSince` forward via the normal award path.
+async function activateFresh(models, liveSince) {
+  const { RewardLedger, RewardWallet, RewardRule, HrUser } = models;
+  // 1) Clean slate — remove all ledger rows and zero all wallets.
+  await RewardLedger.destroy({ where: {} });
+  await RewardWallet.destroy({ where: {} });
+
+  // 2) Retro-credit birthday & anniversary for the last 30 days (inclusive).
+  const bdayRule = await RewardRule.findOne({ where: { key: 'auto_birthday', active: true } });
+  const users = await HrUser.findAll({ where: { active: true } });
+  const liveDate = new Date(liveSince + 'T00:00:00Z');
+  const start = new Date(liveDate.getTime() - 30 * 86400000); // 30 days before
+  // Build the set of MM-DD in the window → year, so we can match birthdays.
+  const windowDays = [];
+  for (let t = start.getTime(); t <= liveDate.getTime(); t += 86400000) { const d = new Date(t); windowDays.push({ mmdd: d.toISOString().slice(5, 10), ymd: d.toISOString().slice(0, 10), year: d.getUTCFullYear() }); }
+  const ANNIV_RULE_FOR = (years) => {
+    const ANNIV_YEARS = [1, 2, 3, 5, 7, 10, 15, 20];
+    if (ANNIV_YEARS.includes(years)) return `auto_anniversary_${years}`;
+    if (years > 10 && years < 15) return 'auto_anniversary_10';
+    if (years > 15 && years < 20) return 'auto_anniversary_15';
+    if (years > 20) return 'auto_anniversary_20';
+    return null;
+  };
+  for (const emp of users) {
+    if (emp.chatOnly) continue;
+    // Birthday in the window?
+    if (emp.birthday && bdayRule && bdayRule.points > 0) {
+      const bMmdd = String(emp.birthday).slice(5, 10);
+      const hit = windowDays.find((w) => w.mmdd === bMmdd);
+      if (hit) await award(models, emp.id, { points: bdayRule.points, category: 'automatic', ruleKey: 'auto_birthday', title: 'Birthday reward', byName: 'System', byRole: 'Automatic', source: 'auto', dedupeKey: `birthday:${emp.id}:${hit.year}` });
+    }
+    // Anniversary in the window?
+    if (emp.joiningDate) {
+      const jMmdd = String(emp.joiningDate).slice(5, 10);
+      const hit = windowDays.find((w) => w.mmdd === jMmdd);
+      if (hit) {
+        const years = hit.year - Number(String(emp.joiningDate).slice(0, 4));
+        if (years >= 1) {
+          const key = ANNIV_RULE_FOR(years);
+          if (key) { const rule = await RewardRule.findOne({ where: { key, active: true } }); if (rule && rule.points > 0) await award(models, emp.id, { points: rule.points, category: 'automatic', ruleKey: key, title: `${years}-year anniversary`, byName: 'System', byRole: 'Automatic', source: 'auto', dedupeKey: `anniv:${emp.id}:${hit.year}` }); }
+        }
+      }
+    }
+  }
+  return { ok: true };
+}
+
+module.exports = { award, reverse, pointsForRule, pointsForBadge, walletFor, getWallet, pointRatio, rupeeValue, expiryMonths, addMonths, istToday, rewardsLive, monthlyLimitFor, spentThisMonth, budgetCheck, approvalTier, needsApproval, reserve, fulfilReserved, refundReserved, expirePoints, transfer, activateFresh };

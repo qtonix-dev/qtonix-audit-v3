@@ -1484,6 +1484,18 @@ router.put('/rewards/rules/:id', requireHrAccess, requireHrManager, async (req, 
 });
 
 // Admin: reward config (point ratio, expiry, budgets).
+// Admin: wipe all reward points (clean slate). Use to clear wrongly-credited
+// points. Does not change the live switch.
+router.post('/rewards/reset', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can reset points.' });
+    await RewardLedger.destroy({ where: {} });
+    await RewardWallet.destroy({ where: {} });
+    hrLog(req, 'rewards.reset', 'Wiped all reward points (clean slate)');
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.put('/rewards/config', requireHrAccess, requireHrManager, async (req, res, next) => {
   try {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
@@ -1492,13 +1504,17 @@ router.put('/rewards/config', requireHrAccess, requireHrManager, async (req, res
     if (b.pointsPerRupee !== undefined) { const n = Number(b.pointsPerRupee); if (n > 0) cfg.pointsPerRupee = n; }
     if (b.expiryMonths !== undefined) { const n = Number(b.expiryMonths); if (n > 0) cfg.expiryMonths = Math.round(n); }
     if (b.rewardsLive !== undefined) {
+      const wasLive = !!cfg.rewardsLive;
       cfg.rewardsLive = !!b.rewardsLive;
-      // Stamp the go-live date the FIRST time Rewards is switched on. Auto-rewards
-      // (joining/anniversary/birthday/attendance milestones) only count events on
-      // or after this date, so turning Rewards on never retroactively credits
-      // milestones people already passed. Kept once set (re-enabling doesn't reset
-      // it) so a pause+resume doesn't re-trigger a fresh backfill window.
-      if (cfg.rewardsLive && !cfg.liveSince) cfg.liveSince = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      // FIRST activation: stamp go-live, wipe any pre-existing points (clean
+      // slate), and retro-credit ONLY birthday/anniversary that fell in the last
+      // 30 days. Everything else counts from go-live forward.
+      const firstActivation = cfg.rewardsLive && !cfg.liveSince;
+      if (firstActivation) {
+        cfg.liveSince = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+        s.rewardConfig = cfg; s.changed('rewardConfig', true); await s.save(); // persist live first so award() passes
+        try { await require('../services/rewards').activateFresh(models, cfg.liveSince); } catch (e) { console.error('[rewards activate]', e.message); }
+      }
     }
     if (b.budgets) cfg.budgets = { ...(cfg.budgets || {}), ...b.budgets };
     if (b.attendancePointsEnabled !== undefined) cfg.attendancePointsEnabled = !!b.attendancePointsEnabled;
