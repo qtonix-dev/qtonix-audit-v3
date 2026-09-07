@@ -573,6 +573,39 @@ router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, nex
  * GET /api/hr/employees — directory of all HR staff with completion %. Powers
  * the top-level "Employee" menu. Available to any HR user (read-only list).
  */
+// ===== RBAC: access control (admin manages; everyone reads their own) =====
+const PERMS = require('../services/permissions');
+
+// My effective permissions (frontend uses this to show/hide nav + buttons).
+router.get('/my-permissions', requireHrAccess, async (req, res, next) => {
+  try {
+    const isAdmin = !!(req.isHrAdmin || req.adminUser);
+    res.json({ isAdmin, modules: PERMS.MODULES, permissions: PERMS.effectiveFor(req.hrUser, isAdmin) });
+  } catch (e) { next(e); }
+});
+
+// Admin: list all employees + their explicit grants (for the Access Control UI).
+router.get('/access-control', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can manage access.' });
+    const rows = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, attributes: ['id', 'name', 'email', 'avatar', 'designation', 'department', 'type', 'permissions'], order: [['name', 'ASC']] });
+    res.json({ modules: PERMS.MODULES, actions: PERMS.ACTIONS, employees: rows.map((u) => ({ id: u.id, name: u.name, email: u.email, avatar: u.avatar || '', designation: u.designation || '', department: u.department || '', type: u.type, permissions: PERMS.sanitize(u.permissions) })) });
+  } catch (e) { next(e); }
+});
+
+// Admin: set an employee's granular permissions.
+router.put('/access-control/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can manage access.' });
+    const row = await HrUser.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Employee not found.' });
+    row.permissions = PERMS.sanitize((req.body || {}).permissions);
+    row.changed('permissions', true); await row.save();
+    hrLog(req, 'access.set', `Updated access for ${row.name}`);
+    res.json({ ok: true, permissions: row.permissions });
+  } catch (e) { next(e); }
+});
+
 router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true } }, order: [['name', 'ASC']] });
@@ -3396,7 +3429,7 @@ function expenseScopeOk(req, branch) {
 }
 router.get('/expenses', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view expenses.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_expenses', 'read')) return res.status(403).json({ error: 'Only an admin or HR manager can view expenses.' });
     const where = {};
     // Branch scoping for single-branch managers.
     if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
@@ -3494,8 +3527,8 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
 });
 router.put('/expenses/:id', requireHrAccess, async (req, res, next) => {
   try {
-    // HR staff, HR Manager, and Admin can edit expenses.
-    const canEdit = req.isHrAdmin || req.isHrManager || req.adminUser || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)) || req.isHrRole;
+    // HR staff, HR Manager, Admin, or anyone granted 'edit' can edit expenses.
+    const canEdit = req.isHrAdmin || req.isHrManager || req.adminUser || (req.hrUser && ['hr', 'recruiter'].includes(req.hrUser.type)) || req.isHrRole || PERMS.can(req, 'corehr_expenses', 'edit');
     if (!canEdit) return res.status(403).json({ error: 'Only HR or an admin can edit expenses.' });
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
@@ -3826,8 +3859,8 @@ router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
 });
 router.delete('/expenses/:id', requireHrAccess, async (req, res, next) => {
   try {
-    // Only an admin can delete an expense (uploaded by HR or an employee).
-    if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can delete expenses.' });
+    // Only an admin (or someone granted 'delete') can delete an expense.
+    if (!(req.isHrAdmin || req.adminUser || PERMS.can(req, 'corehr_expenses', 'delete'))) return res.status(403).json({ error: 'Only an admin can delete expenses.' });
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
     await row.destroy();

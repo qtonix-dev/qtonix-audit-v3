@@ -1360,6 +1360,9 @@ const HrUser = sequelize.define('HrUser', {
   // Chat-only participants (e.g. an admin auto-added to use chat) — excluded
   // from employee/attendance/payroll/reward lists; only visible inside chat.
   chatOnly: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // RBAC: admin-granted extra access per module, ADDITIVE to role defaults.
+  // Shape: { moduleId: { read: bool, edit: bool, delete: bool } }.
+  permissions: { type: DataTypes.JSON, defaultValue: {} },
   branch: { type: DataTypes.STRING(80), defaultValue: 'Bhubaneswar' },
   department: { type: DataTypes.STRING(80), defaultValue: '' },
   joiningDate: { type: DataTypes.DATEONLY, allowNull: true },

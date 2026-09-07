@@ -8635,6 +8635,81 @@ function HrCareersSeo() {
 }
 
 // ===== TV Display admin (Phase 1): links, welcome msg, slide toggles =====
+// ===== Access Control (RBAC) admin: grant read/edit/delete per module =====
+function AccessControlAdmin() {
+  const [data, setData] = useState(null);
+  const [selId, setSelId] = useState(null);
+  const [perms, setPerms] = useState({});
+  const [q, setQ] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { hrApi('/access-control').then((r) => setData(r)).catch(() => {}); }, []);
+  const sel = data && data.employees.find((e) => e.id === selId);
+  const pick = (e) => { setSelId(e.id); setPerms(JSON.parse(JSON.stringify(e.permissions || {}))); setSaved(false); };
+  const toggle = (mod, act) => setPerms((p) => { const n = { ...p }; const m = { ...(n[mod] || {}) }; m[act] = !m[act]; if (!m[act]) delete m[act]; if (Object.keys(m).length) n[mod] = m; else delete n[mod]; return n; });
+  const save = async () => {
+    setSaving(true); setSaved(false);
+    try { await hrApi(`/access-control/${selId}`, { method: 'PUT', body: JSON.stringify({ permissions: perms }) }); setData((d) => ({ ...d, employees: d.employees.map((e) => e.id === selId ? { ...e, permissions: perms } : e) })); setSaved(true); setTimeout(() => setSaved(false), 2000); } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  if (!data) return <div className="text-slate-400 text-sm py-10">Loading…</div>;
+  const shown = data.employees.filter((e) => !q || e.name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div>
+      <div className="text-lg font-extrabold text-[#050A1F] mb-1">🔐 Access Control</div>
+      <p className="text-[13px] text-slate-400 mb-4">Grant an employee extra <b>read / edit / delete</b> access to any module. This is <b>added on top</b> of what their role already allows — it never removes access. Admins always have full access.</p>
+      <div className="grid md:grid-cols-[260px_1fr] gap-4">
+        {/* Employee list */}
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search employee…" className="w-full px-3 py-2.5 text-sm border-b border-slate-100 focus:outline-none" />
+          <div className="max-h-[460px] overflow-auto">
+            {shown.map((e) => {
+              const grants = Object.keys(e.permissions || {}).length;
+              return (
+                <button key={e.id} onClick={() => pick(e)} className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-slate-50 ${selId === e.id ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                  <Avatar name={e.name} src={e.avatar} size={30} />
+                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{e.name}</div><div className="text-[11px] text-slate-400 truncate">{[e.designation, e.department].filter(Boolean).join(' · ') || e.type}</div></div>
+                  {grants > 0 && <span className="text-[10px] font-extrabold text-orange-600 bg-orange-100 rounded-full px-1.5">{grants}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {/* Permission matrix */}
+        <div className="rounded-xl border border-slate-200 p-4">
+          {!sel ? <div className="text-slate-400 text-sm py-16 text-center">Select an employee to manage their access.</div> : (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <Avatar name={sel.name} src={sel.avatar} size={40} />
+                <div><div className="text-[15px] font-extrabold">{sel.name}</div><div className="text-[12px] text-slate-400">{[sel.designation, sel.department].filter(Boolean).join(' · ') || sel.type}</div></div>
+              </div>
+              <div className="overflow-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-[11px] font-extrabold text-slate-400 uppercase"><th className="text-left py-2">Module</th>{data.actions.map((a) => <th key={a} className="text-center py-2 w-20 capitalize">{a}</th>)}</tr></thead>
+                  <tbody>
+                    {data.modules.map((m) => (
+                      <tr key={m.id} className="border-t border-slate-50">
+                        <td className="py-2 font-semibold text-slate-700">{m.label}</td>
+                        {data.actions.map((a) => (
+                          <td key={a} className="text-center py-2"><input type="checkbox" checked={!!(perms[m.id] && perms[m.id][a])} onChange={() => toggle(m.id, a)} className="w-4 h-4 accent-orange-500" /></td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center gap-3 mt-4">
+                <button onClick={save} disabled={saving} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save access'}</button>
+                {saved && <span className="text-[13px] font-bold text-green-600">✓ Saved</span>}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TvDisplayAdmin() {
   const [cfg, setCfg] = useState(null);
   const [token, setToken] = useState('');
@@ -8818,7 +8893,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['access', 'Access Control'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
 
   return (
     <div className="max-w-5xl">
@@ -8833,6 +8908,7 @@ function HrAdmin({ user, onOpenCandidate }) {
       </div>
 
       {/* USERS TAB */}
+      {tab === 'access' && <AccessControlAdmin />}
       {tab === 'tv' && <TvDisplayAdmin />}
       {tab === 'users' && (
         <div>
@@ -9715,24 +9791,30 @@ export default function HrApp() {
   const isScheduler = isAdmin || ['hr', 'recruiter'].includes(user.type) || isHrDept;
   // Only HR-department staff (and admins) may create/manage job posts.
   const canPostJobs = isAdmin || isHrDept || ['hr', 'recruiter'].includes(user.type);
+  // Granular grants (RBAC): does the user have an explicit grant on a module?
+  const _grants = (user && user.permissions) || {};
+  const grant = (mod, act = 'read') => isAdmin || !!(_grants[mod] && _grants[mod][act]);
+  // Core HR children the user can reach: HR managers see all; others see only
+  // the modules they've been granted read on.
+  const coreHrChildren = [
+    { id: 'corehr_attendance', label: 'Attendance' },
+    { id: 'corehr_leave', label: 'Leave' },
+    { id: 'corehr_payroll', label: 'Payroll' },
+    { id: 'corehr_expenses', label: 'Expenses' },
+    { id: 'corehr_stock', label: 'Stock Management' },
+    { id: 'corehr_onboarding', label: 'Onboarding' },
+    { id: 'employees', label: 'Employee' },
+  ].filter((c) => isHrManager || grant(c.id, 'read'));
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Workspace' },
     ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
     ...(!(isAdmin || isHrStaff || isHrManager) ? [{ id: 'rewards', label: 'My Rewards' }] : []),
     { id: 'interview', label: 'Interview' },
-    ...(isScheduler ? [{ id: 'email', label: 'Email' }] : []),
-    ...((isHrStaff || hasPanel) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
-    ...(isHrManager ? [{ id: 'corehr', label: 'Core HR', children: [
-      { id: 'corehr_attendance', label: 'Attendance' },
-      { id: 'corehr_leave', label: 'Leave' },
-      { id: 'corehr_payroll', label: 'Payroll' },
-      { id: 'corehr_expenses', label: 'Expenses' },
-      { id: 'corehr_stock', label: 'Stock Management' },
-      { id: 'corehr_onboarding', label: 'Onboarding' },
-      { id: 'employees', label: 'Employee' },
-    ] }] : []),
-    ...((isAdmin || user.hrManagerAll || user.hrManagerScope === 'all') ? [{ id: 'survey', label: 'Survey' }] : []),
+    ...((isScheduler || grant('email', 'read')) ? [{ id: 'email', label: 'Email' }] : []),
+    ...((isHrStaff || hasPanel || grant('recruitment', 'read')) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
+    ...(coreHrChildren.length ? [{ id: 'corehr', label: 'Core HR', children: coreHrChildren }] : []),
+    ...((isAdmin || user.hrManagerAll || user.hrManagerScope === 'all' || grant('survey', 'read')) ? [{ id: 'survey', label: 'Survey' }] : []),
     ...(isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ];
   const effectiveView = view;
