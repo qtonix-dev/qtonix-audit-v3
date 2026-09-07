@@ -40,16 +40,14 @@ function sanitize(perms) {
 }
 
 // Does the request principal have `action` on `moduleId`?
-// Admins: always yes. Otherwise: role-derived base access OR an explicit grant.
 function can(req, moduleId, action = 'read') {
   if (req.isHrAdmin || req.adminUser) return true;                 // admin = full
-  // Explicit grant on the HR user's permissions map.
   const perms = (req.hrUser && req.hrUser.permissions) || {};
-  const m = perms[moduleId];
-  if (m && m[action] === true) return true;
-  // (Role-based base access is enforced by each route's existing checks; this
-  // function only adds the granular layer, so a "no" here means "fall back to
-  // whatever the route's own role check decides".)
+  const g = perms[moduleId];
+  if (g && g[action] === true) return true;                        // explicit grant
+  const isHrDept = req.hrUser && /^(hr|human resource|human resources)$/i.test(String(req.hrUser.department || '').trim());
+  const base = roleBaseAccess({ isAdmin: false, isHrManager: !!req.isHrManager, type: req.hrUser && req.hrUser.type, isHrDept });
+  if (base[moduleId] && base[moduleId][action] === true) return true; // role base
   return false;
 }
 
@@ -70,4 +68,48 @@ function effectiveFor(hrUser, isAdmin) {
   return sanitize(hrUser && hrUser.permissions);
 }
 
-module.exports = { MODULES, MODULE_IDS, ACTIONS, sanitize, can, requireModule, effectiveFor };
+// Role-derived DEFAULT access per module (LOCKED — cannot be removed by admin,
+// only added to). Determined from the HR user's role/type + manager/HR flags.
+// Returns a map { moduleId: { read, edit, delete } } of the base access.
+function roleBaseAccess(ctx) {
+  // ctx: { isAdmin, isHrManager, type, isHrDept }
+  const rw = { read: true, edit: true, delete: false };
+  const r = { read: true };
+  const rwd = { read: true, edit: true, delete: true };
+  const base = {};
+  if (ctx.isAdmin) { for (const m of MODULES) base[m.id] = { ...rwd }; return base; }
+  // Everyone: Dashboard + Workspace (tasks/chat).
+  base.dashboard = { ...r };
+  base.tasks = { ...r };
+  const isHrStaff = ['hr', 'recruiter'].includes(ctx.type) || ctx.isHrDept;
+  if (isHrStaff) {
+    base.recruitment = { ...rw };
+    base.interview = { ...rw };
+    base.corehr_leave = { ...rw };
+    base.email = { ...rw };
+  }
+  if (ctx.isHrManager) {
+    // HR Managers get all Core HR modules.
+    for (const id of ['corehr_attendance', 'corehr_leave', 'corehr_payroll', 'corehr_expenses', 'corehr_stock', 'corehr_onboarding', 'employees']) base[id] = { ...rw };
+    base.recruitment = { ...rw };
+    base.interview = { ...rw };
+    base.survey = { ...rw };
+    base.recognition = { ...rw };
+  }
+  return base;
+}
+
+// Merge role base + explicit grants → the employee's effective access.
+function mergeAccess(base, grants) {
+  const out = {};
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(grants || {})]);
+  for (const k of keys) {
+    const b = (base && base[k]) || {}; const g = (grants && grants[k]) || {};
+    const m = {};
+    for (const a of ACTIONS) if (b[a] || g[a]) m[a] = true;
+    if (Object.keys(m).length) out[k] = m;
+  }
+  return out;
+}
+
+module.exports = { MODULES, MODULE_IDS, ACTIONS, sanitize, can, requireModule, effectiveFor, roleBaseAccess, mergeAccess };

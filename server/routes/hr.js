@@ -588,8 +588,14 @@ router.get('/my-permissions', requireHrAccess, async (req, res, next) => {
 router.get('/access-control', requireHrAccess, async (req, res, next) => {
   try {
     if (!(req.isHrAdmin || req.adminUser)) return res.status(403).json({ error: 'Only an admin can manage access.' });
-    const rows = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, attributes: ['id', 'name', 'email', 'avatar', 'designation', 'department', 'type', 'permissions'], order: [['name', 'ASC']] });
-    res.json({ modules: PERMS.MODULES, actions: PERMS.ACTIONS, employees: rows.map((u) => ({ id: u.id, name: u.name, email: u.email, avatar: u.avatar || '', designation: u.designation || '', department: u.department || '', type: u.type, permissions: PERMS.sanitize(u.permissions) })) });
+    const rows = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, attributes: ['id', 'name', 'email', 'avatar', 'designation', 'department', 'type', 'branch', 'isHrManager', 'hrManagerScope', 'permissions'], order: [['name', 'ASC']] });
+    const employees = rows.map((u) => {
+      const isHrDept = /^(hr|human resource|human resources)$/i.test(String(u.department || '').trim());
+      const isMgr = !!u.isHrManager || !!u.hrManagerScope;
+      const roleBase = PERMS.roleBaseAccess({ isAdmin: false, isHrManager: isMgr, type: u.type, isHrDept });
+      return { id: u.id, name: u.name, email: u.email, avatar: u.avatar || '', designation: u.designation || '', department: u.department || '', branch: u.branch || '', type: u.type, roleBase, grants: PERMS.sanitize(u.permissions) };
+    });
+    res.json({ modules: PERMS.MODULES, actions: PERMS.ACTIONS, employees });
   } catch (e) { next(e); }
 });
 
@@ -600,7 +606,18 @@ router.put('/access-control/:id', requireHrAccess, async (req, res, next) => {
     const row = await HrUser.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Employee not found.' });
     const before = PERMS.sanitize(row.permissions);
-    const after = PERMS.sanitize((req.body || {}).permissions);
+    // Compute the employee's role base so grants only store EXTRA access — role
+    // access is never stored as a grant (it can't be removed, so no need).
+    const isHrDept = /^(hr|human resource|human resources)$/i.test(String(row.department || '').trim());
+    const isMgr = !!row.isHrManager || !!row.hrManagerScope;
+    const roleBase = PERMS.roleBaseAccess({ isAdmin: false, isHrManager: isMgr, type: row.type, isHrDept });
+    const incoming = PERMS.sanitize((req.body || {}).permissions);
+    const after = {};
+    for (const [mod, acts] of Object.entries(incoming)) {
+      const m = {};
+      for (const a of PERMS.ACTIONS) { if (acts[a] && !(roleBase[mod] && roleBase[mod][a])) m[a] = true; }
+      if (Object.keys(m).length) after[mod] = m;
+    }
     row.permissions = after;
     row.changed('permissions', true); await row.save();
     hrLog(req, 'access.set', `Updated access for ${row.name}`);

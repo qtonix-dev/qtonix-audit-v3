@@ -8639,17 +8639,24 @@ function HrCareersSeo() {
 function AccessControlAdmin() {
   const [data, setData] = useState(null);
   const [selId, setSelId] = useState(null);
-  const [perms, setPerms] = useState({});
+  const [grants, setGrants] = useState({});   // extra access being edited
   const [q, setQ] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   useEffect(() => { hrApi('/access-control').then((r) => setData(r)).catch(() => {}); }, []);
   const sel = data && data.employees.find((e) => e.id === selId);
-  const pick = (e) => { setSelId(e.id); setPerms(JSON.parse(JSON.stringify(e.permissions || {}))); setSaved(false); };
-  const toggle = (mod, act) => setPerms((p) => { const n = { ...p }; const m = { ...(n[mod] || {}) }; m[act] = !m[act]; if (!m[act]) delete m[act]; if (Object.keys(m).length) n[mod] = m; else delete n[mod]; return n; });
+  const roleBase = sel ? (sel.roleBase || {}) : {};
+  const pick = (e) => { setSelId(e.id); setGrants(JSON.parse(JSON.stringify(e.grants || {}))); setSaved(false); };
+  // Is this action locked (comes from role — can't be removed)?
+  const isLocked = (mod, act) => !!(roleBase[mod] && roleBase[mod][act]);
+  const isChecked = (mod, act) => isLocked(mod, act) || !!(grants[mod] && grants[mod][act]);
+  const toggle = (mod, act) => {
+    if (isLocked(mod, act)) return; // role access can't be toggled
+    setGrants((p) => { const n = { ...p }; const m = { ...(n[mod] || {}) }; m[act] = !m[act]; if (!m[act]) delete m[act]; if (Object.keys(m).length) n[mod] = m; else delete n[mod]; return n; });
+  };
   const save = async () => {
     setSaving(true); setSaved(false);
-    try { await hrApi(`/access-control/${selId}`, { method: 'PUT', body: JSON.stringify({ permissions: perms }) }); setData((d) => ({ ...d, employees: d.employees.map((e) => e.id === selId ? { ...e, permissions: perms } : e) })); setSaved(true); setTimeout(() => setSaved(false), 2000); } catch (e) { alert(e.message); }
+    try { await hrApi(`/access-control/${selId}`, { method: 'PUT', body: JSON.stringify({ permissions: grants }) }); setData((d) => ({ ...d, employees: d.employees.map((e) => e.id === selId ? { ...e, grants } : e) })); setSaved(true); setTimeout(() => setSaved(false), 2000); } catch (e) { alert(e.message); }
     setSaving(false);
   };
   if (!data) return <div className="text-slate-400 text-sm py-10">Loading…</div>;
@@ -8657,19 +8664,23 @@ function AccessControlAdmin() {
   return (
     <div>
       <div className="text-lg font-extrabold text-[#050A1F] mb-1">🔐 Access Control</div>
-      <p className="text-[13px] text-slate-400 mb-4">Grant an employee extra <b>read / edit / delete</b> access to any module. This is <b>added on top</b> of what their role already allows — it never removes access. Admins always have full access.</p>
+      <p className="text-[13px] text-slate-400 mb-3">Select an employee to see what they already have. <b>Role access is locked</b> (grey, can't be removed) — you can only <b>add</b> extra access on top. Admins always have full access.</p>
+      <div className="flex items-center gap-4 mb-3 text-[12px]">
+        <span className="flex items-center gap-1.5"><span className="w-4 h-4 rounded border-2 bg-slate-200 border-slate-300 inline-block" /> Locked (from role)</span>
+        <span className="flex items-center gap-1.5"><span className="w-4 h-4 rounded inline-block" style={{ background: '#FF6A00' }} /> Granted by you</span>
+      </div>
       <div className="grid md:grid-cols-[260px_1fr] gap-4">
         {/* Employee list */}
         <div className="rounded-xl border border-slate-200 overflow-hidden">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search employee…" className="w-full px-3 py-2.5 text-sm border-b border-slate-100 focus:outline-none" />
           <div className="max-h-[460px] overflow-auto">
             {shown.map((e) => {
-              const grants = Object.keys(e.permissions || {}).length;
+              const nGrants = Object.keys(e.grants || {}).length;
               return (
                 <button key={e.id} onClick={() => pick(e)} className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-slate-50 ${selId === e.id ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
                   <Avatar name={e.name} src={e.avatar} size={30} />
-                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{e.name}</div><div className="text-[11px] text-slate-400 truncate">{[e.designation, e.department].filter(Boolean).join(' · ') || e.type}</div></div>
-                  {grants > 0 && <span className="text-[10px] font-extrabold text-orange-600 bg-orange-100 rounded-full px-1.5">{grants}</span>}
+                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{e.name}</div><div className="text-[11px] text-slate-400 truncate">{[e.designation, e.branch].filter(Boolean).join(' · ') || e.type}</div></div>
+                  {nGrants > 0 && <span className="text-[10px] font-extrabold text-orange-600 bg-orange-100 rounded-full px-1.5" title="extra grants">+{nGrants}</span>}
                 </button>
               );
             })}
@@ -8681,7 +8692,7 @@ function AccessControlAdmin() {
             <>
               <div className="flex items-center gap-3 mb-4">
                 <Avatar name={sel.name} src={sel.avatar} size={40} />
-                <div><div className="text-[15px] font-extrabold">{sel.name}</div><div className="text-[12px] text-slate-400">{[sel.designation, sel.department].filter(Boolean).join(' · ') || sel.type}</div></div>
+                <div><div className="text-[15px] font-extrabold">{sel.name}</div><div className="text-[12px] text-slate-400">{[sel.designation, sel.department, sel.branch].filter(Boolean).join(' · ') || sel.type}</div></div>
               </div>
               <div className="overflow-auto">
                 <table className="w-full text-sm">
@@ -8690,9 +8701,15 @@ function AccessControlAdmin() {
                     {data.modules.map((m) => (
                       <tr key={m.id} className="border-t border-slate-50">
                         <td className="py-2 font-semibold text-slate-700">{m.label}</td>
-                        {data.actions.map((a) => (
-                          <td key={a} className="text-center py-2"><input type="checkbox" checked={!!(perms[m.id] && perms[m.id][a])} onChange={() => toggle(m.id, a)} className="w-4 h-4 accent-orange-500" /></td>
-                        ))}
+                        {data.actions.map((a) => {
+                          const locked = isLocked(m.id, a);
+                          const checked = isChecked(m.id, a);
+                          return (
+                            <td key={a} className="text-center py-2">
+                              <input type="checkbox" checked={checked} disabled={locked} onChange={() => toggle(m.id, a)} title={locked ? 'From role — cannot be removed' : ''} className="w-4 h-4 accent-orange-500 disabled:opacity-60" style={locked ? { accentColor: '#94a3b8', cursor: 'not-allowed' } : {}} />
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
