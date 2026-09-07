@@ -1708,9 +1708,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
     if (!file || !active) return;
     setUploading(true);
     try {
-      const url = await uploadToImageKit(file);
+      const up = await uploadToImageKit(file, `/qtonix-hr/chat/${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, file.name);
       const isImage = /^image\//.test(file.type);
-      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: url, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage }) });
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: up.url, fileId: up.fileId, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { alert('Upload failed: ' + e.message); }
@@ -1724,7 +1724,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   return (
     <div className="flex h-full bg-white">
       {/* Conversation list */}
-      <div className="flex flex-col border-r border-slate-200 shrink-0" style={{ width: 300, background: '#f8fafc' }}>
+      <div className="flex flex-col border-r border-slate-200 shrink-0 min-h-0" style={{ width: 300, background: '#f8fafc' }}>
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <div className="text-xl font-extrabold">Chat</div>
           <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
@@ -1759,6 +1759,8 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             </div>
           </div>
         )}
+        {/* Scrollable area: #task + Teams + Direct messages all scroll together. */}
+        <div className="flex-1 overflow-y-auto min-h-0 pb-2">
         {/* #task — personal notes & task alerts, pinned at the top. */}
         {taskChannel && (
           <button onClick={() => openChannel('task', { id: taskChannel.id, title: 'task' }, { name: 'Your tasks & notes', color: '#0A1F44', icon: '📋', isTask: true })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 mb-1.5 ${active && active.id === taskChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === taskChannel.id ? { background: '#fff3ec' } : { background: '#f8fafc' }}>
@@ -1791,7 +1793,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
           </div>
         ))}
         <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
-        <div className="flex-1 overflow-auto pb-2">
+        <div>
           {conversations.length === 0 ? (
             <div className="px-4 py-8 text-center text-[13px] text-slate-400">No conversations yet.<br />Tap ✏️ to message a colleague.</div>
           ) : conversations.map((c) => (
@@ -1807,6 +1809,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
               </div>
             </button>
           ))}
+        </div>
         </div>
         </>)}
       </div>

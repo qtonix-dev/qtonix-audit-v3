@@ -140,9 +140,35 @@ async function tick(models) {
     }
     // Expire old points once per run.
     try { const R = require('../services/rewards'); const exp = await R.expirePoints(models); if (exp) console.log(`[badges-job] expired ${exp} points`); } catch (e) { console.error('[badges-job] expiry failed:', e.message); }
+    // Delete chat-uploaded files older than 20 days from ImageKit (and clear the
+    // file from the message so the download link disappears too).
+    try { const n = await cleanupOldChatFiles(models); if (n) console.log(`[badges-job] deleted ${n} old chat file(s)`); } catch (e) { console.error('[badges-job] chat file cleanup failed:', e.message); }
     if (awarded) console.log(`[badges-job] processed ${awarded} auto-award(s)`);
   } catch (e) { console.error('[badges-job] tick failed:', e.message); }
   finally { running = false; }
+}
+
+// Delete ImageKit files attached to chat messages older than 20 days.
+async function cleanupOldChatFiles(models) {
+  const { ChatMessage } = models;
+  if (!ChatMessage) return 0;
+  const { Op } = require('sequelize');
+  const cutoff = new Date(Date.now() - 20 * 86400000);
+  const rows = await ChatMessage.findAll({ where: { fileId: { [Op.ne]: '' }, createdAt: { [Op.lt]: cutoff } }, limit: 200 });
+  if (!rows.length) return 0;
+  const ik = require('../services/imagekit');
+  let done = 0;
+  for (const m of rows) {
+    try {
+      if (m.fileId) await ik.deleteFile(m.fileId);
+      // Clear the file so the message shows "(file removed)" instead of a dead link.
+      m.fileUrl = ''; m.fileId = ''; m.isImage = false;
+      m.fileName = m.fileName ? `${m.fileName} (removed after 20 days)` : '(file removed)';
+      await m.save();
+      done++;
+    } catch (e) { /* keep going */ }
+  }
+  return done;
 }
 
 // Anniversary point tiers (years → rule key). Only exact-year matches award.

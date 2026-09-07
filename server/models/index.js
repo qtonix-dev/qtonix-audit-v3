@@ -2319,6 +2319,7 @@ const ChatMessage = sequelize.define('ChatMessage', {
   body: { type: DataTypes.TEXT, defaultValue: '' },
   // File attachment (via ImageKit). One file per message keeps it simple.
   fileUrl: { type: DataTypes.STRING(600), defaultValue: '' },
+  fileId: { type: DataTypes.STRING(120), defaultValue: '' },       // ImageKit id (for 20-day auto-delete)
   fileName: { type: DataTypes.STRING(200), defaultValue: '' },
   fileType: { type: DataTypes.STRING(60), defaultValue: '' },      // mime or ext
   fileSize: { type: DataTypes.INTEGER, defaultValue: 0 },          // bytes

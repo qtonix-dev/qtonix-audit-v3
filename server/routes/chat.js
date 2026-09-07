@@ -183,7 +183,7 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
     }
     const msg = await ChatMessage.create({
       conversationId: convId, senderId: me, senderName: meName(req), body,
-      fileUrl: hasFile ? String(b.fileUrl).slice(0, 600) : '', fileName: hasFile ? String(b.fileName).slice(0, 200) : '',
+      fileUrl: hasFile ? String(b.fileUrl).slice(0, 600) : '', fileId: hasFile ? String(b.fileId || '').slice(0, 120) : '', fileName: hasFile ? String(b.fileName).slice(0, 200) : '',
       fileType: hasFile ? String(b.fileType || '').slice(0, 60) : '', fileSize: hasFile ? Math.max(0, Number(b.fileSize) || 0) : 0,
       isImage: hasFile ? !!b.isImage : false, mentions, ...reply,
     });
