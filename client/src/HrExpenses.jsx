@@ -37,7 +37,7 @@ function PayeeIcon({ type, name }) {
   return <span className="flex items-center justify-center text-[10px] font-extrabold shrink-0" style={{ width: 24, height: 24, borderRadius: vendor ? 999 : 7, background: vendor ? '#FDE9D7' : '#E2E9F8', color: vendor ? '#C2410C' : '#334155' }}>{init}</span>;
 }
 
-export default function HrExpenses({ user, isAdmin }) {
+export default function HrExpenses({ user, isAdmin, openExpenseId, onIntentConsumed }) {
   const [tab, setTab] = useState('expenses');
   const [data, setData] = useState(null);
   const [vendors, setVendors] = useState([]);
@@ -48,7 +48,7 @@ export default function HrExpenses({ user, isAdmin }) {
   const [err, setErr] = useState('');
   const [q, setQ] = useState(''); const [statusF, setStatusF] = useState(''); const [branchF, setBranchF] = useState(''); const [catF, setCatF] = useState('');
   const [monthF, setMonthF] = useState(() => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7));
-  const [page, setPage] = useState(1); const PER = 10;
+  const [page, setPage] = useState(1); const [perPage, setPerPage] = useState(10); const PER = perPage;
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [payFor, setPayFor] = useState(null);
   const [rejectFor, setRejectFor] = useState(null);
@@ -80,6 +80,14 @@ export default function HrExpenses({ user, isAdmin }) {
     ]).finally(() => { setLoading(false); setDidLoad(true); });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  // Deep-link from the dashboard Review tab: open a specific expense's details.
+  useEffect(() => {
+    if (openExpenseId && expenses.length) {
+      const e = expenses.find((x) => String(x._id) === String(openExpenseId) || String(x.id) === String(openExpenseId));
+      if (e) { setDetail(e); onIntentConsumed && onIntentConsumed(); }
+    }
+    /* eslint-disable-next-line */
+  }, [openExpenseId, expenses]);
   useEffect(() => { setPage(1); }, [q, statusF, branchF, catF, monthF, tab]);
 
   const expenses = (data && data.expenses) || [];
@@ -148,7 +156,7 @@ export default function HrExpenses({ user, isAdmin }) {
       </div>
 
       <div className="flex gap-1.5 mb-4 bg-slate-100 p-1 rounded-xl w-fit items-center">
-        {[['expenses', `Expenses · ${expenses.length}`], ['claims', `Claims${claims && claims.counts ? ` · ${(claims.counts.submitted || 0) + (claims.counts.hr_approved || 0) + (claims.counts.approved || 0)}` : ''}`], ['vendors', `Vendors · ${vendors.length}`], ['rollup', 'Monthly rollup']].map(([id, label]) => (
+        {[['expenses', `Expenses · ${expenses.length}`], ['pending', `Pending · ${expenses.filter((e) => ['submitted', 'hr_approved', 'approved'].includes(e.status)).length}`], ['claims', `Claims${claims && claims.counts ? ` · ${(claims.counts.submitted || 0) + (claims.counts.hr_approved || 0) + (claims.counts.approved || 0)}` : ''}`], ['vendors', `Vendors · ${vendors.length}`], ['rollup', 'Monthly rollup']].map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} className={`px-3.5 py-1.5 rounded-lg text-[12px] font-extrabold ${tab === id ? 'bg-white text-[#050A1F] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
         ))}
         {tab === 'expenses' && <button onClick={() => setCatOpen(true)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-400 hover:text-slate-600">⚙ Categories</button>}
@@ -195,14 +203,23 @@ export default function HrExpenses({ user, isAdmin }) {
             </table>
           </div>
         )}
-        {pages > 1 && (
-          <div className="flex items-center justify-center gap-2 mt-4">
-            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">← Prev</button>
-            <span className="text-xs font-bold text-slate-500">Page {page} of {pages}</span>
-            <button disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">Next →</button>
+        <div className="flex items-center justify-between gap-2 mt-4 flex-wrap">
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span className="font-bold">Show</span>
+            <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-bold">{[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}</select>
+            <span>per page · {filtered.length} total</span>
           </div>
-        )}
+          {pages > 1 && (
+            <div className="flex items-center gap-2">
+              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">← Prev</button>
+              <span className="text-xs font-bold text-slate-500">Page {page} of {pages}</span>
+              <button disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-40">Next →</button>
+            </div>
+          )}
+        </div>
       </>)}
+
+      {tab === 'pending' && <PendingTab expenses={expenses} isAdmin={isAdmin} onApprove={setApproveFor} onReject={setRejectFor} onPay={setPayFor} onDetail={setDetail} />}
 
       {tab === 'vendors' && <VendorsTab vendors={vendors} onAdd={() => setVendorEdit({})} onEdit={(v) => setVendorEdit(v)} onHistory={(v) => setVendorHistory(v)} reload={load} setErr={setErr} />}
 
@@ -210,6 +227,7 @@ export default function HrExpenses({ user, isAdmin }) {
 
       {tab === 'rollup' && (
         <div>
+          <SixMonthChart />
           <div className="flex items-center gap-2 mb-4"><span className="text-sm font-bold text-slate-500">Month</span><input type="month" value={monthF} onChange={(e) => setMonthF(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm" /></div>
           <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm">
@@ -241,6 +259,72 @@ export default function HrExpenses({ user, isAdmin }) {
   );
 }
 
+// Pending tab: two tables — awaiting approval, and approved-but-unpaid.
+// 6-month expense trend (spent vs paid) as a simple bar chart.
+function SixMonthChart() {
+  const [months, setMonths] = useState(null);
+  useEffect(() => { hrApi('/expense-rollup').then((r) => setMonths(r.months || [])).catch(() => setMonths([])); }, []);
+  if (!months) return null;
+  const max = Math.max(1, ...months.map((m) => Math.max(m.total, m.paid)));
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-sm font-bold text-[#050A1F]">Last 6 months</div>
+        <div className="flex items-center gap-3 text-[11px]"><span className="flex items-center gap-1"><span className="w-3 h-3 rounded" style={{ background: ORANGE }} />Total</span><span className="flex items-center gap-1"><span className="w-3 h-3 rounded" style={{ background: '#16A34A' }} />Paid</span></div>
+      </div>
+      <div className="flex items-end justify-between gap-3" style={{ height: 180 }}>
+        {months.map((m) => (
+          <div key={m.key} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+            <div className="flex items-end gap-1 h-full w-full justify-center">
+              <div className="w-1/2 rounded-t transition-all" style={{ height: `${(m.total / max) * 100}%`, background: ORANGE, minHeight: m.total > 0 ? 4 : 0 }} title={`Total ${inr(m.total)}`} />
+              <div className="w-1/2 rounded-t transition-all" style={{ height: `${(m.paid / max) * 100}%`, background: '#16A34A', minHeight: m.paid > 0 ? 4 : 0 }} title={`Paid ${inr(m.paid)}`} />
+            </div>
+            <div className="text-[10px] font-bold text-slate-500">{m.label}</div>
+            <div className="text-[10px] text-slate-400">{m.total >= 100000 ? `₹${(m.total / 100000).toFixed(1)}L` : `₹${(m.total / 1000).toFixed(0)}k`}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PendingTab({ expenses, isAdmin, onApprove, onReject, onPay, onDetail }) {
+  const forApproval = expenses.filter((e) => e.status === 'submitted' || e.status === 'hr_approved');
+  const forPayment = expenses.filter((e) => e.status === 'approved');
+  const Table = ({ title, rows, kind }) => (
+    <div className="mb-6">
+      <div className="text-sm font-extrabold text-[#050A1F] mb-2 flex items-center gap-2">{title} <span className="text-[11px] font-bold text-white rounded-full px-2 py-0.5" style={{ background: kind === 'approval' ? '#F59E0B' : '#0F9D58' }}>{rows.length}</span></div>
+      {rows.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">Nothing {kind === 'approval' ? 'awaiting approval' : 'awaiting payment'}.</div> : (
+        <div className="rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-400 text-left"><th className="px-4 py-2.5">Title</th><th className="px-4 py-2.5">Payee</th><th className="px-4 py-2.5">Amount</th><th className="px-4 py-2.5">{kind === 'approval' ? 'Raised' : 'Due date'}</th><th className="px-4 py-2.5 text-right">Action</th></tr></thead>
+            <tbody>
+              {rows.map((e) => (
+                <tr key={e._id} className="border-t border-slate-50 hover:bg-orange-50/30 cursor-pointer" onClick={() => onDetail(e)}>
+                  <td className="px-4 py-3 font-semibold text-[#050A1F]">{e.title}{e.invoiceUrl && <span className="text-[10px] text-sky-500 ml-1">📎</span>}</td>
+                  <td className="px-4 py-3 text-slate-600">{e.payeeName || '—'}</td>
+                  <td className="px-4 py-3 font-bold">{inr(e.amount)}</td>
+                  <td className="px-4 py-3 text-slate-500">{kind === 'approval' ? fmtDate(e.expenseDate) : (e.payDueDate ? <span className={new Date(e.payDueDate) < new Date() ? 'text-red-600 font-bold' : 'text-amber-600 font-semibold'}>{fmtDate(e.payDueDate)}</span> : '—')}</td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
+                    {kind === 'approval' && isAdmin && <span className="inline-flex gap-1"><button onClick={() => onApprove(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#0F9D58' }}>Approve</button><button onClick={() => onReject(e)} className="text-[11px] font-bold text-red-500 border border-red-200 px-2.5 py-1 rounded">Reject</button></span>}
+                    {kind === 'payment' && <button onClick={() => onPay(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#050A1F' }}>Mark paid</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div>
+      <Table title="⏳ Pending for approval" rows={forApproval} kind="approval" />
+      <Table title="💸 Pending for payment" rows={forPayment} kind="payment" />
+    </div>
+  );
+}
+
 function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
   const del = async (v) => {
     if (!window.confirm(`Delete vendor "${v.name}"? If they have past payments, they'll be deactivated instead.`)) return;
@@ -255,7 +339,7 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
         <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
           <table className="w-full text-sm">
             <thead><tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
-              <th className="text-left px-4 py-3">Vendor</th><th className="text-left px-4 py-3">Contact</th><th className="text-left px-4 py-3">Category</th><th className="text-left px-4 py-3">GST</th><th className="text-left px-4 py-3">Branch</th><th className="text-right px-4 py-3">Actions</th>
+              <th className="text-left px-4 py-3">Vendor</th><th className="text-left px-4 py-3">Contact</th><th className="text-left px-4 py-3">Category</th><th className="text-left px-4 py-3">Last activity</th><th className="text-left px-4 py-3">Branch</th><th className="text-right px-4 py-3">Actions</th>
             </tr></thead>
             <tbody>
               {vendors.map((v) => (
@@ -263,7 +347,10 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
                   <td className="px-4 py-3"><div className="flex items-center gap-2"><PayeeIcon type="vendor" name={v.name} /><div><div className="font-bold text-[#050A1F]">{v.name}{!v.active && <span className="text-[10px] text-slate-400 ml-1">(inactive)</span>}{v.recurringPayment && v.recurringDay && <span className="text-[9px] font-extrabold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 ml-1.5">↻ {v.recurringDay}{['st', 'nd', 'rd'][((v.recurringDay % 10) - 1)] && ![11, 12, 13].includes(v.recurringDay) ? ['st', 'nd', 'rd'][((v.recurringDay % 10) - 1)] : 'th'}</span>}</div>{v.city && <div className="text-[11px] text-slate-400">{v.city}{v.state ? `, ${v.state}` : ''}</div>}</div></div></td>
                   <td className="px-4 py-3 text-xs text-slate-500">{v.contactPerson || '—'}{v.phone && <div className="text-slate-400">{v.phone}</div>}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{v.category || '—'}</td>
-                  <td className="px-4 py-3 text-xs">{v.hasGst ? <span className="font-mono text-[11px] text-slate-600">{v.gstin}</span> : <span className="text-slate-300">No</span>}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {v.lastPaid ? <div className="text-slate-600">💸 Paid {fmtDate(v.lastPaid)}</div> : <div className="text-slate-300">No payment yet</div>}
+                    {v.lastInvoice ? <div className="text-slate-400 mt-0.5">📄 Invoice {fmtDate(v.lastInvoice)}</div> : null}
+                  </td>
                   <td className="px-4 py-3 text-xs">{v.branch ? <BranchBadge b={v.branch} /> : <span className="text-slate-300">—</span>}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <button onClick={() => onHistory(v)} className="text-[11px] font-bold text-slate-500 border border-slate-200 px-2.5 py-1 rounded mr-1 hover:bg-slate-50">History</button>
@@ -317,10 +404,41 @@ function EditExpenseModal({ expense, cats, onClose, onSaved }) {
   );
 }
 
+// Searchable vendor dropdown.
+function VendorSearchSelect({ vendors, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const sel = vendors.find((v) => String(v._id) === String(value));
+  const shown = vendors.filter((v) => !q || v.name.toLowerCase().includes(q.toLowerCase()) || (v.city || '').toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="relative flex-1">
+      <button type="button" onClick={() => { setOpen((o) => !o); setQ(''); }} className="inp w-full text-left flex items-center justify-between">
+        <span className={sel ? '' : 'text-slate-400'}>{sel ? sel.name : 'Select vendor…'}</span>
+        <span className="text-slate-400 text-xs">▾</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute z-40 mt-1 w-full bg-white rounded-lg border border-slate-200 shadow-xl overflow-hidden">
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search vendor…" className="w-full px-3 py-2 text-sm border-b border-slate-100 focus:outline-none" />
+            <div className="max-h-56 overflow-auto">
+              {shown.length === 0 ? <div className="px-3 py-3 text-sm text-slate-400">No vendors found.</div> : shown.map((v) => (
+                <button key={v._id} type="button" onClick={() => { onChange(String(v._id)); setOpen(false); }} className={`w-full text-left px-3 py-2 text-sm hover:bg-orange-50 ${String(v._id) === String(value) ? 'bg-orange-50 font-bold' : ''}`}>
+                  {v.name}{v.city && <span className="text-[11px] text-slate-400"> · {v.city}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, onSaved, onAddVendor }) {
   const allBranch = isAdmin || user.hrManagerAll || user.hrManagerScope === 'all' || !user.hrManagerScope;
   const lockedBranch = !allBranch ? (user.hrManagerScope || user.branch || '') : '';
-  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', employeePayType: '', description: '', modeIdx: '' });
+  const [f, setF] = useState({ title: '', category: cats[0] || '', amount: '', expenseDate: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), branch: lockedBranch || 'Bhubaneswar', payeeType: 'vendor', vendorId: '', employeeId: '', employeePayType: '', description: '', modeIdx: '', payDueDate: '' });
   const [invoice, setInvoice] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -416,6 +534,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
           )}
         </Field>
         <Field label="Expense date"><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className="inp" /></Field>
+        <Field label="Payment due date"><input type="date" value={f.payDueDate} onChange={(e) => set('payDueDate', e.target.value)} className="inp" /><div className="text-[10px] text-slate-400 mt-1">Optional. HR & admin get a reminder 3 days before.</div></Field>
         {/* Non-blocking reminder for larger expenses. */}
         {Number(itemized ? liTotal : f.amount) > 1000 && !invoice && !(itemized && (lineItems || []).some((li) => li.particular)) && (
           <div style={{ gridColumn: '1 / -1' }} className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800 flex items-start gap-2">
@@ -456,7 +575,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
           <div className="flex gap-2 mb-2">{[['vendor', 'Vendor'], ['employee', 'Employee']].map(([id, lbl]) => <button key={id} type="button" onClick={() => set('payeeType', id)} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${f.payeeType === id ? 'border-orange-400 bg-orange-50 text-[#FF4500]' : 'border-slate-200 text-slate-600'}`}>{lbl}</button>)}</div>
           {f.payeeType === 'vendor' ? (
             <>
-              <div className="flex gap-2"><select value={f.vendorId} onChange={(e) => { set('vendorId', e.target.value); set('modeIdx', ''); }} className="inp"><option value="">Select vendor…</option>{vendors.map((v) => <option key={v._id} value={v._id}>{v.name}</option>)}</select><button type="button" onClick={onAddVendor} className="rounded-lg border border-slate-300 px-3 text-xs font-bold text-slate-600 whitespace-nowrap">+ New</button></div>
+              <div className="flex gap-2"><VendorSearchSelect vendors={vendors} value={f.vendorId} onChange={(id) => { set('vendorId', id); set('modeIdx', ''); }} /><button type="button" onClick={onAddVendor} className="rounded-lg border border-slate-300 px-3 text-xs font-bold text-slate-600 whitespace-nowrap">+ New</button></div>
               {(() => { const sv = vendors.find((v) => String(v._id) === String(f.vendorId)); const pm = (sv && Array.isArray(sv.paymentModes)) ? sv.paymentModes : []; if (!sv) return null; return (
                 <div className="mt-2">
                   {pm.length === 0 ? <div className="text-[11px] text-amber-600">This vendor has no saved payment mode. Add one via Edit vendor.</div>
@@ -940,6 +1059,25 @@ function ExpenseDrawer({ expense: e, onClose }) {
   return (
     <DrawerShell onClose={onClose} title={e.title} subtitle={`${e.category || ''} · ${e.branch || ''}`}>
       <div className="flex items-center gap-2 mb-3"><StatusBadge s={e.status} /><span className="text-lg font-extrabold text-[#050A1F] ml-auto">{inr(e.amount)}</span></div>
+      {/* Status timeline: raised → approved → paid */}
+      <div className="rounded-xl border border-slate-100 p-3 mb-3">
+        {[
+          { label: 'Invoice raised', done: true, date: e.expenseDate || (e.createdAt ? new Date(e.createdAt).toISOString().slice(0, 10) : null), by: e.raisedByName },
+          { label: e.status === 'rejected' ? 'Rejected' : 'Approved', done: ['approved', 'paid', 'rejected'].includes(e.status), date: e.approvedAt ? new Date(e.approvedAt).toISOString().slice(0, 10) : null, by: e.approvedByName, bad: e.status === 'rejected' },
+          { label: 'Payment done', done: e.status === 'paid', date: e.paymentDate || (e.paidAt ? new Date(e.paidAt).toISOString().slice(0, 10) : null), by: e.paidByName, pending: e.status !== 'paid' && e.status !== 'rejected', due: e.payDueDate },
+        ].map((step, i, arr) => (
+          <div key={i} className="relative pl-7 pb-3 last:pb-0">
+            {i < arr.length - 1 && <span className="absolute left-[9px] top-5 bottom-0 w-0.5" style={{ background: step.done ? '#16A34A' : '#e2e8f0' }} />}
+            <span className="absolute left-0 top-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white" style={{ background: step.bad ? '#DC2626' : step.done ? '#16A34A' : '#cbd5e1' }}>{step.bad ? '✕' : step.done ? '✓' : '•'}</span>
+            <div className="text-[13px] font-bold text-slate-700">{step.label}</div>
+            <div className="text-[11px] text-slate-400">
+              {step.done && step.date ? `${fmtDate(step.date)}${step.by ? ` · ${titleCase(step.by)}` : ''}`
+                : step.pending ? <span className="text-amber-600 font-semibold">Pending{step.due ? ` · due ${fmtDate(step.due)}` : ''}</span>
+                : '—'}
+            </div>
+          </div>
+        ))}
+      </div>
       <Row label="Payee"><span className="inline-flex items-center gap-2"><PayeeIcon type={e.payeeType} name={e.payeeName} />{e.payeeName} <span className="text-[10px] text-slate-400 uppercase">({e.payeeType})</span></span></Row>
       {e.payeeType === 'employee' && e.employeePayType && <Row label="Payment type">{empPayTypeLabel(e.employeePayType)}</Row>}
       {e.isClaim && <>

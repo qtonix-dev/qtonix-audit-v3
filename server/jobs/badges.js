@@ -143,9 +143,37 @@ async function tick(models) {
     // Delete chat-uploaded files older than 20 days from ImageKit (and clear the
     // file from the message so the download link disappears too).
     try { const n = await cleanupOldChatFiles(models); if (n) console.log(`[badges-job] deleted ${n} old chat file(s)`); } catch (e) { console.error('[badges-job] chat file cleanup failed:', e.message); }
+    // Payment-due reminder: 3 days before an expense's payDueDate, notify HR + admins.
+    try { const n = await expensePayReminders(models); if (n) console.log(`[badges-job] sent ${n} payment reminder(s)`); } catch (e) { console.error('[badges-job] pay reminder failed:', e.message); }
     if (awarded) console.log(`[badges-job] processed ${awarded} auto-award(s)`);
   } catch (e) { console.error('[badges-job] tick failed:', e.message); }
   finally { running = false; }
+}
+
+// Notify HR + admins 3 days before an approved expense's payment due date.
+async function expensePayReminders(models) {
+  const { HrExpense, HrUser, HrNotification, User } = models;
+  if (!HrExpense || !HrNotification) return 0;
+  const { Op } = require('sequelize');
+  const ist = new Date(Date.now() + 330 * 60000);
+  const today = ist.toISOString().slice(0, 10);
+  const target = new Date(ist.getTime() + 3 * 86400000).toISOString().slice(0, 10); // due in 3 days
+  // Approved-but-unpaid expenses due exactly 3 days out, not yet reminded today.
+  const rows = await HrExpense.findAll({ where: { status: { [Op.in]: ['approved', 'hr_approved'] }, payDueDate: target } });
+  if (!rows.length) return 0;
+  // Recipients: HR staff/managers + admins.
+  const hrPeople = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true }, type: { [Op.in]: ['hr', 'recruiter', 'manager'] } }, attributes: ['id'] });
+  const recipientIds = hrPeople.map((u) => u.id);
+  let sent = 0;
+  for (const r of rows) {
+    if (r.payDueReminderSent === today) continue;
+    for (const uid of recipientIds) {
+      try { await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'expense_due', text: `💸 Payment due in 3 days: ${r.title || 'expense'} · ₹${Number(r.amount || 0).toLocaleString('en-IN')}${r.payeeName ? ` to ${r.payeeName}` : ''} (due ${r.payDueDate}).`, meta: { expenseId: r.id } }); } catch {}
+    }
+    r.payDueReminderSent = today; await r.save();
+    sent++;
+  }
+  return sent;
 }
 
 // Delete ImageKit files attached to chat messages older than 20 days.

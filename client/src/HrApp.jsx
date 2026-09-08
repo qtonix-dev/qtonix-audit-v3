@@ -2689,7 +2689,36 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
           </div>
 
           {data.activity.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-slate-100"><div className="text-[11px] font-bold text-slate-400 uppercase mb-1">Activity</div>{data.activity.map((a) => <div key={a._id} className="text-[11px] text-slate-400">{a.actorName} {a.detail} · {new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</div>)}</div>
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <div className="text-[11px] font-bold text-slate-400 uppercase mb-3 flex items-center gap-1.5">🕒 Activity</div>
+              <div className="relative">
+                {data.activity.map((a, i) => {
+                  const meta = ({
+                    created: { icon: '✨', color: '#FF6A00' }, assigned: { icon: '👤', color: '#7C3AED' },
+                    due: { icon: '📅', color: '#CA8A04' }, priority: { icon: '🚩', color: '#DC2626' },
+                    stage: { icon: '↻', color: '#2563EB' }, completed: { icon: '✓', color: '#16A34A' },
+                    note: { icon: '📝', color: '#0891B2' }, subtask: { icon: '☑', color: '#64748B' },
+                  })[a.kind] || { icon: '•', color: '#94A3B8' };
+                  const last = i === data.activity.length - 1;
+                  // Pull out a status/priority word to render as a pill.
+                  const m = /(?:moved to|priority to)\s+(.+)$/.exec(a.detail || '');
+                  const pill = m ? m[1].toUpperCase() : null;
+                  const text = pill ? (a.detail || '').replace(m[1], '').replace(/\s+$/, '') : a.detail;
+                  return (
+                    <div key={a._id} className="relative pl-9 pb-4 last:pb-0">
+                      {!last && <span className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-slate-200" />}
+                      <span className="absolute left-0 top-0.5 w-6 h-6 rounded-full flex items-center justify-center text-[11px] text-white" style={{ background: meta.color }}>{meta.icon}</span>
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="text-[13px] font-extrabold text-[#050A1F]">{a.actorName}</span>
+                        <span className="text-[13px] text-slate-500">{text}</span>
+                        {pill && <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full" style={{ background: meta.color + '1f', color: meta.color }}>{pill}</span>}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -3224,7 +3253,7 @@ function JoinConfirmReview({ it, onConfirm, NAME, SUBT }) {
   );
 }
 
-function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
+function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const [clock, setClock] = useState(null);
   const [myRec, setMyRec] = useState(null);      // the viewer's own recognition
   const [myRecOpen, setMyRecOpen] = useState(false);
@@ -3521,11 +3550,18 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav }) {
                     <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
                       <ReviewIcon kind="expense_approval" />
                       <div className="min-w-0 flex-1">
-                        <div className={NAME}>Expense <span className="text-slate-500">· {titleCase(it.who)}</span></div>
-                        <div className={`${SUBT} mb-1.5`}>₹{Number(it.amount).toLocaleString('en-IN')}{it.category ? ` · ${it.category}` : ''}{it.branch ? ` · ${it.branch}` : ''} → {it.payeeName}{it.invoiceUrl ? <> · <a href={it.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-semibold">invoice</a></> : ''}</div>
-                        <div className="flex gap-1.5">
+                        <div className={NAME}>Expense to approve <span className="text-slate-500">· {it.title || titleCase(it.who)}</span></div>
+                        <div className="text-[12px] text-slate-600 mt-0.5 mb-1.5 space-y-0.5">
+                          <div><b className="text-[#050A1F]">₹{Number(it.amount).toLocaleString('en-IN')}</b>{it.category ? ` · ${it.category}` : ''}{it.branch ? ` · ${it.branch}` : ''}</div>
+                          <div>Vendor/Payee: <b>{it.payeeName || '—'}</b></div>
+                          {it.expenseDate && <div>Invoice date: {new Date(it.expenseDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>}
+                          {it.payDueDate && <div>Payment due: <span className="text-amber-600 font-semibold">{new Date(it.payDueDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span></div>}
+                          {it.invoiceUrl && <div>📎 <a href={it.invoiceUrl} target="_blank" rel="noreferrer" className="text-sky-600 font-semibold">View invoice</a></div>}
+                        </div>
+                        <div className="flex gap-1.5 flex-wrap">
                           <button onClick={() => decideExpense(it.expenseId, 'approve')} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#DCFCE7', color: '#15803D' }}>Approve</button>
                           <button onClick={() => decideExpense(it.expenseId, 'reject')} className="text-[11px] font-bold rounded-md px-2.5 py-1" style={{ background: '#FEE2E2', color: '#B91C1C' }}>Reject</button>
+                          <button onClick={() => { if (onOpenExpense) onOpenExpense(it.expenseId); }} className="text-[11px] font-bold rounded-md px-2.5 py-1 text-slate-600 border border-slate-300">View full details ›</button>
                         </div>
                       </div>
                     </div>
@@ -9817,6 +9853,8 @@ export default function HrApp() {
   const [navKey, setNavKey] = useState(0); // bump to force a fresh sub-view on nav
   const [mobileNav, setMobileNav] = useState(false);
   const [recruitIntent, setRecruitIntent] = useState(null); // {tab, candScope, weekOnly, jobScope}
+  const [expenseIntent, setExpenseIntent] = useState(null); // expenseId to open in Expenses
+  const navToExpense = (expenseId) => { setExpenseIntent(expenseId); setView('corehr_expenses'); setNavKey((k) => k + 1); };
   const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
   // setView writes a clean URL under the base: /dashboard on the HRMS domain, or
   // /hr/dashboard elsewhere. Core HR as <base>/core-hr/<sub>.
@@ -9987,15 +10025,15 @@ export default function HrApp() {
             </div>
             {dashView === 'hr'
               ? <HrDashboard user={user} isAdmin={isAdmin} onOpenCandidate={(id, candTab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: candTab })} onNav={goRecruit} />
-              : <EmployeeDashboard user={user} onNav={setView} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} />}
+              : <EmployeeDashboard user={user} onNav={setView} onOpenExpense={navToExpense} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} />}
           </div>
-        ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onNav={setView} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
+        ) : <div><DashboardCelebrations /><EmployeeDashboard user={user} onNav={setView} onOpenExpense={navToExpense} onOpenCandidate={(id, tab) => goRecruit({ tab: 'candidates', openCandidateId: id, openCandidateTab: tab })} /></div>)}
         {effectiveView === 'recognition' && <RecognitionPage user={user} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'rewards' && <MyRewardsPage user={user} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
-        {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} />}
+        {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} openExpenseId={expenseIntent} onIntentConsumed={() => setExpenseIntent(null)} />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
         {effectiveView === 'corehr_onboarding' && <OnboardingListPage isAdmin={isAdmin} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
         {effectiveView === 'recruitment' && <HrRecruitment isAdmin={isAdmin} me={user} intent={recruitIntent} hrView={isHrStaff} />}

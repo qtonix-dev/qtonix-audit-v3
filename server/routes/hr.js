@@ -2927,6 +2927,7 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
           who: ex.raisedByName || 'HR', title: ex.title, amount: Number(ex.amount || 0),
           category: ex.category || '', branch: ex.branch || '', payeeName: ex.payeeName || '',
           payeeType: ex.payeeType, invoiceUrl: ex.invoiceUrl || '', at: ex.createdAt,
+          expenseDate: ex.expenseDate || '', payDueDate: ex.payDueDate || '',
         });
       }
     }
@@ -3389,7 +3390,16 @@ router.get('/vendors', requireHrAccess, async (req, res, next) => {
     const where = {};
     if (req.query.active !== 'all') where.active = true;
     const rows = await HrVendor.findAll({ where, order: [['name', 'ASC']] });
-    res.json({ vendors: rows.map((r) => r.toJSON()) });
+    // Last payment date + last invoice/expense date per vendor (from expenses).
+    const exps = await HrExpense.findAll({ where: { vendorId: { [Op.ne]: null } }, attributes: ['vendorId', 'status', 'paidAt', 'paymentDate', 'expenseDate', 'invoiceUrl', 'amount'], order: [['createdAt', 'DESC']] });
+    const stat = {};
+    for (const e of exps) {
+      const s = stat[e.vendorId] || (stat[e.vendorId] = { lastPaid: null, lastInvoice: null, totalPaid: 0 });
+      const paidDate = e.paymentDate || (e.paidAt ? new Date(e.paidAt).toISOString().slice(0, 10) : null);
+      if (e.status === 'paid' && paidDate) { if (!s.lastPaid || paidDate > s.lastPaid) s.lastPaid = paidDate; s.totalPaid += Number(e.amount || 0); }
+      if (e.invoiceUrl && e.expenseDate) { if (!s.lastInvoice || e.expenseDate > s.lastInvoice) s.lastInvoice = e.expenseDate; }
+    }
+    res.json({ vendors: rows.map((r) => { const s = stat[r.id] || {}; return { ...r.toJSON(), lastPaid: s.lastPaid || null, lastInvoice: s.lastInvoice || null, totalPaid: Math.round(s.totalPaid || 0) }; }) });
   } catch (e) { next(e); }
 });
 function validateVendor(b) {
@@ -3515,6 +3525,27 @@ router.get('/expenses', requireHrAccess, async (req, res, next) => {
     });
   } catch (e) { next(e); }
 });
+
+// 6-month expense rollup (for the chart on the Monthly Rollup tab).
+router.get('/expense-rollup', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_expenses', 'read')) return res.status(403).json({ error: 'Not allowed.' });
+    const ist = new Date(Date.now() + 330 * 60000);
+    const months = [];
+    for (let i = 5; i >= 0; i--) { const d = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - i, 1)); months.push({ key: d.toISOString().slice(0, 7), label: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }), total: 0, paid: 0 }); }
+    const byKey = {}; months.forEach((m) => { byKey[m.key] = m; });
+    const where = {};
+    if (!(req.isHrAdmin || req.hrManagerAll || !req.hrManagerScope)) where.branch = req.hrManagerScope || req.hrBranch;
+    const rows = await HrExpense.findAll({ where, attributes: ['amount', 'status', 'expenseDate', 'paymentDate', 'paidAt'] });
+    for (const r of rows) {
+      const em = (r.expenseDate || '').slice(0, 7);
+      if (byKey[em]) byKey[em].total += Number(r.amount || 0);
+      const pm = (r.paymentDate || (r.paidAt ? new Date(r.paidAt).toISOString().slice(0, 10) : '') || '').slice(0, 7);
+      if (r.status === 'paid' && byKey[pm]) byKey[pm].paid += Number(r.amount || 0);
+    }
+    res.json({ months: months.map((m) => ({ ...m, total: Math.round(m.total), paid: Math.round(m.paid) })) });
+  } catch (e) { next(e); }
+});
 // Employee payment types. HR may use all five; employee self-claims may use all
 // EXCEPT 'incentive'. 'other' requires a description.
 const EMPLOYEE_PAY_TYPES = ['ta', 'da', 'other', 'advance', 'incentive'];
@@ -3574,7 +3605,7 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
     if (!payeeName && payee.payeeType === 'employee' && payee.employeeId) { const e = await HrUser.findByPk(payee.employeeId); payeeName = e ? e.name : ''; }
     const row = await HrExpense.create({
       title, category: String(b.category || '').trim() || null, amount, currency: 'INR',
-      expenseDate: b.expenseDate || istDateStr(), branch: b.branch, ...payee, payeeName: payeeName || null,
+      expenseDate: b.expenseDate || istDateStr(), payDueDate: b.payDueDate || null, branch: b.branch, ...payee, payeeName: payeeName || null,
       description: String(b.description || '').trim() || null,
       invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null, invoiceFileId: String(b.invoiceFileId || '').trim() || null,
       lineItems: lineItems && lineItems.length ? lineItems : null,
