@@ -140,9 +140,12 @@ async function reconcileAssignees(row, desiredIds, ctx) {
   for (const id of toAdd) {
     const emax = await Task.max('order', { where: { assigneeId: id, bucket: 'recently_assigned', parentTaskId: null } });
     const copy = await Task.create({
-      boardOwnerId: id, bucket: 'recently_assigned', parentTaskId: null, title: row.title,
+      boardOwnerId: id, bucket: row.bucket || 'recently_assigned', parentTaskId: null, title: row.title,
       description: row.description || '', assigneeId: id, assigneeGroupId: row.assigneeGroupId,
-      priority: row.priority, stage: 'not_started', dueDate: row.dueDate || null,
+      // Inherit the main task's stage so a shared task keeps its status (a
+      // completed task stays completed for everyone; it's the SAME task shared).
+      priority: row.priority, stage: row.stage || 'not_started', completedAt: row.stage === 'completed' ? (row.completedAt || new Date()) : null,
+      dueDate: row.dueDate || null,
       order: (Number.isFinite(emax) ? emax : 0) + 1,
       createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
       assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
@@ -254,14 +257,32 @@ async function buildBoard(viewerId, ctx) {
       if (t.stage === 'completed') completed.push(o); else mine.push(o);
     } else if (t.assignedById === viewerId || t.origAssignedById === viewerId) {
       o.relation = 'tracking';
-      // Completed delegated tasks move into the Completed section too, so
-      // "Completed" holds everything finished — whether you did it or assigned it.
       if (t.stage === 'completed') completed.push(o); else tracking.push(o);
     }
   }
+  // Collapse multi-assignee COPIES into one row in the tracking/completed
+  // sections (a task with 3 assignees is ONE task to track, not 3 rows). Keep
+  // the copy the viewer is assigned to if any, else the lowest id (the main).
+  const dedupeGroups = (arr) => {
+    const seen = new Map(); const out = [];
+    for (const o of arr) {
+      if (!o.assigneeGroupId) { out.push(o); continue; }
+      const prev = seen.get(o.assigneeGroupId);
+      if (!prev) { seen.set(o.assigneeGroupId, o); out.push(o); }
+      else {
+        // Merge assignees; prefer the row the viewer owns as the kept one.
+        const merged = new Set([...(prev.assignees || []).map((a) => a.id), ...(o.assignees || []).map((a) => a.id)]);
+        const all = [...(prev.assignees || []), ...(o.assignees || [])].filter((a, i, s) => s.findIndex((x) => x.id === a.id) === i);
+        prev.assignees = all;
+      }
+    }
+    return out;
+  };
+  const trackingD = dedupeGroups(tracking);
+  const completedD = dedupeGroups(completed);
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
-  return { viewer, buckets, tracking, completed, canManage: true };
+  return { viewer, buckets, tracking: trackingD, completed: completedD, canManage: true };
 }
 
 router.get('/my-board', guard, async (req, res, next) => {
@@ -327,11 +348,15 @@ router.get('/assignable', guard, async (req, res, next) => {
     cross.forEach((e) => { e.deptLabel = e.department || 'Other'; });
     const list = [...own, ...cross];
 
-    // Admins have no HrUser row — add a "Me" entry (their negative board id) so
-    // they can assign tasks to their own board.
+    // Admins have no HrUser row, so add a "Me" entry (their negative board id)
+    // so they can assign to their own board — BUT only if there isn't already an
+    // HrUser with the same name (which would make it a confusing duplicate).
     if (ctx.isAdmin && ctx.boardId < 0) {
-      const me = { id: ctx.boardId, name: ctx.actorName + ' (me)', designation: 'Admin', department: '', branch: '', avatar: null, type: 'admin', own: true };
-      if (!q || me.name.toLowerCase().includes(q)) list.unshift(me);
+      const sameName = people.some((u) => u.name.trim().toLowerCase() === String(ctx.actorName).trim().toLowerCase());
+      if (!sameName) {
+        const me = { id: ctx.boardId, name: ctx.actorName + ' (me)', designation: 'Admin', department: '', branch: '', avatar: null, type: 'admin', own: true };
+        if (!q || me.name.toLowerCase().includes(q)) list.unshift(me);
+      }
     }
     res.json(list);
   } catch (e) { next(e); }
