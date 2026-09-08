@@ -241,6 +241,18 @@ function HoverName({ label, children }) {
   );
 }
 
+// WhatsApp-style double-tick: grey = sent/unread, green = read (same as CRM email).
+function ReadTick({ read, size = 18 }) {
+  const color = read ? '#16A34A' : '#94A3B8';
+  const w = size; const h = Math.round(size * 14 / 22);
+  return (
+    <svg width={w} height={h} viewBox="0 0 22 14" fill="none" className="inline-block align-middle">
+      <path d="M1 7.5 L4.5 11 L11 3" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 7.5 L11.5 11 L18 3" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function TAvatar({ person, size = 24 }) {
   if (!person) return <div className="rounded-full bg-slate-200" style={{ width: size, height: size }} />;
   const initials = (person.name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -2024,7 +2036,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                         <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }} dangerouslySetInnerHTML={{ __html: fmtBody(m.body) }} />
                         {/* Read receipt: grey ✓✓ = delivered/unread, green ✓✓ = read. */}
                         {mine && !m.kindTag && (
-                          <button onClick={() => openReads(m)} title="Seen by" className="shrink-0 text-[13px] leading-none pb-0.5" style={{ color: m.allRead ? '#16A34A' : '#94A3B8' }}>✓✓</button>
+                          <button onClick={() => openReads(m)} title={m.allRead ? 'Read' : 'Sent'} className="shrink-0 leading-none pb-0.5 hover:opacity-70"><ReadTick read={!!m.allRead} size={18} /></button>
                         )}
                       </div>
                     )}
@@ -2191,7 +2203,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
           <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between"><div className="text-[15px] font-extrabold">Message info</div><button onClick={() => setReadsFor(null)} className="text-slate-400 text-2xl leading-none">×</button></div>
             <div className="p-4 max-h-[60vh] overflow-auto">
-              <div className="text-[11px] font-bold text-green-600 uppercase mb-1.5 flex items-center gap-1">✓✓ Seen by {readsFor.seen.length}</div>
+              <div className="text-[11px] font-bold text-green-600 uppercase mb-1.5 flex items-center gap-1"><ReadTick read size={16} /> Seen by {readsFor.seen.length}</div>
               {readsFor.seen.length === 0 ? <div className="text-[13px] text-slate-400 mb-3">No one has seen this yet.</div> : (
                 <div className="space-y-1.5 mb-4">
                   {readsFor.seen.map((u) => (
@@ -2200,7 +2212,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                 </div>
               )}
               {readsFor.notSeen.length > 0 && <>
-                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1">✓✓ Not seen ({readsFor.notSeen.length})</div>
+                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1"><ReadTick read={false} size={16} /> Not seen ({readsFor.notSeen.length})</div>
                 <div className="space-y-1.5">
                   {readsFor.notSeen.map((u) => (
                     <div key={u.id} className="flex items-center gap-2.5 opacity-70"><Avatar name={u.name} src={u.avatar} size={28} /><div className="text-[13px] font-semibold truncate">{u.name}</div></div>
