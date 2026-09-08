@@ -322,15 +322,15 @@ function MyRecognitionModal({ data, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[130] p-4 overflow-auto" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl my-6 flex flex-col max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="text-lg font-extrabold text-[#050A1F]">🏅 My Recognition</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
         </div>
-        <div className="p-6 overflow-auto">
-          <div className="grid grid-cols-4 gap-2.5 mb-5">
+        <div className="p-4 sm:p-6 overflow-auto">
+          <div className="grid grid-cols-4 gap-2 sm:gap-2.5 mb-5">
             {[['praise', 'Appreciations'], ['review', 'Reviews'], ['yellow', 'Yellow'], ['red', 'Red']].map(([k, label]) => (
-              <div key={k} className="rounded-xl border p-3 text-center" style={{ background: REC_PERF[k].bg, borderColor: REC_PERF[k].fg + '33' }}>
-                <div className="text-2xl font-extrabold" style={{ color: REC_PERF[k].fg }}>{counts[k] || 0}</div>
+              <div key={k} className="rounded-xl border p-2 sm:p-3 text-center" style={{ background: REC_PERF[k].bg, borderColor: REC_PERF[k].fg + '33' }}>
+                <div className="text-xl sm:text-2xl font-extrabold" style={{ color: REC_PERF[k].fg }}>{counts[k] || 0}</div>
                 <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: REC_PERF[k].fg }}>{label}</div>
               </div>
             ))}
@@ -346,13 +346,13 @@ function MyRecognitionModal({ data, onClose }) {
                   <div key={c.id} className="flex items-start gap-3 py-3 border-t border-slate-50 first:border-0">
                     <span className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ background: c.badge ? (c.badge.color + '22') : meta.bg }}>{icon}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold text-[#050A1F]">{c.title || meta.label}</span>
-                        <span className="text-[9px] font-extrabold rounded-full px-2 py-0.5" style={{ background: meta.bg, color: meta.fg }}>{meta.label.toUpperCase()}</span>
-                        {c.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-bold text-[#050A1F] break-words min-w-0">{c.title || meta.label}</span>
+                        <span className="text-[9px] font-extrabold rounded-full px-2 py-0.5 shrink-0" style={{ background: meta.bg, color: meta.fg }}>{meta.label.toUpperCase()}</span>
+                        {c.auto && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5 shrink-0" style={{ background: '#EDE9FE', color: '#7C3AED' }}>AUTO</span>}
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{c.auto ? 'Automatic' : `by ${c.by || 'HR'}`}{c.byRole ? ` (${c.byRole})` : ''} · {fmt(c.date)}</div>
-                      {c.note && <div className="text-[13px] text-slate-500 mt-1 whitespace-pre-wrap">{c.note}</div>}
+                      <div className="text-[11px] text-slate-400 mt-0.5 break-words">{c.auto ? 'Automatic' : `by ${c.by || 'HR'}`}{c.byRole ? ` (${c.byRole})` : ''} · {fmt(c.date)}</div>
+                      {c.note && <div className="text-[13px] text-slate-500 mt-1 whitespace-pre-wrap break-words">{c.note}</div>}
                     </div>
                   </div>
                 );
@@ -10040,7 +10040,7 @@ function NotificationBell({ onOpenCandidate }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
+          <div className="absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden" style={{ maxWidth: 'min(20rem, calc(100vw - 24px))' }}>
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
               <span className="font-extrabold text-[#050A1F] text-sm">Notifications</span>
               {items.length > 0 && <button onClick={clearAll} className="text-[11px] font-bold text-orange-600">Clear all</button>}
