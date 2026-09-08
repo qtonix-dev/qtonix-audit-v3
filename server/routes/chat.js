@@ -162,7 +162,8 @@ router.get('/conversations/:id/messages', requireHrAccess, async (req, res, next
     const readOf = (createdAt) => otherMems.filter((mm) => mm.lastReadAt && new Date(mm.lastReadAt) >= new Date(createdAt)).length;
     const totalOthers = otherMems.length;
     res.json({
-      messages: rows.map((m) => { const o = m.toJSON(); if (m.senderId === me) { o.readCount = readOf(m.createdAt); o.totalRecipients = totalOthers; o.allRead = totalOthers > 0 && o.readCount >= totalOthers; } return o; }),
+      myChatId: me,
+      messages: rows.map((m) => { const o = m.toJSON(); o.mine = m.senderId === me; if (o.mine) { o.readCount = readOf(m.createdAt); o.totalRecipients = totalOthers; o.allRead = totalOthers > 0 && o.readCount >= totalOthers; } return o; }),
       hasMore: rows.length === 40,
     });
   } catch (e) { next(e); }
@@ -218,7 +219,7 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
     await ChatMembership.update({ hidden: false }, { where: { conversationId: convId } });
     // Mark my own read pointer forward (I've seen my own message).
     await ChatMembership.update({ lastReadAt: msg.createdAt }, { where: { conversationId: convId, userId: me } });
-    res.json({ message: msg.toJSON() });
+    res.json({ message: { ...msg.toJSON(), mine: true } });
   } catch (e) { next(e); }
 });
 

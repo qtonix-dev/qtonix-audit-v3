@@ -1992,7 +1992,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
           )}
           <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-5">
             {messages.map((m, i) => {
-              const mine = m.senderId === me.id;
+              const mine = m.mine != null ? m.mine : (m.senderId === me.id);
               const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
               // Task-notification card (assignment / status change).
               if (m.kindTag === 'task_assigned' || m.kindTag === 'task_status') {
