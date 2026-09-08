@@ -1541,6 +1541,8 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [aiSuggests, setAiSuggests] = useState([]);
   const [aiBusy, setAiBusy] = useState('');
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [collapseTeams, setCollapseTeams] = useState(false);
+  const [collapseDMs, setCollapseDMs] = useState(false);
   const [teams, setTeams] = useState([]);
   const [canCreateTeam, setCanCreateTeam] = useState(false);
   const [active, setActive] = useState(null);   // { id, other } for DM OR { id, channel, team } for channel
@@ -1840,9 +1842,13 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
         )}
         {/* Teams + groups (Slack-style). Only teams I'm a member of show. */}
         <div className="px-4 pt-1 pb-1 flex items-center justify-between">
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Teams</span>
+          <button onClick={() => setCollapseTeams((v) => !v)} className="flex items-center gap-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide hover:text-slate-600">
+            <span className={`text-[9px] transition-transform ${collapseTeams ? '' : 'rotate-90'}`}>▶</span>
+            Teams {teams.length > 0 && <span className="text-slate-300">({teams.length})</span>}
+          </button>
           {canCreateTeam && <button onClick={() => setCreateModal({ type: 'team' })} title="New team" className="text-orange-500 text-base font-bold">+</button>}
         </div>
+        {!collapseTeams && <>
         {teams.length === 0 && <div className="px-4 pb-2 text-[12px] text-slate-400">{canManage ? 'No teams yet. Tap + to create one.' : 'You’re not in any team yet.'}</div>}
         {teams.map((t) => (
           <div key={t.id} className="px-2 mb-1">
@@ -1861,7 +1867,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             ))}
           </div>
         ))}
-        <div className="px-4 pt-2 pb-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Direct messages</div>
+        </>}
+        <div className="px-4 pt-2 pb-1 flex items-center justify-between">
+          <button onClick={() => setCollapseDMs((v) => !v)} className="flex items-center gap-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wide hover:text-slate-600">
+            <span className={`text-[9px] transition-transform ${collapseDMs ? '' : 'rotate-90'}`}>▶</span>
+            Direct messages {conversations.length > 0 && <span className="text-slate-300">({conversations.length})</span>}
+          </button>
+        </div>
+        {!collapseDMs && (
         <div>
           {conversations.length === 0 ? (
             <div className="px-4 py-8 text-center text-[13px] text-slate-400">No conversations yet.<br />Tap ✏️ to message a colleague.</div>
@@ -1879,6 +1892,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             </button>
           ))}
         </div>
+        )}
         </div>
         </>)}
       </div>
