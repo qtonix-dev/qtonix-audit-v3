@@ -254,7 +254,8 @@ function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, 
     <div className="relative w-full min-w-0">
       <button ref={btnRef} onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full min-w-0' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 w-full min-w-0 flex-wrap'}>
         {multi ? (
-          (values && values.length) ? <>{values.map((v) => <span key={v.id} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 rounded-full pl-0.5 pr-2 py-0.5"><TAvatar person={v} size={18} /><span className="text-[11px] font-semibold truncate max-w-[80px]">{titleCase(v.name)}</span></span>)}<span className="text-slate-300 text-xs">+</span></> : <span className="text-slate-400 truncate">{placeholder || 'Assign to…'}</span>
+          (placeholder ? <span className="text-orange-500 font-bold text-xs">{placeholder}</span>
+          : (values && values.length) ? <>{values.map((v) => <span key={v.id} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 rounded-full pl-0.5 pr-2 py-0.5"><TAvatar person={v} size={18} /><span className="text-[11px] font-semibold truncate max-w-[80px]">{titleCase(v.name)}</span></span>)}<span className="text-slate-300 text-xs">+</span></> : <span className="text-slate-400 truncate">Assign to…</span>)
         ) : (
           value ? <><TAvatar person={value} size={20} /><span className="text-xs text-slate-600 truncate min-w-0">{titleCase(value.name)}</span></> : <span className="text-slate-400 truncate">{placeholder || 'Assign…'}</span>
         )}
@@ -2741,10 +2742,19 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
           <div className="space-y-3 mb-5">
             {!t.parentTaskId ? (
               <TField label="Assignees">
-                <AssigneePicker multi
-                  values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])}
-                  onToggle={(p) => { patch({ toggleAssignee: p.id }); }}
-                />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {((t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])).map((a) => (
+                    <div key={a.id} className="group/av relative flex items-center gap-1.5 bg-slate-50 rounded-full pl-0.5 pr-2 py-0.5 border border-slate-200">
+                      <TAvatar person={a} size={24} />
+                      <span className="text-[12px] font-semibold text-slate-700 max-w-[90px] truncate">{titleCase(a.name)}</span>
+                      <button onClick={() => { const cur = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []); if (cur.length <= 1) { alert('A task needs at least one assignee. Add someone else first, then remove this person.'); return; } patch({ toggleAssignee: a.id }); }} title="Remove" className="text-slate-300 hover:text-red-500 text-[13px] font-bold leading-none">×</button>
+                    </div>
+                  ))}
+                  <AssigneePicker multi compact placeholder="+ Add"
+                    values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])}
+                    onToggle={(p) => patch({ toggleAssignee: p.id })}
+                  />
+                </div>
               </TField>
             ) : (
               <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
