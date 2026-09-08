@@ -2056,14 +2056,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                         ))}
                       </div>
                     )}
-                    {/* Hover actions: react / reply / forward */}
-                    <div className={`relative flex gap-2 ${mine ? 'self-end flex-row-reverse' : ''}`}>
-                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">😊</button>
-                      <button onClick={() => setReplyTo(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↩ Reply</button>
-                      <button onClick={() => setForwarding(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↪ Forward</button>
-                      {m.body && <button onClick={() => setTaskFromMsg(m)} title="Turn into a task" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">✅ Task</button>}
-                      {mine && !m.kindTag && m.body && <button onClick={() => setEditingMsg({ id: m.id, body: m.body })} title="Edit" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">✏️ Edit</button>}
-                      {mine && <button onClick={() => deleteMsg(m)} title="Delete" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-red-500 mt-0.5">🗑 Delete</button>}
+                    {/* Hover actions: react / reply / forward / task / edit / delete */}
+                    <div className={`relative flex gap-2 items-center ${mine ? 'self-end flex-row-reverse' : ''}`}>
+                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} title="React" className="opacity-0 group-hover:opacity-100 transition text-[13px] text-slate-400 hover:text-slate-600 mt-0.5">😊</button>
+                      <button onClick={() => setReplyTo(m)} title="Reply" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">↩ Reply</button>
+                      <button onClick={() => setForwarding(m)} title="Forward" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">↪ Forward</button>
+                      {m.body && <button onClick={() => setTaskFromMsg(m)} title="Turn into a task" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">✅ Task</button>}
+                      {mine && !m.kindTag && m.body && <button onClick={() => setEditingMsg({ id: m.id, body: m.body })} title="Edit message" className="opacity-0 group-hover:opacity-100 transition text-[12px] font-semibold text-slate-400 hover:text-orange-600 mt-0.5">✏️ Edit</button>}
+                      {mine && <button onClick={() => deleteMsg(m)} title="Delete message" className="opacity-0 group-hover:opacity-100 transition text-[12px] font-semibold text-slate-400 hover:text-red-600 mt-0.5">🗑 Delete</button>}
                       {reactPickerFor === m.id && (
                         <div className="absolute z-20 top-6 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
                           {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
