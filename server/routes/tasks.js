@@ -150,16 +150,24 @@ router.post('/', requireHrAccess, async (req, res, next) => {
     const roster = await loadRoster();
     const ctx = actorCtx(req);
     const actor = req.hrUser || null;
-    let assigneeId = b.assigneeId ? Number(b.assigneeId) : (parent ? parent.assigneeId : (actor ? actor.id : null));
-    if (assigneeId) {
-      const target = roster.find((u) => u.id === assigneeId);
+    // Multiple assignees: accept assigneeIds[] (or fall back to single assigneeId).
+    let assigneeIds = Array.isArray(b.assigneeIds) ? b.assigneeIds.map(Number).filter(Boolean) : [];
+    if (!assigneeIds.length && b.assigneeId) assigneeIds = [Number(b.assigneeId)];
+    if (!assigneeIds.length && !parent && actor) assigneeIds = [actor.id];
+    if (parent && !assigneeIds.length && parent.assigneeId) assigneeIds = [parent.assigneeId];
+    assigneeIds = [...new Set(assigneeIds)];
+    // Permission check for each.
+    for (const aid of assigneeIds) {
+      const target = roster.find((u) => u.id === aid);
       if (!target) return res.status(404).json({ error: 'Assignee not found.' });
-      if (!perm.canAssign(actor, target, ctx)) return res.status(403).json({ error: 'You can’t assign tasks to this person.' });
+      if (aid !== (actor && actor.id) && !perm.canAssign(actor, target, ctx)) return res.status(403).json({ error: 'You can’t assign tasks to this person.' });
     }
-    const boardOwnerId = parent ? parent.boardOwnerId : (assigneeId || (actor ? actor.id : null));
+    const primaryAssignee = assigneeIds[0] || (actor ? actor.id : null);
+    let assigneeId = primaryAssignee;
+    const boardOwnerId = parent ? parent.boardOwnerId : (primaryAssignee || (actor ? actor.id : null));
     if (!boardOwnerId) return res.status(400).json({ error: 'No board resolved (admins must pick an assignee).' });
 
-    const isAssignedToOther = assigneeId && actor && assigneeId !== actor.id;
+    const isAssignedToOther = primaryAssignee && actor && primaryAssignee !== actor.id;
     const max = await Task.max('order', { where: { boardOwnerId, sectionId: b.sectionId || null, parentTaskId: parent ? parent.id : null } });
     const row = await Task.create({
       boardOwnerId,
@@ -168,6 +176,7 @@ router.post('/', requireHrAccess, async (req, res, next) => {
       title: title.slice(0, 300),
       description: String(b.description || '').slice(0, 20000),
       assigneeId: assigneeId || null,
+      assigneeIds,
       priority: PRIORITIES.includes(b.priority) ? b.priority : 'medium',
       stage: STAGES.includes(b.stage) ? b.stage : 'not_started',
       dueDate: b.dueDate || null,
@@ -175,9 +184,32 @@ router.post('/', requireHrAccess, async (req, res, next) => {
       createdById: req.hrActor.id, createdByName: req.hrActor.name, createdByKind: req.hrActor.kind,
       assignedById: isAssignedToOther ? req.hrActor.id : null,
       assignedByName: isAssignedToOther ? req.hrActor.name : '',
+      origAssignedById: isAssignedToOther ? req.hrActor.id : null,
+      origAssignedByName: isAssignedToOther ? req.hrActor.name : '',
     });
     await logActivity(row.id, req, 'created', 'created this task');
-    if (isAssignedToOther) await notifyAssignee(assigneeId, req.hrActor.name, title, boardOwnerId, row.id);
+    if (isAssignedToOther) await notifyAssignee(primaryAssignee, req.hrActor.name, title, boardOwnerId, row.id);
+    // Additional assignees (beyond the primary): create a linked copy on each of
+    // their boards, sharing a group id, and notify them.
+    const extra = assigneeIds.slice(1);
+    if (extra.length && !parent) {
+      row.assigneeGroupId = `ag${row.id}`; await row.save();
+      for (const aid of extra) {
+        const emax = await Task.max('order', { where: { boardOwnerId: aid, sectionId: null, parentTaskId: null } });
+        const copy = await Task.create({
+          boardOwnerId: aid, sectionId: null, parentTaskId: null,
+          title: title.slice(0, 300), description: String(b.description || '').slice(0, 20000),
+          assigneeId: aid, assigneeIds, assigneeGroupId: row.assigneeGroupId,
+          priority: row.priority, stage: 'not_started', dueDate: b.dueDate || null,
+          order: (Number.isFinite(emax) ? emax : 0) + 1,
+          createdById: req.hrActor.id, createdByName: req.hrActor.name, createdByKind: req.hrActor.kind,
+          assignedById: req.hrActor.id, assignedByName: req.hrActor.name,
+          origAssignedById: req.hrActor.id, origAssignedByName: req.hrActor.name,
+        });
+        await logActivity(copy.id, req, 'created', 'created this task');
+        await notifyAssignee(aid, req.hrActor.name, title, aid, copy.id);
+      }
+    }
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -212,10 +244,26 @@ router.patch('/:id', requireHrAccess, async (req, res, next) => {
         if (!target) return res.status(404).json({ error: 'Assignee not found.' });
         if (!perm.canAssign(actor, target, ctx)) return res.status(403).json({ error: 'You can’t assign tasks to this person.' });
         if (newId !== row.assigneeId) {
+          const prevAssigneeId = row.assigneeId;
+          const roster2 = roster;
+          const prevName = (roster2.find((u) => u.id === prevAssigneeId) || {}).name || '';
+          const newName = target.name || '';
           row.assigneeId = newId;
-          row.assignedById = actor && newId !== actor.id ? req.hrActor.id : null;
-          row.assignedByName = actor && newId !== actor.id ? req.hrActor.name : '';
-          await logActivity(row.id, req, 'assigned', 'reassigned this task');
+          // Record the pass-on in the chain so the ORIGINAL assigner can still
+          // track where it went. The original assigner is preserved and never
+          // overwritten, so the task stays in their "Assigned by me" list.
+          const chain = Array.isArray(row.reassignChain) ? [...row.reassignChain] : [];
+          chain.push({ byId: req.hrActor.id, byName: req.hrActor.name, fromId: prevAssigneeId, fromName: prevName, toId: newId, toName: newName, at: new Date().toISOString() });
+          row.reassignChain = chain; row.changed('reassignChain', true);
+          // First-ever assigner stays the "assignedBy". If this task had no
+          // original assigner yet (it was self-owned), the person reassigning
+          // becomes the original assigner.
+          if (!row.origAssignedById && actor && newId !== actor.id) { row.origAssignedById = req.hrActor.id; row.origAssignedByName = req.hrActor.name; }
+          // Keep assignedById pointing at the ORIGINAL assigner (not the latest),
+          // so the task never disappears from the first assigner's list.
+          row.assignedById = row.origAssignedById || (actor && newId !== actor.id ? req.hrActor.id : null);
+          row.assignedByName = row.origAssignedByName || (actor && newId !== actor.id ? req.hrActor.name : '');
+          await logActivity(row.id, req, 'assigned', `reassigned this task${prevName ? ` from ${prevName}` : ''} to ${newName}`);
           if (actor && newId !== actor.id) await notifyAssignee(newId, req.hrActor.name, row.title, row.boardOwnerId, row.id);
         }
       } else { row.assigneeId = null; }
@@ -265,6 +313,25 @@ router.post('/:id/comments', requireHrAccess, async (req, res, next) => {
     const body = String((req.body && req.body.body) || '').trim();
     if (!body) return res.status(400).json({ error: 'Note can’t be empty.' });
     const c = await TaskComment.create({ taskId: row.id, authorId: req.hrActor.id, authorName: req.hrActor.name, body: body.slice(0, 10000) });
+    // @mentions: notify tagged people (by name) so they can follow up.
+    try {
+      const names = [...body.matchAll(/@([A-Za-z][A-Za-z .'-]{1,60})/g)].map((m) => m[1].trim());
+      if (names.length) {
+        const { HrUser, HrNotification } = require('../models');
+        const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name'] });
+        const notified = new Set();
+        for (const nm of names) {
+          // Longest-prefix match on the mention text against real names.
+          const cand = all.filter((u) => nm.toLowerCase().startsWith(u.name.toLowerCase()) || u.name.toLowerCase().startsWith(nm.toLowerCase()));
+          const best = cand.sort((a, b2) => b2.name.length - a.name.length)[0];
+          if (best && !notified.has(best.id) && best.id !== req.hrActor.id) {
+            notified.add(best.id);
+            await HrNotification.create({ userId: best.id, actorKind: 'hr', type: 'task_mention', text: `💬 ${req.hrActor.name} mentioned you in a task note: "${String(row.title).slice(0, 60)}"`, meta: { taskId: row.id } });
+            try { await require('../services/chatTask').postTaskAlert(best.id, { kindTag: 'task_status', taskId: row.id, body: `${req.hrActor.name} mentioned you: "${body.slice(0, 100)}"` }); } catch {}
+          }
+        }
+      }
+    } catch {}
     res.status(201).json(c.toJSON());
   } catch (e) { next(e); }
 });
@@ -288,11 +355,12 @@ router.delete('/attachments/:id', requireHrAccess, async (req, res, next) => {
 router.get('/assigned-by-me', requireHrAccess, async (req, res, next) => {
   try {
     if (!req.hrActor) return res.json({ tasks: [] });
-    const rows = await Task.findAll({ where: { assignedById: req.hrActor.id }, order: [['createdAt', 'DESC']], limit: 200 });
+    const { Op } = require('sequelize');
+    const rows = await Task.findAll({ where: { [Op.or]: [{ assignedById: req.hrActor.id }, { origAssignedById: req.hrActor.id }] }, order: [['createdAt', 'DESC']], limit: 200 });
     const ids = [...new Set(rows.map((t) => t.assigneeId).filter(Boolean))];
     const people = ids.length ? await HrUser.findAll({ where: { id: ids }, attributes: ['id', 'name', 'avatar'] }) : [];
     const pById = Object.fromEntries(people.map((p) => [p.id, p]));
-    res.json({ tasks: rows.map((t) => ({ ...t.toJSON(), assignee: t.assigneeId && pById[t.assigneeId] ? { id: pById[t.assigneeId].id, name: pById[t.assigneeId].name, avatar: pById[t.assigneeId].avatar } : null })) });
+    res.json({ tasks: rows.map((t) => ({ ...t.toJSON(), assignee: t.assigneeId && pById[t.assigneeId] ? { id: pById[t.assigneeId].id, name: pById[t.assigneeId].name, avatar: pById[t.assigneeId].avatar } : null, reassignChain: t.reassignChain || [] })) });
   } catch (e) { next(e); }
 });
 

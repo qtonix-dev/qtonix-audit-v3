@@ -2462,6 +2462,11 @@ const Task = sequelize.define('Task', {
   title: { type: DataTypes.STRING(300), allowNull: false },
   description: { type: DataTypes.TEXT, defaultValue: '' },
   assigneeId: { type: DataTypes.INTEGER, allowNull: true },
+  assigneeIds: { type: DataTypes.JSON, defaultValue: [] },        // multiple assignees (all get it on their board)
+  assigneeGroupId: { type: DataTypes.STRING(24), allowNull: true }, // links copies of a multi-assignee task
+  reassignChain: { type: DataTypes.JSON, defaultValue: [] },      // [{ byId, byName, toId, toName, at }] — full pass-on history
+  origAssignedById: { type: DataTypes.INTEGER, allowNull: true }, // the FIRST assigner (never overwritten) so it stays in their "Assigned by me"
+  origAssignedByName: { type: DataTypes.STRING(120), defaultValue: '' },
   priority: { type: DataTypes.STRING(10), defaultValue: 'medium' },   // urgent|high|medium|low
   stage: { type: DataTypes.STRING(14), defaultValue: 'not_started' }, // not_started|in_progress|completed
   dueDate: { type: DataTypes.DATEONLY, allowNull: true },

@@ -1555,6 +1555,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [uploading, setUploading] = useState(false);
   const [typing, setTyping] = useState([]);
   const [reactPickerFor, setReactPickerFor] = useState(null);
+  const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [inChatSearch, setInChatSearch] = useState(false);
@@ -1930,7 +1931,19 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                     {m.reactions && Object.keys(m.reactions).length > 0 && (
                       <div className={`flex flex-wrap gap-1 mt-1 ${mine ? 'justify-end' : ''}`}>
                         {Object.entries(m.reactions).map(([emoji, users]) => (
-                          <button key={emoji} onClick={() => react(m.id, emoji)} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold border" style={(users || []).includes(me.id) ? { background: '#fff3ec', borderColor: '#ffd9c2', color: '#c2410c' } : { background: '#fff', borderColor: '#e8eaf0', color: '#64748b' }}>{emoji} {(users || []).length}</button>
+                          <div key={emoji} className="relative">
+                            <button onClick={() => setWhoReacted(whoReacted && whoReacted.msgId === m.id && whoReacted.emoji === emoji ? null : { msgId: m.id, emoji })} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold border" style={(users || []).includes(me.id) ? { background: '#fff3ec', borderColor: '#ffd9c2', color: '#c2410c' } : { background: '#fff', borderColor: '#e8eaf0', color: '#64748b' }}>{emoji} {(users || []).length}</button>
+                            {whoReacted && whoReacted.msgId === m.id && whoReacted.emoji === emoji && (
+                              <>
+                                <div className="fixed inset-0 z-30" onClick={() => setWhoReacted(null)} />
+                                <div className={`absolute z-40 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-[160px] ${mine ? 'right-0' : 'left-0'}`}>
+                                  <div className="text-[11px] font-bold text-slate-400 uppercase px-1.5 mb-1 flex items-center gap-1">{emoji} Reacted</div>
+                                  {(users || []).map((uid) => { const u = members.find((x) => x.id === uid) || (uid === me.id ? me : null); return <div key={uid} className="flex items-center gap-2 px-1.5 py-1"><Avatar name={u ? u.name : 'Someone'} src={u && u.avatar} size={22} /><span className="text-[13px] font-semibold">{uid === me.id ? 'You' : (u ? u.name : 'Someone')}</span></div>; })}
+                                  <button onClick={() => { react(m.id, emoji); setWhoReacted(null); }} className="w-full mt-1 pt-1.5 border-t border-slate-100 text-[11px] font-bold text-orange-600">{(users || []).includes(me.id) ? 'Remove my reaction' : 'React too'}</button>
+                                </div>
+                              </>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
@@ -2284,6 +2297,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               <button onClick={() => setOpenTask(t)} className={`text-sm font-bold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
               {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
               {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {titleCase(t.assignee.name)}</span>}
+              {tracking && (t.reassignChain || []).length > 0 && <span className="ml-1.5 text-[10px] font-bold text-orange-500 shrink-0" title={(t.reassignChain || []).map((c) => `${c.fromName || '—'} → ${c.toName}`).join('\n')}>↪ reassigned ×{(t.reassignChain || []).length}</span>}
             </div>
             {(() => { const d = plainPreview(t.description); return d ? <div className="text-[11px] text-slate-400 truncate leading-tight">{d}</div> : null; })()}
           </div>
@@ -2606,6 +2620,15 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
           <input defaultValue={t.title} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none" />
           <div className="space-y-3 mb-5">
             <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
+            {!t.parentTaskId && <TField label="Also assign"><AssigneePicker value={null} placeholder="+ Add another person" onChange={(p) => { if (p && p.id) { hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: t.title, description: t.description || '', assigneeId: p.id, dueDate: t.dueDate || null, priority: t.priority }) }).then(() => { alert(`Also assigned to ${p.name}. They now have it on their board.`); }).catch((e) => alert(e.message)); } }} /></TField>}
+            {(t.reassignChain || []).length > 0 && (
+              <div className="rounded-lg bg-orange-50 border border-orange-100 p-2.5">
+                <div className="text-[11px] font-bold text-orange-700 mb-1">↪ Reassignment history</div>
+                {(t.reassignChain || []).map((c, i) => (
+                  <div key={i} className="text-[11px] text-slate-600">{c.fromName || '—'} → <b>{c.toName}</b> <span className="text-slate-400">· by {c.byName} · {c.at ? new Date(c.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</span></div>
+                ))}
+              </div>
+            )}
             <TField label="Due date"><input type="date" defaultValue={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patch({ dueDate: e.target.value || null })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs" /></TField>
             <TField label="Priority"><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select></TField>
             <TField label="Stage"><select value={t.stage} onChange={(e) => patch({ stage: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select></TField>
@@ -2664,7 +2687,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
               ))}
             </div>
             <div className="flex items-stretch gap-2">
-              <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note…" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+              <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note… (type @name to tag someone)" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
               <button onClick={suggestNotes} disabled={!!noteAiBusy} title="Suggest a comment" className="shrink-0 w-9 rounded-lg flex items-center justify-center text-white text-[15px] disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)', boxShadow: '0 2px 8px rgba(139,92,246,.3)' }}>{noteAiBusy === 'suggest' ? '…' : '✨'}</button>
               <button onClick={addNote} className="shrink-0 rounded-lg px-3 text-xs font-bold text-white" style={{ background: ORANGE }}>Post</button>
             </div>
