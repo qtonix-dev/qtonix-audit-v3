@@ -1556,13 +1556,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [typing, setTyping] = useState([]);
   const [reactPickerFor, setReactPickerFor] = useState(null);
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
+  const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [inChatSearch, setInChatSearch] = useState(false);
   const [inChatQ, setInChatQ] = useState('');
   const [inChatHits, setInChatHits] = useState([]);
   const [members, setMembers] = useState([]);
-  const [mention, setMention] = useState(null); // {q} while typing @
+  const [mention, setMention] = useState(null); // {q, idx} while typing @
   const typingSentRef = useRef(0);
   const fileRef = useRef(null);
   const edRef = useRef(null);
@@ -1656,6 +1657,30 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
 
   // Auto-scroll to newest.
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
+
+  // Smart @mention: candidates whose name STARTS WITH the typed text (prefix),
+  // falling back to "contains" so nothing is hidden. Capped for the dropdown.
+  const mentionCands = () => {
+    if (!mention) return [];
+    const q = String(mention.q || '').toLowerCase();
+    const pool = members.filter((u) => u.id !== me.id);
+    const starts = pool.filter((u) => u.name.toLowerCase().startsWith(q));
+    const contains = pool.filter((u) => !u.name.toLowerCase().startsWith(q) && u.name.toLowerCase().includes(q));
+    return [...starts, ...contains].slice(0, 6);
+  };
+  // Insert the chosen user into the editor, replacing the trailing @query.
+  const pickMention = (u) => {
+    if (!u) return;
+    const base = text.replace(/@(\w*)$/, '');
+    setEditor(`${base}@${u.name} `);
+    setMention(null);
+    setTimeout(() => { if (edRef.current) { edRef.current.focus(); const r = document.createRange(); r.selectNodeContents(edRef.current); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } }, 0);
+  };
+
+  // Quick "mark done" from a task card in #task chat.
+  const markTaskDone = async (taskId) => {
+    try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ stage: 'completed' }) }); alert('Task marked done ✓'); } catch (e) { alert(e.message); }
+  };
 
   const send = async () => {
     if (!active || (!text.trim() && !sending)) return;
@@ -1907,6 +1932,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                     <span className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[15px] shrink-0" style={{ background: '#FF6A00' }}>{m.kindTag === 'task_assigned' ? '📋' : '🔄'}</span>
                     <div className="flex-1 min-w-0"><div className="text-[13px] font-bold" style={{ color: '#9a3412' }}>{m.body}</div><div className="text-[11px]" style={{ color: '#c2732c' }}>{fmtTime(m.createdAt)}</div></div>
                     {m.taskId && onOpenTask && <button onClick={() => onOpenTask(m.taskId)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: '#FF6A00' }}>View task</button>}
+                    {m.taskId && m.kindTag === 'task_assigned' && <button onClick={() => markTaskDone(m.taskId)} title="Mark done" className="text-[12px] font-bold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>✓ Done</button>}
                     <button onClick={() => setReplyTo(m)} title="Reply (saves as task note)" className="text-[12px] font-bold text-orange-700 shrink-0">↩</button>
                   </div>
                 );
@@ -1952,6 +1978,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                       <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">😊</button>
                       <button onClick={() => setReplyTo(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↩ Reply</button>
                       <button onClick={() => setForwarding(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↪ Forward</button>
+                      {m.body && <button onClick={() => setTaskFromMsg(m)} title="Turn into a task" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">✅ Task</button>}
                       {reactPickerFor === m.id && (
                         <div className="absolute z-20 top-6 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
                           {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
@@ -1980,12 +2007,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             )}
             <div className="relative">
               {/* @mention autocomplete */}
-              {mention && members.length > 0 && (() => {
-                const cands = members.filter((u) => u.id !== me.id && u.name.toLowerCase().includes((mention.q || '').toLowerCase())).slice(0, 6);
+              {mention && (() => {
+                const cands = mentionCands();
+                const idx = mention.idx || 0;
                 return cands.length ? (
                   <div className="absolute bottom-full left-0 mb-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-20">
-                    {cands.map((u) => (
-                      <button key={u.id} onClick={() => { const base = text.replace(/@(\w*)$/, ''); setEditor(`${base}@${u.name} `); setMention(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-orange-50 text-left">
+                    <div className="px-3 pt-1.5 pb-1 text-[10px] font-bold text-slate-300 uppercase">↑↓ to move · Enter/Tab to pick</div>
+                    {cands.map((u, i) => (
+                      <button key={u.id} onClick={() => pickMention(u)} className={`w-full flex items-center gap-2.5 px-3 py-2 text-left ${i === idx ? 'bg-orange-50' : 'hover:bg-orange-50'}`}>
                         <Avatar name={u.name} src={u.avatar} size={26} />
                         <span className="text-[13px] font-bold">{u.name}</span>
                         {u.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500" />}
@@ -2013,8 +2042,34 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                     contentEditable
                     role="textbox"
                     data-ph={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)}
-                    onInput={(e) => { const v = htmlToMarkers(e.currentTarget.innerHTML); setText(v); pingTyping(); const mm = v.match(/@(\w*)$/); setMention(mm ? { q: mm[1] } : null); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); } if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'i')) { setTimeout(syncEditor, 0); } }}
+                    onInput={(e) => {
+                      const v = htmlToMarkers(e.currentTarget.innerHTML); setText(v); pingTyping();
+                      const mm = v.match(/@(\w*)$/);
+                      if (mm) {
+                        const q = mm[1].toLowerCase();
+                        // Auto-complete when the query uniquely identifies ONE person.
+                        if (q.length >= 1) {
+                          const pool = members.filter((u) => u.id !== me.id);
+                          const starts = pool.filter((u) => u.name.toLowerCase().startsWith(q));
+                          if (starts.length === 1) { setMention({ q: mm[1], idx: 0 }); return; }
+                        }
+                        setMention((prev) => ({ q: mm[1], idx: prev && prev.q === mm[1] ? (prev.idx || 0) : 0 }));
+                      } else setMention(null);
+                    }}
+                    onKeyDown={(e) => {
+                      // While the mention list is open, keys drive it.
+                      if (mention) {
+                        const cands = mentionCands();
+                        if (cands.length) {
+                          if (e.key === 'ArrowDown') { e.preventDefault(); setMention((m) => ({ ...m, idx: ((m.idx || 0) + 1) % cands.length })); return; }
+                          if (e.key === 'ArrowUp') { e.preventDefault(); setMention((m) => ({ ...m, idx: ((m.idx || 0) - 1 + cands.length) % cands.length })); return; }
+                          if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(cands[mention.idx || 0]); return; }
+                          if (e.key === 'Escape') { setMention(null); return; }
+                        }
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey && !mention) { e.preventDefault(); send(); }
+                      if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'i')) { setTimeout(syncEditor, 0); }
+                    }}
                     className="flex-1 text-[14px] py-1 focus:outline-none max-h-32 overflow-auto empty-ph"
                     suppressContentEditableWarning
                     style={{ minHeight: '1.6em', wordBreak: 'break-word' }}
@@ -2036,6 +2091,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
         </div>
       )}
       {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
+      {taskFromMsg && <ChatToTaskModal message={taskFromMsg} directory={directory} onClose={() => setTaskFromMsg(null)} onDone={() => setTaskFromMsg(null)} />}
       {createModal && <ChatGroupModal mode={createModal} directory={directory} onClose={() => setCreateModal(null)} onDone={afterCreate} />}
       {manageFor && <ChatManageModal team={manageFor} directory={directory} isAdmin={isAdmin} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} onDeleted={() => { setManageFor(null); setActive(null); loadTeams(); }} />}
     </div>
@@ -2169,6 +2225,48 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
 }
 
 // Forward a message to a person (DM) or a channel.
+// Turn a chat message into a task (assign to someone; they get it on their board).
+function ChatToTaskModal({ message, directory, onClose, onDone }) {
+  const [title, setTitle] = useState(String(message.body || '').replace(/\*\*/g, '').replace(/_/g, '').slice(0, 200));
+  const [assigneeId, setAssigneeId] = useState('');
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+  const create = async () => {
+    if (!title.trim()) { alert('Add a task title.'); return; }
+    setBusy(true);
+    try {
+      await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: title.trim(), description: `From chat: "${String(message.body || '').slice(0, 500)}"${message.senderName ? ` — ${message.senderName}` : ''}`, assigneeId: assigneeId || undefined }) });
+      alert('Task created ✓'); onDone();
+    } catch (e) { alert(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">✅ Turn into a task</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        <div className="p-5 space-y-3">
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Task title</div><textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          <div>
+            <div className="text-[12px] font-bold text-slate-500 mb-1">Assign to <span className="font-normal text-slate-400">(optional — defaults to you)</span></div>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search…" className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] mb-1.5" />
+            <div className="max-h-40 overflow-auto border border-slate-100 rounded-lg">
+              {people.slice(0, 30).map((u) => (
+                <button key={u.id} onClick={() => setAssigneeId(assigneeId === u.id ? '' : u.id)} className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left ${assigneeId === u.id ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                  <Avatar name={u.name} src={u.avatar} size={24} /><span className="text-[13px] font-semibold">{u.name}</span>{assigneeId === u.id && <span className="ml-auto text-orange-600 font-bold">✓</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={create} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Creating…' : 'Create task'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChatForwardModal({ message, directory, conversations, onClose, onDone }) {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);

@@ -81,6 +81,8 @@ async function notifyAssignee(assigneeId, ctx, task) {
       text: ctx.actorName + ' assigned you a task: \u201C' + String(task.title).slice(0, 120) + '\u201D',
     });
   } catch { /* non-fatal */ }
+  // Drop a card into the assignee's private #task chat (with a link to the task).
+  try { if (assigneeId > 0) await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag: 'task_assigned', taskId: task.id, body: `${ctx.actorName} assigned you a task: "${String(task.title).slice(0, 120)}"` }); } catch { /* non-fatal */ }
 }
 
 async function roster() {
@@ -128,7 +130,7 @@ async function buildBoard(viewerId, ctx) {
   }
 
   const tasks = await Task.findAll({
-    where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }] },
+    where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }, { origAssignedById: viewerId }] },
     order: [['order', 'ASC'], ['id', 'ASC']],
   });
   const ids = tasks.map((t) => t.id);
@@ -157,7 +159,7 @@ async function buildBoard(viewerId, ctx) {
     if (t.assigneeId === viewerId) {
       o.relation = 'mine';
       if (t.stage === 'completed') completed.push(o); else mine.push(o);
-    } else if (t.assignedById === viewerId) {
+    } else if (t.assignedById === viewerId || t.origAssignedById === viewerId) {
       o.relation = 'tracking';
       // Completed delegated tasks move into the Completed section too, so
       // "Completed" holds everything finished — whether you did it or assigned it.
@@ -298,19 +300,45 @@ router.post('/tasks', guard, async (req, res, next) => {
     if (isAssignedByOther && !parentTaskId && !BUCKETS.includes(b.bucket)) bucket = 'recently_assigned';
 
     const max = await Task.max('order', { where: { assigneeId, bucket, parentTaskId: parentTaskId || null } });
+    // Multiple assignees: accept assigneeIds[] (primary is the first / assigneeId).
+    let extraIds = Array.isArray(b.assigneeIds) ? b.assigneeIds.map(Number).filter((x) => x > 0 && x !== assigneeId) : [];
+    extraIds = [...new Set(extraIds)];
     const row = await Task.create({
       boardOwnerId, bucket, parentTaskId, title,
       description: String(b.description || '').slice(0, 20000),
       assigneeId,
+      assigneeIds: [assigneeId, ...extraIds].filter((x) => x > 0),
       priority: ['urgent', 'high', 'medium', 'low'].includes(b.priority) ? b.priority : 'medium',
       stage: ['not_started', 'in_progress', 'completed'].includes(b.stage) ? b.stage : 'not_started',
       dueDate: b.dueDate || null,
       order: (Number.isFinite(max) ? max : 0) + 1,
       createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
-      assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
+      assignedById: isAssignedByOther ? (ctx.boardId || null) : null, assignedByName: isAssignedByOther ? ctx.actorName : '',
+      origAssignedById: isAssignedByOther ? (ctx.boardId || null) : null, origAssignedByName: isAssignedByOther ? ctx.actorName : '',
     });
     await logActivity(row.id, ctx, 'created', parentTaskId ? 'created subtask' : 'created task');
     if (isAssignedByOther && assigneeId > 0) await notifyAssignee(assigneeId, ctx, row);
+    // Extra assignees: create a linked copy on each of their boards + notify.
+    if (extraIds.length && !parentTaskId) {
+      for (const aid of extraIds) {
+        const target = people.find((u) => u.id === aid);
+        if (!target || !canAssign(ctx.actorUser, target, ctx, people)) continue;
+        const emax = await Task.max('order', { where: { assigneeId: aid, bucket: 'recently_assigned', parentTaskId: null } });
+        const copy = await Task.create({
+          boardOwnerId: aid, bucket: 'recently_assigned', parentTaskId: null, title,
+          description: String(b.description || '').slice(0, 20000), assigneeId: aid,
+          assigneeIds: [assigneeId, ...extraIds], assigneeGroupId: `ag${row.id}`,
+          priority: row.priority, stage: 'not_started', dueDate: b.dueDate || null,
+          order: (Number.isFinite(emax) ? emax : 0) + 1,
+          createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
+          assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
+          origAssignedById: ctx.boardId || null, origAssignedByName: ctx.actorName,
+        });
+        await logActivity(copy.id, ctx, 'created', 'created task');
+        await notifyAssignee(aid, ctx, copy);
+      }
+      row.assigneeGroupId = `ag${row.id}`; await row.save();
+    }
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -337,6 +365,8 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       row.stage = b.stage;
       row.completedAt = b.stage === 'completed' ? new Date() : null;
       await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + b.stage.replace('_', ' '));
+      // Notify the assignee in their #task chat (unless they made the change).
+      try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${b.stage.replace('_', ' ')}` }); } catch {}
     }
 
     if (b.assigneeId !== undefined && Number(b.assigneeId) !== row.assigneeId) {
@@ -352,9 +382,20 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
         if (!canAssign(ctx.actorUser, target, ctx, people)) return res.status(403).json({ error: 'You can\u2019t assign a task to this person.' });
         newName = target.name;
       }
+      const prevAssigneeId = row.assigneeId;
+      const prevName = row.assigneeName || '';
       row.assigneeId = newId;
       if (!row.parentTaskId) { row.boardOwnerId = newId; row.bucket = 'recently_assigned'; }
-      row.assignedById = ctx.boardId || null; row.assignedByName = ctx.actorName;
+      // Record the pass-on chain + preserve the ORIGINAL assigner so the task
+      // stays visible in the first assigner's "Assigned by me" tracking.
+      try {
+        const chain = Array.isArray(row.reassignChain) ? [...row.reassignChain] : [];
+        chain.push({ byId: ctx.boardId || ctx.actorId, byName: ctx.actorName, fromId: prevAssigneeId, fromName: prevName, toId: newId, toName: newName, at: new Date().toISOString() });
+        row.reassignChain = chain; row.changed('reassignChain', true);
+      } catch {}
+      if (!row.origAssignedById && ctx.boardId) { row.origAssignedById = ctx.boardId; row.origAssignedByName = ctx.actorName; }
+      row.assignedById = row.origAssignedById || ctx.boardId || null;
+      row.assignedByName = row.origAssignedByName || ctx.actorName;
       await logActivity(row.id, ctx, 'assigned', 'assigned to ' + newName);
       if (newId > 0) await notifyAssignee(newId, ctx, row);
     }
@@ -429,6 +470,23 @@ router.post('/tasks/:id/comments', guard, async (req, res, next) => {
     const body = String((req.body && req.body.body) || '').trim();
     if (!body) return res.status(400).json({ error: 'Note can\u2019t be empty.' });
     const c = await TaskComment.create({ taskId: row.id, authorId: ctx.actorId || null, authorName: ctx.actorName, body: body.slice(0, 5000) });
+    // @mentions in the note: notify tagged people + drop a card in their #task chat.
+    try {
+      const names = [...body.matchAll(/@([A-Za-z][A-Za-z .'-]{1,60})/g)].map((m) => m[1].trim());
+      if (names.length) {
+        const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name'] });
+        const notified = new Set();
+        for (const nm of names) {
+          const cand = all.filter((u) => nm.toLowerCase().startsWith(u.name.toLowerCase()) || u.name.toLowerCase().startsWith(nm.toLowerCase()));
+          const best = cand.sort((a, b2) => b2.name.length - a.name.length)[0];
+          if (best && !notified.has(best.id) && best.id !== ctx.actorId) {
+            notified.add(best.id);
+            try { await HrNotification.create({ userId: best.id, actorKind: 'hr', type: 'task_mention', text: `\uD83D\uDCAC ${ctx.actorName} mentioned you in a task note: "${String(row.title).slice(0, 60)}"` }); } catch {}
+            try { await require('../services/chatTask').postTaskAlert(best.id, { kindTag: 'task_status', taskId: row.id, body: `${ctx.actorName} mentioned you: "${body.slice(0, 100)}"` }); } catch {}
+          }
+        }
+      }
+    } catch {}
     res.status(201).json(c.toJSON());
   } catch (e) { next(e); }
 });
