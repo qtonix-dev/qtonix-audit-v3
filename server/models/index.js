@@ -1653,6 +1653,7 @@ const HrNotification = sequelize.define('HrNotification', {
   type: { type: DataTypes.STRING(40), defaultValue: 'info' }, // mention | application | interview | offer | info
   text: { type: DataTypes.STRING(500), allowNull: false },
   candidateId: { type: DataTypes.INTEGER, allowNull: true },
+  meta: { type: DataTypes.JSON, allowNull: true },                 // extra link data (e.g. { taskId, expenseId })
   read: { type: DataTypes.BOOLEAN, defaultValue: false },
 }, {
   tableName: 'hr_notifications',

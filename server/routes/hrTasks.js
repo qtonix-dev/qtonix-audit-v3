@@ -77,6 +77,7 @@ async function notifyAssignee(assigneeId, ctx, task) {
     await HrNotification.create({
       userId: assigneeId, actorKind: 'hr', type: 'task_assigned',
       text: ctx.actorName + ' assigned you a task: \u201C' + String(task.title).slice(0, 120) + '\u201D',
+      meta: { taskId: task.id },
     });
   } catch { /* non-fatal */ }
   // Drop a card into the assignee's private #task chat (with a link to the task).
@@ -558,10 +559,13 @@ router.delete('/tasks/:id', guard, async (req, res, next) => {
     const isCreator = row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId);
     if (!ctx.isAdmin && !isCreator) return res.status(403).json({ error: 'Only the task creator or an admin can delete this task.' });
 
-    // Gather this task + all its subtasks, then remove their comments,
-    // attachments, and activity, then the tasks themselves.
+    // Gather this task + all its subtasks + any multi-assignee GROUP copies,
+    // then remove their comments, attachments, activity, chat cards and
+    // notifications, then the tasks themselves.
     const subs = await Task.findAll({ where: { parentTaskId: row.id }, attributes: ['id'] });
-    const allIds = [row.id, ...subs.map((s) => s.id)];
+    let groupCopies = [];
+    if (row.assigneeGroupId) groupCopies = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['id'] });
+    const allIds = [...new Set([row.id, ...subs.map((s) => s.id), ...groupCopies.map((g) => g.id)])];
     await TaskComment.destroy({ where: { taskId: { [Op.in]: allIds } } });
     // Remove attached files from ImageKit before dropping the DB rows.
     const attachs = await TaskAttachment.findAll({ where: { taskId: { [Op.in]: allIds } } });
@@ -571,6 +575,18 @@ router.delete('/tasks/:id', guard, async (req, res, next) => {
     }
     await TaskAttachment.destroy({ where: { taskId: { [Op.in]: allIds } } });
     await TaskActivity.destroy({ where: { taskId: { [Op.in]: allIds } } });
+    // Remove the linked #task chat cards (assignment/status alerts) so a deleted
+    // task leaves no dangling "task deleted" cards in anyone's chat.
+    try { const { ChatMessage } = require('../models'); if (ChatMessage) await ChatMessage.destroy({ where: { taskId: { [Op.in]: allIds } } }); } catch {}
+    // Remove any task notifications that pointed at these tasks.
+    try {
+      const { HrNotification } = require('../models');
+      if (HrNotification) {
+        const notifs = await HrNotification.findAll({ where: { type: { [Op.in]: ['task_assigned', 'task_mention'] } } });
+        const toDrop = notifs.filter((n) => n.meta && allIds.includes(Number(n.meta.taskId))).map((n) => n.id);
+        if (toDrop.length) await HrNotification.destroy({ where: { id: { [Op.in]: toDrop } } });
+      }
+    } catch {}
     await Task.destroy({ where: { id: { [Op.in]: allIds } } });
     res.json({ ok: true });
   } catch (e) { next(e); }
