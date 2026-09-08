@@ -1598,6 +1598,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [uploading, setUploading] = useState(false);
   const [typing, setTyping] = useState([]);
   const [reactPickerFor, setReactPickerFor] = useState(null);
+  const [moreMenuFor, setMoreMenuFor] = useState(null); // message id whose ⋯ menu is open
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
   const [editingMsg, setEditingMsg] = useState(null);   // { id, body } being edited
@@ -2009,7 +2010,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
               return (
                 <div key={m.id} id={`chatmsg-${m.id}`} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
                   {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
-                  <div className={`max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
+                  <div className={`relative max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
                     {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
                     {m.forwardedFrom && <div className={`text-[10px] text-slate-400 italic mb-0.5 ${mine ? 'text-right' : ''}`}>↪ Forwarded from {m.forwardedFrom}</div>}
                     {m.replyToId && <div className={`text-[11px] rounded-lg px-2.5 py-1 mb-0.5 border-l-2 ${mine ? 'self-end' : ''}`} style={{ background: '#f8fafc', borderColor: '#FF6A00', color: '#64748b' }}><b>{m.replyToName}</b>: {m.replyToBody}</div>}
@@ -2056,18 +2057,26 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                         ))}
                       </div>
                     )}
-                    {/* Hover actions: react / reply / forward / task / edit / delete */}
-                    <div className={`relative flex gap-2 items-center ${mine ? 'self-end flex-row-reverse' : ''}`}>
-                      <button onClick={() => setReactPickerFor(reactPickerFor === m.id ? null : m.id)} title="React" className="opacity-0 group-hover:opacity-100 transition text-[13px] text-slate-400 hover:text-slate-600 mt-0.5">😊</button>
-                      <button onClick={() => setReplyTo(m)} title="Reply" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">↩ Reply</button>
-                      <button onClick={() => setForwarding(m)} title="Forward" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">↪ Forward</button>
-                      {m.body && <button onClick={() => setTaskFromMsg(m)} title="Turn into a task" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-400 hover:text-slate-600 mt-0.5">✅ Task</button>}
-                      {mine && !m.kindTag && m.body && <button onClick={() => setEditingMsg({ id: m.id, body: m.body })} title="Edit message" className="opacity-0 group-hover:opacity-100 transition text-[12px] font-semibold text-slate-400 hover:text-orange-600 mt-0.5">✏️ Edit</button>}
-                      {mine && <button onClick={() => deleteMsg(m)} title="Delete message" className="opacity-0 group-hover:opacity-100 transition text-[12px] font-semibold text-slate-400 hover:text-red-600 mt-0.5">🗑 Delete</button>}
-                      {reactPickerFor === m.id && (
-                        <div className="absolute z-20 top-6 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
-                          {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
-                        </div>
+                    {/* Teams-style floating action bar: quick reactions + edit + ⋯ more */}
+                    <div className={`absolute -top-3 ${mine ? 'right-2' : 'left-2'} opacity-0 group-hover:opacity-100 transition z-30`}>
+                      <div className="flex items-center gap-0.5 bg-white border border-slate-200 rounded-full shadow-md px-1 py-0.5">
+                        {['👍', '❤️', '😂', '😮', '🎉'].map((e) => <button key={e} onClick={() => react(m.id, e)} title={`React ${e}`} className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-[15px] transition">{e}</button>)}
+                        <span className="w-px h-4 bg-slate-200 mx-0.5" />
+                        {mine && !m.kindTag && m.body && <button onClick={() => setEditingMsg({ id: m.id, body: m.body })} title="Edit" className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 text-[13px]">✏️</button>}
+                        <button onClick={() => setMoreMenuFor(moreMenuFor === m.id ? null : m.id)} title="More options" className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-[15px] leading-none">⋯</button>
+                      </div>
+                      {moreMenuFor === m.id && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setMoreMenuFor(null)} />
+                          <div className={`absolute z-50 mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl py-1 ${mine ? 'right-0' : 'left-0'}`}>
+                            <button onClick={() => { setReplyTo(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">↩</span> Reply</button>
+                            <button onClick={() => { setForwarding(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">↪</span> Forward</button>
+                            {m.body && <button onClick={() => { setTaskFromMsg(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">✅</span> Turn into task</button>}
+                            {m.body && <button onClick={() => { navigator.clipboard && navigator.clipboard.writeText(m.body.replace(/\*\*/g, '').replace(/_/g, '')); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">⧉</span> Copy text</button>}
+                            {mine && !m.kindTag && m.body && <button onClick={() => { setEditingMsg({ id: m.id, body: m.body }); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-700 hover:bg-slate-50 text-left"><span className="w-4 text-center">✏️</span> Edit</button>}
+                            {mine && <button onClick={() => { deleteMsg(m); setMoreMenuFor(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-red-600 hover:bg-red-50 text-left border-t border-slate-100 mt-1"><span className="w-4 text-center">🗑</span> Delete</button>}
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
