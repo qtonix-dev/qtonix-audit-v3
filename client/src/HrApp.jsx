@@ -235,7 +235,7 @@ function TAvatar({ person, size = 24 }) {
 }
 
 // Searchable assignee picker (scoped by backend to who the actor may assign to).
-function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, compact, placeholder }) {
+function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, compact, placeholder, customLabel }) {
   const [open, setOpen] = useState(false);
   const [people, setPeople] = useState([]);
   const [q, setQ] = useState('');
@@ -259,7 +259,7 @@ function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, 
   return (
     <div className="relative w-full min-w-0">
       <button ref={btnRef} onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full min-w-0' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 w-full min-w-0 flex-wrap'}>
-        {multi ? (
+        {customLabel ? customLabel : multi ? (
           (placeholder ? <span className="text-orange-500 font-bold text-xs">{placeholder}</span>
           : (values && values.length) ? <>{values.map((v) => <span key={v.id} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 rounded-full pl-0.5 pr-2 py-0.5"><TAvatar person={v} size={18} /><span className="text-[11px] font-semibold truncate max-w-[80px]">{titleCase(v.name)}</span></span>)}<span className="text-slate-300 text-xs">+</span></> : <span className="text-slate-400 truncate">Assign to…</span>)
         ) : (
@@ -2435,9 +2435,25 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
           </div>
           {/* assignee (inline picker) */}
           <div className="px-2 h-9 flex items-center border-r border-slate-100 min-w-0 overflow-hidden">
-            {tracking ? <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate min-w-0"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && titleCase(t.assignee.name)}</span></span>
-              : isSub ? <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />
-              : <AssigneePicker multi compact values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} />}
+            {(() => {
+              const list = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []);
+              // 2+ assignees → show overlapping circles only (photo or initials), no names.
+              if (list.length > 1) {
+                const circles = (
+                  <span className="flex items-center" title={list.map((a) => titleCase(a.name)).join(', ')}>
+                    {list.slice(0, 4).map((a, i) => <span key={a.id} className="rounded-full ring-2 ring-white" style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}><TAvatar person={a} size={22} /></span>)}
+                    {list.length > 4 && <span className="text-[10px] text-slate-400 ml-1 font-bold">+{list.length - 4}</span>}
+                  </span>
+                );
+                if (tracking || isSub) return circles;
+                // Editable: the circles ARE the picker button (opens tick-list).
+                return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={circles} />;
+              }
+              // Single assignee.
+              if (tracking) return <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate min-w-0"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && titleCase(t.assignee.name)}</span></span>;
+              if (isSub) return <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />;
+              return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} />;
+            })()}
           </div>
           {/* deadline (inline date) */}
           <div className="px-2 h-9 flex items-center border-r border-slate-100">

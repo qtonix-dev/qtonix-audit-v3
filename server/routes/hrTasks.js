@@ -247,42 +247,58 @@ async function buildBoard(viewerId, ctx) {
   const mine = [];
   const tracking = [];
   const completed = [];
+  // Group tasks by their assignee-group so multi-assignee copies are treated as
+  // ONE logical task. For each group we pick a single representative row and the
+  // merged list of assignees.
+  const groups = new Map(); // groupKey -> { rep, assigneeIds:Set, tasks:[] }
+  const singles = [];
   for (const t of tasks) {
-    const o = decorate(t);
-    o.assignees = assigneesFor(t);
-    const g = subBy[t.id]; o.subtaskCount = g ? g.total : 0; o.subtaskDone = g ? g.done : 0;
-    o.subtasks = subsByParent[t.id] || [];
-    if (t.assigneeId === viewerId) {
-      o.relation = 'mine';
-      if (t.stage === 'completed') completed.push(o); else mine.push(o);
-    } else if (t.assignedById === viewerId || t.origAssignedById === viewerId) {
-      o.relation = 'tracking';
-      if (t.stage === 'completed') completed.push(o); else tracking.push(o);
-    }
+    if (t.assigneeGroupId) {
+      const g = groups.get(t.assigneeGroupId) || { tasks: [], assigneeIds: new Set() };
+      g.tasks.push(t); if (t.assigneeId) g.assigneeIds.add(t.assigneeId);
+      groups.set(t.assigneeGroupId, g);
+    } else singles.push(t);
   }
-  // Collapse multi-assignee COPIES into one row in the tracking/completed
-  // sections (a task with 3 assignees is ONE task to track, not 3 rows). Keep
-  // the copy the viewer is assigned to if any, else the lowest id (the main).
-  const dedupeGroups = (arr) => {
-    const seen = new Map(); const out = [];
-    for (const o of arr) {
-      if (!o.assigneeGroupId) { out.push(o); continue; }
-      const prev = seen.get(o.assigneeGroupId);
-      if (!prev) { seen.set(o.assigneeGroupId, o); out.push(o); }
-      else {
-        // Merge assignees; prefer the row the viewer owns as the kept one.
-        const merged = new Set([...(prev.assignees || []).map((a) => a.id), ...(o.assignees || []).map((a) => a.id)]);
-        const all = [...(prev.assignees || []), ...(o.assignees || [])].filter((a, i, s) => s.findIndex((x) => x.id === a.id) === i);
-        prev.assignees = all;
-      }
+
+  const classify = (t, allAssignees) => {
+    const o = decorate(t);
+    o.assignees = allAssignees || assigneesFor(t);
+    const sc = subBy[t.id]; o.subtaskCount = sc ? sc.total : 0; o.subtaskDone = sc ? sc.done : 0;
+    o.subtasks = subsByParent[t.id] || [];
+    const iAmAssigner = t.assignedById === viewerId || t.origAssignedById === viewerId;
+    const iAmAssignee = t.assigneeId === viewerId;
+    // Rule: if I ASSIGNED this task → it lives in "Assigned by me" (tracking),
+    // shown once, even if I'm also one of the assignees. Otherwise, if it was
+    // assigned TO me by someone else → it's on my own board.
+    if (iAmAssigner) {
+      o.relation = 'tracking';
+      (t.stage === 'completed' ? completed : tracking).push(o);
+    } else if (iAmAssignee) {
+      o.relation = 'mine';
+      (t.stage === 'completed' ? completed : mine).push(o);
     }
-    return out;
   };
-  const trackingD = dedupeGroups(tracking);
-  const completedD = dedupeGroups(completed);
+
+  // Singles: classify directly.
+  for (const t of singles) classify(t);
+
+  // Groups: one representative row with all assignees merged.
+  for (const [, g] of groups) {
+    const people2 = await HrUser.findAll({ where: { id: { [Op.in]: [...g.assigneeIds].filter((x) => x > 0).length ? [...g.assigneeIds].filter((x) => x > 0) : [0] } }, attributes: ['id', 'name', 'avatar'] });
+    const pMap = Object.fromEntries(people2.map((u) => [u.id, u]));
+    const allAssignees = [...g.assigneeIds].map((id) => { const u = pMap[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
+    // Representative: the copy I assigned (my origAssignedById) OR the one I'm the
+    // assignee of, whichever makes it appear in the right section. Prefer the
+    // assigner-view so a task I delegated shows once under "Assigned by me".
+    const iAssignedThis = g.tasks.some((t) => t.assignedById === viewerId || t.origAssignedById === viewerId);
+    let rep;
+    if (iAssignedThis) rep = g.tasks.find((t) => t.assignedById === viewerId || t.origAssignedById === viewerId) || g.tasks[0];
+    else rep = g.tasks.find((t) => t.assigneeId === viewerId) || g.tasks[0];
+    classify(rep, allAssignees);
+  }
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
-  return { viewer, buckets, tracking: trackingD, completed: completedD, canManage: true };
+  return { viewer, buckets, tracking, completed, canManage: true };
 }
 
 router.get('/my-board', guard, async (req, res, next) => {
