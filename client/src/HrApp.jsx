@@ -1598,6 +1598,20 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [reactPickerFor, setReactPickerFor] = useState(null);
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
+  const [editingMsg, setEditingMsg] = useState(null);   // { id, body } being edited
+  const [readsFor, setReadsFor] = useState(null);       // { msgId, seen, notSeen } popup
+  const saveEdit = async () => {
+    if (!editingMsg || !editingMsg.body.trim()) { setEditingMsg(null); return; }
+    try { const r = await hrApi(`/chat/messages/${editingMsg.id}`, { method: 'PATCH', body: JSON.stringify({ body: editingMsg.body.trim() }) }); setMessages((prev) => prev.map((m) => m.id === editingMsg.id ? { ...m, body: r.message.body, editedAt: r.message.editedAt } : m)); } catch (e) { alert(e.message); }
+    setEditingMsg(null);
+  };
+  const deleteMsg = async (m) => {
+    if (!window.confirm('Delete this message? This can’t be undone.')) return;
+    try { await hrApi(`/chat/messages/${m.id}`, { method: 'DELETE' }); setMessages((prev) => prev.filter((x) => x.id !== m.id)); } catch (e) { alert(e.message); }
+  };
+  const openReads = async (m) => {
+    try { const r = await hrApi(`/chat/messages/${m.id}/reads`); setReadsFor({ msgId: m.id, seen: r.seen || [], notSeen: r.notSeen || [] }); } catch (e) { alert(e.message); }
+  };
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [inChatSearch, setInChatSearch] = useState(false);
@@ -1997,7 +2011,21 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                     {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}
                     {m.forwardedFrom && <div className={`text-[10px] text-slate-400 italic mb-0.5 ${mine ? 'text-right' : ''}`}>↪ Forwarded from {m.forwardedFrom}</div>}
                     {m.replyToId && <div className={`text-[11px] rounded-lg px-2.5 py-1 mb-0.5 border-l-2 ${mine ? 'self-end' : ''}`} style={{ background: '#f8fafc', borderColor: '#FF6A00', color: '#64748b' }}><b>{m.replyToName}</b>: {m.replyToBody}</div>}
-                    {m.body && <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }} dangerouslySetInnerHTML={{ __html: fmtBody(m.body) }} />}
+                    {editingMsg && editingMsg.id === m.id ? (
+                      <div className={`flex flex-col gap-1 ${mine ? 'items-end' : ''}`}>
+                        <textarea autoFocus value={editingMsg.body} onChange={(e) => setEditingMsg({ ...editingMsg, body: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') setEditingMsg(null); }} rows={2} className="rounded-xl border border-orange-300 px-3 py-2 text-[14px] w-[280px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
+                        <div className="flex gap-2 text-[11px]"><button onClick={saveEdit} className="font-bold text-orange-600">Save</button><button onClick={() => setEditingMsg(null)} className="text-slate-400">Cancel</button></div>
+                      </div>
+                    ) : m.body && (
+                      <div className={`flex items-end gap-1 ${mine ? 'flex-row-reverse' : ''}`}>
+                        <div className="rounded-2xl px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap" style={mine ? { background: 'linear-gradient(135deg,#FF6A00,#FF4500)', color: '#fff' } : { background: '#f1f3f7', color: '#334155' }} dangerouslySetInnerHTML={{ __html: fmtBody(m.body) }} />
+                        {/* Read receipt: grey ✓✓ = delivered/unread, green ✓✓ = read. */}
+                        {mine && !m.kindTag && (
+                          <button onClick={() => openReads(m)} title="Seen by" className="shrink-0 text-[13px] leading-none pb-0.5" style={{ color: m.allRead ? '#16A34A' : '#94A3B8' }}>✓✓</button>
+                        )}
+                      </div>
+                    )}
+                    {m.editedAt && !editingMsg && <div className={`text-[10px] text-slate-300 italic mt-0.5 ${mine ? 'text-right' : ''}`}>edited</div>}
                     {m.fileUrl && (m.isImage ? (
                       <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 block"><img src={m.fileUrl} alt={m.fileName} className="rounded-xl max-w-[240px] max-h-[240px] object-cover border border-slate-200" /></a>
                     ) : (
@@ -2032,6 +2060,8 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                       <button onClick={() => setReplyTo(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↩ Reply</button>
                       <button onClick={() => setForwarding(m)} className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">↪ Forward</button>
                       {m.body && <button onClick={() => setTaskFromMsg(m)} title="Turn into a task" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">✅ Task</button>}
+                      {mine && !m.kindTag && m.body && <button onClick={() => setEditingMsg({ id: m.id, body: m.body })} title="Edit" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-slate-500 mt-0.5">✏️ Edit</button>}
+                      {mine && <button onClick={() => deleteMsg(m)} title="Delete" className="opacity-0 group-hover:opacity-100 transition text-[12px] text-slate-300 hover:text-red-500 mt-0.5">🗑 Delete</button>}
                       {reactPickerFor === m.id && (
                         <div className="absolute z-20 top-6 bg-white border border-slate-200 rounded-xl shadow-lg px-2 py-1.5 flex gap-1" style={mine ? { right: 0 } : { left: 0 }}>
                           {['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥'].map((e) => <button key={e} onClick={() => react(m.id, e)} className="text-lg hover:scale-125 transition">{e}</button>)}
@@ -2145,6 +2175,31 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       )}
       {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
       {taskFromMsg && <ChatToTaskModal message={taskFromMsg} directory={directory} onClose={() => setTaskFromMsg(null)} onDone={() => setTaskFromMsg(null)} />}
+      {readsFor && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-[150] p-4" onClick={() => setReadsFor(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between"><div className="text-[15px] font-extrabold">Message info</div><button onClick={() => setReadsFor(null)} className="text-slate-400 text-2xl leading-none">×</button></div>
+            <div className="p-4 max-h-[60vh] overflow-auto">
+              <div className="text-[11px] font-bold text-green-600 uppercase mb-1.5 flex items-center gap-1">✓✓ Seen by {readsFor.seen.length}</div>
+              {readsFor.seen.length === 0 ? <div className="text-[13px] text-slate-400 mb-3">No one has seen this yet.</div> : (
+                <div className="space-y-1.5 mb-4">
+                  {readsFor.seen.map((u) => (
+                    <div key={u.id} className="flex items-center gap-2.5"><Avatar name={u.name} src={u.avatar} size={28} /><div className="flex-1 min-w-0"><div className="text-[13px] font-bold truncate">{u.name}</div><div className="text-[10px] text-slate-400">{u.at ? new Date(u.at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</div></div></div>
+                  ))}
+                </div>
+              )}
+              {readsFor.notSeen.length > 0 && <>
+                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1">✓✓ Not seen ({readsFor.notSeen.length})</div>
+                <div className="space-y-1.5">
+                  {readsFor.notSeen.map((u) => (
+                    <div key={u.id} className="flex items-center gap-2.5 opacity-70"><Avatar name={u.name} src={u.avatar} size={28} /><div className="text-[13px] font-semibold truncate">{u.name}</div></div>
+                  ))}
+                </div>
+              </>}
+            </div>
+          </div>
+        </div>
+      )}
       {createModal && <ChatGroupModal mode={createModal} directory={directory} onClose={() => setCreateModal(null)} onDone={afterCreate} />}
       {manageFor && <ChatManageModal team={manageFor} directory={directory} isAdmin={isAdmin} onClose={() => setManageFor(null)} onDone={() => { setManageFor(null); loadTeams(); }} onDeleted={() => { setManageFor(null); setActive(null); loadTeams(); }} />}
     </div>

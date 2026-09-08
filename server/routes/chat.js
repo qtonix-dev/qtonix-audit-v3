@@ -156,7 +156,15 @@ router.get('/conversations/:id/messages', requireHrAccess, async (req, res, next
     if (before) where.id = { [Op.lt]: before };
     const rows = await ChatMessage.findAll({ where, order: [['id', 'DESC']], limit: 40 });
     rows.reverse();
-    res.json({ messages: rows.map((m) => m.toJSON()), hasMore: rows.length === 40 });
+    // Read receipts: for the current user's OWN messages, compute how many other
+    // members have read each one (lastReadAt >= message time). Also flag deleted.
+    const otherMems = await ChatMembership.findAll({ where: { conversationId: convId, userId: { [Op.ne]: me } } });
+    const readOf = (createdAt) => otherMems.filter((mm) => mm.lastReadAt && new Date(mm.lastReadAt) >= new Date(createdAt)).length;
+    const totalOthers = otherMems.length;
+    res.json({
+      messages: rows.map((m) => { const o = m.toJSON(); if (m.senderId === me) { o.readCount = readOf(m.createdAt); o.totalRecipients = totalOthers; o.allRead = totalOthers > 0 && o.readCount >= totalOthers; } return o; }),
+      hasMore: rows.length === 40,
+    });
   } catch (e) { next(e); }
 });
 
@@ -221,6 +229,61 @@ router.post('/conversations/:id/read', requireHrAccess, async (req, res, next) =
     const convId = Number(req.params.id);
     await ChatMembership.update({ lastReadAt: new Date() }, { where: { conversationId: convId, userId: me } });
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Edit my own message ----------------------------------------------------
+router.patch('/messages/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const msg = await ChatMessage.findByPk(Number(req.params.id));
+    if (!msg) return res.status(404).json({ error: 'Message not found.' });
+    if (msg.senderId !== me) return res.status(403).json({ error: 'You can only edit your own messages.' });
+    if (msg.deleted) return res.status(400).json({ error: 'This message was deleted.' });
+    if (msg.kindTag) return res.status(400).json({ error: 'System messages can’t be edited.' });
+    const body = String((req.body && req.body.body) || '').trim();
+    if (!body) return res.status(400).json({ error: 'Message can’t be empty.' });
+    msg.body = body.slice(0, 5000); msg.editedAt = new Date(); await msg.save();
+    res.json({ message: msg.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// ---- Delete my own message (soft delete) ------------------------------------
+router.delete('/messages/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const msg = await ChatMessage.findByPk(Number(req.params.id));
+    if (!msg) return res.status(404).json({ error: 'Message not found.' });
+    // Sender can delete their own; an admin/HR can delete any.
+    if (msg.senderId !== me && !isAdminOrHr(req)) return res.status(403).json({ error: 'You can only delete your own messages.' });
+    msg.deleted = true; msg.body = ''; msg.fileUrl = ''; msg.fileName = ''; await msg.save();
+    // Also remove the uploaded file from ImageKit if any.
+    try { if (msg.fileId) await require('../services/imagekit').deleteFile(msg.fileId); } catch {}
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- Who has read a message (seen-by list with timestamps) ------------------
+router.get('/messages/:id/reads', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const msg = await ChatMessage.findByPk(Number(req.params.id));
+    if (!msg) return res.status(404).json({ error: 'Message not found.' });
+    const mem = await ChatMembership.findOne({ where: { conversationId: msg.conversationId, userId: me } });
+    if (!mem) return res.status(403).json({ error: 'Not your conversation.' });
+    const mems = await ChatMembership.findAll({ where: { conversationId: msg.conversationId, userId: { [Op.ne]: msg.senderId } } });
+    const uids = mems.map((m) => m.userId);
+    const users = await HrUser.findAll({ where: { id: { [Op.in]: uids.length ? uids : [0] } }, attributes: ['id', 'name', 'avatar'] });
+    const uById = {}; users.forEach((u) => { uById[u.id] = u; });
+    const seen = []; const notSeen = [];
+    for (const m of mems) {
+      const u = uById[m.userId]; if (!u) continue;
+      const readAt = m.lastReadAt && new Date(m.lastReadAt) >= new Date(msg.createdAt) ? m.lastReadAt : null;
+      const entry = { id: u.id, name: u.name, avatar: u.avatar || '', at: readAt };
+      if (readAt) seen.push(entry); else notSeen.push(entry);
+    }
+    seen.sort((a, b) => new Date(b.at) - new Date(a.at));
+    res.json({ seen, notSeen });
   } catch (e) { next(e); }
 });
 
