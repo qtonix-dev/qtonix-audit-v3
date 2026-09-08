@@ -2423,7 +2423,8 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
           {/* assignee (inline picker) */}
           <div className="px-2 h-9 flex items-center border-r border-slate-100 min-w-0 overflow-hidden">
             {tracking ? <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate min-w-0"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && titleCase(t.assignee.name)}</span></span>
-              : <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />}
+              : isSub ? <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />
+              : <AssigneePicker multi compact values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} />}
           </div>
           {/* deadline (inline date) */}
           <div className="px-2 h-9 flex items-center border-r border-slate-100">

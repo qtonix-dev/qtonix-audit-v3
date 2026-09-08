@@ -149,11 +149,25 @@ async function buildBoard(viewerId, ctx) {
   const subsByParent = {};
   for (const s of subsAll) { (subsByParent[s.parentTaskId] = subsByParent[s.parentTaskId] || []).push(decorate(s)); }
 
+  // Batch-resolve multi-assignee groups so each task can show all its assignees.
+  const groupIds = [...new Set(tasks.map((t) => t.assigneeGroupId).filter(Boolean))];
+  const groupMembers = {}; // groupId -> [assigneeId,...]
+  if (groupIds.length) {
+    const grp = await Task.findAll({ where: { assigneeGroupId: { [Op.in]: groupIds } }, attributes: ['assigneeGroupId', 'assigneeId'] });
+    for (const g of grp) { if (!g.assigneeId) continue; (groupMembers[g.assigneeGroupId] = groupMembers[g.assigneeGroupId] || new Set()).add(g.assigneeId); }
+  }
+  const assigneesFor = (t) => {
+    const ids = new Set([t.assigneeId].filter(Boolean));
+    if (t.assigneeGroupId && groupMembers[t.assigneeGroupId]) groupMembers[t.assigneeGroupId].forEach((id) => ids.add(id));
+    return [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : null; }).filter(Boolean);
+  };
+
   const mine = [];
   const tracking = [];
   const completed = [];
   for (const t of tasks) {
     const o = decorate(t);
+    o.assignees = assigneesFor(t);
     const g = subBy[t.id]; o.subtaskCount = g ? g.total : 0; o.subtaskDone = g ? g.done : 0;
     o.subtasks = subsByParent[t.id] || [];
     if (t.assigneeId === viewerId) {
