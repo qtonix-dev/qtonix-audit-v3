@@ -102,26 +102,26 @@ function canAssign(actorUser, targetUser, ctx = {}, roster = null) {
   };
 
   if (isLead(actorUser)) {
-    // Downline: target is under the actor at any depth.
+    // Own team: anyone in the SAME department (same branch), plus their downline
+    // at any depth and their reporting chain.
+    const sameDeptLead = (actorUser.department || '') && (targetUser.department || '') &&
+      (actorUser.department || '').toLowerCase() === (targetUser.department || '').toLowerCase() &&
+      (actorUser.branch || '').toLowerCase() === (targetUser.branch || '').toLowerCase();
+    if (sameDeptLead) return true;
     if (byId && isDownline(actorUser, targetUser, roster)) return true;
     if (targetUser.reportsToId === actorUser.id) return true; // direct report
-    // Reporting chain upward.
-    if (inMyReportingChain(targetUser.id)) return true;
-    // Any other lead (has reports, or heads a department) — seniors who lead.
+    if (inMyReportingChain(targetUser.id)) return true;        // reporting chain upward
+    // Other department HEADS/leads are reachable (cross-department coordination).
     if (isLead(targetUser)) return true;
     return false;
   }
 
-  // Member: everyone in their own department (same branch) ＋ reporting chain
-  // ＋ other-department leads (seniors who head/lead a department). This mirrors
-  // the dropdown, which lists other-department seniors so a member knows who
-  // they can reach across departments.
+  // Member (regular employee): may assign ONLY to others in their OWN department
+  // (same branch). No cross-department assignment.
   const sameDept = (actorUser.department || '') && (targetUser.department || '') &&
     (actorUser.department || '').toLowerCase() === (targetUser.department || '').toLowerCase() &&
     (actorUser.branch || '').toLowerCase() === (targetUser.branch || '').toLowerCase();
   if (sameDept) return true;
-  if (inMyReportingChain(targetUser.id)) return true;
-  if (isLead(targetUser)) return true; // other-department leads are reachable
   return false;
 }
 

@@ -226,6 +226,19 @@ function plainPreview(html) {
   return s;
 }
 
+// Instant hover tooltip (no native title delay). Shows the label above the child.
+function HoverName({ label, children }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span className="relative inline-flex" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      {children}
+      {show && label && (
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-semibold whitespace-nowrap z-[70] pointer-events-none shadow-lg">{label}</span>
+      )}
+    </span>
+  );
+}
+
 function TAvatar({ person, size = 24 }) {
   if (!person) return <div className="rounded-full bg-slate-200" style={{ width: size, height: size }} />;
   const initials = (person.name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -274,9 +287,21 @@ function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, 
             {multi && <div className="text-[10px] text-slate-400 px-2 pb-1">Tick everyone who should get this task.</div>}
             <div className="max-h-56 overflow-auto">
               {allowClear && !multi && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
-              {people.map((p, i) => {
-                const prev = people[i - 1];
-                const showOwnHdr = i === 0 && p.own;
+              {/* Currently assigned (checked) shown first for multi-select. */}
+              {multi && (values || []).length > 0 && <>
+                <div className="px-2 pt-1 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-orange-400">Assigned</div>
+                {(values || []).map((p) => (
+                  <button key={`sel-${p.id}`} onClick={() => onToggle && onToggle(p)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left bg-orange-50">
+                    <span className="w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 bg-orange-500 border-orange-500 text-white">✓</span>
+                    <TAvatar person={p} size={24} />
+                    <div className="min-w-0 flex-1"><div className="text-xs font-semibold text-[#050A1F] truncate">{titleCase(p.name)}</div></div>
+                  </button>
+                ))}
+                <div className="px-2 pt-2 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-300 border-t border-slate-100 mt-1">Add more</div>
+              </>}
+              {people.filter((p) => !(multi && selIds.has(p.id))).map((p, i, arr) => {
+                const prev = arr[i - 1];
+                const showOwnHdr = i === 0 && p.own && !(multi && (values || []).length > 0);
                 const showCrossHdr = !p.own && (i === 0 || (prev && prev.own));
                 const checked = selIds.has(p.id);
                 return (
@@ -2441,8 +2466,8 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               if (list.length > 1) {
                 const circleRow = (extra) => (
                   <span className="flex items-center gap-1.5">
-                    {list.slice(0, 5).map((a) => <span key={a.id} title={titleCase(a.name)} className="cursor-default"><TAvatar person={a} size={22} /></span>)}
-                    {list.length > 5 && <span className="text-[10px] text-slate-400 font-bold" title={list.slice(5).map((a) => titleCase(a.name)).join(', ')}>+{list.length - 5}</span>}
+                    {list.slice(0, 5).map((a) => <HoverName key={a.id} label={titleCase(a.name)}><TAvatar person={a} size={22} /></HoverName>)}
+                    {list.length > 5 && <HoverName label={list.slice(5).map((a) => titleCase(a.name)).join(', ')}><span className="text-[10px] text-slate-400 font-bold">+{list.length - 5}</span></HoverName>}
                     {extra}
                   </span>
                 );
@@ -2456,7 +2481,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               if (list.length === 1) {
                 const single = (
                   <span className="flex items-center gap-1.5">
-                    <span title={titleCase(list[0].name)} className="cursor-default"><TAvatar person={list[0]} size={22} /></span>
+                    <HoverName label={titleCase(list[0].name)}><TAvatar person={list[0]} size={22} /></HoverName>
                     <span className="w-[22px] h-[22px] rounded-full border border-dashed border-slate-300 flex items-center justify-center text-slate-400 hover:text-orange-500 hover:border-orange-400 text-sm font-bold" title="Add / remove assignee">+</span>
                   </span>
                 );
