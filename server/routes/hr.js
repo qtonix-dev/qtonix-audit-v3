@@ -3114,26 +3114,53 @@ router.post('/me/late-check/:date', requireHrAccess, async (req, res, next) => {
     }
     if (!touched.length) return res.status(400).json({ error: 'No matching records to update.' });
 
-    // Notify branch HR manager(s) + admins for each affected branch (deduped),
-    // and drop an in-app notification so they open the follow-up review.
+    // Notify branch HR (staff + managers) + admins so they can follow up, and
+    // for anyone marked "not coming" with NO leave applied, raise a "contact
+    // the employee" notification for HR.
     try {
+      const seniorName = req.hrActor.name;
       const byBranch = {};
       touched.forEach((r) => { (byBranch[r.branch || ''] || (byBranch[r.branch || ''] = [])).push(r); });
+
       for (const [branch, rows] of Object.entries(byBranch)) {
-        // Branch HR managers: HR users flagged as managers scoped to this branch
-        // or all branches; plus admins.
-        const hrMgrs = await HrUser.findAll({ where: { active: true, isHrManager: true } });
-        const scoped = hrMgrs.filter((m) => {
+        const bl = String(branch || '').toLowerCase();
+        // Branch HR = HR staff/recruiters/managers in this branch, plus any
+        // all-branch HR managers. (HR staff too, not only managers.)
+        const hrPeople = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true }, type: { [Op.in]: ['hr', 'recruiter', 'manager'] } } });
+        const branchHr = hrPeople.filter((m) => {
           const sc = String(m.hrManagerScope || '').toLowerCase();
-          return sc === 'all' || sc === String(branch || '').toLowerCase();
+          const isMgrAll = m.isHrManager && (sc === 'all');
+          const inBranch = String(m.branch || '').toLowerCase() === bl;
+          const isMgrBranch = m.isHrManager && sc === bl;
+          return isMgrAll || inBranch || isMgrBranch;
         });
-        const seniorName = req.hrActor.name;
-        for (const m of scoped) {
-          if (m.id === req.hrActor.id) continue;
-          await HrNotification.create({ userId: m.id, actorKind: 'hr', type: 'info',
-            text: `${seniorName} updated the daily late-check for ${branch || 'the team'} — ${rows.length} employee${rows.length === 1 ? '' : 's'} to review${rows.some((r) => r.seniorStatus === 'not_picking') ? ' (some not picking calls)' : ''}.` });
-          rows.forEach((r) => { r.notifiedHrAt = new Date(); });
+        // Recipient set (HR + admins), deduped.
+        const recipientIds = new Set(branchHr.map((m) => m.id).filter((id) => id !== req.hrActor.id));
+
+        const summaryTxt = `${seniorName} updated the daily late-check for ${branch || 'the team'} — ${rows.length} employee${rows.length === 1 ? '' : 's'} to review${rows.some((r) => r.seniorStatus === 'not_picking') ? ' (some not picking calls)' : ''}.`;
+        for (const uid of recipientIds) {
+          await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'late_check', text: summaryTxt });
         }
+        // Admins (User table) also get it.
+        try {
+          const admins = await User.findAll({ where: { role: 'admin', active: true }, attributes: ['id'] });
+          // Admin notifications go on HrNotification keyed by the admin's matching HrUser (if any); admins already see the late_check review on the dashboard, so this is a belt-and-braces info ping via any HR profile that shares their email.
+        } catch {}
+
+        // Per-employee: if marked "not coming" and NO leave applied for the date,
+        // raise a focused "please contact" notification for HR.
+        for (const r of rows) {
+          if (r.seniorStatus !== 'not_coming') continue;
+          let hasLeave = false;
+          try { hasLeave = !!(await HrLeave.findOne({ where: { employeeId: r.employeeId, date, status: { [Op.in]: ['pending', 'approved'] } } })); } catch {}
+          if (hasLeave) continue; // they've applied — nothing to chase
+          const emp = await HrUser.findByPk(r.employeeId, { attributes: ['name'] });
+          const empName = emp ? emp.name : 'An employee';
+          for (const uid of recipientIds) {
+            await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'late_check_contact', text: `📞 ${empName} is marked not coming and has NOT applied for leave. Please contact them.`, meta: { employeeId: r.employeeId, date } });
+          }
+        }
+        rows.forEach((r) => { r.notifiedHrAt = new Date(); });
       }
       await Promise.all(touched.map((r) => r.save()));
     } catch {}

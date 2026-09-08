@@ -1525,7 +1525,7 @@ function WorkspaceView({ user, isAdmin }) {
       <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3">
         {pane === 'chat'
           ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
-          : <div className="h-full overflow-auto"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
+          : <div className="h-full overflow-auto no-scrollbar"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
       </div>
     </div>
   );

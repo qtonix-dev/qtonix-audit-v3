@@ -63,3 +63,7 @@ a.chClickToSms { display: none !important; }
 .empty-ph:empty:before { content: attr(data-ph); color: #94a3b8; pointer-events: none; }
 .empty-ph b, .empty-ph strong { font-weight: 800; }
 .empty-ph i, .empty-ph em { font-style: italic; }
+
+/* Hide scrollbar visually but keep scroll functionality (mouse/trackpad). */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
