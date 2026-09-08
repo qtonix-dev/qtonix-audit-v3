@@ -2338,14 +2338,20 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [filter, setFilter] = useState('all');      // all | mine | overdue | high
   const [sort, setSort] = useState('manual');       // manual | due | priority
 
-  const loadBoard = (id) => hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); setViewerId(id); }).catch((e) => setErr(e.message));
+  const fetchBoard = (id, { clear } = {}) => {
+    if (clear) { setBoard(null); setExpandedTasks({}); }
+    setViewerId(id);
+    return hrApi(`/tasks/board/${id}`).then((d) => { setBoard(d); }).catch((e) => setErr(e.message));
+  };
+  // Switching to another person's board: clear first so stale rows never linger.
+  const loadBoard = (id) => fetchBoard(id, { clear: true });
   useEffect(() => {
     // Everyone lands on their OWN board first.
     hrApi('/tasks/my-board').then((d) => { setBoard(d); setViewerId(d.viewer.id); setMyBoardId(d.viewer.id); }).catch((e) => setErr(e.message));
     // Load the people list for the top switcher (admin/HR can view others).
     hrApi('/tasks/boards').then(setPeople).catch(() => {});
   }, []);
-  const refresh = () => { if (viewerId != null) loadBoard(viewerId); };
+  const refresh = () => { if (viewerId != null) fetchBoard(viewerId); };
 
   const addTask = async (bucket) => {
     if (!newTitle.trim() || viewerId == null) return;
