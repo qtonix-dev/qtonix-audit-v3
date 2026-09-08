@@ -2437,21 +2437,31 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
           <div className="px-2 h-9 flex items-center border-r border-slate-100 min-w-0 overflow-hidden">
             {(() => {
               const list = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []);
-              // 2+ assignees → show overlapping circles only (photo or initials), no names.
+              // 2+ assignees → circles with a gap; each shows its OWN name on hover.
               if (list.length > 1) {
-                const circles = (
-                  <span className="flex items-center gap-1.5 cursor-pointer" title={list.map((a) => titleCase(a.name)).join(', ')}>
-                    {list.slice(0, 4).map((a) => <span key={a.id}><TAvatar person={a} size={22} /></span>)}
-                    {list.length > 4 && <span className="text-[10px] text-slate-400 font-bold">+{list.length - 4}</span>}
+                const circleRow = (extra) => (
+                  <span className="flex items-center gap-1.5">
+                    {list.slice(0, 5).map((a) => <span key={a.id} title={titleCase(a.name)} className="cursor-default"><TAvatar person={a} size={22} /></span>)}
+                    {list.length > 5 && <span className="text-[10px] text-slate-400 font-bold" title={list.slice(5).map((a) => titleCase(a.name)).join(', ')}>+{list.length - 5}</span>}
+                    {extra}
                   </span>
                 );
-                if (isSub) return circles;
-                // Editable everywhere else (including tracking/"Assigned by me"):
-                // the circles ARE the picker button (opens the tick-list to add/remove).
-                return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={circles} />;
+                if (isSub) return circleRow(null);
+                // A distinct "+" circle opens the picker to add/remove assignees.
+                const plusCircle = <span className="w-[22px] h-[22px] rounded-full border border-dashed border-slate-300 flex items-center justify-center text-slate-400 hover:text-orange-500 hover:border-orange-400 text-sm font-bold" title="Add / remove assignee">+</span>;
+                return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={circleRow(plusCircle)} />;
               }
-              // Single assignee.
+              // Single assignee: circle with hover name + a "+" circle to add more.
               if (isSub) return <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />;
+              if (list.length === 1) {
+                const single = (
+                  <span className="flex items-center gap-1.5">
+                    <span title={titleCase(list[0].name)} className="cursor-default"><TAvatar person={list[0]} size={22} /></span>
+                    <span className="w-[22px] h-[22px] rounded-full border border-dashed border-slate-300 flex items-center justify-center text-slate-400 hover:text-orange-500 hover:border-orange-400 text-sm font-bold" title="Add / remove assignee">+</span>
+                  </span>
+                );
+                return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={single} />;
+              }
               return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} />;
             })()}
           </div>
