@@ -1515,7 +1515,7 @@ function WorkspaceView({ user, isAdmin }) {
     </button>
   );
   return (
-    <div className="flex flex-col pt-3" style={{ height: 'calc(100vh - 56px)' }}>
+    <div className="flex flex-col pt-3 h-full" style={{ minHeight: 0 }}>
       <div className="max-w-6xl w-full mx-auto px-4 shrink-0">
         <div className="flex items-center gap-1 bg-white border-b border-slate-100" style={{ marginBottom: 12 }}>
           <Tab id="tasks" icon="✅" label="Task" badge={0} />
@@ -1734,7 +1734,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   return (
     <div className="flex h-full bg-white">
       {/* Conversation list */}
-      <div className="flex flex-col border-r border-slate-200 shrink-0 min-h-0" style={{ width: 300, background: '#f8fafc' }}>
+      <div className="flex flex-col border-r border-slate-200 shrink-0 min-h-0 overflow-x-hidden" style={{ width: 300, background: '#f8fafc' }}>
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <div className="text-xl font-extrabold">Chat</div>
           <div className="flex items-center gap-2">
@@ -1747,7 +1747,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
           <input id="chatMainSearch" value={searchQ} onChange={(e) => runSearch(e.target.value)} placeholder="🔍 Search people, teams & messages…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
         </div>
         {searchResults !== null && (
-          <div className="px-2 pb-2 overflow-auto" style={{ maxHeight: '60vh' }}>
+          <div className="px-2 pb-2 overflow-y-auto overflow-x-hidden" style={{ maxHeight: '60vh' }}>
             {/* People */}
             {(searchResults.people || []).length > 0 && <>
               <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1 mt-1">People</div>
@@ -1803,7 +1803,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
           </div>
         )}
         {/* Scrollable area: #task + Teams + Direct messages all scroll together. */}
-        <div className="flex-1 overflow-y-auto min-h-0 pb-2">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 pb-2">
         {/* #task — personal notes & task alerts, pinned at the top. */}
         {taskChannel && (
           <button onClick={() => openChannel('task', { id: taskChannel.id, title: 'task' }, { name: 'Your tasks & notes', color: '#0A1F44', icon: '📋', isTask: true })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 mb-1.5 ${active && active.id === taskChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === taskChannel.id ? { background: '#fff3ec' } : { background: '#f8fafc' }}>
@@ -10011,7 +10011,7 @@ export default function HrApp() {
       {/* Workspace (Task + Buzz) renders full-bleed so the chat fits the screen
           with no outer page padding forcing a scroll. */}
       {effectiveView === 'tasks' ? (
-        <div key={`${effectiveView}-${navKey}`}><WorkspaceView user={user} isAdmin={isAdmin} /></div>
+        <div key={`${effectiveView}-${navKey}`} className="overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}><WorkspaceView user={user} isAdmin={isAdmin} /></div>
       ) : (
       <main className="max-w-6xl mx-auto px-4 py-8" key={`${effectiveView}-${navKey}`}>
         {effectiveView === 'dashboard' && (isHrStaff || isHrManager || isAdmin ? (
