@@ -112,7 +112,11 @@ router.get('/conversations', requireHrAccess, async (req, res, next) => {
       const lastRead = myMemByConv[c.id] && myMemByConv[c.id].lastReadAt;
       const unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(lastRead ? { createdAt: { [Op.gt]: lastRead } } : {}) } });
       const entry = { id: c.id, kind: c.kind, other: pubUser(userById[otherByConv[c.id]]), lastMessageText: c.lastMessageText, lastMessageAt: c.lastMessageAt, lastMessageBy: c.lastMessageBy, unread };
-      if (c.kind === 'task') taskChannel = entry; else out.push(entry);
+      if (c.kind === 'task') { taskChannel = entry; continue; }
+      // ONLY DMs belong in the Direct Messages list. Channels are rendered from
+      // the /teams endpoint — including them here made a channel's last message
+      // show up (mislabelled) under a random member's DM row.
+      if (c.kind === 'dm') out.push(entry);
     }
     res.json({ conversations: out, taskChannel });
   } catch (e) { next(e); }
