@@ -1557,6 +1557,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [reactPickerFor, setReactPickerFor] = useState(null);
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
+  const [inChatSearch, setInChatSearch] = useState(false);
+  const [inChatQ, setInChatQ] = useState('');
+  const [inChatHits, setInChatHits] = useState([]);
   const [members, setMembers] = useState([]);
   const [mention, setMention] = useState(null); // {q} while typing @
   const typingSentRef = useRef(0);
@@ -1609,7 +1612,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   // Load members (for @mention) when a conversation opens.
   useEffect(() => { if (active) hrApi(`/chat/conversations/${active.id}/members`).then((r) => setMembers(r.members || [])).catch(() => setMembers([])); else setMembers([]); }, [active && active.id]);
   // Run a search.
-  const runSearch = async (term) => { setSearchQ(term); if (term.trim().length < 2) { setSearchResults(null); return; } try { const r = await hrApi(`/chat/search?q=${encodeURIComponent(term.trim())}`); setSearchResults(r.results || []); } catch { setSearchResults([]); } };
+  const runSearch = async (term) => { setSearchQ(term); if (term.trim().length < 2) { setSearchResults(null); return; } try { const r = await hrApi(`/chat/search?q=${encodeURIComponent(term.trim())}`); setSearchResults({ people: r.people || [], teams: r.teams || [], results: r.results || [] }); } catch { setSearchResults({ people: [], teams: [], results: [] }); } };
+  // Search inside the currently-open conversation only.
+  const runInChatSearch = async (term) => { setInChatQ(term); if (!active || term.trim().length < 2) { setInChatHits([]); return; } try { const r = await hrApi(`/chat/search?q=${encodeURIComponent(term.trim())}&within=${active.id}`); setInChatHits(r.results || []); } catch { setInChatHits([]); } };
+  // Jump to a message in the open chat (scroll into view + brief highlight).
+  const jumpToMessage = (msgId) => {
+    const el = document.getElementById(`chatmsg-${msgId}`);
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.transition = 'background .2s'; el.style.background = '#fff3ec'; setTimeout(() => { el.style.background = ''; }, 1500); }
+  };
   // Open a search result → open its conversation.
   const openResult = async (res) => {
     setSearchQ(''); setSearchResults(null);
@@ -1727,21 +1737,54 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       <div className="flex flex-col border-r border-slate-200 shrink-0 min-h-0" style={{ width: 300, background: '#f8fafc' }}>
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <div className="text-xl font-extrabold">Chat</div>
-          <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setSearchQ(''); setSearchResults({ people: [], teams: [], results: [] }); setTimeout(() => { const el = document.getElementById('chatMainSearch'); if (el) el.focus(); }, 0); }} title="Search messages" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 text-sm border border-slate-200">🔍</button>
+            <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
+          </div>
         </div>
-        {/* Message search */}
+        {/* Unified search: people, teams & messages */}
         <div className="px-3 mb-2">
-          <input value={searchQ} onChange={(e) => runSearch(e.target.value)} placeholder="🔍 Search messages…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
+          <input id="chatMainSearch" value={searchQ} onChange={(e) => runSearch(e.target.value)} placeholder="🔍 Search people, teams & messages…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
         </div>
         {searchResults !== null && (
-          <div className="px-2 pb-2">
-            <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1">Search results</div>
-            {searchResults.length === 0 ? <div className="px-3 py-3 text-[13px] text-slate-400">No messages found.</div> : searchResults.map((r) => (
-              <button key={r.id} onClick={() => openResult(r)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100">
-                <div className="text-[12px] font-bold text-slate-600">{r.label} · <span className="font-normal text-slate-400">{r.senderName}</span></div>
-                <div className="text-[12px] text-slate-500 truncate">{r.body}</div>
-              </button>
-            ))}
+          <div className="px-2 pb-2 overflow-auto" style={{ maxHeight: '60vh' }}>
+            {/* People */}
+            {(searchResults.people || []).length > 0 && <>
+              <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1 mt-1">People</div>
+              {searchResults.people.map((u) => (
+                <button key={`p${u.id}`} onClick={() => { startDm(u); setSearchQ(''); setSearchResults(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-orange-50 text-left">
+                  <Avatar name={u.name} src={u.avatar} size={28} />
+                  <div className="min-w-0"><div className="text-[13px] font-bold truncate">{u.name}</div><div className="text-[11px] text-slate-400 truncate">{[u.designation, u.department].filter(Boolean).join(' · ')}</div></div>
+                </button>
+              ))}
+            </>}
+            {/* Teams & channels */}
+            {(searchResults.teams || []).length > 0 && <>
+              <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1 mt-2">Teams & groups</div>
+              {searchResults.teams.map((t, i) => t.type === 'channel' ? (
+                <button key={`c${t.conversationId}`} onClick={() => { openChannel(t.teamName, { id: t.conversationId, title: t.title }, { id: t.teamId, name: t.teamName, icon: t.icon, color: t.color }); setSearchQ(''); setSearchResults(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-orange-50 text-left">
+                  <span className="text-slate-300">#</span><div className="text-[13px] font-bold truncate">{t.title}</div><span className="text-[11px] text-slate-400 ml-auto">{t.teamName}</span>
+                </button>
+              ) : (
+                <div key={`t${t.teamId}`} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-left">
+                  <span className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-extrabold text-white shrink-0" style={{ background: t.color || '#FF6A00' }}>{t.icon}</span>
+                  <div className="text-[13px] font-bold truncate">{t.name}</div><span className="text-[10px] text-slate-400 ml-auto">team</span>
+                </div>
+              ))}
+            </>}
+            {/* Messages */}
+            {(searchResults.results || []).length > 0 && <>
+              <div className="text-[11px] font-extrabold text-slate-400 uppercase px-2 mb-1 mt-2">Messages</div>
+              {searchResults.results.map((r) => (
+                <button key={r.id} onClick={() => openResult(r)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100">
+                  <div className="text-[12px] font-bold text-slate-600">{r.label} · <span className="font-normal text-slate-400">{r.senderName}</span></div>
+                  <div className="text-[12px] text-slate-500 truncate">{r.body}</div>
+                </button>
+              ))}
+            </>}
+            {(searchResults.people || []).length === 0 && (searchResults.teams || []).length === 0 && (searchResults.results || []).length === 0 && (
+              <div className="px-3 py-3 text-[13px] text-slate-400">No people, teams or messages found.</div>
+            )}
           </div>
         )}
         {searchResults === null && (<>
@@ -1835,7 +1878,23 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                 <div><div className="text-[16px] font-extrabold">{active.other ? active.other.name : 'Unknown'}</div><div className="text-[12px] text-slate-400">{active.other ? [active.other.designation, active.other.department].filter(Boolean).join(' · ') : ''}</div></div>
               </>
             )}
+            <button onClick={() => { setInChatSearch((v) => !v); setInChatQ(''); setInChatHits([]); }} title="Search this chat" className="ml-auto w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">🔍</button>
           </div>
+          {inChatSearch && (
+            <div className="border-b border-slate-100 bg-slate-50 px-4 py-2">
+              <input autoFocus value={inChatQ} onChange={(e) => runInChatSearch(e.target.value)} placeholder="Search in this conversation…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
+              {inChatQ.trim().length >= 2 && (
+                <div className="mt-2 max-h-56 overflow-auto rounded-lg bg-white border border-slate-100">
+                  {inChatHits.length === 0 ? <div className="px-3 py-3 text-[13px] text-slate-400">No matches in this chat.</div> : inChatHits.map((r) => (
+                    <button key={r.id} onClick={() => jumpToMessage(r.id)} className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-slate-50 last:border-0">
+                      <div className="text-[11px] font-bold text-slate-500">{r.senderName} · {new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</div>
+                      <div className="text-[13px] text-slate-600 truncate">{r.body}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-5">
             {messages.map((m, i) => {
               const mine = m.senderId === me.id;
@@ -1843,7 +1902,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
               // Task-notification card (assignment / status change).
               if (m.kindTag === 'task_assigned' || m.kindTag === 'task_status') {
                 return (
-                  <div key={m.id} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                  <div key={m.id} id={`chatmsg-${m.id}`} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
                     <span className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[15px] shrink-0" style={{ background: '#FF6A00' }}>{m.kindTag === 'task_assigned' ? '📋' : '🔄'}</span>
                     <div className="flex-1 min-w-0"><div className="text-[13px] font-bold" style={{ color: '#9a3412' }}>{m.body}</div><div className="text-[11px]" style={{ color: '#c2732c' }}>{fmtTime(m.createdAt)}</div></div>
                     {m.taskId && onOpenTask && <button onClick={() => onOpenTask(m.taskId)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: '#FF6A00' }}>View task</button>}
@@ -1852,7 +1911,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
                 );
               }
               return (
-                <div key={m.id} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
+                <div key={m.id} id={`chatmsg-${m.id}`} className={`group flex gap-3 ${mine ? 'flex-row-reverse' : ''} ${showHead ? 'mt-4' : 'mt-1'}`}>
                   {!mine ? (showHead ? <Avatar name={m.senderName} size={36} /> : <div style={{ width: 36 }} />) : <div style={{ width: 0 }} />}
                   <div className={`max-w-[70%] ${mine ? 'items-end' : ''} flex flex-col`}>
                     {showHead && <div className={`flex items-baseline gap-2 mb-1 ${mine ? 'flex-row-reverse' : ''}`}><span className="text-[13px] font-bold">{mine ? 'You' : m.senderName}</span><span className="text-[10px] text-slate-400">{fmtTime(m.createdAt)}</span></div>}

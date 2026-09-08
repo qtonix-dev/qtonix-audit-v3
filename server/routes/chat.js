@@ -487,20 +487,54 @@ router.get('/search', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
     const term = String(req.query.q || '').trim();
-    if (term.length < 2) return res.json({ results: [] });
+    const within = Number(req.query.within) || null;  // scope to one conversation
+    if (term.length < 2) return res.json({ people: [], teams: [], results: [] });
+    const like = `%${term}%`; const lower = term.toLowerCase();
     const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
     const convIds = mems.map((m) => m.conversationId);
-    if (!convIds.length) return res.json({ results: [] });
-    const rows = await ChatMessage.findAll({ where: { conversationId: { [Op.in]: convIds }, deleted: false, body: { [Op.like]: `%${term}%` } }, order: [['id', 'DESC']], limit: 30 });
-    const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: [...new Set(rows.map((r) => r.conversationId))].length ? [...new Set(rows.map((r) => r.conversationId))] : [0] } } });
+
+    // ---- Messages (optionally scoped to one conversation) ----
+    let results = [];
+    const msgWhere = { deleted: false, body: { [Op.like]: like } };
+    if (within) { const inThis = convIds.includes(within) || !!(await ChatMembership.findOne({ where: { conversationId: within, userId: me } })); if (inThis) msgWhere.conversationId = within; else msgWhere.conversationId = -1; }
+    else msgWhere.conversationId = { [Op.in]: convIds.length ? convIds : [0] };
+    const rows = await ChatMessage.findAll({ where: msgWhere, order: [['id', 'DESC']], limit: 30 });
+    const usedConvIds = [...new Set(rows.map((r) => r.conversationId))];
+    const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: usedConvIds.length ? usedConvIds : [0] } } });
     const convById = {}; convs.forEach((c) => { convById[c.id] = c; });
     const dmConvIds = convs.filter((c) => c.kind === 'dm').map((c) => c.id);
     const dmMems = await ChatMembership.findAll({ where: { conversationId: { [Op.in]: dmConvIds.length ? dmConvIds : [0] }, userId: { [Op.ne]: me } } });
     const otherByConv = {}; dmMems.forEach((m) => { if (!otherByConv[m.conversationId]) otherByConv[m.conversationId] = m.userId; });
     const others = await HrUser.findAll({ where: { id: { [Op.in]: Object.values(otherByConv).length ? Object.values(otherByConv) : [0] } }, attributes: ['id', 'name'] });
     const otherName = {}; others.forEach((u) => { otherName[u.id] = u.name; });
-    const results = rows.map((r) => { const c = convById[r.conversationId]; const label = c && c.kind === 'channel' ? `#${c.title}` : (otherName[otherByConv[r.conversationId]] || 'Direct message'); return { id: r.id, conversationId: r.conversationId, body: r.body, senderName: r.senderName, createdAt: r.createdAt, label, kind: c ? c.kind : 'dm', other: c && c.kind === 'dm' ? { id: otherByConv[r.conversationId], name: otherName[otherByConv[r.conversationId]] } : null }; });
-    res.json({ results });
+    results = rows.map((r) => { const c = convById[r.conversationId]; const label = c && c.kind === 'channel' ? `#${c.title}` : (c && c.kind === 'task' ? '#task' : (otherName[otherByConv[r.conversationId]] || 'Direct message')); return { id: r.id, conversationId: r.conversationId, body: r.body, senderName: r.senderName, createdAt: r.createdAt, label, kind: c ? c.kind : 'dm', other: c && c.kind === 'dm' ? { id: otherByConv[r.conversationId], name: otherName[otherByConv[r.conversationId]] } : null }; });
+
+    // People + Teams only for the global (unscoped) search.
+    let people = [], teams = [];
+    if (!within) {
+      // ---- People (message anyone) ----
+      const users = await HrUser.findAll({ where: { active: true, name: { [Op.like]: like } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'], order: [['name', 'ASC']], limit: 8 });
+      people = users.filter((u) => u.id !== me).map((u) => ({ id: u.id, name: u.name, avatar: u.avatar || '', designation: u.designation || '', department: u.department || '' }));
+      // ---- Teams & channels I'm a member of ----
+      const myTeamRows = await ChatTeamMember.findAll({ where: { userId: me } });
+      const myTeamIds = myTeamRows.map((r) => r.teamId);
+      if (myTeamIds.length) {
+        const teamRows = await ChatTeam.findAll({ where: { id: { [Op.in]: myTeamIds }, archived: false } });
+        const teamById = {}; teamRows.forEach((t) => { teamById[t.id] = t; });
+        // Match team name OR channel name (channels I'm in).
+        const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId: { [Op.in]: myTeamIds } } });
+        for (const t of teamRows) { if (t.name.toLowerCase().includes(lower)) teams.push({ type: 'team', teamId: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color }); }
+        for (const c of chans) {
+          if (!c.title.toLowerCase().includes(lower)) continue;
+          const cm = await ChatMembership.findOne({ where: { conversationId: c.id, userId: me } });
+          if (!cm) continue;
+          const t = teamById[c.teamId];
+          teams.push({ type: 'channel', conversationId: c.id, title: c.title, teamId: c.teamId, teamName: t ? t.name : '', color: t ? t.color : '#FF6A00', icon: t ? t.icon : '#' });
+        }
+        teams = teams.slice(0, 8);
+      }
+    }
+    res.json({ people, teams, results });
   } catch (e) { next(e); }
 });
 
