@@ -80,6 +80,10 @@ export default function HrExpenses({ user, isAdmin, openExpenseId, onIntentConsu
     ]).finally(() => { setLoading(false); setDidLoad(true); });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { setPage(1); }, [q, statusF, branchF, catF, monthF, tab]);
+
+  const expenses = (data && data.expenses) || [];
+  const counts = (data && data.counts) || { pending: 0, approved: 0, paid: 0, rejected: 0 };
   // Deep-link from the dashboard Review tab: open a specific expense's details.
   useEffect(() => {
     if (openExpenseId && expenses.length) {
@@ -88,10 +92,6 @@ export default function HrExpenses({ user, isAdmin, openExpenseId, onIntentConsu
     }
     /* eslint-disable-next-line */
   }, [openExpenseId, expenses]);
-  useEffect(() => { setPage(1); }, [q, statusF, branchF, catF, monthF, tab]);
-
-  const expenses = (data && data.expenses) || [];
-  const counts = (data && data.counts) || { pending: 0, approved: 0, paid: 0, rejected: 0 };
 
   const filtered = expenses.filter((e) => {
     if (statusF && e.status !== statusF) return false;
