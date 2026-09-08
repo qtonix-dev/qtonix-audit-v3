@@ -244,7 +244,13 @@ function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, 
   useEffect(() => { if (open) hrApi(`/tasks/assignable?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])); }, [open, q]);
   useEffect(() => {
     if (!open) return;
-    const place = () => { const r = btnRef.current && btnRef.current.getBoundingClientRect(); if (r) setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 268) }); };
+    const place = () => {
+      const r = btnRef.current && btnRef.current.getBoundingClientRect(); if (!r) return;
+      const dropH = 300; // approx max dropdown height
+      const below = window.innerHeight - r.bottom;
+      const flipUp = below < dropH && r.top > below; // not enough room below, more room above
+      setPos({ top: flipUp ? undefined : r.bottom + 4, bottom: flipUp ? (window.innerHeight - r.top + 4) : undefined, left: Math.min(r.left, window.innerWidth - 268) });
+    };
     place();
     window.addEventListener('scroll', place, true); window.addEventListener('resize', place);
     return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
@@ -263,7 +269,7 @@ function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, 
       {open && (
         <>
           <div className="fixed inset-0 z-[59]" onClick={() => setOpen(false)} />
-          <div className="fixed z-[60] w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2" style={{ top: pos ? pos.top : 0, left: pos ? pos.left : 0 }}>
+          <div className="fixed z-[60] w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2" style={{ top: pos && pos.top != null ? pos.top : undefined, bottom: pos && pos.bottom != null ? pos.bottom : undefined, left: pos ? pos.left : 0 }}>
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
             {multi && <div className="text-[10px] text-slate-400 px-2 pb-1">Tick everyone who should get this task.</div>}
             <div className="max-h-56 overflow-auto">

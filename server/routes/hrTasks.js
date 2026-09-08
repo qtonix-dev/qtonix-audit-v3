@@ -38,16 +38,14 @@ async function actingContext(req) {
   let actorUser = null;
   if (req.hrUser) actorUser = req.hrUser;
   else if (req.hrActor && req.hrActor.kind === 'hr') actorUser = await HrUser.findByPk(req.hrActor.id);
-  // The board identity. HR staff use their HrUser id (positive). A CRM admin has
-  // no HrUser row, so they get a negative board id (-userId) that can never
-  // collide with an HrUser id — this lets the admin own a real board + be an
-  // assignee/assigner in the same integer columns.
+  // If an admin also has a matching HR profile (same email), act AS that Hr
+  // profile so they don't appear twice (once as "(me)" admin board, once as
+  // their HrUser). This unifies their identity across the task system.
+  if (!actorUser && isAdmin && req.adminUser && req.adminUser.email) {
+    try { const hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true, chatOnly: { [require('sequelize').Op.not]: true } } }); if (hr) actorUser = hr; } catch {}
+  }
   const rawId = req.hrActor && req.hrActor.id;
   const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
-  // IMPORTANT: "isHr" means the actor holds an actual HR role (HR / recruiter /
-  // HR-manager) or is an admin — NOT merely that they signed in through the HR
-  // app. Every employee's hrActor.kind is 'hr', so keying off kind alone would
-  // grant everyone HR-wide assign/view powers. Use the role on the HrUser row.
   const HR_ROLE_TYPES = new Set(['hr', 'recruiter']);
   const isHr = isAdmin || !!(actorUser && (HR_ROLE_TYPES.has(actorUser.type) || actorUser.isHrManager));
   return {
@@ -56,7 +54,7 @@ async function actingContext(req) {
     actorUser,
     actorId: req.hrActor && req.hrActor.id,
     boardId,
-    actorName: (req.hrActor && req.hrActor.name) || 'Admin',
+    actorName: (actorUser && actorUser.name) || (req.hrActor && req.hrActor.name) || 'Admin',
     actorKind: (req.hrActor && req.hrActor.kind) || 'admin',
   };
 }
