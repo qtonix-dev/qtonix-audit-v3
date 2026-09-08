@@ -260,6 +260,18 @@ router.delete('/messages/:id', requireHrAccess, async (req, res, next) => {
     msg.deleted = true; msg.body = ''; msg.fileUrl = ''; msg.fileName = ''; await msg.save();
     // Also remove the uploaded file from ImageKit if any.
     try { if (msg.fileId) await require('../services/imagekit').deleteFile(msg.fileId); } catch {}
+    // Refresh the conversation's last-message preview from the most recent
+    // remaining (non-deleted) message — so the sidebar doesn't show the deleted
+    // text as the preview.
+    try {
+      const last = await ChatMessage.findOne({ where: { conversationId: msg.conversationId, deleted: false }, order: [['id', 'DESC']] });
+      if (last) {
+        const summary = last.body ? String(last.body).slice(0, 200) : (last.fileName ? `📎 ${last.fileName}` : '');
+        await ChatConversation.update({ lastMessageAt: last.createdAt, lastMessageText: summary, lastMessageBy: last.senderId }, { where: { id: msg.conversationId } });
+      } else {
+        await ChatConversation.update({ lastMessageAt: null, lastMessageText: '', lastMessageBy: null }, { where: { id: msg.conversationId } });
+      }
+    } catch {}
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
