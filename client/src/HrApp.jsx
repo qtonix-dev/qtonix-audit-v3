@@ -10040,7 +10040,7 @@ function NotificationBell({ onOpenCandidate }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden" style={{ maxWidth: 'min(20rem, calc(100vw - 24px))' }}>
+          <div className="fixed sm:absolute left-1/2 sm:left-auto right-auto sm:right-0 -translate-x-1/2 sm:translate-x-0 top-16 sm:top-auto sm:mt-2 w-[calc(100vw-24px)] max-w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden" style={{ maxWidth: 'min(20rem, calc(100vw - 24px))' }}>
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
               <span className="font-extrabold text-[#050A1F] text-sm">Notifications</span>
               {items.length > 0 && <button onClick={clearAll} className="text-[11px] font-bold text-orange-600">Clear all</button>}

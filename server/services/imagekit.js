@@ -121,4 +121,19 @@ async function deleteFile(fileId) {
   } catch { return false; }
 }
 
-module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder, emailFolder, uploadFile, deleteFile };
+// Best-effort: resolve an ImageKit fileId from a file URL by listing by name.
+// Used to clean up files uploaded before we started storing the fileId.
+async function fileIdFromUrl(url) {
+  try {
+    const cfg = getConfig(); if (!cfg || !cfg.privateKey || !url) return null;
+    const name = decodeURIComponent(String(url).split('?')[0].split('/').pop() || '');
+    if (!name) return null;
+    const auth = 'Basic ' + Buffer.from(cfg.privateKey + ':').toString('base64');
+    const res = await fetch(`https://api.imagekit.io/v1/files?searchQuery=${encodeURIComponent(`name="${name}"`)}&limit=1`, { headers: { Authorization: auth } });
+    if (!res.ok) return null;
+    const list = await res.json();
+    return Array.isArray(list) && list[0] && list[0].fileId ? list[0].fileId : null;
+  } catch { return null; }
+}
+
+module.exports = { getConfig, isConfigured, getAuthParams, testConnection, employeeFolder, emailFolder, uploadFile, deleteFile, fileIdFromUrl };

@@ -3576,7 +3576,7 @@ router.post('/expenses', requireHrAccess, async (req, res, next) => {
       title, category: String(b.category || '').trim() || null, amount, currency: 'INR',
       expenseDate: b.expenseDate || istDateStr(), branch: b.branch, ...payee, payeeName: payeeName || null,
       description: String(b.description || '').trim() || null,
-      invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null,
+      invoiceUrl: String(b.invoiceUrl || '').trim() || null, invoiceName: String(b.invoiceName || '').trim() || null, invoiceFileId: String(b.invoiceFileId || '').trim() || null,
       lineItems: lineItems && lineItems.length ? lineItems : null,
       selectedPaymentMode: (b.selectedPaymentMode && typeof b.selectedPaymentMode === 'object') ? b.selectedPaymentMode : null,
       status: 'submitted', raisedById: req.hrActor.id, raisedByKind: req.hrActor.kind, raisedByName: req.hrActor.name,
@@ -3912,6 +3912,8 @@ router.post('/expenses/:id/pay', requireHrAccess, async (req, res, next) => {
       row.paymentRef = row.chequeNumber;
     }
     row.status = 'paid'; row.paidById = req.hrActor.id; row.paidByName = req.hrActor.name; row.paidAt = new Date();
+    // Optional payment receipt / cheque photo (not mandatory).
+    if (b.receiptUrl !== undefined) { row.receiptUrl = String(b.receiptUrl || '').trim() || null; row.receiptFileId = String(b.receiptFileId || '').trim() || null; }
     await row.save();
     hrLog(req, 'expense.pay', row.title);
     res.json(row.toJSON());
@@ -3923,6 +3925,16 @@ router.delete('/expenses/:id', requireHrAccess, async (req, res, next) => {
     if (!(req.isHrAdmin || req.adminUser || PERMS.can(req, 'corehr_expenses', 'delete'))) return res.status(403).json({ error: 'Only an admin can delete expenses.' });
     const row = await HrExpense.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Expense not found.' });
+    // Remove uploaded files from ImageKit (invoice + receipt + any attachments).
+    try {
+      const ik = require('../services/imagekit');
+      const idFromUrl = (u) => { try { const m = String(u || '').match(/[?&]ik-attachment|\/([^/?#]+)$/); return null; } catch { return null; } };
+      const delId = async (fileId) => { if (fileId) { try { await ik.deleteFile(fileId); } catch {} } };
+      const delByUrl = async (url) => { if (!url) return; try { const fid = await ik.fileIdFromUrl(url); if (fid) await ik.deleteFile(fid); } catch {} };
+      if (row.invoiceFileId) await delId(row.invoiceFileId); else await delByUrl(row.invoiceUrl);
+      if (row.receiptFileId) await delId(row.receiptFileId); else await delByUrl(row.receiptUrl);
+      for (const a of (row.attachments || [])) { if (a && a.fileId) await delId(a.fileId); else if (a && a.url) await delByUrl(a.url); }
+    } catch (e) { /* never block the delete on a cleanup hiccup */ }
     await row.destroy();
     res.json({ ok: true });
   } catch (e) { next(e); }

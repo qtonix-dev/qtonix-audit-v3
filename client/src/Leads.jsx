@@ -487,13 +487,25 @@ function normalizeSpacing(html) {
 
 export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxHeight, onAttach, onAiDraft, onInsertSignature, extraTools }) {
   const ref = useRef(null);
+  const lastValueRef = useRef(value); // the value we last emitted / wrote
   const [focused, setFocused] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
   const [showColor, setShowColor] = useState(null); // 'fore' | 'back' | null
 
+  // Only overwrite the editor's HTML when `value` changed from OUTSIDE (e.g. an
+  // AI draft loaded, or a template inserted) — NOT when it's the echo of the
+  // user's own typing. Overwriting on every keystroke moves the caret to the
+  // start on each edit (the backspace-jumps-to-top bug).
   useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || '';
+    if (!ref.current) return;
+    if (value === lastValueRef.current) return;        // our own echo — ignore
+    if (ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || '';
+    lastValueRef.current = value;
   }, [value]);
+
+  // Emit changes, remembering what we emitted so the effect above can tell our
+  // own echo apart from an external change.
+  const emit = (html) => { lastValueRef.current = html; onChange(html); };
 
   // Make Enter produce <p> blocks (which we space out via CSS + inline styles),
   // like Gmail — so hitting Enter gives a real visual gap.
@@ -532,13 +544,13 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxH
       out = plain.split(/\n{2,}/).map((para) => `<p style="margin:0 0 1em">${para.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>`).join('');
     }
     document.execCommand('insertHTML', false, out);
-    if (ref.current) onChange(ref.current.innerHTML);
+    if (ref.current) emit(ref.current.innerHTML);
   };
 
   const exec = (cmd, arg) => {
     ref.current && ref.current.focus();
     document.execCommand(cmd, false, arg || null);
-    if (ref.current) onChange(ref.current.innerHTML);
+    if (ref.current) emit(ref.current.innerHTML);
   };
   const link = () => { const url = prompt('Link URL'); if (url) exec('createLink', url); };
   const isEmpty = !value || value === '<br>' || value === '<div><br></div>';
@@ -558,9 +570,9 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxH
       <div className="relative">
         {isEmpty && !focused && placeholder && <div className="absolute top-2 left-3 text-sm text-slate-300 pointer-events-none">{placeholder}</div>}
         <div ref={ref} contentEditable suppressContentEditableWarning
-          onInput={() => onChange(ref.current.innerHTML)}
+          onInput={() => emit(ref.current.innerHTML)}
           onPaste={onPaste}
-          onBlur={() => { setFocused(false); onChange(ref.current.innerHTML); }}
+          onBlur={() => { setFocused(false); emit(ref.current.innerHTML); }}
           onFocus={() => setFocused(true)}
           className="px-3 py-2 text-sm outline-none overflow-auto rich-text" style={{ minHeight, ...(maxHeight ? { maxHeight } : {}) }} />
       </div>

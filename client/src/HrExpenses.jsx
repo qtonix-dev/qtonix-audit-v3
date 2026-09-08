@@ -178,7 +178,7 @@ export default function HrExpenses({ user, isAdmin }) {
                     <td className="px-4 py-3"><BranchBadge b={e.branch} /></td>
                     <td className="px-4 py-3"><div className="flex items-center gap-2"><PayeeIcon type={e.payeeType} name={e.payeeName} /><span className="text-slate-600 text-xs">{e.payeeName || '—'}</span></div></td>
                     <td className="px-4 py-3 text-right font-extrabold text-[#050A1F] whitespace-nowrap">{inr(e.amount)}</td>
-                    <td className="px-4 py-3">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} className="text-[11px] font-bold text-sky-600">📎 {e.invoiceName || 'view'}</a> : <span className="text-[11px] text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3">{e.invoiceUrl ? <a href={e.invoiceUrl} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()} title={e.invoiceName || 'view'} className="text-[11px] font-bold text-sky-600 inline-block truncate align-middle" style={{ maxWidth: 120 }}>📎 {e.invoiceName || 'view'}</a> : <span className="text-[11px] text-slate-300">—</span>}</td>
                     <td className="px-4 py-3"><StatusBadge s={e.status} />{e.status === 'paid' && e.paymentMethod && <span className="text-[10px] text-slate-400 ml-1">{methodLabel(e.paymentMethod)}</span>}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
                       {e.status === 'submitted' && isAdmin && <span className="inline-flex gap-1"><button onClick={() => setApproveFor(e)} className="text-[11px] font-bold text-white px-2.5 py-1 rounded" style={{ background: '#0F9D58' }}>Approve</button><button onClick={() => setRejectFor(e)} className="text-[11px] font-bold text-red-500 border border-red-200 px-2.5 py-1 rounded">Reject</button></span>}
@@ -283,13 +283,17 @@ function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
 function EditExpenseModal({ expense, cats, onClose, onSaved }) {
   const [title, setTitle] = useState(expense.title || '');
   const [amount, setAmount] = useState(expense.amount || '');
-  const [category, setCategory] = useState(expense.category || (cats[0] && cats[0].id) || '');
+  const [category, setCategory] = useState(expense.category || (cats[0] || ''));
+  const [expenseDate, setExpenseDate] = useState(expense.expenseDate || '');
   const [notes, setNotes] = useState(expense.notes || expense.description || '');
   const [busy, setBusy] = useState(false);
+  // Categories are plain strings; make sure the current one is selectable even
+  // if it's no longer in the list (so it never shows blank).
+  const catList = [...new Set([...(cats || []), ...(expense.category ? [expense.category] : [])])];
   const save = async () => {
     if (!amount || Number(amount) <= 0) { alert('Enter a valid amount.'); return; }
     setBusy(true);
-    try { await hrApi(`/expenses/${expense._id}`, { method: 'PUT', body: JSON.stringify({ title, amount: Number(amount), category, notes }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); }
+    try { await hrApi(`/expenses/${expense._id}`, { method: 'PUT', body: JSON.stringify({ title, amount: Number(amount), category, expenseDate, notes, description: notes }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
@@ -297,8 +301,11 @@ function EditExpenseModal({ expense, cats, onClose, onSaved }) {
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">Edit expense</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
         <div className="p-5 space-y-3">
           <div><div className="text-[12px] font-bold text-slate-500 mb-1">Title</div><input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
-          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Amount (₹)</div><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
-          {cats.length > 0 && <div><div className="text-[12px] font-bold text-slate-500 mb-1">Category</div><select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">{cats.map((c) => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}</select></div>}
+          <div className="grid grid-cols-2 gap-3">
+            <div><div className="text-[12px] font-bold text-slate-500 mb-1">Amount (₹)</div><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+            <div><div className="text-[12px] font-bold text-slate-500 mb-1">Expense date</div><input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+          </div>
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Category</div><select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white text-slate-800">{catList.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
           <div><div className="text-[12px] font-bold text-slate-500 mb-1">Notes</div><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
         </div>
         <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
@@ -331,7 +338,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
     let dataUrl = '';
     try { dataUrl = await readAsDataURL(file); } catch {}
     // 1) Upload to ImageKit so the file is attached to the expense.
-    try { const safe = (f.title || 'expense').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30); const { url } = await uploadToImageKit(file, `/qtonix-hr/expenses/${safe}-${Date.now()}`, file.name); setInvoice({ url, name: file.name }); }
+    try { const safe = (f.title || 'expense').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30); const { url, fileId } = await uploadToImageKit(file, `/qtonix-hr/expenses/${safe}-${Date.now()}`, file.name); setInvoice({ url, name: file.name, fileId }); }
     catch (er) { setErr('Invoice upload failed. ' + (er.message || '')); setUploading(false); return; }
     setUploading(false);
     // 2) Ask the server to read the invoice and auto-fill (best-effort).
@@ -377,7 +384,7 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
     try {
       const selVendor = vendors.find((v) => String(v._id) === String(f.vendorId));
       const selectedPaymentMode = (f.payeeType === 'vendor' && selVendor && Array.isArray(selVendor.paymentModes) && f.modeIdx !== '') ? selVendor.paymentModes[Number(f.modeIdx)] : null;
-      await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: effAmount, lineItems: cleanItems, vendorId: f.vendorId || null, employeeId: f.employeeId || null, selectedPaymentMode, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '' }) }); onSaved(); }
+      await hrApi('/expenses', { method: 'POST', body: JSON.stringify({ ...f, amount: effAmount, lineItems: cleanItems, vendorId: f.vendorId || null, employeeId: f.employeeId || null, selectedPaymentMode, invoiceUrl: invoice ? invoice.url : '', invoiceName: invoice ? invoice.name : '', invoiceFileId: invoice ? (invoice.fileId || '') : '' }) }); onSaved(); }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   return (
@@ -409,6 +416,12 @@ function RaiseExpenseModal({ user, isAdmin, cats, vendors, employees, onClose, o
           )}
         </Field>
         <Field label="Expense date"><input type="date" value={f.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} className="inp" /></Field>
+        {/* Non-blocking reminder for larger expenses. */}
+        {Number(itemized ? liTotal : f.amount) > 1000 && !invoice && !(itemized && (lineItems || []).some((li) => li.particular)) && (
+          <div style={{ gridColumn: '1 / -1' }} className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800 flex items-start gap-2">
+            <span>💡</span><span>This expense is over ₹1,000. Please add proper particulars or upload the invoice for a clear record. (Optional, but recommended.)</span>
+          </div>
+        )}
         <div style={{ gridColumn: '1 / -1' }}>
           <div className="flex items-center justify-between">
             <button type="button" onClick={() => { setItemized((v) => !v); if (!itemized && lineItems.length === 0) setLineItems([{ particular: '', amount: '' }]); }} className="text-[12px] font-bold text-[#FF4500]">{itemized ? '− Remove particulars' : '+ Add particulars (itemize invoice)'}</button>
@@ -643,7 +656,9 @@ function PayModal({ expense, onClose, onSaved }) {
     chequeDate: today,
   });
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const [receipt, setReceipt] = useState(null); const [upLoading, setUpLoading] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const uploadReceipt = async (file) => { if (!file) return; setUpLoading(true); try { const { url, fileId } = await uploadToImageKit(file, `/qtonix-hr/receipts/${Date.now()}`, file.name); setReceipt({ url, name: file.name, fileId }); } catch (e) { setErr('Upload failed: ' + e.message); } setUpLoading(false); };
   const save = async () => {
     if (method === 'bank' && !f.paymentRef.trim()) { setErr('Transaction ID is required for a bank transfer.'); return; }
     if (method === 'upi') {
@@ -652,7 +667,7 @@ function PayModal({ expense, onClose, onSaved }) {
     }
     if (method === 'cheque' && !f.chequeNumber.trim()) { setErr('Cheque number is required.'); return; }
     setBusy(true); setErr('');
-    try { await hrApi(`/expenses/${expense._id}/pay`, { method: 'POST', body: JSON.stringify({ paymentMethod: method, ...f }) }); onSaved(); }
+    try { await hrApi(`/expenses/${expense._id}/pay`, { method: 'POST', body: JSON.stringify({ paymentMethod: method, ...f, receiptUrl: receipt ? receipt.url : '', receiptFileId: receipt ? (receipt.fileId || '') : '' }) }); onSaved(); }
     catch (er) { setErr(er.message); } finally { setBusy(false); }
   };
   return (
@@ -705,6 +720,18 @@ function PayModal({ expense, onClose, onSaved }) {
         {method === 'cheque' && <Field label="Cheque date"><input type="date" value={f.chequeDate} onChange={(e) => set('chequeDate', e.target.value)} className="inp" /></Field>}
 
         {method === 'cash' && <Field label="Reference (optional)" full><input value={f.paymentRef} onChange={(e) => set('paymentRef', e.target.value)} className="inp" placeholder="Optional" /></Field>}
+      </div>
+      {/* Optional payment receipt / cheque photo. */}
+      <div className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="text-[12px] font-bold text-slate-600 mb-1.5">Payment receipt / cheque photo <span className="font-normal text-slate-400">(optional)</span></div>
+        {receipt ? (
+          <div className="flex items-center gap-2 text-[12px]"><span className="text-green-600 font-bold truncate">✓ {receipt.name}</span><button onClick={() => setReceipt(null)} className="text-slate-400">×</button></div>
+        ) : (
+          <label className="inline-flex items-center gap-2 text-[12px] font-bold text-sky-600 cursor-pointer">
+            {upLoading ? 'Uploading…' : '📎 Upload receipt / cheque photo'}
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { uploadReceipt(e.target.files?.[0]); e.target.value = ''; }} />
+          </label>
+        )}
       </div>
       <div className="flex justify-end gap-2 mt-5"><button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button><button onClick={save} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: '#0F9D58' }}>{busy ? 'Saving…' : 'Confirm payment'}</button></div>
     </ModalShell>

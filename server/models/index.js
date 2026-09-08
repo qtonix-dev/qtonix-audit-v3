@@ -1755,6 +1755,9 @@ const HrExpense = sequelize.define('HrExpense', {
   description: { type: DataTypes.TEXT, allowNull: true },
   invoiceUrl: { type: DataTypes.STRING(600), allowNull: true },
   invoiceName: { type: DataTypes.STRING(200), allowNull: true },
+  invoiceFileId: { type: DataTypes.STRING(120), allowNull: true }, // ImageKit id (delete on expense delete)
+  receiptUrl: { type: DataTypes.STRING(600), allowNull: true },    // payment receipt / cheque photo
+  receiptFileId: { type: DataTypes.STRING(120), allowNull: true },
   // Optional itemization: an invoice broken into particulars. When present, the
   // amount equals the sum of these line items. Array of { particular, amount }.
   lineItems: { type: DataTypes.JSON, defaultValue: null },
