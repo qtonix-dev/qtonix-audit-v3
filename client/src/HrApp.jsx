@@ -2440,9 +2440,9 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               // 2+ assignees → show overlapping circles only (photo or initials), no names.
               if (list.length > 1) {
                 const circles = (
-                  <span className="flex items-center cursor-pointer" title={list.map((a) => titleCase(a.name)).join(', ')}>
-                    {list.slice(0, 4).map((a, i) => <span key={a.id} className="rounded-full ring-2 ring-white" style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}><TAvatar person={a} size={22} /></span>)}
-                    {list.length > 4 && <span className="text-[10px] text-slate-400 ml-1 font-bold">+{list.length - 4}</span>}
+                  <span className="flex items-center gap-1.5 cursor-pointer" title={list.map((a) => titleCase(a.name)).join(', ')}>
+                    {list.slice(0, 4).map((a) => <span key={a.id}><TAvatar person={a} size={22} /></span>)}
+                    {list.length > 4 && <span className="text-[10px] text-slate-400 font-bold">+{list.length - 4}</span>}
                   </span>
                 );
                 if (isSub) return circles;
