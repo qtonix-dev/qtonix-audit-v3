@@ -228,12 +228,14 @@ function plainPreview(html) {
 
 // Instant hover tooltip (no native title delay). Shows the label above the child.
 function HoverName({ label, children }) {
-  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState(null); // {top,left} in viewport coords, or null
+  const ref = useRef(null);
+  const enter = () => { const r = ref.current && ref.current.getBoundingClientRect(); if (r) setPos({ top: r.top - 6, left: r.left + r.width / 2 }); };
   return (
-    <span className="relative inline-flex" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+    <span ref={ref} className="inline-flex" onMouseEnter={enter} onMouseLeave={() => setPos(null)}>
       {children}
-      {show && label && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-semibold whitespace-nowrap z-[70] pointer-events-none shadow-lg">{label}</span>
+      {pos && label && (
+        <span className="fixed px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-semibold whitespace-nowrap z-[200] pointer-events-none shadow-lg" style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}>{label}</span>
       )}
     </span>
   );
