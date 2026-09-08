@@ -2440,17 +2440,17 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               // 2+ assignees → show overlapping circles only (photo or initials), no names.
               if (list.length > 1) {
                 const circles = (
-                  <span className="flex items-center" title={list.map((a) => titleCase(a.name)).join(', ')}>
+                  <span className="flex items-center cursor-pointer" title={list.map((a) => titleCase(a.name)).join(', ')}>
                     {list.slice(0, 4).map((a, i) => <span key={a.id} className="rounded-full ring-2 ring-white" style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}><TAvatar person={a} size={22} /></span>)}
                     {list.length > 4 && <span className="text-[10px] text-slate-400 ml-1 font-bold">+{list.length - 4}</span>}
                   </span>
                 );
-                if (tracking || isSub) return circles;
-                // Editable: the circles ARE the picker button (opens tick-list).
+                if (isSub) return circles;
+                // Editable everywhere else (including tracking/"Assigned by me"):
+                // the circles ARE the picker button (opens the tick-list to add/remove).
                 return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={circles} />;
               }
               // Single assignee.
-              if (tracking) return <span className="flex items-center gap-1.5 text-xs text-slate-600 truncate min-w-0"><TAvatar person={t.assignee} size={20} /> <span className="truncate">{t.assignee && titleCase(t.assignee.name)}</span></span>;
               if (isSub) return <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />;
               return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} />;
             })()}

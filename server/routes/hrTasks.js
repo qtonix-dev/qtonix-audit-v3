@@ -238,10 +238,18 @@ async function buildBoard(viewerId, ctx) {
     const grp = await Task.findAll({ where: { assigneeGroupId: { [Op.in]: groupIds } }, attributes: ['assigneeGroupId', 'assigneeId'] });
     for (const g of grp) { if (!g.assigneeId) continue; (groupMembers[g.assigneeGroupId] = groupMembers[g.assigneeGroupId] || new Set()).add(g.assigneeId); }
   }
+  // Collapse duplicate identities by name (e.g. an admin "Sandeep" on a negative
+  // board + an HrUser "Sandeep") so a person never shows twice.
+  const dedupeByName = (arr) => {
+    const seen = new Set(); const out = [];
+    for (const a of arr) { if (!a) continue; const key = String(a.name || '').trim().toLowerCase(); if (seen.has(key)) continue; seen.add(key); out.push(a); }
+    return out;
+  };
   const assigneesFor = (t) => {
     const ids = new Set([t.assigneeId].filter(Boolean));
     if (t.assigneeGroupId && groupMembers[t.assigneeGroupId]) groupMembers[t.assigneeGroupId].forEach((id) => ids.add(id));
-    return [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : null; }).filter(Boolean);
+    const list = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
+    return dedupeByName(list);
   };
 
   const mine = [];
@@ -286,7 +294,7 @@ async function buildBoard(viewerId, ctx) {
   for (const [, g] of groups) {
     const people2 = await HrUser.findAll({ where: { id: { [Op.in]: [...g.assigneeIds].filter((x) => x > 0).length ? [...g.assigneeIds].filter((x) => x > 0) : [0] } }, attributes: ['id', 'name', 'avatar'] });
     const pMap = Object.fromEntries(people2.map((u) => [u.id, u]));
-    const allAssignees = [...g.assigneeIds].map((id) => { const u = pMap[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
+    const allAssignees = dedupeByName([...g.assigneeIds].map((id) => { const u = pMap[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean));
     // Representative: the copy I assigned (my origAssignedById) OR the one I'm the
     // assignee of, whichever makes it appear in the right section. Prefer the
     // assigner-view so a task I delegated shows once under "Assigned by me".
@@ -589,7 +597,9 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
     try {
       const ids = new Set([row.assigneeId].filter(Boolean));
       if (row.assigneeGroupId) { const grp = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] }); grp.forEach((g) => { if (g.assigneeId) ids.add(g.assigneeId); }); }
-      assignees = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : null; }).filter(Boolean);
+      assignees = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
+      // Collapse duplicate identities by name.
+      const _seen = new Set(); assignees = assignees.filter((a) => { const k = String(a.name || '').trim().toLowerCase(); if (_seen.has(k)) return false; _seen.add(k); return true; });
     } catch {}
     const taskOut = dec(row); taskOut.assignees = assignees;
     res.json({ task: taskOut, subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete });
