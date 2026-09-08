@@ -235,15 +235,13 @@ function TAvatar({ person, size = 24 }) {
 }
 
 // Searchable assignee picker (scoped by backend to who the actor may assign to).
-function AssigneePicker({ value, onChange, allowClear, compact }) {
+function AssigneePicker({ value, values, onChange, onToggle, multi, allowClear, compact, placeholder }) {
   const [open, setOpen] = useState(false);
   const [people, setPeople] = useState([]);
   const [q, setQ] = useState('');
   const btnRef = useRef(null);
   const [pos, setPos] = useState(null); // fixed-position coords so the dropdown escapes overflow-hidden cells
   useEffect(() => { if (open) hrApi(`/tasks/assignable?q=${encodeURIComponent(q)}`).then(setPeople).catch(() => setPeople([])); }, [open, q]);
-  // Position the popover under the button using viewport coords (fixed), so it
-  // isn't clipped by the grid cell's overflow. Recomputed on open + scroll.
   useEffect(() => {
     if (!open) return;
     const place = () => { const r = btnRef.current && btnRef.current.getBoundingClientRect(); if (r) setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 268) }); };
@@ -251,27 +249,35 @@ function AssigneePicker({ value, onChange, allowClear, compact }) {
     window.addEventListener('scroll', place, true); window.addEventListener('resize', place);
     return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
   }, [open]);
+  const selIds = new Set((values || []).map((v) => v && v.id));
   return (
     <div className="relative w-full min-w-0">
-      <button ref={btnRef} onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full min-w-0' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 w-full min-w-0'}>
-        {value ? <><TAvatar person={value} size={20} /><span className="text-xs text-slate-600 truncate min-w-0">{titleCase(value.name)}</span></> : <span className="text-slate-400 truncate">Assign…</span>}
+      <button ref={btnRef} onClick={() => setOpen((o) => !o)} className={compact ? 'flex items-center gap-1.5 text-xs hover:bg-slate-100 rounded px-1 py-0.5 w-full min-w-0' : 'flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-slate-50 w-full min-w-0 flex-wrap'}>
+        {multi ? (
+          (values && values.length) ? <>{values.map((v) => <span key={v.id} className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 rounded-full pl-0.5 pr-2 py-0.5"><TAvatar person={v} size={18} /><span className="text-[11px] font-semibold truncate max-w-[80px]">{titleCase(v.name)}</span></span>)}<span className="text-slate-300 text-xs">+</span></> : <span className="text-slate-400 truncate">{placeholder || 'Assign to…'}</span>
+        ) : (
+          value ? <><TAvatar person={value} size={20} /><span className="text-xs text-slate-600 truncate min-w-0">{titleCase(value.name)}</span></> : <span className="text-slate-400 truncate">{placeholder || 'Assign…'}</span>
+        )}
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-[59]" onClick={() => setOpen(false)} />
           <div className="fixed z-[60] w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-2" style={{ top: pos ? pos.top : 0, left: pos ? pos.left : 0 }}>
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            {multi && <div className="text-[10px] text-slate-400 px-2 pb-1">Tick everyone who should get this task.</div>}
             <div className="max-h-56 overflow-auto">
-              {allowClear && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
+              {allowClear && !multi && <button onClick={() => { onChange(null); setOpen(false); }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-50 rounded-lg">Unassigned</button>}
               {people.map((p, i) => {
                 const prev = people[i - 1];
                 const showOwnHdr = i === 0 && p.own;
                 const showCrossHdr = !p.own && (i === 0 || (prev && prev.own));
+                const checked = selIds.has(p.id);
                 return (
                   <React.Fragment key={p.id}>
                     {showOwnHdr && <div className="px-2 pt-1 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-300">My team</div>}
                     {showCrossHdr && <div className="px-2 pt-2 pb-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-300 border-t border-slate-100 mt-1">Other departments</div>}
-                    <button onClick={() => { onChange(p); setOpen(false); setQ(''); }} className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded-lg text-left">
+                    <button onClick={() => { if (multi) { onToggle && onToggle(p); } else { onChange(p); setOpen(false); setQ(''); } }} className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left ${checked ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                      {multi && <span className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 ${checked ? 'bg-orange-500 border-orange-500 text-white' : 'border-slate-300'}`}>{checked ? '✓' : ''}</span>}
                       <TAvatar person={p} size={24} />
                       <div className="min-w-0 flex-1">
                         <div className="text-xs font-semibold text-[#050A1F] truncate">{titleCase(p.name)}{!p.own && p.deptLabel && <span className="text-slate-400 font-normal"> · {p.deptLabel}</span>}</div>
@@ -283,6 +289,7 @@ function AssigneePicker({ value, onChange, allowClear, compact }) {
               })}
               {people.length === 0 && <div className="text-xs text-slate-400 px-2 py-3 text-center">No people found.</div>}
             </div>
+            {multi && <button onClick={() => { setOpen(false); setQ(''); }} className="w-full mt-1 pt-1.5 border-t border-slate-100 text-xs font-bold text-orange-600">Done</button>}
           </div>
         </>
       )}
@@ -2731,8 +2738,16 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
           {isSubtask && <div className="text-[11px] text-slate-400 mb-2">Subtask{parentTitle ? <> of <span className="font-semibold text-slate-500">{parentTitle}</span></> : ''}</div>}
           <input defaultValue={t.title} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none" />
           <div className="space-y-3 mb-5">
-            <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
-            {!t.parentTaskId && <TField label="Also assign"><AssigneePicker value={null} placeholder="+ Add another person" onChange={(p) => { if (p && p.id) { hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: t.title, description: t.description || '', assigneeId: p.id, dueDate: t.dueDate || null, priority: t.priority }) }).then(() => { alert(`Also assigned to ${p.name}. They now have it on their board.`); }).catch((e) => alert(e.message)); } }} /></TField>}
+            {!t.parentTaskId ? (
+              <TField label="Assignees">
+                <AssigneePicker multi
+                  values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])}
+                  onToggle={(p) => { patch({ toggleAssignee: p.id }); }}
+                />
+              </TField>
+            ) : (
+              <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
+            )}
             {(t.reassignChain || []).length > 0 && (
               <div className="rounded-lg bg-orange-50 border border-orange-100 p-2.5">
                 <div className="text-[11px] font-bold text-orange-700 mb-1">↪ Reassignment history</div>

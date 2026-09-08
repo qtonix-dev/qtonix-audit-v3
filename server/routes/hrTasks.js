@@ -369,6 +369,52 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${b.stage.replace('_', ' ')}` }); } catch {}
     }
 
+    // Multi-assignee: add/remove a person from the task's assignee group.
+    if (b.toggleAssignee && !row.parentTaskId) {
+      const pid = Number(b.toggleAssignee);
+      const groupId = row.assigneeGroupId || `ag${row.id}`;
+      if (!row.assigneeGroupId) { row.assigneeGroupId = groupId; }
+      // Everyone currently on this task (the group = all copies).
+      const groupTasks = await Task.findAll({ where: { assigneeGroupId: groupId } });
+      const existingIds = new Set([row.assigneeId, ...groupTasks.map((g) => g.assigneeId)].filter(Boolean));
+      if (existingIds.has(pid)) {
+        // Remove: delete that person's copy (but never the last remaining one).
+        if (existingIds.size > 1) {
+          if (pid === row.assigneeId) {
+            // Removing the primary: promote another member's copy to be primary,
+            // delete this row's assignment by pointing it to a remaining member.
+            const other = groupTasks.find((g) => g.assigneeId && g.assigneeId !== pid);
+            if (other) { row.assigneeId = other.assigneeId; row.boardOwnerId = other.assigneeId; await other.destroy(); }
+          } else {
+            const copy = groupTasks.find((g) => g.assigneeId === pid);
+            if (copy && copy.id !== row.id) await copy.destroy();
+          }
+          await logActivity(row.id, ctx, 'assigned', 'removed an assignee');
+        }
+      } else {
+        // Add: validate + create a linked copy on their board + notify.
+        const people = await roster();
+        const target = people.find((u) => u.id === pid);
+        if (target && (canAssign(ctx.actorUser, target, ctx, people) || pid === ctx.boardId)) {
+          const emax = await Task.max('order', { where: { assigneeId: pid, bucket: 'recently_assigned', parentTaskId: null } });
+          const copy = await Task.create({
+            boardOwnerId: pid, bucket: 'recently_assigned', parentTaskId: null, title: row.title,
+            description: row.description || '', assigneeId: pid, assigneeGroupId: groupId,
+            priority: row.priority, stage: 'not_started', dueDate: row.dueDate || null,
+            order: (Number.isFinite(emax) ? emax : 0) + 1,
+            createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
+            assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
+            origAssignedById: ctx.boardId || null, origAssignedByName: ctx.actorName,
+          });
+          await logActivity(copy.id, ctx, 'created', 'created task');
+          await notifyAssignee(pid, ctx, copy);
+          await logActivity(row.id, ctx, 'assigned', 'added ' + target.name + ' as an assignee');
+        }
+      }
+      await row.save();
+      return res.json(row.toJSON());
+    }
+
     if (b.assigneeId !== undefined && Number(b.assigneeId) !== row.assigneeId) {
       const newId = Number(b.assigneeId);
       let newName = '';
@@ -386,6 +432,9 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       const prevName = row.assigneeName || '';
       row.assigneeId = newId;
       if (!row.parentTaskId) { row.boardOwnerId = newId; row.bucket = 'recently_assigned'; }
+      // A reassigned task becomes fresh work for the new person: reset it to
+      // not-started (unless it's being handed back to the same person).
+      if (row.stage === 'completed') { row.stage = 'not_started'; row.completedAt = null; }
       // Record the pass-on chain + preserve the ORIGINAL assigner so the task
       // stays visible in the first assigner's "Assigned by me" tracking.
       try {
@@ -447,7 +496,15 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
     const dec = decorateWith(pById, adminById);
     const ctx = await actingContext(req);
     const canDelete = !!ctx.isAdmin || (row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId));
-    res.json({ task: dec(row), subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete });
+    // Resolve the full assignee group (all people this task is assigned to).
+    let assignees = [];
+    try {
+      const ids = new Set([row.assigneeId].filter(Boolean));
+      if (row.assigneeGroupId) { const grp = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] }); grp.forEach((g) => { if (g.assigneeId) ids.add(g.assigneeId); }); }
+      assignees = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : null; }).filter(Boolean);
+    } catch {}
+    const taskOut = dec(row); taskOut.assignees = assignees;
+    res.json({ task: taskOut, subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete });
   } catch (e) { next(e); }
 });
 
