@@ -1825,12 +1825,12 @@ function OfferTab({ c, isAdmin, reload }) {
 }
 
 function DiscussionModal({ candidateId, onClose, onSaved }) {
-  const [f, setF] = useState({ mode: 'phone', offered: '', candidateAsk: '', notes: '', at: '', durationMins: 30 });
+  const [f, setF] = useState({ mode: 'phone', offered: '', candidateAsk: '', offeredDesignation: '', notes: '', at: '', durationMins: 30 });
   const [meet, setMeet] = useState(null);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const createMeet = async () => { if (!f.at) return toast('Pick a date & time first.'); setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/offer-meet`, { method: 'POST', body: JSON.stringify({ start: f.at, durationMins: f.durationMins, notes: f.notes }) }); setMeet(r.meetLink); } catch (e) { toast(e.message); } finally { setBusy(false); } };
-  const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, offeredDesignation: f.offeredDesignation, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
   return (
     <Modal title="Log salary offer" onClose={onClose}>
       <div className="space-y-3">
@@ -1849,6 +1849,7 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
           <div><Lbl>Candidate ask</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
           <div><Lbl>Offered</Lbl><input className={inp} value={f.offered} onChange={(e) => set('offered', e.target.value)} placeholder="e.g. 8L" /></div>
         </div>
+        <div><Lbl>Offered designation</Lbl><input className={inp} value={f.offeredDesignation} onChange={(e) => set('offeredDesignation', e.target.value)} placeholder="e.g. Team Lead (the role actually offered)" /><div className="text-[10px] text-slate-400 mt-1">If different from the applied position — used in the offer letter, onboarding & employee record.</div></div>
         <div><Lbl>Remark</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any notes about this offer / conversation" /></div>
       </div>
       <div className="flex justify-end gap-2 mt-4">
@@ -1861,12 +1862,12 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
 
 // Edit an existing salary offer (candidate ask / offered / remark).
 function EditDiscussionModal({ candidateId, disc, onClose, onSaved }) {
-  const [f, setF] = useState({ offered: disc.offered || '', candidateAsk: disc.candidateAsk || '', notes: disc.notes || '' });
+  const [f, setF] = useState({ offered: disc.offered || '', candidateAsk: disc.candidateAsk || '', offeredDesignation: disc.offeredDesignation || '', notes: disc.notes || '' });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const save = async () => {
     setBusy(true);
-    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'edit_discussion', discussionId: disc.id, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes }) }); onSaved(); }
+    try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'edit_discussion', discussionId: disc.id, offered: f.offered, candidateAsk: f.candidateAsk, offeredDesignation: f.offeredDesignation, notes: f.notes }) }); onSaved(); }
     catch (e) { toast(e.message); setBusy(false); }
   };
   return (
@@ -1876,6 +1877,7 @@ function EditDiscussionModal({ candidateId, disc, onClose, onSaved }) {
           <div><Lbl>Candidate ask</Lbl><input className={inp} value={f.candidateAsk} onChange={(e) => set('candidateAsk', e.target.value)} placeholder="e.g. 10L" /></div>
           <div><Lbl>Offered</Lbl><input className={inp} value={f.offered} onChange={(e) => set('offered', e.target.value)} placeholder="e.g. 8L" /></div>
         </div>
+        <div><Lbl>Offered designation</Lbl><input className={inp} value={f.offeredDesignation} onChange={(e) => set('offeredDesignation', e.target.value)} placeholder="e.g. Team Lead" /></div>
         <div><Lbl>Remark</Lbl><textarea rows={2} className={inp} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any notes about this offer / conversation" /></div>
       </div>
       <div className="flex justify-end gap-2 mt-4">

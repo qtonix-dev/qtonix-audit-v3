@@ -6445,8 +6445,11 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
     const now = new Date().toISOString();
     switch (b.op) {
       case 'add_discussion':
-        offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', notes: b.notes || '', by: req.hrActor.name });
-        pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
+        offer.salaryDiscussions.unshift({ id: `sd${Date.now()}`, at: b.at || now, mode: b.mode || 'phone', meetLink: b.meetLink || '', offered: b.offered || '', candidateAsk: b.candidateAsk || '', offeredDesignation: (b.offeredDesignation || '').slice(0, 120), notes: b.notes || '', by: req.hrActor.name });
+        // The offered designation (the role they'll actually be hired as, which can
+        // differ from what they applied for) becomes the offer's designation.
+        if (b.offeredDesignation) offer.offeredDesignation = String(b.offeredDesignation).slice(0, 120);
+        pushTimeline(row, { type: 'offer', text: `Salary offer logged by ${req.hrActor.name}${b.offeredDesignation ? ` for ${b.offeredDesignation}` : ''}${b.offered ? ` (offered ${b.offered}${b.candidateAsk ? `, asked ${b.candidateAsk}` : ''})` : ''}.`, by: req.hrActor.name });
         break;
       case 'manage_hire': {
         // Edit accepted salary, joining date/time and joined/not-joined in one go.
@@ -6513,6 +6516,7 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         if (!d) return res.status(404).json({ error: 'Salary offer not found.' });
         if (b.offered !== undefined) d.offered = String(b.offered).slice(0, 60);
         if (b.candidateAsk !== undefined) d.candidateAsk = String(b.candidateAsk).slice(0, 60);
+        if (b.offeredDesignation !== undefined) { d.offeredDesignation = String(b.offeredDesignation).slice(0, 120); offer.offeredDesignation = d.offeredDesignation || offer.offeredDesignation; }
         if (b.notes !== undefined) d.notes = String(b.notes).slice(0, 300);
         d.editedAt = now; d.editedBy = req.hrActor.name;
         // If this offer was the accepted one, keep the final amount in sync.
@@ -6978,7 +6982,7 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
       name: f.name || row.name, email, passwordHash, type: b.type,
       employeeId: b.employeeId || null,
       phone: f.phone || row.phone || '+91 ',
-      designation: b.designation || (row.jobPostId ? '' : ''),
+      designation: b.designation || (row.offer && row.offer.offeredDesignation) || '',
       branch: b.branch || '',
       department: b.department || '',
       joiningDate: (row.offer && row.offer.joiningDate) || null,
