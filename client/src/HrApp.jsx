@@ -1612,6 +1612,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [typing, setTyping] = useState([]);
   const [reactPickerFor, setReactPickerFor] = useState(null);
   const [moreMenuFor, setMoreMenuFor] = useState(null); // message id whose ⋯ menu is open
+  const [quickTask, setQuickTask] = useState(null); // { title } — /task quick creator
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
   const [editingMsg, setEditingMsg] = useState(null);   // { id, body } being edited
@@ -1764,6 +1765,13 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const send = async () => {
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
+    // Slash command: "/task" opens the quick task creator.
+    if (/^\/task\b/i.test(body)) {
+      const preTitle = body.replace(/^\/task\s*/i, '').trim();
+      setQuickTask({ title: preTitle });
+      clearEditor();
+      return;
+    }
     const rid = replyTo ? replyTo.id : undefined;
     clearEditor(); setReplyTo(null); setAiSuggests([]); setSending(true);
     try {
@@ -2207,6 +2215,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       )}
       {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
       {taskFromMsg && <ChatToTaskModal message={taskFromMsg} directory={directory} onClose={() => setTaskFromMsg(null)} onDone={() => setTaskFromMsg(null)} />}
+      {quickTask && <QuickTaskModal initialTitle={quickTask.title} directory={directory} onClose={() => setQuickTask(null)} onDone={() => setQuickTask(null)} />}
       {readsFor && (
         <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-[150] p-4" onClick={() => setReadsFor(null)}>
           <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -2367,6 +2376,56 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
 }
 
 // Forward a message to a person (DM) or a channel.
+// Quick task creator — opened by typing "/task" in chat.
+function QuickTaskModal({ initialTitle, directory, onClose, onDone }) {
+  const [title, setTitle] = useState(initialTitle || '');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [q, setQ] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [priority, setPriority] = useState('medium');
+  const [busy, setBusy] = useState(false);
+  const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+  const sel = directory.find((u) => u.id === assigneeId);
+  const create = async () => {
+    if (!title.trim()) { toast('Enter a task name.'); return; }
+    setBusy(true);
+    try {
+      await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: title.trim(), assigneeId: assigneeId || undefined, dueDate: dueDate || null, priority }) });
+      toast('Task created ✓'); onDone();
+    } catch (e) { toast(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">⚡ Quick task</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
+        <div className="p-5 space-y-3">
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Task name</div><input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && create()} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="What needs to be done?" /></div>
+          <div>
+            <div className="text-[12px] font-bold text-slate-500 mb-1">Assignee <span className="font-normal text-slate-400">(optional — defaults to you)</span></div>
+            {sel ? <div className="flex items-center gap-2 mb-1.5"><Avatar name={sel.name} src={sel.avatar} size={24} /><span className="text-[13px] font-bold">{sel.name}</span><button onClick={() => setAssigneeId('')} className="text-slate-400 ml-1">×</button></div> : null}
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search people…" className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] mb-1.5" />
+            <div className="max-h-32 overflow-auto border border-slate-100 rounded-lg">
+              {people.slice(0, 20).map((u) => (
+                <button key={u.id} onClick={() => { setAssigneeId(u.id); setQ(''); }} className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left ${assigneeId === u.id ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                  <Avatar name={u.name} src={u.avatar} size={22} /><span className="text-[13px] font-semibold">{u.name}</span>{assigneeId === u.id && <span className="ml-auto text-orange-600 font-bold">✓</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><div className="text-[12px] font-bold text-slate-500 mb-1">Deadline</div><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
+            <div><div className="text-[12px] font-bold text-slate-500 mb-1">Priority</div><select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white">{['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}</select></div>
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          <button onClick={create} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Creating…' : 'Create task'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Turn a chat message into a task (assign to someone; they get it on their board).
 function ChatToTaskModal({ message, directory, onClose, onDone }) {
   const [title, setTitle] = useState(String(message.body || '').replace(/\*\*/g, '').replace(/_/g, '').slice(0, 200));
@@ -10192,6 +10251,25 @@ export default function HrApp() {
   const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
   const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = `${HR_BASE}/login`; }); };
 
+  // ---- Auto-logout after 30 min of inactivity (with a 5-min warning popup) ----
+  const [idleWarn, setIdleWarn] = useState(false);
+  const idleWarnRef = useRef(false);
+  const idleResetRef = useRef(null);
+  useEffect(() => { idleWarnRef.current = idleWarn; }, [idleWarn]);
+  useEffect(() => {
+    if (!user) return;
+    const IDLE_MS = 30 * 60 * 1000; // 30 minutes of no activity → show warning
+    let idleTimer = null;
+    const resetIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => setIdleWarn(true), IDLE_MS); };
+    idleResetRef.current = () => { setIdleWarn(false); resetIdle(); };
+    let lastReset = 0;
+    const onActivity = () => { const now = Date.now(); if (now - lastReset > 5000) { lastReset = now; if (!idleWarnRef.current) resetIdle(); } };
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    resetIdle();
+    return () => { events.forEach((e) => window.removeEventListener(e, onActivity)); if (idleTimer) clearTimeout(idleTimer); };
+  }, [user]);
+
   // For plain employees, whether they sit on any interview panel (drives whether
   // the Recruitment tab — candidate-list only — is shown at all).
   const [hasPanel, setHasPanel] = useState(false);
@@ -10252,6 +10330,7 @@ export default function HrApp() {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      {idleWarn && <HrIdleWarning onContinue={() => idleResetRef.current && idleResetRef.current()} onSignOut={logout} />}
       <header className="bg-[#050A1F] text-white">
         <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14 gap-2">
           <div className="flex items-center gap-3 md:gap-6 min-w-0">
@@ -10415,6 +10494,31 @@ function NotificationBell({ onOpenCandidate }) {
 }
 
 // Top-right user dropdown: My Profile, Email Template, Email Signature, Logout.
+// Idle-timeout warning: counts down 5 minutes, then auto signs out.
+function HrIdleWarning({ onContinue, onSignOut }) {
+  const [left, setLeft] = useState(5 * 60);
+  useEffect(() => {
+    const t = setInterval(() => setLeft((s) => { if (s <= 1) { clearInterval(t); onSignOut(); return 0; } return s - 1; }), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const mm = String(Math.floor(left / 60)).padStart(2, '0');
+  const ss = String(left % 60).padStart(2, '0');
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl text-center">
+        <div className="text-3xl mb-2">⏰</div>
+        <div className="text-lg font-extrabold text-[#050A1F]">Are you still there?</div>
+        <p className="text-sm text-slate-500 mt-1">Your screen has been inactive for a while. For security you'll be signed out in:</p>
+        <div className="my-4 text-4xl font-black tabular-nums" style={{ color: left <= 60 ? '#DC2626' : '#050A1F' }}>{mm}:{ss}</div>
+        <div className="flex flex-col gap-2">
+          <button onClick={onContinue} className="w-full rounded-lg px-4 py-2.5 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Continue logged in</button>
+          <button onClick={onSignOut} className="w-full rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Sign out now</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UserMenu({ user, onNavigate, onLogout, isAdmin }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {

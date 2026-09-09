@@ -54,6 +54,12 @@ function mailboxEmail(s) {
 // service; each send gets a unique dedupeKey so repeat sends are all logged.
 async function sendHrEmailLogged(s, token, mailbox, msg, opts = {}) {
   const { sendAndLog } = require('../services/hrEmailLog');
+  // Ensure HR emails show a friendly display name — the assigned HR's name if
+  // provided, otherwise "HR Qtonix" — instead of a bare "career@qtonix.com".
+  if (msg && msg.from && !/</.test(String(msg.from))) {
+    const dn = (msg.fromName || opts.fromName || 'HR Qtonix').replace(/["<>]/g, '');
+    msg = { ...msg, from: `${dn} <${msg.from}>` };
+  }
   return sendAndLog(s, token, mailbox, msg, opts);
 }
 
@@ -78,7 +84,7 @@ async function sendShortlistEmail(row, hrActor) {
     const sig = await rejectSignature(hrActor, mailbox);
     const bodyHtml = hrEmail.shortlistedEmail({ candidateName: row.name, role: job ? job.title : '', signature: sig });
     const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_shortlisted' });
+    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `You've been shortlisted${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_shortlisted' });
     row.shortlistEmailSent = true;
     return true;
   } catch (e) { console.error('[shortlist] email failed:', e.message); return false; }
@@ -86,19 +92,23 @@ async function sendShortlistEmail(row, hrActor) {
 
 // Signature block for a rejection email from the acting HR person.
 async function rejectSignature(hrActor, mailbox) {
+  // HR / recruitment emails always go from the recruitment mailbox — never an
+  // admin's personal address. The DISPLAY NAME is the assigned HR's name, or a
+  // neutral "HR Qtonix" when no HR person is attached.
   let email = mailbox || 'career@qtonix.com';
-  let name = (hrActor && hrActor.name) || 'Qtonix Recruitment Team';
-  let title = 'Talent Acquisition · Qtonix';
+  let name = 'HR Qtonix';
+  let title = 'Human Resources · Qtonix';
   try {
     if (hrActor && hrActor.kind === 'hr') {
       const u = await HrUser.findByPk(hrActor.id);
-      if (u) { name = u.name || name; if (u.designation) title = `${u.designation} · Qtonix`; if (u.email) email = u.email; }
-    } else if (hrActor && hrActor.kind === 'admin') {
-      const u = await User.findByPk(hrActor.id);
-      if (u && u.email) email = u.email;
+      if (u) { name = u.name || name; if (u.designation) title = `${u.designation} · Qtonix`; }
+      // Note: we intentionally keep the recruitment mailbox for the FROM address
+      // even for a specific HR user, so replies land in the shared inbox.
     }
+    // For admins we do NOT switch to their personal email — HR mail stays on the
+    // recruitment mailbox; only the display name falls back to "HR Qtonix".
   } catch {}
-  return { name, title, email };
+  return { name, title, email: email || 'career@qtonix.com' };
 }
 // Roles that count as "HR staff" for edit permissions on locked profile
 // sections (payroll, performance, identity). Everyone else is view-only there.
@@ -5476,7 +5486,7 @@ router.post('/candidates/:id/reject', requireHrAccess, async (req, res, next) =>
           // Wrap the HR-reviewed draft body in the branded rejection template.
           const bodyHtml = hrEmail.rejectionEmail({ role: job ? job.title : '', bodyHtml: String(req.body.body).slice(0, 8000), signature: sig });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] }, { type: 'hr_reject_or_custom' });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: String(req.body.subject).slice(0, 200), bodyHtml, attachments: [] }, { type: 'hr_reject_or_custom' });
           emailed = true;
           pushTimeline(row, { type: 'rejection', text: `Rejection email sent to ${row.name} by ${req.hrActor.name}.`, by: req.hrActor.name });
           await row.save();
@@ -5770,7 +5780,7 @@ router.post('/candidates/:id/assign-task', requireHrAccess, async (req, res, nex
             deadlineText: `${deadlineText} IST`, uploadUrl, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_assignment' });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `Assessment task${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_assignment' });
           emailed = true;
         }
       } catch (e) { console.error('[task] assign email failed:', e.message); }
@@ -5845,7 +5855,7 @@ router.patch('/candidates/:id/task/:taskId', requireHrAccess, async (req, res, n
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Updated assessment task details${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_updated' });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `Updated assessment task details${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_updated' });
           emailed = true;
         }
       } catch (e) { console.error('[task] edit email failed:', e.message); }
@@ -5892,7 +5902,7 @@ router.post('/candidates/:id/task/:taskId/reactivate', requireHrAccess, async (r
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_reactivate' });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `Your assessment task link is active again${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_reactivate' });
           emailed = true;
         }
       } catch (e) { console.error('[task] reactivate email failed:', e.message); }
@@ -5987,7 +5997,7 @@ router.post('/candidates/:id/task/:taskId/request-info', requireHrAccess, async 
             deadlineText: `${deadlineText} IST`, uploadUrl: `${appUrl}/task/${t.token}`, signature: sig,
           });
           const cc = await assignedHrCc(row, { excludeEmail: mailbox });
-          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Additional information requested${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_addinfo' });
+          await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `Additional information requested${job ? ` — ${job.title}` : ''}`, bodyHtml }, { type: 'hr_task_addinfo' });
           emailed = true;
         }
       } catch (e) { console.error('[task] request-info email failed:', e.message); }
@@ -6937,7 +6947,7 @@ router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (r
       onboardingUrl: onb.token ? `${appUrl}/onboarding/${onb.token}` : '', signature: sig,
     });
     const cc = []; if (hr && hr.email) cc.push(hr.email);
-    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, to: row.email, cc, subject: `Welcome to Qtonix, ${String(row.name).split(' ')[0]}! \u2013 Next Steps`, bodyHtml }, { type: 'onboarding_welcome' });
+    await sendHrEmailLogged(s, token, mailbox, { from: mailbox, fromName: (req.hrActor && req.hrActor.kind === 'hr' ? req.hrActor.name : 'HR Qtonix'), to: row.email, cc, subject: `Welcome to Qtonix, ${String(row.name).split(' ')[0]}! \u2013 Next Steps`, bodyHtml }, { type: 'onboarding_welcome' });
     onb.welcomeEmailSentAt = new Date().toISOString();
     if (!onb.activatedAt) onb.activatedAt = onb.welcomeEmailSentAt;
     row.onboarding = onb; row.changed('onboarding', true);
