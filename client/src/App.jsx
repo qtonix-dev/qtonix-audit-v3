@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from './toast';
 import { API_BASE } from './config.js';
 import { APP_BUILD } from './version.js';
 import { AppSwitcher } from './AppSwitcher.jsx';
@@ -786,12 +787,12 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
 
   const download = async (id, name) => {
     if (IS_DEMO) {
-      alert('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
+      toast('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
       return;
     }
     const token = localStorage.getItem('qtx_token');
     const res = await fetch(`${API_BASE}/api/reports/${id}/download`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return alert('That PDF isn\'t ready yet.');
+    if (!res.ok) return toast('That PDF isn\'t ready yet.');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -881,7 +882,7 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                   {isAdmin && (
                     <button onClick={async () => {
                       if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
-                      try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); }
+                      try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); }
                     }} title="Delete report"
                       className="rounded-lg border border-slate-200 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-colors">
                       <Icon.Trash size={14} />
@@ -2088,7 +2089,7 @@ export default function App() {
                     await api(`/reports/${activeReport._id}/retry`, { method: 'POST' });
                     setViewNonce(Date.now());
                     setView('progress');
-                  } catch (e) { alert(e.message); }
+                  } catch (e) { toast(e.message); }
                 }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">↻ Re-run report</button>
                 {isAdmin && (
                   <button onClick={async () => {
@@ -2096,17 +2097,17 @@ export default function App() {
                     try {
                       await api(`/reports/${activeReport._id}`, { method: 'DELETE' });
                       setActiveReport(null); setView('list');
-                    } catch (e) { alert(e.message); }
+                    } catch (e) { toast(e.message); }
                   }} className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-50">🗑 Delete</button>
                 )}
                 <button onClick={async () => {
                   if (IS_DEMO) {
-                    alert('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
+                    toast('Sample reports have no PDF behind them. In the live app this downloads the finished branded report.');
                     return;
                   }
                   const token = localStorage.getItem('qtx_token');
                   const res = await fetch(`${API_BASE}/api/reports/${activeReport._id}/download`, { headers: { Authorization: `Bearer ${token}` } });
-                  if (!res.ok) return alert("That PDF isn't ready yet.");
+                  if (!res.ok) return toast("That PDF isn't ready yet.");
                   const blob = await res.blob(); const url = URL.createObjectURL(blob);
                   const a = document.createElement('a'); a.href = url; a.download = `${activeReport.businessName.replace(/[^a-z0-9]/gi, '-')}-Site-Analysis.pdf`; a.click(); URL.revokeObjectURL(url);
                 }} className="rounded-lg px-5 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>↓ Download PDF</button>

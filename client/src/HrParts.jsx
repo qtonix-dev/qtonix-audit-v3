@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from './toast';
 import { API_BASE } from './config.js';
 
 // Same icon set used across the Site Analysis platform, redrawn here so the HR
@@ -384,7 +385,7 @@ export function ProfilePage({ me, targetId }) {
   const perfCards = () => (p.performanceCards || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const addPerfCard = (card) => setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] }));
   const delPerfCard = (id) => setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== id) }));
-  const delPerf = async (cardId) => { if (!window.confirm('Remove this note?')) return; try { await hrApi(`/employees/${id}/performance/${cardId}`, { method: 'DELETE' }); setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== cardId) })); } catch (e) { alert(e.message); } };
+  const delPerf = async (cardId) => { if (!window.confirm('Remove this note?')) return; try { await hrApi(`/employees/${id}/performance/${cardId}`, { method: 'DELETE' }); setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== cardId) })); } catch (e) { toast(e.message); } };
 
   const save = async (overrideProfile) => {
     setSaving(true); setMsg(''); setErr('');
@@ -997,7 +998,7 @@ function AttendanceDayModal({ employeeId, day, onClose, onSaved }) {
   const [logoutTime, setLogoutTime] = useState(day.rec.logoutTime || '');
   const [note, setNote] = useState(day.rec.note || '');
   const [busy, setBusy] = useState(false);
-  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/attendance/${day.date}`, { method: 'PUT', body: JSON.stringify({ status, loginTime, logoutTime, note }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/attendance/${day.date}`, { method: 'PUT', body: JSON.stringify({ status, loginTime, logoutTime, note }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -1035,8 +1036,8 @@ function LeaveTab({ employeeId, canManage }) {
   const load = () => hrApi(`/employees/${employeeId}/leave`).then(setData).catch(() => setData({ leaves: [] }));
   useEffect(() => { load(); }, [employeeId]);
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
-  const del = async (id) => { if (!window.confirm('Remove this leave record?')) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
-  const setCategory = async (categoryId) => { try { await hrApi(`/employees/${employeeId}/leave-category`, { method: 'PUT', body: JSON.stringify({ categoryId, clearOverride: true }) }); load(); } catch (e) { alert(e.message); } };
+  const del = async (id) => { if (!window.confirm('Remove this leave record?')) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const setCategory = async (categoryId) => { try { await hrApi(`/employees/${employeeId}/leave-category`, { method: 'PUT', body: JSON.stringify({ categoryId, clearOverride: true }) }); load(); } catch (e) { toast(e.message); } };
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1128,17 +1129,17 @@ function LeaveAddModal({ employeeId, onClose, onSaved }) {
     const payload = duration === 'half'
       ? { type, date: from, duration: 'half', reason, paid: type !== 'lop', documentUrl, force }
       : { type, from, to, duration: 'full', reason, paid: type !== 'lop', documentUrl, force };
-    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify(payload) }); if (r.forcedUnpaid) alert(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
+    try { const r = await hrApi(`/employees/${employeeId}/leave`, { method: 'POST', body: JSON.stringify(payload) }); if (r.forcedUnpaid) toast(`Recorded as UNPAID — paid leave isn't allowed during ${r.forcedReason === 'probation' ? 'probation (first 3 months)' : 'the notice period'}.`); onSaved(); }
     catch (e) {
       // Policy blocks come back with a message; offer an override.
       if (e.status === 400 && /week-off|advance|medical/i.test(e.message)) { setBlockErr(e.message); setBusy(false); }
-      else { alert(e.message); setBusy(false); }
+      else { toast(e.message); setBusy(false); }
     }
   };
   const uploadMedical = async (file) => {
     if (!file) return; setUploading(true);
     try { const { url } = await uploadToImageKit(file, `/qtonix-hr/employees/id${employeeId}/medical`, file.name); setDocumentUrl(url); }
-    catch (e) { alert('Upload failed: ' + e.message); } finally { setUploading(false); }
+    catch (e) { toast('Upload failed: ' + e.message); } finally { setUploading(false); }
   };
   // LOP is loss-of-pay (unpaid) — no paid/unpaid warning. WFH isn't leave credit.
   const unpaidWarn = elig && !elig.paidAllowed && type !== 'wfh' && type !== 'lop';
@@ -1227,7 +1228,7 @@ function Stat({ label, value }) {
 function LeaveAllocModal({ employeeId, current, onClose, onSaved }) {
   const [alloc, setAlloc] = useState({ casual: current.casual ?? 12, medical: current.medical ?? 12, privilege: current.privilege ?? 12, wfh: current.wfh ?? 24 });
   const [busy, setBusy] = useState(false);
-  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/leave-allocation`, { method: 'PUT', body: JSON.stringify(alloc) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/leave-allocation`, { method: 'PUT', body: JSON.stringify(alloc) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -1250,9 +1251,9 @@ function OnboardingChecklist({ employeeId, canEdit }) {
   const [newTask, setNewTask] = useState('');
   const load = () => hrApi(`/employees/${employeeId}/onboarding`).then(setData).catch(() => setData({ tasks: [], percent: 0 }));
   useEffect(() => { load(); }, [employeeId]);
-  const toggle = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'PATCH', body: JSON.stringify({ done: !t.done }) }); load(); } catch (e) { alert(e.message); } };
-  const add = async () => { if (!newTask.trim()) return; try { await hrApi(`/employees/${employeeId}/onboarding`, { method: 'POST', body: JSON.stringify({ task: newTask }) }); setNewTask(''); load(); } catch (e) { alert(e.message); } };
-  const del = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  const toggle = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'PATCH', body: JSON.stringify({ done: !t.done }) }); load(); } catch (e) { toast(e.message); } };
+  const add = async () => { if (!newTask.trim()) return; try { await hrApi(`/employees/${employeeId}/onboarding`, { method: 'POST', body: JSON.stringify({ task: newTask }) }); setNewTask(''); load(); } catch (e) { toast(e.message); } };
+  const del = async (t) => { try { await hrApi(`/employees/${employeeId}/onboarding/${t._id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
   const tasks = data.tasks || [];
   return (
@@ -1351,10 +1352,10 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
 
   const del = async (u) => {
     if (!window.confirm(`Delete ${u.name}? This removes their employee & login record permanently.`)) return;
-    try { await hrApi(`/users/${u._id}`, { method: 'DELETE' }); setMsg(`Deleted ${u.name}.`); load(); } catch (e) { alert(e.message); }
+    try { await hrApi(`/users/${u._id}`, { method: 'DELETE' }); setMsg(`Deleted ${u.name}.`); load(); } catch (e) { toast(e.message); }
   };
   const toggleActive = async (u) => {
-    try { await hrApi(`/users/${u._id}`, { method: 'PUT', body: JSON.stringify({ active: !(u.active !== false) }) }); load(); } catch (e) { alert(e.message); }
+    try { await hrApi(`/users/${u._id}`, { method: 'PUT', body: JSON.stringify({ active: !(u.active !== false) }) }); load(); } catch (e) { toast(e.message); }
   };
 
   const IconBtn = ({ title, onClick, color, children }) => (

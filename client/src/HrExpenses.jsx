@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { toast } from './toast';
 import { hrApi } from './HrApp.jsx';
 import { titleCase, uploadToImageKit } from './HrParts.jsx';
 
@@ -59,7 +60,7 @@ export default function HrExpenses({ user, isAdmin, openExpenseId, onIntentConsu
   const canEdit = isAdmin || user.isHrManager || user.hrManagerAll || ['hr', 'recruiter'].includes(user.type);
   const deleteExpense = async (e) => {
     if (!window.confirm(`Delete this expense (${e.title || e.category}) permanently?`)) return;
-    try { await hrApi(`/expenses/${e._id}`, { method: 'DELETE' }); load(); } catch (err) { alert(err.message); }
+    try { await hrApi(`/expenses/${e._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
   };
   const [vendorHistory, setVendorHistory] = useState(null);
   const [catOpen, setCatOpen] = useState(false);
@@ -378,9 +379,9 @@ function EditExpenseModal({ expense, cats, onClose, onSaved }) {
   // if it's no longer in the list (so it never shows blank).
   const catList = [...new Set([...(cats || []), ...(expense.category ? [expense.category] : [])])];
   const save = async () => {
-    if (!amount || Number(amount) <= 0) { alert('Enter a valid amount.'); return; }
+    if (!amount || Number(amount) <= 0) { toast('Enter a valid amount.'); return; }
     setBusy(true);
-    try { await hrApi(`/expenses/${expense._id}`, { method: 'PUT', body: JSON.stringify({ title, amount: Number(amount), category, expenseDate, notes, description: notes }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); }
+    try { await hrApi(`/expenses/${expense._id}`, { method: 'PUT', body: JSON.stringify({ title, amount: Number(amount), category, expenseDate, notes, description: notes }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>

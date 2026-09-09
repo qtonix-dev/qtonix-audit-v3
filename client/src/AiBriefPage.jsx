@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { toast } from './toast';
 import { api } from './App.jsx';
 import { PhoneField, Pagination } from './Leads.jsx';
 
@@ -62,7 +63,7 @@ export default function AiBriefPage({ user }) {
     e.stopPropagation();
     if (!confirm('Delete this brief?')) return;
     try { await api(`/briefs/${id}`, { method: 'DELETE' }); if (active && active._id === id) setActive(null); loadList(); }
-    catch (err) { alert(err.message); }
+    catch (err) { toast(err.message); }
   };
 
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';

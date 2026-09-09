@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from './toast';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
@@ -827,7 +828,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
       a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setExporting(false);
   };
   const [page, setPage] = useState(1);
@@ -1145,7 +1146,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                               try {
                                 await api(`/leads/${l._id}/request-reminder`, { method: 'POST', body: JSON.stringify({}) });
                                 load();
-                              } catch (err) { alert(err.message); }
+                              } catch (err) { toast(err.message); }
                             }}
                             className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:border-orange-300 hover:text-[#FF4500] whitespace-nowrap">
                             Request draft
@@ -1161,7 +1162,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                         <button title="Delete lead" onClick={async (e) => {
                           e.stopPropagation();
                           if (!confirm(`Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.`)) return;
-                          try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { alert(err.message); }
+                          try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
                         }} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>
                       </td>
                     )}
@@ -1260,7 +1261,7 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       };
       const r = await api('/gmail/bulk', { method: 'POST', body: JSON.stringify(payload) });
-      alert(mode === 'schedule'
+      toast(mode === 'schedule'
         ? `Scheduled ${r.sentCount} email(s).`
         : `Sent ${r.sentCount} email(s)${r.failedCount ? `, ${r.failedCount} failed` : ''}.`);
       onSent();
@@ -1909,7 +1910,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
     try {
       const updated = await api(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(draft) });
       setLead(updated); setEditSection(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
 
   // NB: named RowIcon, not Icon — a local `Icon` would shadow the imported SVG
@@ -1996,7 +1997,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
             {user.role === 'admin' && (
               <button title="Delete lead" onClick={async () => {
                 if (!confirm(`Permanently delete ${fullName(lead)}?\n\nThis removes the lead and all of its notes, activities and deals from the database. This cannot be undone.`)) return;
-                try { await api(`/leads/${leadId}`, { method: 'DELETE' }); onBack(); } catch (e) { alert(e.message); }
+                try { await api(`/leads/${leadId}`, { method: 'DELETE' }); onBack(); } catch (e) { toast(e.message); }
               }} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50">
                 <Icon.Trash /> Delete
               </button>
@@ -2131,7 +2132,7 @@ function QuickNoteModal({ lead, onClose, onSaved }) {
     if (!plainText(text)) return;
     setBusy(true);
     try { const u = await api(`/leads/${lead._id}/notes`, { method: 'POST', body: JSON.stringify({ text }) }); onSaved(u); }
-    catch (e) { alert(e.message); } setBusy(false);
+    catch (e) { toast(e.message); } setBusy(false);
   };
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -2334,7 +2335,7 @@ function EmailInboxTab({ lead, user, initialCompose, composeSignal }) {
               <span className="text-[11px] font-bold text-[#FF4500] shrink-0">{(() => { try { return new Date(r.sendAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return r.sendAt; } })()}</span>
               <button onClick={() => editScheduled(r)} className="rounded border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-600 hover:bg-white shrink-0">Edit</button>
               <button onClick={() => setReschedule(r)} className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-white shrink-0">Reschedule</button>
-              <button onClick={async () => { try { await api(`/gmail/scheduled/${r.id}/cancel`, { method: 'POST' }); loadScheduled(); } catch (e) { alert(e.message); } }} className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-bold text-red-600 hover:bg-white shrink-0">Cancel</button>
+              <button onClick={async () => { try { await api(`/gmail/scheduled/${r.id}/cancel`, { method: 'POST' }); loadScheduled(); } catch (e) { toast(e.message); } }} className="rounded border border-red-200 px-2 py-0.5 text-[10px] font-bold text-red-600 hover:bg-white shrink-0">Cancel</button>
             </div>
           ))}
         </div>
@@ -2992,7 +2993,7 @@ function EmailDraftTab({ lead, user, onChange }) {
   const save = async (path, payload) => {
     setBusy(true);
     try { const u = await api(`/leads/${lead._id}/${path}`, { method: 'PATCH', body: JSON.stringify(payload) }); onChange(u); }
-    catch (e) { alert(e.message); }
+    catch (e) { toast(e.message); }
     setBusy(false);
   };
 
@@ -3157,7 +3158,7 @@ function DraftModal({ title, onClose, onSubmit, busy, initial }) {
         uploaded.push({ name: file.name, url, size: file.size });
       }
       setAttachments((a) => [...a, ...uploaded]);
-    } catch (e) { alert(e.message || 'Upload failed.'); } finally { setUploading(false); }
+    } catch (e) { toast(e.message || 'Upload failed.'); } finally { setUploading(false); }
   };
 
   return (
@@ -3260,7 +3261,7 @@ function FirstReplyPanel({ lead, user, onChange }) {
     try {
       onChange(await api(`/leads/${lead._id}/first-reply`, { method: 'PATCH', body: JSON.stringify(payload) }));
       setDraft('');
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
 
@@ -3926,7 +3927,7 @@ function NotesTab({ lead, onChange }) {
     try {
       const updated = await api(`/leads/${lead._id}/notes`, { method: 'POST', body: JSON.stringify({ text }) });
       onChange(updated); setText('');
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
   return (
@@ -3966,7 +3967,7 @@ function ActivityTab({ lead, config, user, onChange }) {
     try {
       const updated = await api(`/leads/${lead._id}/activities/${act.id}`, { method: 'PATCH', body: JSON.stringify({ status: act.status === 'done' ? 'open' : 'done' }) });
       onChange(updated);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
 
   // A user may edit/delete an activity they created; an admin may manage any.
@@ -3976,7 +3977,7 @@ function ActivityTab({ lead, config, user, onChange }) {
     try {
       const updated = await api(`/leads/${lead._id}/activities/${delAct.id}`, { method: 'DELETE' });
       onChange(updated); setDelAct(null);
-    } catch (e) { alert(e.message); setDelAct(null); }
+    } catch (e) { toast(e.message); setDelAct(null); }
   };
 
   const overdue = (a) => {
@@ -4113,7 +4114,7 @@ function ActivityModal({ kind, lead, config, onClose, onSaved, edit }) {
         ? await api(`/leads/${lead._id}/activities/${edit.id}`, { method: 'PATCH', body: JSON.stringify(body) })
         : await api(`/leads/${lead._id}/activities`, { method: 'POST', body: JSON.stringify(body) });
       onSaved(updated);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
 
@@ -4407,7 +4408,7 @@ function DealsTab({ lead, config, user, onChange }) {
         method: 'PATCH', body: JSON.stringify({ paid: false }),
       });
       onChange(u);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast(err.message); }
     setBusyInst(null);
   };
 
@@ -4428,7 +4429,7 @@ function DealsTab({ lead, config, user, onChange }) {
       });
       onChange(u);
       setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayStart(''); setPayTenure('onetime'); setPayRenewal('');
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast(err.message); }
     setBusyInst(null);
   };
 
@@ -4441,7 +4442,7 @@ function DealsTab({ lead, config, user, onChange }) {
         method: 'PATCH', body: JSON.stringify({ invoiceSent: true }),
       });
       onChange(u);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast(err.message); }
     setBusyInst(null);
   };
 
@@ -4454,7 +4455,7 @@ function DealsTab({ lead, config, user, onChange }) {
         method: 'PATCH', body: JSON.stringify({ dueDate }),
       });
       onChange(u);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast(err.message); }
     setBusyInst(null);
   };
 
@@ -4465,7 +4466,7 @@ function DealsTab({ lead, config, user, onChange }) {
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'DELETE' });
       onChange(u);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast(err.message); }
   };
 
   return (
@@ -4741,7 +4742,7 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
   };
 
   const save = async () => {
-    if (!String(f.name).trim()) { alert('Deal name is required.'); return; }
+    if (!String(f.name).trim()) { toast('Deal name is required.'); return; }
     setBusy(true);
     try {
       const payload = { ...f };
@@ -4750,18 +4751,18 @@ function DealModal({ lead, config, deal, onClose, onSaved }) {
         ? await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await api(`/leads/${lead._id}/deals`, { method: 'POST', body: JSON.stringify(payload) });
       onSaved(u);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
 
   const markPaid = async (inst) => {
-    if (!deal) { alert('Save the deal first, then mark installments paid.'); return; }
+    if (!deal) { toast('Save the deal first, then mark installments paid.'); return; }
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${inst.id}`, { method: 'PATCH', body: JSON.stringify({ paid: !inst.paid }) });
       const d = (u.deals || []).find((x) => x.id === deal.id);
       if (d) setF((s) => ({ ...s, installments: d.installments }));
       onSaved(u);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
 
   return (
@@ -5068,7 +5069,7 @@ function ReportsTab({ lead, onChange }) {
     try {
       await api(`/reports/${existing._id}/refresh`, { method: 'POST' });
       window.location.href = `/?reportId=${existing._id}`;
-    } catch (e) { alert(e.message); setRefreshing(false); }
+    } catch (e) { toast(e.message); setRefreshing(false); }
   };
   return (
     <div>
@@ -5183,7 +5184,7 @@ function ReleasedLeads({ user, onOpen }) {
     if (!confirm(`Delete released lead "${l.firstName || l.email || 'this lead'}" permanently? This cannot be undone.`)) return;
     setBusy(l._id);
     try { await api(`/leads/${l._id}`, { method: 'DELETE' }); setItems((xs) => xs.filter((x) => x._id !== l._id)); }
-    catch (e) { alert(e.message); } finally { setBusy(null); }
+    catch (e) { toast(e.message); } finally { setBusy(null); }
   };
 
   if (loading) return <div className="text-slate-400 text-sm py-12 text-center">Loading released leads…</div>;
@@ -5319,7 +5320,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         method: 'PATCH', body: JSON.stringify({ dueDate }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(null);
   };
 
@@ -5365,14 +5366,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'stop', reason }) });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
       setStopFor(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
   const resumeRecurring = async (lead, deal) => {
     if (!confirm(`Resume the recurring contract for "${deal.name}"?`)) return;
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'resume' }) });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
 
   // Backfill tenure + renewal date onto the latest paid installment of an old
@@ -5381,14 +5382,14 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     const paidInsts = (deal.installments || []).filter((it) => it.paid)
       .sort((a, b) => String(b.paidDate || '').localeCompare(String(a.paidDate || '')));
     const target = paidInsts[0];
-    if (!target) { alert('No paid installment to attach a renewal to.'); return; }
+    if (!target) { toast('No paid installment to attach a renewal to.'); return; }
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/installments/${target.id}`, {
         method: 'PATCH', body: JSON.stringify({ tenure, renewalDate: tenure === 'onetime' ? null : (renewalDate || undefined) }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
       setRenewalFor(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
 
   const markInvoiced = async (lead, deal, inst) => {
@@ -5398,7 +5399,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
         method: 'PATCH', body: JSON.stringify({ invoiceSent: true }),
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(null);
   };
 
@@ -5416,7 +5417,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
       });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));
       setPayFor(null); setPayGateway(''); setPayRef(''); setPayDate(''); setPayAmount(''); setPayTenure('onetime'); setPayRenewal('');
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(null);
   };
   const load = () => {
@@ -6412,7 +6413,7 @@ function DealsPipeline({ user, onOpenLead }) {
     setDeals((ds) => ds.map((d) => (d.id === deal.id ? { ...d, stage: toStage } : d)));
     try {
       await api(`/leads/${deal.leadId}/deals/${deal.id}`, { method: 'PATCH', body: JSON.stringify({ stage: toStage }) });
-    } catch (e) { alert(e.message); load(); }
+    } catch (e) { toast(e.message); load(); }
   };
 
   const stageTotal = (sid) => shownDeals.filter((d) => d.stage === sid).reduce((sum, d) => sum + Number(d.amount || 0), 0);

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toast } from './toast';
 import { api } from './App.jsx';
 
 // Polls for completed CallHippo calls (credited to the current agent) that still
@@ -33,7 +34,7 @@ export default function CallRemarkPrompt() {
       await api(`/callhippo/logs/${current.id}/remark`, { method: 'POST', body: JSON.stringify({ remark }) });
       setRemark('');
       setPending((p) => p.slice(1));
-    } catch (e) { alert(e.message); } finally { setBusy(false); }
+    } catch (e) { toast(e.message); } finally { setBusy(false); }
   };
 
   const skip = async () => {
@@ -42,7 +43,7 @@ export default function CallRemarkPrompt() {
     try {
       await api(`/callhippo/logs/${current.id}/remark`, { method: 'POST', body: JSON.stringify({ remark: '' }) });
       setPending((p) => p.slice(1));
-    } catch (e) { alert(e.message); } finally { setBusy(false); }
+    } catch (e) { toast(e.message); } finally { setBusy(false); }
   };
 
   const mins = Math.floor((current.durationSeconds || 0) / 60);

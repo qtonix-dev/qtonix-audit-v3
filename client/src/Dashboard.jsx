@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from './toast';
 import { api, DashboardGmailNotice } from './App.jsx';
 
 // Human-readable "how long ago" for email awaiting-reply ages.
@@ -1597,7 +1598,7 @@ export function EmailDraftsPage({ user, onOpenLead }) {
 
   const act = async (id, path, payload) => {
     try { await api(`/leads/${id}/${path}`, { method: 'PATCH', body: JSON.stringify(payload) }); load(); }
-    catch (e) { alert(e.message); }
+    catch (e) { toast(e.message); }
   };
 
   if (err) return <div className="text-red-500 text-sm">{err}</div>;

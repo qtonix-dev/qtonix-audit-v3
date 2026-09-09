@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from './toast';
 import { api } from './App.jsx';
 
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
@@ -281,7 +282,7 @@ function ReviewModal({ agent, period, onClose, onSaved }) {
         }),
       });
       onSaved();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
 
@@ -472,7 +473,7 @@ function ManagerReviewModal({ manager, period, onClose, onSaved }) {
         }),
       });
       onSaved();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
 

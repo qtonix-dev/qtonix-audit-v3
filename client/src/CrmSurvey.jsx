@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from './toast';
 import { api } from './App.jsx';
 
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
@@ -375,7 +376,7 @@ function SurveyResults({ surveys }) {
   useEffect(() => { if (!surveyId) return; api(`/surveys/${surveyId}/periods`).then((r) => { setPeriods(r.periods || []); setPeriod((r.periods && r.periods[0]) || ''); }).catch(() => {}); }, [surveyId]);
   const loadResults = () => { if (!surveyId) return; setBusy(true); api(`/surveys/${surveyId}/results${period ? `?period=${encodeURIComponent(period)}` : ''}`).then(setData).catch(() => {}).finally(() => setBusy(false)); };
   useEffect(() => { loadResults(); }, [surveyId, period]);
-  const analyze = async () => { setAnalyzing(true); try { await api(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
+  const analyze = async () => { setAnalyzing(true); try { await api(`/surveys/${surveyId}/analyze`, { method: 'POST', body: JSON.stringify({ period }) }); loadResults(); } catch (e) { toast(e.message); } finally { setAnalyzing(false); } };
   if (!surveys.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-8 text-center text-slate-400 text-sm">Create a survey first.</div>;
   return (
     <div>
@@ -492,8 +493,8 @@ function TestResultsModal({ survey, onClose }) {
   const [analyzing, setAnalyzing] = useState(false);
   const load = () => { setBusy(true); api(`/surveys/${survey._id}/results?period=test`).then(setData).catch(() => setData(null)).finally(() => setBusy(false)); };
   useEffect(() => { load(); }, [survey._id]);
-  const analyze = async () => { setAnalyzing(true); try { await api(`/surveys/${survey._id}/analyze`, { method: 'POST', body: JSON.stringify({ period: 'test' }) }); load(); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
-  const clear = async () => { if (!window.confirm('Clear all test responses for this survey?')) return; try { await api(`/surveys/${survey._id}/test-responses`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
+  const analyze = async () => { setAnalyzing(true); try { await api(`/surveys/${survey._id}/analyze`, { method: 'POST', body: JSON.stringify({ period: 'test' }) }); load(); } catch (e) { toast(e.message); } finally { setAnalyzing(false); } };
+  const clear = async () => { if (!window.confirm('Clear all test responses for this survey?')) return; try { await api(`/surveys/${survey._id}/test-responses`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[140] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>

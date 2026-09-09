@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { toast } from './toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase, uploadToImageKit } from './HrParts.jsx';
@@ -525,7 +526,7 @@ function HelpingHandView() {
   const [busy, setBusy] = useState(false);
   const load = () => hrApi('/helping/mine').then(setData).catch(() => setData({ given: [], received: [] }));
   useEffect(() => { load(); hrApi('/helping/colleagues').then((r) => setTeam(r.colleagues || [])).catch(() => {}); }, []);
-  const submit = async () => { if (!benef || !reason.trim()) return; setBusy(true); try { await hrApi('/helping/nominate', { method: 'POST', body: JSON.stringify({ beneficiaryId: benef.id, reason: reason.trim() }) }); setShow(false); setBenef(null); setReason(''); load(); } catch (e) { alert(e.message); } setBusy(false); };
+  const submit = async () => { if (!benef || !reason.trim()) return; setBusy(true); try { await hrApi('/helping/nominate', { method: 'POST', body: JSON.stringify({ beneficiaryId: benef.id, reason: reason.trim() }) }); setShow(false); setBenef(null); setReason(''); load(); } catch (e) { toast(e.message); } setBusy(false); };
   if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
   const shown = team.filter((m) => !q || (m.name || '').toLowerCase().includes(q.toLowerCase()));
   const statusPill = (s) => s === 'approved' ? { background: '#DCFCE7', color: '#15803D' } : s === 'rejected' ? { background: '#FEE2E2', color: '#DC2626' } : { background: '#FEF9C3', color: '#CA8A04' };
@@ -583,7 +584,7 @@ function MyIdeasView() {
   const [busy, setBusy] = useState(false);
   const load = () => hrApi('/innovation/mine').then((r) => setIdeas(r.ideas || [])).catch(() => setIdeas([]));
   useEffect(() => { load(); }, []);
-  const submit = async () => { if (!f.title.trim()) return; setBusy(true); try { await hrApi('/innovation', { method: 'POST', body: JSON.stringify(f) }); setShow(false); setF({ title: '', problem: '', solution: '', benefit: '', estimatedSavings: '', timeSaving: '' }); load(); } catch (e) { alert(e.message); } setBusy(false); };
+  const submit = async () => { if (!f.title.trim()) return; setBusy(true); try { await hrApi('/innovation', { method: 'POST', body: JSON.stringify(f) }); setShow(false); setF({ title: '', problem: '', solution: '', benefit: '', estimatedSavings: '', timeSaving: '' }); load(); } catch (e) { toast(e.message); } setBusy(false); };
   if (!ideas) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
   const STAGE = { submitted: ['Submitted', '#94A3B8', '#F1F5F9'], under_review: ['Under review', '#CA8A04', '#FEF9C3'], approved: ['Approved', '#2563EB', '#EFF6FF'], implemented: ['Implemented', '#0891B2', '#CFFAFE'], rewarded: ['Rewarded', '#15803D', '#DCFCE7'], rejected: ['Rejected', '#DC2626', '#FEE2E2'] };
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
@@ -642,8 +643,8 @@ function RewardStoreView() {
   const bal = (data.wallet || {}).balance || 0;
   const ratio = (data.wallet || {}).rupeeValue && bal ? (bal / data.wallet.rupeeValue) : 2; // pts per ₹
   const encashRupees = encashPts ? Math.round((Number(encashPts) / ratio) * 100) / 100 : 0;
-  const redeem = async (item) => { if (!window.confirm(`Redeem "${item.name}" for ${item.cost} points?`)) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); alert('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { alert(e.message); } setBusy(''); };
-  const doEncash = async () => { const p = Number(encashPts); if (!p || p <= 0) return; if (p > bal) { alert('You don’t have that many points.'); return; } setBusy('encash'); try { await hrApi('/store/encash', { method: 'POST', body: JSON.stringify({ points: p }) }); setEncashPts(''); setEncashOpen(false); load(); alert('Encashment requested! HR will approve it for your next salary.'); } catch (e) { alert(e.message); } setBusy(''); };
+  const redeem = async (item) => { if (!window.confirm(`Redeem "${item.name}" for ${item.cost} points?`)) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); toast('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { toast(e.message); } setBusy(''); };
+  const doEncash = async () => { const p = Number(encashPts); if (!p || p <= 0) return; if (p > bal) { toast('You don’t have that many points.'); return; } setBusy('encash'); try { await hrApi('/store/encash', { method: 'POST', body: JSON.stringify({ points: p }) }); setEncashPts(''); setEncashOpen(false); load(); toast('Encashment requested! HR will approve it for your next salary.'); } catch (e) { toast(e.message); } setBusy(''); };
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], paid: ['Paid w/ salary', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'], cancelled: ['Cancelled', '#64748B', '#F1F5F9'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
     <div>
@@ -776,13 +777,13 @@ function RewardsAdmin() {
   const load = () => { hrApi('/rewards/rules').then(setData).catch(() => {}); hrApi('/rewards/overview').then(setOv).catch(() => {}); };
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
-  const addBadge = async (cat) => { if (!newBadge.name.trim()) { alert('Name required'); return; } setBusy('add'); try { await hrApi('/rewards/rules', { method: 'POST', body: JSON.stringify({ name: newBadge.name, category: cat, points: Number(newBadge.points) || 0, icon: newBadge.icon }) }); setNewBadge({ icon: '🏅', name: '', points: '' }); setAddCat(''); await load(); } catch (e) { alert(e.message); } setBusy(''); };
-  const delRule = async (r) => { if (!window.confirm(`Delete "${r.name}"?`)) return; try { await hrApi(`/rewards/rules/${r.id}`, { method: 'DELETE' }); await load(); } catch (e) { alert(e.message); } };
+  const addBadge = async (cat) => { if (!newBadge.name.trim()) { toast('Name required'); return; } setBusy('add'); try { await hrApi('/rewards/rules', { method: 'POST', body: JSON.stringify({ name: newBadge.name, category: cat, points: Number(newBadge.points) || 0, icon: newBadge.icon }) }); setNewBadge({ icon: '🏅', name: '', points: '' }); setAddCat(''); await load(); } catch (e) { toast(e.message); } setBusy(''); };
+  const delRule = async (r) => { if (!window.confirm(`Delete "${r.name}"?`)) return; try { await hrApi(`/rewards/rules/${r.id}`, { method: 'DELETE' }); await load(); } catch (e) { toast(e.message); } };
   const cfg = data.config || {};
   const live = !!cfg.rewardsLive;
-  const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
-  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON?\n\n• All existing points will be reset to zero (clean slate).\n• Birthdays & work anniversaries from the last 30 days will be credited.\n• Everything else starts awarding points from today forward.\n\nMake sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); await load(); } catch (e) { alert(e.message); } setBusy(''); };
-  const resetPoints = async () => { if (!window.confirm('Reset ALL reward points to zero for everyone? This cannot be undone.')) return; setBusy('reset'); try { await hrApi('/rewards/reset', { method: 'POST', body: '{}' }); await load(); alert('All points have been reset to zero.'); } catch (e) { alert(e.message); } setBusy(''); };
+  const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { toast(e.message); } setBusy(''); };
+  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON?\n\n• All existing points will be reset to zero (clean slate).\n• Birthdays & work anniversaries from the last 30 days will be credited.\n• Everything else starts awarding points from today forward.\n\nMake sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); await load(); } catch (e) { toast(e.message); } setBusy(''); };
+  const resetPoints = async () => { if (!window.confirm('Reset ALL reward points to zero for everyone? This cannot be undone.')) return; setBusy('reset'); try { await hrApi('/rewards/reset', { method: 'POST', body: '{}' }); await load(); toast('All points have been reset to zero.'); } catch (e) { toast(e.message); } setBusy(''); };
   const cats = {}; (data.rules || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
   const catLabel = { badge: '🏅 Badges', appreciation: '❤️ Appreciation', automatic: '🎁 Automatic', anniversary: '🎊 Anniversary', attendance: '📅 Attendance' };
   return (
@@ -869,7 +870,7 @@ function RewardBudgets() {
   const load = () => hrApi('/rewards/budgets').then(setData).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
-  const save = async (id, limit) => { setBusy('b' + id); try { await hrApi(`/rewards/budgets/${id}`, { method: 'PUT', body: JSON.stringify(limit === '' ? { clear: true } : { limit: Number(limit) }) }); await load(); setEdits((e) => { const n = { ...e }; delete n[id]; return n; }); } catch (e) { alert(e.message); } setBusy(''); };
+  const save = async (id, limit) => { setBusy('b' + id); try { await hrApi(`/rewards/budgets/${id}`, { method: 'PUT', body: JSON.stringify(limit === '' ? { clear: true } : { limit: Number(limit) }) }); await load(); setEdits((e) => { const n = { ...e }; delete n[id]; return n; }); } catch (e) { toast(e.message); } setBusy(''); };
   const rows = (data.seniors || []).filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.department || '').toLowerCase().includes(q.toLowerCase()));
   const rd = data.roleDefaults || {};
   return (
@@ -912,7 +913,7 @@ function RewardApprovals() {
   const load = () => hrApi('/rewards/approvals').then(setData).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
-  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/rewards/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/rewards/approvals/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { toast(e.message); } setBusy(''); };
   const rows = data.approvals || [];
   const tierLabel = { manager: 'Manager', hod_hr: 'HOD + HR', senior_mgmt: 'Senior Mgmt' };
   return (
@@ -947,7 +948,7 @@ function HelpingQueue() {
   const load = () => hrApi('/helping/queue').then(setData).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
-  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/helping/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const decide = async (id, approve) => { setBusy(id); try { await hrApi(`/helping/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve }) }); await load(); } catch (e) { toast(e.message); } setBusy(''); };
   const rows = data.recommendations || [];
   return (
     <div>
@@ -1016,7 +1017,7 @@ function InnovationManage({ idea, onDone }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const IMPACT_PTS = { small: 250, moderate: 500, significant: 1000, major: 2500, exceptional: 5000 };
-  const save = async () => { setBusy(true); try { await hrApi(`/innovation/${idea.id}/status`, { method: 'POST', body: JSON.stringify({ status, impact: impact || undefined, reviewNote: note }) }); onDone(); } catch (e) { alert(e.message); setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/innovation/${idea.id}/status`, { method: 'POST', body: JSON.stringify({ status, impact: impact || undefined, reviewNote: note }) }); onDone(); } catch (e) { toast(e.message); setBusy(false); } };
   return (
     <div className="mt-3 pt-3 border-t border-slate-100 space-y-2.5">
       {idea.problem && <div className="text-[12px]"><b className="text-slate-600">Problem:</b> <span className="text-slate-500">{idea.problem}</span></div>}
@@ -1139,12 +1140,12 @@ function StoreAdmin() {
   const [busy, setBusy] = useState('');
   const load = () => { hrApi('/store/admin/catalogue').then((r) => setItems(r.items || [])).catch(() => setItems([])); hrApi('/store/admin/redemptions').then((r) => setReds(r.redemptions || [])).catch(() => setReds([])); };
   useEffect(() => { load(); }, []);
-  const saveItem = async () => { if (!f.name.trim() || !Number(f.cost)) { alert('Name and cost required.'); return; } setBusy('add'); try { if (editing) await hrApi(`/store/admin/catalogue/${editing}`, { method: 'PUT', body: JSON.stringify(f) }); else await hrApi('/store/admin/catalogue', { method: 'POST', body: JSON.stringify(f) }); setF(blank); setEditing(null); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const saveItem = async () => { if (!f.name.trim() || !Number(f.cost)) { toast('Name and cost required.'); return; } setBusy('add'); try { if (editing) await hrApi(`/store/admin/catalogue/${editing}`, { method: 'PUT', body: JSON.stringify(f) }); else await hrApi('/store/admin/catalogue', { method: 'POST', body: JSON.stringify(f) }); setF(blank); setEditing(null); load(); } catch (e) { toast(e.message); } setBusy(''); };
   const startEdit = (it) => { setEditing(it.id); setF({ name: it.name, vendor: it.vendor || '', category: it.category || 'voucher', icon: it.icon || '🎁', imageUrl: it.imageUrl || '', cost: it.cost, rupeeValue: it.rupeeValue || '', stock: it.stock == null ? '' : it.stock, description: it.description || '' }); };
-  const uploadImg = async (file) => { if (!file) return; setUploading(true); try { const url = await uploadToImageKit(file); setF((s) => ({ ...s, imageUrl: url })); } catch (e) { alert('Upload failed: ' + e.message); } setUploading(false); };
-  const toggle = async (it) => { try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'PUT', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { alert(e.message); } };
-  const del = async (it) => { if (!window.confirm(`Delete "${it.name}"?`)) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { alert(e.message); } };
-  const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = window.prompt('Voucher code / fulfilment note (optional):') || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { alert(e.message); } setBusy(''); };
+  const uploadImg = async (file) => { if (!file) return; setUploading(true); try { const url = await uploadToImageKit(file); setF((s) => ({ ...s, imageUrl: url })); } catch (e) { toast('Upload failed: ' + e.message); } setUploading(false); };
+  const toggle = async (it) => { try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'PUT', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { toast(e.message); } };
+  const del = async (it) => { if (!window.confirm(`Delete "${it.name}"?`)) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = window.prompt('Voucher code / fulfilment note (optional):') || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { toast(e.message); } setBusy(''); };
   const inp = 'rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]';
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
@@ -1291,7 +1292,7 @@ function AllRecognition({ onOpenEmployee }) {
   const sel = 'border border-slate-300 rounded-lg px-2.5 py-1.5 text-[13px]';
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const [autoBusy, setAutoBusy] = useState(false);
-  const runAuto = async () => { setAutoBusy(true); try { await hrApi('/badges/run-auto', { method: 'POST', body: '{}' }); await load(); alert('Milestone badges updated.'); } catch (e) { alert(e.message); } setAutoBusy(false); };
+  const runAuto = async () => { setAutoBusy(true); try { await hrApi('/badges/run-auto', { method: 'POST', body: '{}' }); await load(); toast('Milestone badges updated.'); } catch (e) { toast(e.message); } setAutoBusy(false); };
   return (
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -1382,12 +1383,12 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
       if (kind === 'praise' && specialKey) {
         const sp = specials.find((s) => s.key === specialKey);
         const r = await hrApi('/rewards/award', { method: 'POST', body: JSON.stringify({ employeeId: emp.id, ruleKey: specialKey, amount: (sp && sp.pointsMax && specialAmount) ? Number(specialAmount) : undefined, title: title.trim() || (sp && sp.name), reason: note.trim() }) });
-        if (r.pendingApproval) alert(`Sent for approval — this ${r.points}-point reward needs sign-off.`);
+        if (r.pendingApproval) toast(`Sent for approval — this ${r.points}-point reward needs sign-off.`);
         onSaved(); return;
       }
       if (!title.trim() && !note.trim() && !(kind === 'praise' && badgeId)) { setErr('Add a badge, title, or note.'); setBusy(false); return; }
       const r = await hrApi(`/employees/${emp.id}/performance`, { method: 'POST', body: JSON.stringify({ kind, title: title.trim(), note: note.trim(), date, badgeId: kind === 'praise' ? badgeId : undefined, appreciationKey: (kind === 'praise' && !badgeId) ? appreciationKey : undefined, announce: kind === 'praise' ? announce : false }) });
-      if (r.pendingApproval) alert(`Sent for approval — this ${r.pointsPending}-point award needs HR/senior sign-off before the points are credited.`);
+      if (r.pendingApproval) toast(`Sent for approval — this ${r.pointsPending}-point award needs HR/senior sign-off before the points are credited.`);
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
   };
@@ -1617,7 +1618,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [readsFor, setReadsFor] = useState(null);       // { msgId, seen, notSeen } popup
   const saveEdit = async () => {
     if (!editingMsg || !editingMsg.body.trim()) { setEditingMsg(null); return; }
-    try { const r = await hrApi(`/chat/messages/${editingMsg.id}`, { method: 'PATCH', body: JSON.stringify({ body: editingMsg.body.trim() }) }); setMessages((prev) => prev.map((m) => m.id === editingMsg.id ? { ...m, body: r.message.body, editedAt: r.message.editedAt } : m)); } catch (e) { alert(e.message); }
+    try { const r = await hrApi(`/chat/messages/${editingMsg.id}`, { method: 'PATCH', body: JSON.stringify({ body: editingMsg.body.trim() }) }); setMessages((prev) => prev.map((m) => m.id === editingMsg.id ? { ...m, body: r.message.body, editedAt: r.message.editedAt } : m)); } catch (e) { toast(e.message); }
     setEditingMsg(null);
   };
   const deleteMsg = async (m) => {
@@ -1627,10 +1628,10 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
       await loadConversations();               // refresh sidebar preview now
       setTimeout(() => loadConversations(), 600); // and once more after the write settles
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message); }
   };
   const openReads = async (m) => {
-    try { const r = await hrApi(`/chat/messages/${m.id}/reads`); setReadsFor({ msgId: m.id, seen: r.seen || [], notSeen: r.notSeen || [] }); } catch (e) { alert(e.message); }
+    try { const r = await hrApi(`/chat/messages/${m.id}/reads`); setReadsFor({ msgId: m.id, seen: r.seen || [], notSeen: r.notSeen || [] }); } catch (e) { toast(e.message); }
   };
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -1674,7 +1675,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   };
   const startDm = async (u) => {
     setShowNew(false); setQ('');
-    try { const r = await hrApi(`/chat/dm/${u.id}`, { method: 'POST', body: '{}' }); await openConv({ id: r.conversation.id, other: r.conversation.other }); loadConversations(); } catch (e) { alert(e.message); }
+    try { const r = await hrApi(`/chat/dm/${u.id}`, { method: 'POST', body: '{}' }); await openConv({ id: r.conversation.id, other: r.conversation.other }); loadConversations(); } catch (e) { toast(e.message); }
   };
   // After a team/group is created (or members changed) → refresh.
   const afterCreate = () => { setCreateModal(null); loadTeams(); };
@@ -1682,7 +1683,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   // Phase 3: react to a message (optimistic toggle).
   const react = async (msgId, emoji) => {
     setReactPickerFor(null);
-    try { const r = await hrApi(`/chat/messages/${msgId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }); setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, reactions: r.reactions } : m)); } catch (e) { alert(e.message); }
+    try { const r = await hrApi(`/chat/messages/${msgId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) }); setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, reactions: r.reactions } : m)); } catch (e) { toast(e.message); }
   };
   // Send a typing heartbeat (throttled to once per 3s).
   const pingTyping = () => { if (!active) return; const now = Date.now(); if (now - typingSentRef.current > 3000) { typingSentRef.current = now; hrApi(`/chat/conversations/${active.id}/typing`, { method: 'POST', body: '{}' }).catch(() => {}); } };
@@ -1757,7 +1758,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
 
   // Quick "mark done" from a task card in #task chat.
   const markTaskDone = async (taskId) => {
-    try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ stage: 'completed' }) }); alert('Task marked done ✓'); } catch (e) { alert(e.message); }
+    try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ stage: 'completed' }) }); toast('Task marked done ✓'); } catch (e) { toast(e.message); }
   };
 
   const send = async () => {
@@ -1769,7 +1770,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body, replyToId: rid }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
-    } catch (e) { alert(e.message); setEditor(body); }
+    } catch (e) { toast(e.message); setEditor(body); }
     setSending(false);
   };
   // Convert the contentEditable HTML into our storage markers (**bold**, _italic_).
@@ -1809,13 +1810,13 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       const recent = messages.slice(-8).map((m) => ({ me: m.senderId === me.id, name: m.senderName, body: m.body }));
       const r = await hrApi('/chat/ai/suggest-reply', { method: 'POST', body: JSON.stringify({ recent }) });
       setAiSuggests(r.suggestions || []);
-    } catch (e) { alert(e.message || 'AI failed'); }
+    } catch (e) { toast(e.message || 'AI failed'); }
     setAiBusy('');
   };
   // AI: retone the typed message.
   const aiRetone = async (mode) => {
     if (!text.trim()) return; setAiBusy(mode);
-    try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setEditor(r.text); } catch (e) { alert(e.message || 'AI failed'); }
+    try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setEditor(r.text); } catch (e) { toast(e.message || 'AI failed'); }
     setAiBusy('');
   };
   const sendFile = async (file) => {
@@ -1827,7 +1828,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: up.url, fileId: up.fileId, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
-    } catch (e) { alert('Upload failed: ' + e.message); }
+    } catch (e) { toast('Upload failed: ' + e.message); }
     setUploading(false);
   };
 
@@ -2249,14 +2250,14 @@ function ChatGroupModal({ mode, directory, onClose, onDone }) {
   const shown = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
   const needMembers = isTeam || visibility === 'private';
   const submit = async () => {
-    if (!name.trim()) { alert('Name is required.'); return; }
+    if (!name.trim()) { toast('Name is required.'); return; }
     setBusy(true);
     try {
       const memberIds = [...selected];
       if (isTeam) await hrApi('/chat/teams', { method: 'POST', body: JSON.stringify({ name: name.trim(), memberIds }) });
       else await hrApi(`/chat/teams/${mode.teamId}/channels`, { method: 'POST', body: JSON.stringify({ name: name.trim(), visibility, memberIds }) });
       onDone();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
@@ -2317,12 +2318,12 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
   useEffect(() => { load(); }, []);
   const memberIds = new Set((members || []).map((m) => m.id));
   const addable = directory.filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
-  const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
-  const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { alert(e.message); } setBusy(false); };
+  const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
+  const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
   const deleteTeam = async () => {
     if (!window.confirm(`Delete the team "${team.teamName}" and ALL its groups & messages? This cannot be undone.`)) return;
     setBusy(true);
-    try { await hrApi(`/chat/teams/${team.teamId}`, { method: 'DELETE' }); (onDeleted || onDone)(); } catch (e) { alert(e.message); setBusy(false); }
+    try { await hrApi(`/chat/teams/${team.teamId}`, { method: 'DELETE' }); (onDeleted || onDone)(); } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
@@ -2372,12 +2373,12 @@ function ChatToTaskModal({ message, directory, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
   const create = async () => {
-    if (!title.trim()) { alert('Add a task title.'); return; }
+    if (!title.trim()) { toast('Add a task title.'); return; }
     setBusy(true);
     try {
       await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: title.trim(), description: `From chat: "${String(message.body || '').slice(0, 500)}"${message.senderName ? ` — ${message.senderName}` : ''}`, assigneeId: assigneeId || undefined }) });
-      alert('Task created ✓'); onDone();
-    } catch (e) { alert(e.message); setBusy(false); }
+      toast('Task created ✓'); onDone();
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
@@ -2411,7 +2412,7 @@ function ChatForwardModal({ message, directory, conversations, onClose, onDone }
   const [busy, setBusy] = useState(false);
   const fwd = async (target) => {
     setBusy(true);
-    try { await hrApi(`/chat/messages/${message.id}/forward`, { method: 'POST', body: JSON.stringify(target) }); alert('Forwarded ✓'); onDone(); } catch (e) { alert(e.message); setBusy(false); }
+    try { await hrApi(`/chat/messages/${message.id}/forward`, { method: 'POST', body: JSON.stringify(target) }); toast('Forwarded ✓'); onDone(); } catch (e) { toast(e.message); setBusy(false); }
   };
   const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
   return (
@@ -2753,7 +2754,7 @@ function RichText({ value, onSave, placeholder, taskTitle }) {
   const runAi = async (mode) => {
     setAiOpen(false); setAiBusy(mode); setAiResult(null);
     try { const r = await hrApi('/tasks/ai/description', { method: 'POST', body: JSON.stringify({ title: taskTitle || '', text: editor.getHTML(), mode }) }); setAiResult({ text: r.text, mode: r.mode }); }
-    catch (e) { alert(e.message || 'AI request failed.'); }
+    catch (e) { toast(e.message || 'AI request failed.'); }
     setAiBusy('');
   };
   const acceptAi = () => { const html = aiResult.text.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join(''); editor.commands.setContent(html, false); lastSaved.current = html; if (onSave) onSave(html); setAiResult(null); };
@@ -2862,8 +2863,8 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   useEffect(() => { load(); }, [taskId]);
   const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
   const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); setNoteSuggestions([]); load(); };
-  const suggestNotes = async () => { setNoteAiBusy('suggest'); try { const t = data && data.task; const r = await hrApi('/tasks/ai/suggest-notes', { method: 'POST', body: JSON.stringify({ title: t && t.title, description: t && t.description, status: t && t.stage }) }); setNoteSuggestions(r.suggestions || []); } catch (e) { alert(e.message || 'AI failed'); } setNoteAiBusy(''); };
-  const retoneNote = async (mode) => { if (!note.trim()) return; setNoteAiBusy(mode); try { const r = await hrApi('/tasks/ai/retone-note', { method: 'POST', body: JSON.stringify({ text: note, mode }) }); if (r.text) setNote(r.text); } catch (e) { alert(e.message || 'AI failed'); } setNoteAiBusy(''); };
+  const suggestNotes = async () => { setNoteAiBusy('suggest'); try { const t = data && data.task; const r = await hrApi('/tasks/ai/suggest-notes', { method: 'POST', body: JSON.stringify({ title: t && t.title, description: t && t.description, status: t && t.stage }) }); setNoteSuggestions(r.suggestions || []); } catch (e) { toast(e.message || 'AI failed'); } setNoteAiBusy(''); };
+  const retoneNote = async (mode) => { if (!note.trim()) return; setNoteAiBusy(mode); try { const r = await hrApi('/tasks/ai/retone-note', { method: 'POST', body: JSON.stringify({ text: note, mode }) }); if (r.text) setNote(r.text); } catch (e) { toast(e.message || 'AI failed'); } setNoteAiBusy(''); };
   const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
   const toggleSub = async (s) => { await hrApi(`/tasks/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
   const onPickFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; setUpErr(''); setUploading(true); uploadTaskFile(taskId, f, () => { setUploading(false); load(); }, (m) => { setUploading(false); setUpErr(m); }); e.target.value = ''; };
@@ -2881,7 +2882,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
           </div>
           <div className="flex items-center gap-1">
-            {data.canDelete && <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } catch (e) { alert(e.message); } } }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500" title="Delete task"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>}
+            {data.canDelete && <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } catch (e) { toast(e.message); } } }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500" title="Delete task"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>}
             <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-100 text-slate-400" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>
           </div>
         </div>
@@ -2896,7 +2897,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                     <div key={a.id} className="group/av relative flex items-center gap-1.5 bg-slate-50 rounded-full pl-0.5 pr-2 py-0.5 border border-slate-200">
                       <TAvatar person={a} size={24} />
                       <span className="text-[12px] font-semibold text-slate-700 max-w-[90px] truncate">{titleCase(a.name)}</span>
-                      <button onClick={() => { const cur = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []); if (cur.length <= 1) { alert('A task needs at least one assignee. Add someone else first, then remove this person.'); return; } patch({ toggleAssignee: a.id }); }} title="Remove" className="text-slate-300 hover:text-red-500 text-[13px] font-bold leading-none">×</button>
+                      <button onClick={() => { const cur = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []); if (cur.length <= 1) { toast('A task needs at least one assignee. Add someone else first, then remove this person.'); return; } patch({ toggleAssignee: a.id }); }} title="Remove" className="text-slate-300 hover:text-red-500 text-[13px] font-bold leading-none">×</button>
                     </div>
                   ))}
                   <AssigneePicker multi compact placeholder="+ Add"
@@ -3616,7 +3617,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const firstName = titleCase(String(user.name || '').split(' ')[0] || 'there');
   const pad = (n) => String(n).padStart(2, '0');
   const t12 = (hhmm) => { if (!hhmm) return ''; let [h, m] = hhmm.split(':').map(Number); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${pad(h)}:${pad(m)} ${ap}`; };
-  const clockAction = async (action) => { setBusy(true); try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action }) }); await loadClock(); } catch (e) { alert(e.message); } finally { setBusy(false); } };
+  const clockAction = async (action) => { setBusy(true); try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action }) }); await loadClock(); } catch (e) { toast(e.message); } finally { setBusy(false); } };
 
   const quote = dailyQuote ? dailyQuote.quote : 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
   const quoteAuthor = dailyQuote ? dailyQuote.author : 'Oliver Wendell Holmes';
@@ -3633,13 +3634,13 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const fmtDay = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
   const weekday = (d) => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' }); } catch { return ''; } };
 
-  const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { alert(e.message); } };
-  const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { alert(e.message); } };
-  const decideExpense = async (expenseId, decision) => { try { await hrApi(`/expenses/${expenseId}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); loadReviews(); } catch (e) { alert(e.message); } };
-  const markOnbTaskDone = async (taskId) => { try { await hrApi(`/onboarding-task/${taskId}/done`, { method: 'POST', body: '{}' }); loadReviews(); } catch (e) { alert(e.message); } };
-  const confirmJoin = async (candidateId, joined, reason) => { try { await hrApi(`/candidates/${candidateId}/join-confirm`, { method: 'POST', body: JSON.stringify({ joined, reason: reason || '' }) }); loadReviews(); } catch (e) { alert(e.message); } };
-  const saveLateCheck = async (date, updates) => { try { await hrApi(`/me/late-check/${date}`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateItem(null); loadReviews(); } catch (e) { alert(e.message); } };
-  const saveLateCheckHr = async (date, updates) => { try { await hrApi(`/late-check/${date}/hr`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateHrItem(null); loadReviews(); } catch (e) { alert(e.message); } };
+  const decide = async (id, approve, note) => { try { await hrApi(`/me/leave/${id}/decide`, { method: 'POST', body: JSON.stringify({ approve, note: note || '' }) }); setDecideItem(null); loadReviews(); loadLeave(); } catch (e) { toast(e.message); } };
+  const markAttendance = async (candidateId, interviewId, attended) => { try { await hrApi(`/me/interview/${candidateId}/${interviewId}/attendance`, { method: 'POST', body: JSON.stringify({ attended }) }); loadReviews(); } catch (e) { toast(e.message); } };
+  const decideExpense = async (expenseId, decision) => { try { await hrApi(`/expenses/${expenseId}/decide`, { method: 'POST', body: JSON.stringify({ decision, reason: '' }) }); loadReviews(); } catch (e) { toast(e.message); } };
+  const markOnbTaskDone = async (taskId) => { try { await hrApi(`/onboarding-task/${taskId}/done`, { method: 'POST', body: '{}' }); loadReviews(); } catch (e) { toast(e.message); } };
+  const confirmJoin = async (candidateId, joined, reason) => { try { await hrApi(`/candidates/${candidateId}/join-confirm`, { method: 'POST', body: JSON.stringify({ joined, reason: reason || '' }) }); loadReviews(); } catch (e) { toast(e.message); } };
+  const saveLateCheck = async (date, updates) => { try { await hrApi(`/me/late-check/${date}`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateItem(null); loadReviews(); } catch (e) { toast(e.message); } };
+  const saveLateCheckHr = async (date, updates) => { try { await hrApi(`/late-check/${date}/hr`, { method: 'POST', body: JSON.stringify({ updates }) }); setLateHrItem(null); loadReviews(); } catch (e) { toast(e.message); } };
 
   const ORNG = 'linear-gradient(90deg,#FF6A00,#FF4500)';
   // Uniform typography for the dashboard cards: a prominent box title, a black
@@ -4458,7 +4459,7 @@ function LateCheckModal({ item, onClose, onSave }) {
   const setRow = (idx, patch) => setRows((a) => a.map((r, i) => i === idx ? { ...r, ...patch } : r));
   const save = async () => {
     const updates = rows.filter((r) => r.status).map((r) => ({ id: r.id, status: r.status, notes: r.notes }));
-    if (!updates.length) { alert('Set a status for at least one person.'); return; }
+    if (!updates.length) { toast('Set a status for at least one person.'); return; }
     setBusy(true); try { await onSave(updates); } finally { setBusy(false); }
   };
   return (
@@ -4507,7 +4508,7 @@ function LateCheckHrModal({ item, onClose, onSave }) {
   const setRow = (idx, patch) => setRows((a) => a.map((r, i) => i === idx ? { ...r, ...patch } : r));
   const save = async () => {
     const updates = rows.filter((r) => r.hrStatus).map((r) => ({ id: r.id, status: r.hrStatus, notes: r.hrNotes }));
-    if (!updates.length) { alert('Set a status for at least one person.'); return; }
+    if (!updates.length) { toast('Set a status for at least one person.'); return; }
     setBusy(true); try { await onSave(updates); } finally { setBusy(false); }
   };
   return (
@@ -4956,7 +4957,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
                   <div className="text-sm font-bold text-[#050A1F] flex items-center gap-1.5">{a.pinned && <span title="Pinned">📌</span>}{a.title}{a.audience && a.audience !== 'all' && <span className="text-[9px] font-bold rounded px-1.5 py-0.5 bg-blue-100 text-blue-600">{a.audience}</span>}</div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] text-slate-400">{a.authorName} · {new Date(a.createdAt).toLocaleDateString()}</span>
-                    {annCanPost && <button title="Remove" onClick={async () => { if (!window.confirm('Remove this announcement?')) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { alert(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
+                    {annCanPost && <button title="Remove" onClick={async () => { if (!window.confirm('Remove this announcement?')) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { toast(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
                   </div>
                 </div>
                 {a.body && <div className="text-xs text-slate-500 mt-0.5 whitespace-pre-wrap">{a.body}</div>}
@@ -5171,7 +5172,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
         const newItems = [...((mail.missed) || []), ...((mail.awaiting) || [])];
         if (newItems.length === 0) return null;
         const overdueCount = (mail.missed || []).length;
-        const dismiss = async (emailId) => { try { await hrApi(`/unread-mail/${encodeURIComponent(emailId)}/dismiss`, { method: 'POST' }); setMail((prev) => prev ? { ...prev, awaiting: (prev.awaiting || []).filter((x) => x.emailId !== emailId), missed: (prev.missed || []).filter((x) => x.emailId !== emailId) } : prev); } catch (e) { alert(e.message); } };
+        const dismiss = async (emailId) => { try { await hrApi(`/unread-mail/${encodeURIComponent(emailId)}/dismiss`, { method: 'POST' }); setMail((prev) => prev ? { ...prev, awaiting: (prev.awaiting || []).filter((x) => x.emailId !== emailId), missed: (prev.missed || []).filter((x) => x.emailId !== emailId) } : prev); } catch (e) { toast(e.message); } };
         return (
           <div className="rounded-2xl border border-blue-200 bg-white p-4">
             <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -5434,7 +5435,7 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, scope: s
   };
   const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
-  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { alert(e.message); } };
+  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { toast(e.message); } };
   const statusPill = (s) => {
     if (s === 'published') return { label: 'Live', cls: 'bg-green-100 text-green-700' };
     if (s === 'paused') return { label: 'Paused', cls: 'bg-amber-100 text-amber-700' };
@@ -5511,7 +5512,7 @@ function AssignHrModal({ job, onClose, onSaved }) {
   const [q, setQ] = useState('');
   useEffect(() => { hrApi('/employees?hrDept=1').then((rows) => setEmps(rows || [])).catch(() => {}); }, []);
   const toggle = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
-  const save = async () => { setBusy(true); try { await hrApi(`/job-posts/${job._id}/assigned-hr`, { method: 'PUT', body: JSON.stringify({ assignedHrIds: sel }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/job-posts/${job._id}/assigned-hr`, { method: 'PUT', body: JSON.stringify({ assignedHrIds: sel }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
   const filtered = emps.filter((e) => !q || e.name.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
@@ -5845,7 +5846,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const toggleSel = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const allShownSelected = paged.length > 0 && paged.every((c) => sel.includes(c._id));
   const toggleAll = () => setSel(allShownSelected ? sel.filter((id) => !paged.some((c) => c._id === id)) : Array.from(new Set([...sel, ...paged.map((c) => c._id)])));
-  const delCandidate = async (id) => { if (!window.confirm('Delete this candidate permanently?')) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { alert(e.message); } };
+  const delCandidate = async (id) => { if (!window.confirm('Delete this candidate permanently?')) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { toast(e.message); } };
 
   const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
   return (
@@ -5997,7 +5998,7 @@ function RejReasonModal({ candidate, jobTitle, onClose, onSaved }) {
     if (!reason.trim()) return;
     setBusy(true);
     try { await hrApi(`/candidates/${candidate._id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
@@ -6144,8 +6145,8 @@ function OnboardingListPage({ isAdmin, onOpenCandidate }) {
   const [tab, setTab] = useState('active'); // active | completed
   const load = () => hrApi(`/onboarding${tab === 'completed' ? '?view=completed' : ''}`).then((r) => setRows(r.candidates || [])).catch((e) => setErr(e.message));
   useEffect(() => { setRows(null); load(); }, [tab]);
-  const markComplete = async (c) => { if (!window.confirm(`Mark ${c.name}'s onboarding as complete? They'll move to the Completed tab.`)) return; try { await hrApi(`/onboarding/${c._id || c.id}/complete`, { method: 'POST', body: '{}' }); load(); } catch (e) { alert(e.message); } };
-  const reopen = async (c) => { try { await hrApi(`/onboarding/${c._id || c.id}/reopen`, { method: 'POST', body: '{}' }); load(); } catch (e) { alert(e.message); } };
+  const markComplete = async (c) => { if (!window.confirm(`Mark ${c.name}'s onboarding as complete? They'll move to the Completed tab.`)) return; try { await hrApi(`/onboarding/${c._id || c.id}/complete`, { method: 'POST', body: '{}' }); load(); } catch (e) { toast(e.message); } };
+  const reopen = async (c) => { try { await hrApi(`/onboarding/${c._id || c.id}/reopen`, { method: 'POST', body: '{}' }); load(); } catch (e) { toast(e.message); } };
   const runDiag = () => { setShowDiag(true); hrApi('/onboarding/debug').then(setDiag).catch((e) => setErr(e.message)); };
 
   const daysTo = (d) => { try { const ist = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return Math.round((new Date(d + 'T00:00:00') - new Date(ist + 'T00:00:00')) / 86400000); } catch { return null; } };
@@ -6688,7 +6689,7 @@ function OnbTaskRow({ task, candidateId, created, onChanged, onCreateEmployee })
   const [meetTime, setMeetTime] = useState((task.meta && task.meta.meetingTime) || '10:00');
   const [meetDate, setMeetDate] = useState((task.meta && task.meta.meetingDate) || '');
 
-  const call = async (body) => { setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/onboarding/task/${task.id}`, { method: 'POST', body: JSON.stringify(body) }); onChanged(r.task); } catch (e) { alert(e.message); } setBusy(false); };
+  const call = async (body) => { setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/onboarding/task/${task.id}`, { method: 'POST', body: JSON.stringify(body) }); onChanged(r.task); } catch (e) { toast(e.message); } setBusy(false); };
   const toggle = () => { if (task.createsEmployee && !task.done && !created) { onCreateEmployee(); return; } call({ done: !task.done }); };
   const [showKpi, setShowKpi] = useState(false);
 
@@ -6840,7 +6841,7 @@ function NotJoinedModal({ candidate, onClose, onSaved }) {
   const save = async () => {
     setBusy(true);
     try { await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'mark_not_joined', reason: reason.trim() }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
@@ -6866,10 +6867,10 @@ function HiredOfferModal({ candidate, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   const save = async () => {
-    if (!offered.trim()) return alert('Enter what we offered.');
+    if (!offered.trim()) return toast('Enter what we offered.');
     setBusy(true);
     try { await hrApi(`/candidates/${candidate._id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_hired_offer', candidateAsk: ask.trim(), offered: offered.trim(), note: note.trim() }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
@@ -6941,7 +6942,7 @@ function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
   const [newReason, setNewReason] = useState('');
   const addReason = async () => {
     const v = newReason.trim(); if (!v) return;
-    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setReason(v); setNewReason(''); setAddingReason(false); } catch (e) { alert(e.message); }
+    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setReason(v); setNewReason(''); setAddingReason(false); } catch (e) { toast(e.message); }
   };
   const [emps, setEmps] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -6958,7 +6959,7 @@ function BulkActionModal({ action, ids, jobs, stages, onClose, onDone }) {
       if (action === 'reject') body.reason = reason;
       await hrApi('/candidates/bulk', { method: 'POST', body: JSON.stringify(body) });
       onDone();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   const disabled = (action === 'move' && !stage) || (action === 'assign' && !recruiterId) || (action === 'reject' && !reason);
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
@@ -7365,7 +7366,7 @@ function StageRejectModal({ candidate, onClose, onDone }) {
     if (!finalReason) return;
     setBusy(true);
     try { await hrApi(`/candidates/${candidate._id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage: 'rejected', reason: finalReason }) }); onDone(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
@@ -7424,7 +7425,7 @@ function RecruitPipeline({ jobs, scope, onDetailOpen }) {
       } else if (updated && updated.stage) {
         setCands((cs) => cs.map((x) => x._id === c._id ? { ...x, stage: updated.stage } : x));
       }
-    } catch (e) { alert(e.message); load(); }
+    } catch (e) { toast(e.message); load(); }
   };
   if (!published.length) return <div className="bg-white rounded-2xl border border-slate-200/70 p-12 text-center text-slate-400 text-sm">Publish a job to see its pipeline.</div>;
   if (viewId) return <HrCandidateView candidateId={viewId} onBack={() => { setViewId(null); load(); }} />;
@@ -7570,7 +7571,7 @@ function MyInterviews() {
     hrApi('/my-schedule-requests').then((r) => setReqs(r.requests || [])).catch(() => {});
   };
   useEffect(() => { load(); }, []);
-  const confirmSlots = async (candidateId, slotIds) => { try { await hrApi(`/candidates/${candidateId}/self-schedule/confirm`, { method: 'POST', body: JSON.stringify({ slotIds }) }); load(); } catch (e) { alert(e.message); } };
+  const confirmSlots = async (candidateId, slotIds) => { try { await hrApi(`/candidates/${candidateId}/self-schedule/confirm`, { method: 'POST', body: JSON.stringify({ slotIds }) }); load(); } catch (e) { toast(e.message); } };
   // Jump to the candidate's Feedback tab and mark the interview completed.
   const completeFromPopup = (iv) => { setPartModal(null); setViewAction({ type: 'completeInterview', interviewId: iv.interviewId || iv.id }); setViewId(iv.candidateId); };
   if (viewId) return <HrCandidateView candidateId={viewId} initialTab={viewAction ? 'feedback' : undefined} initialAction={viewAction} onBack={() => { setViewId(null); setViewAction(null); load(); }} />;
@@ -7827,10 +7828,10 @@ function TemplateEditor({ tpl, onClose, onSaved }) {
   const [aiBusy, setAiBusy] = useState(false);
   useEffect(() => { hrApi('/template-variables').then(setVars).catch(() => setVars([])); }, []);
   const save = async () => {
-    if (!name.trim()) { alert('Give the template a name.'); return; }
+    if (!name.trim()) { toast('Give the template a name.'); return; }
     setBusy(true);
     try { await hrApi('/email-templates', { method: 'POST', body: JSON.stringify({ id: tpl.id, name, subject, body }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   const insertVar = (key) => { setBody((b) => `${b || ''} {{${key}}}`); setShowVars(false); };
   const insertSubjectVar = (key) => { setSubject((s) => `${s || ''}{{${key}}}`); setShowSubjVars(false); };
@@ -7842,7 +7843,7 @@ function TemplateEditor({ tpl, onClose, onSaved }) {
       if (r.subject) setSubject(r.subject);
       if (r.body) setBody(r.body);
       setShowAi(false); setAiPrompt('');
-    } catch (e) { alert(e.message); } finally { setAiBusy(false); }
+    } catch (e) { toast(e.message); } finally { setAiBusy(false); }
   };
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   const VarMenu = ({ onPick }) => (
@@ -7983,10 +7984,10 @@ function SignatureEditor({ sig, onClose, onSaved }) {
   const [body, setBody] = useState(sig.body || '');
   const [busy, setBusy] = useState(false);
   const save = async () => {
-    if (!name.trim()) { alert('Give the signature a name.'); return; }
+    if (!name.trim()) { toast('Give the signature a name.'); return; }
     setBusy(true);
     try { await hrApi('/signatures', { method: 'POST', body: JSON.stringify({ id: sig.id, name, body }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   return (
@@ -8109,7 +8110,7 @@ function MyProfilePage({ user, onUpdated }) {
   const persistAvatar = async (file) => {
     setAvatarBusy(true);
     try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); set({ avatar: r.url }); onUpdated && onUpdated(); }
-    catch (e) { alert(e.message); } finally { setAvatarBusy(false); }
+    catch (e) { toast(e.message); } finally { setAvatarBusy(false); }
   };
   // Pick → if the image isn't square, open the crop dialog; a square image
   // uploads directly. Matches the Sales CRM behavior.
@@ -8117,7 +8118,7 @@ function MyProfilePage({ user, onUpdated }) {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { alert('Image too large (max 5MB).'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast('Image too large (max 5MB).'); return; }
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
@@ -8134,12 +8135,12 @@ function MyProfilePage({ user, onUpdated }) {
     if (!window.confirm('Remove your profile photo?')) return;
     setAvatarBusy(true);
     try { await hrApi('/profile-me/avatar', { method: 'DELETE' }); set({ avatar: '' }); onUpdated && onUpdated(); }
-    catch (e) { alert(e.message); } finally { setAvatarBusy(false); }
+    catch (e) { toast(e.message); } finally { setAvatarBusy(false); }
   };
   const save = async () => {
     setBusy(true); setSaved(false);
     try { await hrApi('/profile-me', { method: 'PUT', body: JSON.stringify({ phone: p.phone, avatar: p.avatar, birthday: p.birthday, maritalStatus: p.maritalStatus, anniversary: p.anniversary }) }); setSaved(true); onUpdated && onUpdated(); }
-    catch (e) { alert(e.message); } finally { setBusy(false); }
+    catch (e) { toast(e.message); } finally { setBusy(false); }
   };
   const L = 'text-[11px] font-bold text-slate-500 mb-1';
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
@@ -8266,10 +8267,10 @@ function ResetPasswordModal({ user, onClose, onDone }) {
   const [pw, setPw] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async () => {
-    if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+    if (pw.length < 8) { toast('Password must be at least 8 characters.'); return; }
     setBusy(true);
-    try { await hrApi(`/users/${user._id}/reset-password`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) }); alert('Password reset.'); onDone(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    try { await hrApi(`/users/${user._id}/reset-password`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) }); toast('Password reset.'); onDone(); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4" onClick={onClose}>
@@ -8307,11 +8308,11 @@ function RecruitmentMailbox({ isAdmin, setErr }) {
       window.addEventListener('message', onMsg);
       // Fallback: poll in case the popup can't postMessage back.
       const poll = setInterval(() => { if (w && w.closed) { clearInterval(poll); setTimeout(load, 500); } }, 1200);
-    } catch (e) { setErr ? setErr(e.message) : alert(e.message); }
+    } catch (e) { setErr ? setErr(e.message) : toast(e.message); }
   };
   const disconnect = async (mb) => {
     if (!window.confirm(`Unlink ${mb.email}? Recruiters will no longer be able to use this inbox.`)) return;
-    try { await hrApi(`/mailboxes/${mb.id}/disconnect`, { method: 'POST' }); load(); } catch (e) { setErr ? setErr(e.message) : alert(e.message); }
+    try { await hrApi(`/mailboxes/${mb.id}/disconnect`, { method: 'POST' }); load(); } catch (e) { setErr ? setErr(e.message) : toast(e.message); }
   };
   if (!data) return <Empty>Loading…</Empty>;
   const boxes = data.mailboxes || [];
@@ -8421,7 +8422,7 @@ function OnboardingTemplateEditor() {
   const [tasks, setTasks] = useState(null);
   const [saved, setSaved] = useState(false);
   useEffect(() => { hrApi('/onboarding-template').then((r) => setTasks(r.tasks || [])).catch(() => setTasks([])); }, []);
-  const save = async (next) => { setSaved(false); try { await hrApi('/onboarding-template', { method: 'PUT', body: JSON.stringify({ tasks: next }) }); setTasks(next); setSaved(true); } catch (e) { alert(e.message); } };
+  const save = async (next) => { setSaved(false); try { await hrApi('/onboarding-template', { method: 'PUT', body: JSON.stringify({ tasks: next }) }); setTasks(next); setSaved(true); } catch (e) { toast(e.message); } };
   if (!tasks) return <div className="text-slate-400 text-sm">Loading…</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
@@ -8665,7 +8666,7 @@ function HrSettingsTab({ isAdmin, setErr }) {
     hrApi('/settings').then(setS).catch(() => {});
     hrApi('/api-usage').then((r) => setUsage(r.usage || {})).catch(() => setUsage({}));
   }, []);
-  const toggle = async (v) => { setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ autoScore: v }) }); setS((x) => ({ ...x, autoScore: r.autoScore })); setSaved(true); } catch (e) { alert(e.message); } };
+  const toggle = async (v) => { setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ autoScore: v }) }); setS((x) => ({ ...x, autoScore: r.autoScore })); setSaved(true); } catch (e) { toast(e.message); } };
   const providers = [['anthropic', 'Claude (Anthropic)'], ['openai', 'OpenAI (email drafts)']];
   if (!s) return <div className="text-slate-400 text-sm">Loading…</div>;
   return (
@@ -8877,8 +8878,8 @@ function HrCareersTab() {
   // not the current admin origin (people.qtonix.com).
   const base = (careersDomain || window.location.origin).replace(/\/$/, '');
   const publicUrl = `${base}/`;
-  const save = async () => { setBusy(true); setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ careers: { title: c.title, description: c.description, logo: c.logo } }) }); setC(r.careers); setSaved(true); } catch (e) { alert(e.message); } finally { setBusy(false); } };
-  const uploadLogo = async (file) => { if (!file) return; try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); setC((x) => ({ ...x, logo: r.url })); } catch (e) { alert(e.message); } };
+  const save = async () => { setBusy(true); setSaved(false); try { const r = await hrApi('/settings', { method: 'PUT', body: JSON.stringify({ careers: { title: c.title, description: c.description, logo: c.logo } }) }); setC(r.careers); setSaved(true); } catch (e) { toast(e.message); } finally { setBusy(false); } };
+  const uploadLogo = async (file) => { if (!file) return; try { const base64 = await fileToBase64(file); const r = await hrApi('/profile-me/avatar', { method: 'POST', body: JSON.stringify({ base64, fileName: file.name }) }); setC((x) => ({ ...x, logo: r.url })); } catch (e) { toast(e.message); } };
   const L = 'text-[11px] font-bold text-slate-500 mb-1';
   const inp2 = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm';
   return (
@@ -8938,7 +8939,7 @@ function HrCareersSeo() {
   const [cs, setCs] = useState({ title: '', description: '', image: '' });
   const [busy, setBusy] = useState('');
   const [savedFlash, setSavedFlash] = useState('');
-  const load = () => hrApi('/seo/jobs').then((r) => { setData(r); setCs(r.careersSeo || { title: '', description: '' }); }).catch((e) => alert(e.message));
+  const load = () => hrApi('/seo/jobs').then((r) => { setData(r); setCs(r.careersSeo || { title: '', description: '' }); }).catch((e) => toast(e.message));
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
   const flash = (id) => { setSavedFlash(id); setTimeout(() => setSavedFlash(''), 1800); };
@@ -8947,13 +8948,13 @@ function HrCareersSeo() {
   const counter = (v, max) => { const n = (v || '').length; const over = n > max; return <span className={`text-[11px] font-semibold ${over ? 'text-red-500' : n > max * 0.9 ? 'text-orange-500' : 'text-slate-400'}`}>{n} / {max}</span>; };
   const host = (() => { try { return new URL(window.location.origin).host; } catch { return 'qtonix.com'; } })();
 
-  const saveCareers = async () => { setBusy('careers'); try { const r = await hrApi('/seo/careers', { method: 'PUT', body: JSON.stringify(cs) }); setCs(r); flash('careers'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
-  const genCareers = async () => { setBusy('careers-ai'); try { const r = await hrApi('/seo/careers/generate', { method: 'POST', body: '{}' }); setCs((x) => ({ ...x, title: r.title, description: r.description, keywords: r.keywords || x.keywords })); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const saveCareers = async () => { setBusy('careers'); try { const r = await hrApi('/seo/careers', { method: 'PUT', body: JSON.stringify(cs) }); setCs(r); flash('careers'); } catch (e) { toast(e.message); } finally { setBusy(''); } };
+  const genCareers = async () => { setBusy('careers-ai'); try { const r = await hrApi('/seo/careers/generate', { method: 'POST', body: '{}' }); setCs((x) => ({ ...x, title: r.title, description: r.description, keywords: r.keywords || x.keywords })); if (!r.ai) toast('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { toast(e.message); } finally { setBusy(''); } };
 
   const setJob = (id, patch) => setData((d) => ({ ...d, jobs: d.jobs.map((j) => j.id === id ? { ...j, ...patch } : j) }));
-  const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription, seoKeywords: job.seoKeywords || [] }) }); flash('job-' + job.id); } catch (e) { alert(e.message); } finally { setBusy(''); } };
-  const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description, seoKeywords: r.keywords || job.seoKeywords }); if (!r.ai) alert('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { alert(e.message); } finally { setBusy(''); } };
-  const genAll = async () => { if (!confirm('Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.')) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); alert(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { alert(e.message); } finally { setBusy(''); } };
+  const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription, seoKeywords: job.seoKeywords || [] }) }); flash('job-' + job.id); } catch (e) { toast(e.message); } finally { setBusy(''); } };
+  const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description, seoKeywords: r.keywords || job.seoKeywords }); if (!r.ai) toast('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { toast(e.message); } finally { setBusy(''); } };
+  const genAll = async () => { if (!confirm('Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.')) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); toast(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { toast(e.message); } finally { setBusy(''); } };
 
   const published = data.jobs.filter((j) => j.status === 'published');
   return (
@@ -9068,7 +9069,7 @@ function AccessControlAdmin() {
   };
   const save = async () => {
     setSaving(true); setSaved(false);
-    try { await hrApi(`/access-control/${selId}`, { method: 'PUT', body: JSON.stringify({ permissions: grants }) }); setData((d) => ({ ...d, employees: d.employees.map((e) => e.id === selId ? { ...e, grants } : e) })); setSaved(true); setTimeout(() => setSaved(false), 2000); } catch (e) { alert(e.message); }
+    try { await hrApi(`/access-control/${selId}`, { method: 'PUT', body: JSON.stringify({ permissions: grants }) }); setData((d) => ({ ...d, employees: d.employees.map((e) => e.id === selId ? { ...e, grants } : e) })); setSaved(true); setTimeout(() => setSaved(false), 2000); } catch (e) { toast(e.message); }
     setSaving(false);
   };
   if (!data) return <div className="text-slate-400 text-sm py-10">Loading…</div>;
@@ -9150,7 +9151,7 @@ function TvDisplayAdmin() {
     try {
       const r = await fetch('/api/tv-display/config', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('qtx_hr_token') || '') }, body: JSON.stringify({ config: cfg, regenerate }) });
       const j = await r.json(); setCfg(j.config); setToken(j.token); setSaved(true); setTimeout(() => setSaved(false), 2000);
-    } catch (e) { alert('Save failed'); }
+    } catch (e) { toast('Save failed'); }
     setSaving(false);
   };
   if (!cfg) return <div className="text-slate-400 text-sm py-10">Loading…</div>;
@@ -9159,7 +9160,7 @@ function TvDisplayAdmin() {
   const salesUrl = `${base}/tv/sales?t=${token}`;
   const SLIDES = [['welcome', 'Welcome message'], ['quote', 'Daily quote'], ['birthday', 'Birthdays'], ['anniversary', 'Work anniversaries'], ['newJoinee', 'New joinees'], ['recognition', 'Recognition'], ['performers', 'Top performers'], ['featured', 'Featured teammate (level/XP)'], ['rising', 'Rising star'], ['badges', 'Badges unlocked'], ['clubs', 'Reward club standings'], ['earlyBirds', 'Early birds'], ['streaks', 'On-time streaks'], ['helping', 'Helping hand'], ['poll', 'Poll of the day'], ['cheers', 'Team cheers'], ['deptLeaderboard', 'Department leaderboard'], ['innovation', 'Innovation impact'], ['funStats', 'Fun stats'], ['memory', 'On this day'], ['race', 'Sales race (sales only)'], ['counter', 'Live counter (sales only)'], ['goal', 'Company goal (sales only)'], ['countdown', 'Month-end countdown (sales only)']];
   const setSlide = (k, v) => setCfg((c) => ({ ...c, slides: { ...(c.slides || {}), [k]: v } }));
-  const copy = (url) => { try { navigator.clipboard.writeText(url); alert('Link copied!'); } catch {} };
+  const copy = (url) => { try { navigator.clipboard.writeText(url); toast('Link copied!'); } catch {} };
   return (
     <div className="space-y-6">
       <div>
@@ -9226,12 +9227,12 @@ function TvPollManager() {
   const authHdr = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('qtx_hr_token') || '') };
   const create = async () => {
     const options = opts.map((o) => o.trim()).filter(Boolean);
-    if (!q.trim() || options.length < 2) { alert('Add a question and at least 2 options.'); return; }
+    if (!q.trim() || options.length < 2) { toast('Add a question and at least 2 options.'); return; }
     setBusy(true);
-    try { await fetch('/api/tv-display/admin/poll', { method: 'POST', headers: authHdr, body: JSON.stringify({ question: q.trim(), options }) }); setQ(''); setOpts(['', '']); alert('Poll is now live on the TV!'); } catch { alert('Failed'); }
+    try { await fetch('/api/tv-display/admin/poll', { method: 'POST', headers: authHdr, body: JSON.stringify({ question: q.trim(), options }) }); setQ(''); setOpts(['', '']); toast('Poll is now live on the TV!'); } catch { toast('Failed'); }
     setBusy(false);
   };
-  const endPoll = async () => { if (!window.confirm('End the current poll?')) return; try { await fetch('/api/tv-display/admin/poll/end', { method: 'POST', headers: authHdr }); alert('Poll ended.'); } catch {} };
+  const endPoll = async () => { if (!window.confirm('End the current poll?')) return; try { await fetch('/api/tv-display/admin/poll/end', { method: 'POST', headers: authHdr }); toast('Poll ended.'); } catch {} };
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <div className="text-[13px] font-bold text-slate-600 mb-2">📊 Poll of the day</div>

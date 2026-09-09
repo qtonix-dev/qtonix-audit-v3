@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from './toast';
 import { hrApi, fileToBase64, ResumeMatchBadge } from './HrApp.jsx';
 import { titleCase } from './HrParts.jsx';
 import { MailEditor, ChipInput, RichText } from './Leads.jsx';
@@ -982,7 +983,7 @@ function TaskSubmissions({ c, reload }) {
   const reactivate = async (t) => {
     setBusyId(t.id);
     try { await hrApi(`/candidates/${c.id}/task/${t.id}/reactivate`, { method: 'POST', body: JSON.stringify({ notify: true }) }); reload(); }
-    catch (e) { alert(e.message); } finally { setBusyId(null); }
+    catch (e) { toast(e.message); } finally { setBusyId(null); }
   };
   const copyLink = (t) => { const url = `${window.location.origin}/task/${t.token}`; navigator.clipboard?.writeText(url); };
   const openEdit = (t) => { setEditFor(t.id); setEditTitle(t.title || ''); setEditDetails(t.details || ''); setErr(''); };
@@ -990,7 +991,7 @@ function TaskSubmissions({ c, reload }) {
     if (!window.confirm(`Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.`)) return;
     setBusyId(t.id);
     try { await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'DELETE' }); reload(); }
-    catch (e) { alert(e.message); } finally { setBusyId(null); }
+    catch (e) { toast(e.message); } finally { setBusyId(null); }
   };
   const editHtmlEmpty = (h) => !h || !String(h).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
   const saveEdit = async (t) => {
@@ -1000,7 +1001,7 @@ function TaskSubmissions({ c, reload }) {
       const r = await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'PATCH', body: JSON.stringify({ title: editTitle.trim(), details: editDetails, notify: true }) });
       setEditFor(null);
       reload();
-      if (r && r.emailed === false) alert('Task updated. (The correction email could not be sent — check the recruitment mailbox connection.)');
+      if (r && r.emailed === false) toast('Task updated. (The correction email could not be sent — check the recruitment mailbox connection.)');
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const submitFeedback = async (t) => {
@@ -1392,7 +1393,7 @@ function ActivityModal({ kind, candidateId, onClose, onSaved }) {
         : { kind: 'task', mode, title: f.title, date: f.date, description: f.description, priority: f.priority, assignedToId: f.assignedToId || null, assignedToName: assignedTo ? assignedTo.name : '' };
       await hrApi(`/candidates/${candidateId}/activities`, { method: 'POST', body: JSON.stringify(body) });
       onSaved();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title={isCall ? '📞 Add Call' : '📝 Add Notes'} onClose={onClose}>
@@ -1539,7 +1540,7 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, inte
       await hrApi(`/candidates/${candidateId}/interview/${iv.id}/reschedule`, { method: 'POST', body: JSON.stringify({ start: startIso, durationMins: Number(ivEditDur) || 30, sendEmail: ivEmail, timeZone: 'Asia/Kolkata' }) });
       setExisting((list) => list.map((x) => x.id === iv.id ? { ...x, at: startIso, end: new Date(new Date(startIso).getTime() + (Number(ivEditDur) || 30) * 60000).toISOString() } : x));
       setEditIv(null); onDone && onDone();
-    } catch (e) { alert(e.message); } finally { setIvBusy(false); }
+    } catch (e) { toast(e.message); } finally { setIvBusy(false); }
   };
   const doCancel = async (iv) => {
     setIvBusy(true);
@@ -1547,7 +1548,7 @@ function InterviewModal({ candidateId, candidateStage, stages, roundPanels, inte
       await hrApi(`/candidates/${candidateId}/interview/${iv.id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: ivCancelNote, sendEmail: ivEmail }) });
       setExisting((list) => list.filter((x) => x.id !== iv.id));
       setCancelIvLocal(null); setIvCancelNote(''); onDone && onDone();
-    } catch (e) { alert(e.message); } finally { setIvBusy(false); }
+    } catch (e) { toast(e.message); } finally { setIvBusy(false); }
   };
   return (
     <Modal title="Schedule Meeting" onClose={onClose} wide>
@@ -1678,7 +1679,7 @@ function EditModal({ c, onClose, onSaved }) {
     try {
       await hrApi(`/candidates/${c.id}`, { method: 'PATCH', body: JSON.stringify({ name: d.name, email: d.email, phone: d.phone, currentLocation: d.currentLocation, recruiterId: d.recruiterId ? Number(d.recruiterId) : null, jobPostId: d.jobPostId ? Number(d.jobPostId) : null, answers: { currentCtc: d.currentCtc, expectedCtc: d.expectedCtc, noticePeriod: d.noticePeriod, portfolio: d.portfolio } }) });
       onSaved();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Edit candidate" onClose={onClose} wide>
@@ -1720,8 +1721,8 @@ function OfferTab({ c, isAdmin, reload }) {
   const offer = c.offer;
   const [modal, setModal] = useState(null); // 'discussion' | 'approval' | 'loi' | 'letter'
   const [editDisc, setEditDisc] = useState(null); // salary discussion being edited
-  const op = async (body) => { try { await hrApi(`/candidates/${c.id}/offer`, { method: 'POST', body: JSON.stringify(body) }); reload(); } catch (e) { alert(e.message); } };
-  const decide = async (approvalId, decision, counterOffer) => { try { await hrApi(`/candidates/${c.id}/offer/approve`, { method: 'POST', body: JSON.stringify({ approvalId, decision, counterOffer }) }); reload(); } catch (e) { alert(e.message); } };
+  const op = async (body) => { try { await hrApi(`/candidates/${c.id}/offer`, { method: 'POST', body: JSON.stringify(body) }); reload(); } catch (e) { toast(e.message); } };
+  const decide = async (approvalId, decision, counterOffer) => { try { await hrApi(`/candidates/${c.id}/offer/approve`, { method: 'POST', body: JSON.stringify({ approvalId, decision, counterOffer }) }); reload(); } catch (e) { toast(e.message); } };
 
   if (!offer || !offer.active) {
     return (
@@ -1828,8 +1829,8 @@ function DiscussionModal({ candidateId, onClose, onSaved }) {
   const [meet, setMeet] = useState(null);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  const createMeet = async () => { if (!f.at) return alert('Pick a date & time first.'); setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/offer-meet`, { method: 'POST', body: JSON.stringify({ start: f.at, durationMins: f.durationMins, notes: f.notes }) }); setMeet(r.meetLink); } catch (e) { alert(e.message); } finally { setBusy(false); } };
-  const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { alert(e.message); setBusy(false); } };
+  const createMeet = async () => { if (!f.at) return toast('Pick a date & time first.'); setBusy(true); try { const r = await hrApi(`/candidates/${candidateId}/offer-meet`, { method: 'POST', body: JSON.stringify({ start: f.at, durationMins: f.durationMins, notes: f.notes }) }); setMeet(r.meetLink); } catch (e) { toast(e.message); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'add_discussion', mode: f.mode, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes, at: f.at ? new Date(f.at).toISOString() : undefined, meetLink: meet || '' }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
   return (
     <Modal title="Log salary offer" onClose={onClose}>
       <div className="space-y-3">
@@ -1866,7 +1867,7 @@ function EditDiscussionModal({ candidateId, disc, onClose, onSaved }) {
   const save = async () => {
     setBusy(true);
     try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'edit_discussion', discussionId: disc.id, offered: f.offered, candidateAsk: f.candidateAsk, notes: f.notes }) }); onSaved(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Edit salary offer" onClose={onClose}>
@@ -1913,11 +1914,11 @@ function AcceptOfferModal({ offer, candidateId, onClose, onDone }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const go = async () => {
-    if (!price.trim()) return alert('Enter the final offered price.');
-    if (!joiningDate) return alert('Select the joining date.');
+    if (!price.trim()) return toast('Enter the final offered price.');
+    if (!joiningDate) return toast('Select the joining date.');
     setBusy(true);
     try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'accepted', acceptedOfferId: last.id, finalPrice: price.trim(), joiningDate, note: note.trim() }) }); onDone(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Mark offer accepted" onClose={onClose}>
@@ -1947,7 +1948,7 @@ function DeclineOfferModal({ offer, candidateId, onClose, onDone }) {
   const go = async () => {
     setBusy(true);
     try { await hrApi(`/candidates/${candidateId}/offer`, { method: 'POST', body: JSON.stringify({ op: 'set_status', status: 'declined', candidateAsk: ask.trim(), offered: offered.trim(), note: note.trim() }) }); onDone(); }
-    catch (e) { alert(e.message); setBusy(false); }
+    catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Mark offer declined" onClose={onClose}>
@@ -1977,7 +1978,7 @@ function LoiModal({ candidate, onClose, onSent }) {
       await hrApi(`/candidates/${candidate.id}/offer-email`, { method: 'POST', body: JSON.stringify({ subject, body }) });
       await hrApi(`/candidates/${candidate.id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'send_loi', subject, body, emailSent: true }) });
       onSent();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Send Letter of Intent" onClose={onClose} wide>
@@ -2003,7 +2004,7 @@ function OfferLetterModal({ candidate, onClose, onSent }) {
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
   const send = async () => {
-    if (!file) return alert('Attach the offer letter PDF.');
+    if (!file) return toast('Attach the offer letter PDF.');
     setBusy(true);
     try {
       const base64 = await fileToBase64(file);
@@ -2012,7 +2013,7 @@ function OfferLetterModal({ candidate, onClose, onSent }) {
       await hrApi(`/candidates/${candidate.id}/offer-email`, { method: 'POST', body: JSON.stringify({ subject, body, attachmentBase64: base64, attachmentName: file.name }) });
       await hrApi(`/candidates/${candidate.id}/offer`, { method: 'POST', body: JSON.stringify({ op: 'send_offer_letter', fileUrl: att ? att.url : '', fileName: file.name, finalCtc, joiningDate, emailSent: true }) });
       onSent();
-    } catch (e) { alert(e.message); setBusy(false); }
+    } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <Modal title="Send Offer Letter" onClose={onClose} wide>
@@ -2052,7 +2053,7 @@ function RejectModal({ candidateId, candidateEmail, onClose, onReject }) {
   useEffect(() => { hrApi('/rejection-reasons').then((r) => setReasons(r.reasons || [])).catch(() => {}); }, []);
   const addReason = async () => {
     const v = custom.trim(); if (!v) return;
-    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { alert(e.message); }
+    try { const r = await hrApi('/rejection-reasons', { method: 'POST', body: JSON.stringify({ reason: v }) }); setReasons(r.reasons || []); setPicked(v); setCustom(''); setAdding(false); } catch (e) { toast(e.message); }
   };
   const goEmail = async () => {
     if (!picked) return;
