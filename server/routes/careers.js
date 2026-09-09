@@ -612,13 +612,24 @@ function recruitmentMailbox(s) {
 }
 
 async function notifyNewApplication(cand, job) {
-  // (1) In-app notifications to HR/recruiters.
+  // (1) In-app notifications — ONLY to HR / recruitment staff. Managers and team
+  // leads of OTHER departments must not receive recruitment notifications.
   try {
     const hrRoute = require('./hr');
     if (hrRoute.notify) {
-      const recruiters = await HrUser.findAll({ where: { active: true } });
-      for (const u of recruiters) {
-        if (['hr', 'recruiter', 'manager', 'tl'].includes(u.type)) {
+      const people = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+      const isHrRecipient = (u) => {
+        // Dedicated recruitment roles always qualify.
+        if (['hr', 'recruiter'].includes(u.type)) return true;
+        // HR managers (flagged) qualify.
+        if (u.isHrManager) return true;
+        // Managers/TLs qualify ONLY if they belong to the HR / Recruitment dept.
+        const dept = String(u.department || '').trim().toLowerCase();
+        if (['manager', 'tl'].includes(u.type) && /^(hr|human resource|human resources|recruitment|talent)$/.test(dept)) return true;
+        return false;
+      };
+      for (const u of people) {
+        if (isHrRecipient(u)) {
           await hrRoute.notify(u.id, { type: 'application', text: `New application from ${cand.name} for ${job.title}.`, candidateId: cand.id });
         }
       }
