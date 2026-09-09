@@ -1765,9 +1765,11 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const send = async () => {
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
-    // Slash command: "/task" opens the quick task creator.
-    if (/^\/task\b/i.test(body)) {
-      const preTitle = body.replace(/^\/task\s*/i, '').trim();
+    // Slash command: "/task" opens the quick task creator. Strip any stray HTML
+    // and leading whitespace/marker characters the editor may include.
+    const plain = body.replace(/<[^>]*>/g, '').replace(/\*\*/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (/^\/task(\s|$)/i.test(plain)) {
+      const preTitle = plain.replace(/^\/task\s*/i, '').trim();
       setQuickTask({ title: preTitle });
       clearEditor();
       return;

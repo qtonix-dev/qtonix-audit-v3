@@ -584,7 +584,26 @@ router.post('/candidates/:id/offer-email', requireHrAccess, requireScheduler, as
       const mime = (String(b.attachmentBase64).match(/^data:([^;]+);base64,/) || [])[1] || 'application/pdf';
       attachments.push({ filename: b.attachmentName, mimeType: mime, contentBase64: raw });
     }
-    await gmail.sendMessage(s, token, email, { from: email, to: cand.email, subject: b.subject || 'Regarding your offer', bodyHtml: b.body || '', attachments });
+    // Wrap the HR-written body in the SAME branded shell as the Application
+    // thank-you email so every candidate email shares one design/theme.
+    let styledHtml = b.body || '';
+    try {
+      const hrEmail = require('../services/hrEmailTemplate');
+      if (hrEmail && hrEmail.shell) {
+        const sig = { name: 'HR Qtonix', title: 'Human Resources · Qtonix', email: email || 'career@qtonix.com' };
+        styledHtml = hrEmail.shell({
+          kicker: 'Letter of Intent',
+          heroIcon: '\uD83E\uDD1D',
+          headline: 'We’d love for you to join us',
+          subhead: cand.name || '',
+          greetingName: (cand.name || '').split(' ')[0] || '',
+          introHtml: b.body || '',
+          outroHtml: 'A formal offer letter will follow shortly. If you have any questions, just reply to this email.',
+          signature: sig,
+        });
+      }
+    } catch {}
+    await gmail.sendMessage(s, token, email, { from: `HR Qtonix <${email}>`, to: cand.email, subject: b.subject || 'Regarding your offer', bodyHtml: styledHtml, attachments });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

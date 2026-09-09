@@ -1986,7 +1986,7 @@ function LoiModal({ candidate, onClose, onSent }) {
     <Modal title="Send Letter of Intent" onClose={onClose} wide>
       <div className="space-y-3">
         <div><Lbl>Subject</Lbl><input className={inp} value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
-        <div><Lbl>Message</Lbl><div className="rounded-lg border border-slate-300 min-h-[160px] p-3 text-sm" contentEditable suppressContentEditableWarning onInput={(e) => setBody(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: body }} /></div>
+        <div><Lbl>Message</Lbl><MailEditor value={body} onChange={setBody} minHeight={200} placeholder="Write the Letter of Intent…" /></div>
         <div className="text-[11px] text-slate-400">Sent from the shared recruitment mailbox. No attachment for the LOI.</div>
       </div>
       <div className="flex justify-end gap-2 mt-4">

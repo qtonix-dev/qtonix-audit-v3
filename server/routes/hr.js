@@ -6694,6 +6694,14 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
       if (view === 'completed') { if (!onbComplete) continue; }
       else { if (onbComplete) continue; }
       if (!isHiredCandidate(c)) continue;
+      // Onboarding only STARTS once the Letter of Intent has been sent — accepting
+      // the offer alone isn't enough. (Candidates hired via a legacy stage without
+      // an offer object still appear so old data isn't hidden.)
+      if (view === 'active') {
+        const loiSent = !!(offer.loi && (offer.loi.status === 'sent' || offer.loi.sentAt));
+        const hasOffer = !!(c.offer && c.offer.status);
+        if (hasOffer && !loiSent && !offer.joinedConfirmed) continue;
+      }
       // In the ACTIVE view, only hide by past-date when they haven't joined yet
       // (a joined-but-not-completed candidate should stay so HR can finish + mark
       // complete). Completed view ignores the date filter entirely.
