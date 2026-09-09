@@ -1622,7 +1622,12 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   };
   const deleteMsg = async (m) => {
     if (!window.confirm('Delete this message? This can’t be undone.')) return;
-    try { await hrApi(`/chat/messages/${m.id}`, { method: 'DELETE' }); setMessages((prev) => prev.filter((x) => x.id !== m.id)); loadConversations(); } catch (e) { alert(e.message); }
+    try {
+      await hrApi(`/chat/messages/${m.id}`, { method: 'DELETE' });
+      setMessages((prev) => prev.filter((x) => x.id !== m.id));
+      await loadConversations();               // refresh sidebar preview now
+      setTimeout(() => loadConversations(), 600); // and once more after the write settles
+    } catch (e) { alert(e.message); }
   };
   const openReads = async (m) => {
     try { const r = await hrApi(`/chat/messages/${m.id}/reads`); setReadsFor({ msgId: m.id, seen: r.seen || [], notSeen: r.notSeen || [] }); } catch (e) { alert(e.message); }
