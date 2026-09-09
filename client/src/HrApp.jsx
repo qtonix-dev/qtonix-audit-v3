@@ -1933,7 +1933,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
               <span className="w-6 h-6 rounded-md flex items-center justify-center text-[12px] font-extrabold text-white shrink-0" style={{ background: t.color || '#FF6A00' }}>{t.icon}</span>
               <span className="text-[14px] font-bold truncate flex-1">{t.name}</span>
               {canManage && <button onClick={() => setManageFor({ teamId: t.id, teamName: t.name })} title="Manage members" className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-orange-500 text-xs">👥</button>}
-              {canManage && <button onClick={() => setCreateModal({ type: 'group', teamId: t.id, teamName: t.name })} title="New group" className="text-slate-300 hover:text-orange-500 text-sm">+</button>}
+              {(canManage || t.canCreateGroup) && <button onClick={() => setCreateModal({ type: 'group', teamId: t.id, teamName: t.name })} title="New group" className="text-slate-300 hover:text-orange-500 text-sm">+</button>}
             </div>
             {t.channels.map((c) => (
               <button key={c.id} onClick={() => openChannel(t.name, c, { id: t.id, name: t.name, icon: t.icon, color: t.color })} className={`w-full flex items-center gap-1.5 pl-10 pr-3 py-1.5 rounded-lg text-[13.5px] ${active && active.id === c.id ? 'font-bold' : 'text-slate-500 hover:bg-slate-100'}`} style={active && active.id === c.id ? { background: '#fff3ec', color: '#c2410c' } : {}}>
@@ -2320,6 +2320,7 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
   const addable = directory.filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
   const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
   const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
+  const toggleGroupMgr = async (m) => { const grant = m.role !== 'manager' && m.role !== 'owner'; try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}/role`, { method: 'PUT', body: JSON.stringify({ canManageGroups: grant }) }); await load(); onDone(); } catch (e) { toast(e.message); } };
   const deleteTeam = async () => {
     if (!window.confirm(`Delete the team "${team.teamName}" and ALL its groups & messages? This cannot be undone.`)) return;
     setBusy(true);
@@ -2335,7 +2336,8 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
             {members === null ? <div className="px-3 py-4 text-sm text-slate-400 text-center">Loading…</div> : members.map((m) => (
               <div key={m.id} className="flex items-center gap-3 px-3 py-2 border-b border-slate-50 last:border-0">
                 <Avatar name={m.name} src={m.avatar} size={28} />
-                <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold truncate">{m.name} {m.role === 'owner' && <span className="text-[10px] text-orange-500">owner</span>}</span><span className="block text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</span></span>
+                <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold truncate">{m.name} {m.role === 'owner' && <span className="text-[10px] text-orange-500">owner</span>}{m.role === 'manager' && <span className="text-[10px] font-bold text-violet-600 bg-violet-100 rounded px-1.5 ml-1">can create groups</span>}</span><span className="block text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</span></span>
+                {isAdmin && m.role !== 'owner' && <button onClick={() => toggleGroupMgr(m)} disabled={busy} title="Allow this person to create groups in this team" className={`text-[11px] font-bold rounded px-2 py-1 ${m.role === 'manager' ? 'text-violet-600 bg-violet-50' : 'text-slate-500 border border-slate-200'}`}>{m.role === 'manager' ? '✓ Group access' : '+ Group access'}</button>}
                 {m.role !== 'owner' && <button onClick={() => remove(m)} disabled={busy} className="text-[11px] font-bold text-red-500">Remove</button>}
               </div>
             ))}
@@ -2558,13 +2560,10 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
                     {extra}
                   </span>
                 );
-                if (isSub) return circleRow(null);
-                // A distinct "+" circle opens the picker to add/remove assignees.
                 const plusCircle = <span className="w-[22px] h-[22px] rounded-full border border-dashed border-slate-300 flex items-center justify-center text-slate-400 hover:text-orange-500 hover:border-orange-400 text-sm font-bold" title="Add / remove assignee">+</span>;
                 return <AssigneePicker multi compact values={list} onToggle={(p) => patchTask(t._id, { toggleAssignee: p.id })} customLabel={circleRow(plusCircle)} />;
               }
               // Single assignee: circle with hover name + a "+" circle to add more.
-              if (isSub) return <AssigneePicker value={t.assignee} onChange={(p) => patchTask(t._id, { assigneeId: p ? p.id : null })} allowClear compact />;
               if (list.length === 1) {
                 const single = (
                   <span className="flex items-center gap-1.5">

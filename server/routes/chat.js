@@ -362,9 +362,11 @@ router.get('/teams', requireHrAccess, async (req, res, next) => {
     // membership; there's no self-join.)
     if (!myTeamIds.size) return res.json({ teams: [], canCreateTeam: isAdminOrHr(req), canManage: isAdminOrHr(req) });
     const teams = await ChatTeam.findAll({ where: { archived: false, id: { [Op.in]: [...myTeamIds] } }, order: [['name', 'ASC']] });
+    const admin = isAdminOrHr(req);
+    // My role in each team (owner/manager can create groups).
+    const myRoles = {}; myTeamRows.forEach((r) => { myRoles[r.teamId] = r.role; });
     const out = [];
     for (const t of teams) {
-      // Channels I'm a member of within this team.
       const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId: t.id }, order: [['createdAt', 'ASC']] });
       const chanOut = [];
       for (const c of chans) {
@@ -373,7 +375,8 @@ router.get('/teams', requireHrAccess, async (req, res, next) => {
         const unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(cm.lastReadAt ? { createdAt: { [Op.gt]: cm.lastReadAt } } : {}) } });
         chanOut.push({ id: c.id, title: c.title, visibility: c.visibility, unread, lastMessageAt: c.lastMessageAt });
       }
-      out.push({ id: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color, member: true, channels: chanOut });
+      const canCreateGroup = admin || ['owner', 'manager'].includes(myRoles[t.id]);
+      out.push({ id: t.id, name: t.name, icon: t.icon || t.name.charAt(0).toUpperCase(), color: t.color, member: true, canCreateGroup, channels: chanOut });
     }
     res.json({ teams: out, canCreateTeam: isAdminOrHr(req), canManage: isAdminOrHr(req) });
   } catch (e) { next(e); }
@@ -403,12 +406,19 @@ router.post('/teams', requireHrAccess, async (req, res, next) => {
 // Create a channel in a team (any team member can).
 router.post('/teams/:teamId/channels', requireHrAccess, async (req, res, next) => {
   try {
-    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can create groups.' });
     const me = meId(req);
     if (!me) return res.status(403).json({ error: 'Your admin account has no matching HR profile.' });
     const teamId = Number(req.params.teamId);
     const team = await ChatTeam.findByPk(teamId);
     if (!team) return res.status(404).json({ error: 'Team not found.' });
+    // Groups can be created by Admin/HR OR by a team member who has been granted
+    // the "group manager" privilege for this team.
+    let allowed = isAdminOrHr(req);
+    if (!allowed) {
+      const myMem = await ChatTeamMember.findOne({ where: { teamId, userId: me } });
+      if (myMem && (myMem.role === 'owner' || myMem.role === 'manager')) allowed = true;
+    }
+    if (!allowed) return res.status(403).json({ error: 'You don’t have permission to create groups in this team.' });
     const b = req.body || {};
     const name = String(b.name || '').slice(0, 60).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase();
     if (!name) return res.status(400).json({ error: 'Group name is required.' });
@@ -454,6 +464,22 @@ router.post('/teams/:teamId/members', requireHrAccess, async (req, res, next) =>
     const chans = await ChatConversation.findAll({ where: { kind: 'channel', teamId, visibility: { [Op.ne]: 'private' } } });
     for (const c of chans) for (const uid of ids) await ChatMembership.findOrCreate({ where: { conversationId: c.id, userId: uid }, defaults: { conversationId: c.id, userId: uid } });
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// HR/Admin: grant or revoke the "group manager" privilege for a team member —
+// lets that employee create groups (channels) within this team.
+router.put('/teams/:teamId/members/:userId/role', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can change member roles.' });
+    const teamId = Number(req.params.teamId);
+    const uid = Number(req.params.userId);
+    const grant = !!(req.body || {}).canManageGroups;
+    const mem = await ChatTeamMember.findOne({ where: { teamId, userId: uid } });
+    if (!mem) return res.status(404).json({ error: 'That person isn’t a member of this team.' });
+    // Keep 'owner' as-is; toggle between 'manager' and 'member'.
+    if (mem.role !== 'owner') { mem.role = grant ? 'manager' : 'member'; await mem.save(); }
+    res.json({ ok: true, role: mem.role });
   } catch (e) { next(e); }
 });
 

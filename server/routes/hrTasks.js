@@ -96,7 +96,6 @@ async function roster() {
 //   is removed, another member is promoted into the main row (its copy deleted).
 // Returns { ok, error } — validation failures are returned, not thrown.
 async function reconcileAssignees(row, desiredIds, ctx) {
-  if (row.parentTaskId) return { ok: false, error: 'Subtasks can’t have multiple assignees.' };
   const want = [...new Set((desiredIds || []).map(Number).filter((x) => x > 0 || x < 0))];
   if (!want.length) return { ok: false, error: 'A task needs at least one assignee.' };
 
@@ -107,6 +106,20 @@ async function reconcileAssignees(row, desiredIds, ctx) {
     if (id === ctx.boardId) continue;
     const target = byId[id];
     if (id > 0 && (!target || !canAssign(ctx.actorUser, target, ctx, people))) return { ok: false, error: 'You can’t assign a task to one of the selected people.' };
+  }
+
+  // SUBTASKS: multiple assignees are stored inline on the subtask row itself
+  // (no board copies — a subtask lives under its parent, not on a board). The
+  // primary assigneeId is the first in the list; the rest live in assigneeIds.
+  if (row.parentTaskId) {
+    const prev = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
+    row.assigneeId = want[0];
+    row.assigneeIds = want;
+    row.changed('assigneeIds', true);
+    await row.save();
+    // Notify only the NEWLY added people.
+    try { for (const id of want) { if (id > 0 && id !== ctx.boardId && !prev.has(id)) await notifyAssignee(id, ctx, row); } } catch {}
+    return { ok: true };
   }
 
   const groupId = row.assigneeGroupId || (want.length > 1 ? `ag${row.id}` : null);
@@ -182,6 +195,11 @@ function decorateWith(pById, adminById) {
     const o = t.toJSON();
     o.assignee = resolve(t.assigneeId);
     o.assigner = resolve(t.assignedById, t.assignedByName);
+    // Resolve all assignees (subtasks store extras in assigneeIds).
+    const ids = new Set([t.assigneeId].filter(Boolean));
+    if (Array.isArray(t.assigneeIds)) t.assigneeIds.forEach((id) => { if (id) ids.add(id); });
+    const seen = new Set();
+    o.assignees = [...ids].map((id) => resolve(id)).filter((a) => { if (!a) return false; const k = String(a.name || '').toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
     return o;
   };
 }
@@ -248,6 +266,8 @@ async function buildBoard(viewerId, ctx) {
   };
   const assigneesFor = (t) => {
     const ids = new Set([t.assigneeId].filter(Boolean));
+    // Subtasks store their extra assignees inline in assigneeIds.
+    if (Array.isArray(t.assigneeIds)) t.assigneeIds.forEach((id) => { if (id) ids.add(id); });
     if (t.assigneeGroupId && groupMembers[t.assigneeGroupId]) groupMembers[t.assigneeGroupId].forEach((id) => ids.add(id));
     const list = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
     return dedupeByName(list);
@@ -519,7 +539,13 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       desired = b.assigneeIds.map(Number).filter(Boolean);
     } else if (b.toggleAssignee !== undefined) {
       const pid = Number(b.toggleAssignee);
-      const current = new Set([row.assigneeId, ...(row.assigneeGroupId ? (await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] })).map((g) => g.assigneeId) : [])].filter(Boolean));
+      let current;
+      if (row.parentTaskId) {
+        // Subtask: current assignees are stored inline.
+        current = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
+      } else {
+        current = new Set([row.assigneeId, ...(row.assigneeGroupId ? (await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] })).map((g) => g.assigneeId) : [])].filter(Boolean));
+      }
       if (current.has(pid)) current.delete(pid); else current.add(pid);
       desired = [...current];
     } else if (b.assigneeId !== undefined) {
