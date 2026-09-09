@@ -1709,16 +1709,19 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
         if (!alive) return;
         if (onUnread) onUnread(r.totalUnread || 0);
         if (active) setTyping(r.typing || []);
-        // Merge reaction updates into existing messages.
+        // Merge reaction updates + drop any messages deleted by others.
         if (active && (r.reactions || []).length) {
-          setMessages((prev) => prev.map((m) => { const rx = r.reactions.find((x) => x.id === m.id); return rx ? { ...m, reactions: rx.reactions } : m; }));
+          const deletedIds = new Set(r.reactions.filter((x) => x.deleted).map((x) => x.id));
+          setMessages((prev) => prev.filter((m) => !deletedIds.has(m.id)).map((m) => { const rx = r.reactions.find((x) => x.id === m.id); return rx ? { ...m, reactions: rx.reactions } : m; }));
         }
         if (active && (r.messages || []).length) {
           setMessages((prev) => { const have = new Set(prev.map((m) => m.id)); const add = r.messages.filter((m) => !have.has(m.id)); if (!add.length) return prev; lastMsgId.current = Math.max(lastMsgId.current, ...add.map((m) => m.id)); return [...prev, ...add]; });
           // Mark read since the conversation is open.
           hrApi(`/chat/conversations/${active.id}/read`, { method: 'POST', body: '{}' }).catch(() => {});
-          loadConversations(); loadTeams();
-        } else if (!active) { loadConversations(); loadTeams(); }
+        }
+        // Always keep the sidebar previews + team unreads in sync (covers edits,
+        // deletes, and read-state changes that don't add new messages).
+        loadConversations(); loadTeams();
       } catch {}
     };
     const iv = setInterval(tick, 4000);
