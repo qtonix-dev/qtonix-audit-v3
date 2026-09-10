@@ -444,7 +444,10 @@ router.get('/boards', guard, async (req, res, next) => {
     const people = await roster();
     // Only list boards this actor is allowed to view (own + downline; everyone
     // for HR/admin). This is what feeds the top "view another board" switcher.
-    const viewable = people.filter((u) => canViewBoard(ctx.actorUser, u, people, ctx));
+    // Exclude the actor's OWN board id — the frontend adds a dedicated "My board"
+    // entry, so listing it here again would show two boards for the same person.
+    const actorNm = String(ctx.actorName || '').trim().toLowerCase();
+    const viewable = people.filter((u) => u.id !== ctx.boardId && String(u.name || '').trim().toLowerCase() !== actorNm && canViewBoard(ctx.actorUser, u, people, ctx));
     const counts = await Task.findAll({ attributes: ['assigneeId', [sequelize.fn('COUNT', sequelize.col('id')), 'n']], where: { parentTaskId: null, stage: { [Op.ne]: 'completed' } }, group: ['assigneeId'], raw: true });
     const countBy = Object.fromEntries(counts.map((c) => [c.assigneeId, Number(c.n)]));
     res.json(viewable.map((u) => ({ id: u.id, name: u.name, designation: u.designation || '', department: u.department || '', branch: u.branch || '', avatar: u.avatar || null, type: u.type, taskCount: countBy[u.id] || 0 })));
