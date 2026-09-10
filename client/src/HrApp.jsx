@@ -843,7 +843,7 @@ function RewardsAdmin() {
               return (
                 <div key={r.id} className="flex items-center gap-2.5 rounded-lg border border-slate-100 px-3 py-2">
                   {r.icon && <span className="text-lg shrink-0">{r.icon}</span>}
-                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{r.name}</div><div className="text-[10px] text-slate-400 truncate">{r.pointsMax ? `${r.points}–${r.pointsMax} pts` : r.frequency}{r.requiresApproval ? ' · needs approval' : ''}</div></div>
+                  <div className="min-w-0 flex-1"><div className="text-[13px] font-bold truncate">{r.name}</div><div className="text-[10px] text-slate-400 truncate">{r.points ? `${r.points} pts` : r.frequency}{r.requiresApproval ? ' · needs approval' : ''}</div></div>
                   <input type="number" value={val} onChange={(e) => setEdits((x) => ({ ...x, [r.id]: e.target.value }))} className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-[13px] text-right" />
                   <span className="text-[11px] text-slate-400">pts</span>
                   {pending
@@ -1382,7 +1382,7 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
       // the generic award endpoint (admin/HR only; may carry an amount if ranged).
       if (kind === 'praise' && specialKey) {
         const sp = specials.find((s) => s.key === specialKey);
-        const r = await hrApi('/rewards/award', { method: 'POST', body: JSON.stringify({ employeeId: emp.id, ruleKey: specialKey, amount: (sp && sp.pointsMax && specialAmount) ? Number(specialAmount) : undefined, title: title.trim() || (sp && sp.name), reason: note.trim() }) });
+        const r = await hrApi('/rewards/award', { method: 'POST', body: JSON.stringify({ employeeId: emp.id, ruleKey: specialKey, title: title.trim() || (sp && sp.name), reason: note.trim() }) });
         if (r.pendingApproval) toast(`Sent for approval — this ${r.points}-point reward needs sign-off.`);
         onSaved(); return;
       }
@@ -1487,7 +1487,7 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                     return (
                       <>
                         <div className="grid grid-cols-4 gap-2">
-                          {visible.map((b) => (<button key={b.id} onClick={() => { setBadgeId(badgeId === b.id ? '' : b.id); setSpecialKey(''); }} title={b.desc} className={`rounded-2xl border-[1.5px] p-2.5 text-center transition ${badgeId === b.id ? '' : 'border-slate-100'}`} style={badgeId === b.id ? { background: b.color + '14', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: b.color + '0c' }}><div className="text-2xl leading-none">{b.icon}</div><div className="text-[8.5px] font-extrabold mt-1.5 leading-tight" style={{ color: '#475569' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-extrabold mt-1 rounded" style={{ color: '#7C3AED', background: '#f5f3ff' }}>+{b.pointsMax ? `${b.points}–${b.pointsMax}` : b.points}</div>}</button>))}
+                          {visible.map((b) => (<button key={b.id} onClick={() => { setBadgeId(badgeId === b.id ? '' : b.id); setSpecialKey(''); }} title={b.desc} className={`rounded-2xl border-[1.5px] p-2.5 text-center transition ${badgeId === b.id ? '' : 'border-slate-100'}`} style={badgeId === b.id ? { background: b.color + '14', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: b.color + '0c' }}><div className="text-2xl leading-none">{b.icon}</div><div className="text-[8.5px] font-extrabold mt-1.5 leading-tight" style={{ color: '#475569' }}>{b.name}</div>{b.points > 0 && <div className="text-[9px] font-extrabold mt-1 rounded" style={{ color: '#7C3AED', background: '#f5f3ff' }}>+{b.points}</div>}</button>))}
                         </div>
                         {badges.length > 8 && (
                           <button onClick={() => setShowAllBadges((v) => !v)} className="mt-2.5 text-[12px] font-extrabold text-orange-600 bg-orange-50 rounded-lg px-3 py-1.5">{showAllBadges ? '▲ Show fewer badges' : `▼ Load more badges (${badges.length - 8} more)`}</button>
@@ -1504,15 +1504,12 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
                     {specials.map((s) => (
                       <button key={s.key} onClick={() => { setSpecialKey(specialKey === s.key ? '' : s.key); setSpecialAmount(''); if (specialKey !== s.key) setBadgeId(''); }} className={`flex items-center gap-2.5 rounded-xl border-[1.5px] px-3 py-2.5 text-left transition ${specialKey === s.key ? '' : 'border-slate-100'}`} style={specialKey === s.key ? { background: (s.color || '#7C3AED') + '10', borderColor: 'transparent', boxShadow: '0 0 0 2px #FF6A00' } : { background: (s.color || '#7C3AED') + '08' }}>
                         <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base shrink-0" style={{ background: (s.color || '#7C3AED') + '1a' }}>{s.icon}</span>
-                        <span className="min-w-0 flex-1"><span className="block text-[12px] font-extrabold text-slate-700 truncate">{s.name}</span><span className="block text-[10px] font-extrabold" style={{ color: '#7C3AED' }}>{s.pointsMax ? `${s.points}–${s.pointsMax}` : `+${s.points}`} pts</span></span>
+                        <span className="min-w-0 flex-1"><span className="block text-[12px] font-extrabold text-slate-700 truncate">{s.name}</span><span className="block text-[10px] font-extrabold" style={{ color: '#7C3AED' }}>+{s.points} pts</span></span>
                       </button>
                     ))}
                   </div>
-                  {(() => { const sp = specials.find((s) => s.key === specialKey); return sp && sp.pointsMax ? (
-                    <div className="mt-2.5 flex items-center gap-2">
-                      <span className="text-[12px] font-semibold text-slate-500">Points ({sp.points}–{sp.pointsMax}):</span>
-                      <input type="number" min={sp.points} max={sp.pointsMax} value={specialAmount} onChange={(e) => setSpecialAmount(e.target.value)} placeholder={`${sp.points}`} className="w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]" />
-                    </div>
+                  {(() => { const sp = specials.find((s) => s.key === specialKey); return sp && sp.points ? (
+                    <div className="mt-2.5 text-[12px] font-semibold text-slate-500">Points awarded: <span className="font-extrabold" style={{ color: '#7C3AED' }}>+{sp.points}</span></div>
                   ) : null; })()}
                 </div>
               )}
