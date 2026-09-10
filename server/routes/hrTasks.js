@@ -108,94 +108,60 @@ async function roster() {
 // - Adds create copies + notify; removes delete the extra copies; if the primary
 //   is removed, another member is promoted into the main row (its copy deleted).
 // Returns { ok, error } — validation failures are returned, not thrown.
+// SHARED-TASK model: a task is a SINGLE row. Multiple assignees all share that
+// one row (via assigneeIds), so status/priority/bucket/completion are the same
+// for everyone automatically — no per-person copies. This applies to both top-
+// level tasks and subtasks.
 async function reconcileAssignees(row, desiredIds, ctx) {
   const want = [...new Set((desiredIds || []).map(Number).filter((x) => x > 0 || x < 0))];
   if (!want.length) return { ok: false, error: 'A task needs at least one assignee.' };
 
   const people = await roster();
   const byId = Object.fromEntries(people.map((u) => [u.id, u]));
-  // Validate each desired assignee (permission), except the actor's own board.
-  for (const id of want) {
+
+  // Current assignees on the task.
+  const current = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
+  const wantSet = new Set(want);
+  const toAdd = want.filter((id) => !current.has(id));
+
+  // Only validate NEWLY-added people against the permission rules — never re-check
+  // people already on the task (that could reject the whole edit and silently
+  // drop assignees). The actor's own board is always allowed.
+  for (const id of toAdd) {
     if (id === ctx.boardId) continue;
     const target = byId[id];
-    if (id > 0 && (!target || !canAssign(ctx.actorUser, target, ctx, people))) return { ok: false, error: 'You can’t assign a task to one of the selected people.' };
-  }
-
-  // SUBTASKS: multiple assignees are stored inline on the subtask row itself
-  // (no board copies — a subtask lives under its parent, not on a board). The
-  // primary assigneeId is the first in the list; the rest live in assigneeIds.
-  if (row.parentTaskId) {
-    const prev = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
-    row.assigneeId = want[0];
-    row.assigneeIds = want;
-    row.changed('assigneeIds', true);
-    await row.save();
-    // Notify only the NEWLY added people.
-    try { for (const id of want) { if (id > 0 && id !== ctx.boardId && !prev.has(id)) await notifyAssignee(id, ctx, row); } } catch {}
-    return { ok: true };
-  }
-
-  const groupId = row.assigneeGroupId || (want.length > 1 ? `ag${row.id}` : null);
-  const groupTasks = row.assigneeGroupId ? await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId } }) : [row];
-  // Current membership: primary (main row) + each copy's assignee.
-  const copies = groupTasks.filter((g) => g.id !== row.id);
-  const currentIds = new Set([row.assigneeId, ...copies.map((c) => c.assigneeId)].filter(Boolean));
-  const wantSet = new Set(want);
-
-  // 1) Remove members no longer wanted.
-  for (const id of [...currentIds]) {
-    if (wantSet.has(id)) continue;
-    if (id === row.assigneeId) {
-      // Removing the primary: promote a remaining wanted member into the main row.
-      const promoteId = want.find((w) => currentIds.has(w) && w !== id) || want[0];
-      const promoteCopy = copies.find((c) => c.assigneeId === promoteId);
-      row.assigneeId = promoteId; row.boardOwnerId = promoteId; row.bucket = 'recently_assigned';
-      if (promoteCopy) await promoteCopy.destroy();
-    } else {
-      const copy = copies.find((c) => c.assigneeId === id);
-      if (copy) await copy.destroy();
+    if (id > 0 && (!target || !canAssign(ctx.actorUser, target, ctx, people))) {
+      return { ok: false, error: `You can’t assign this task to ${(target && target.name) || 'that person'}.` };
     }
-    await logActivity(row.id, ctx, 'assigned', `removed ${(byId[id] && byId[id].name) || 'an assignee'}`);
   }
 
-  // Re-read membership after removals.
-  const afterRemove = new Set([row.assigneeId, ...(row.assigneeGroupId ? (await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId } })).map((c) => c.assigneeId) : [])].filter(Boolean));
+  // Set the shared assignee list. Primary = first in the list (kept stable when
+  // possible so the existing owner stays primary).
+  const primary = want.includes(row.assigneeId) ? row.assigneeId : want[0];
+  const ordered = [primary, ...want.filter((id) => id !== primary)];
+  row.assigneeId = primary;
+  row.assigneeIds = ordered;
+  row.changed('assigneeIds', true);
+  // Keep boardOwnerId = primary for legacy single-owner queries/compat.
+  if (!row.parentTaskId) row.boardOwnerId = primary;
 
-  // 2) Add newly wanted members as copies on their boards.
-  const toAdd = want.filter((id) => !afterRemove.has(id) && id > 0);
-  if (toAdd.length && !row.assigneeGroupId) { row.assigneeGroupId = groupId || `ag${row.id}`; await row.save(); }
-  for (const id of toAdd) {
-    const emax = await Task.max('order', { where: { assigneeId: id, bucket: 'recently_assigned', parentTaskId: null } });
-    const copy = await Task.create({
-      boardOwnerId: id, bucket: row.bucket || 'recently_assigned', parentTaskId: null, title: row.title,
-      description: row.description || '', assigneeId: id, assigneeGroupId: row.assigneeGroupId,
-      // Inherit the main task's stage so a shared task keeps its status (a
-      // completed task stays completed for everyone; it's the SAME task shared).
-      priority: row.priority, stage: row.stage || 'not_started', completedAt: row.stage === 'completed' ? (row.completedAt || new Date()) : null,
-      dueDate: row.dueDate || null,
-      order: (Number.isFinite(emax) ? emax : 0) + 1,
-      createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
-      assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
-      origAssignedById: row.origAssignedById || ctx.boardId || null, origAssignedByName: row.origAssignedByName || ctx.actorName,
-    });
-    await logActivity(copy.id, ctx, 'created', 'created task');
-    await notifyAssignee(id, ctx, copy);
-    await logActivity(row.id, ctx, 'assigned', `added ${(byId[id] && byId[id].name) || 'an assignee'}`);
-  }
-
-  // Count the full group INCLUDING the main row. Only clear the group if a
-  // single member remains (main row alone).
-  let memberCount = 1;
-  if (row.assigneeGroupId) { const grp = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['id', 'assigneeId'] }); const ids = new Set([row.assigneeId, ...grp.map((g) => g.assigneeId)].filter(Boolean)); memberCount = ids.size; }
-  if (memberCount <= 1) row.assigneeGroupId = null;
-
-  // Track the original assigner so it stays in their "assigned by me".
-  if (!row.origAssignedById && ctx.boardId && row.assigneeId !== ctx.boardId) { row.origAssignedById = ctx.boardId; row.origAssignedByName = ctx.actorName; }
-  row.assignedById = row.origAssignedById || row.assignedById || (row.assigneeId !== ctx.boardId ? ctx.boardId : null);
+  // Preserve the original assigner so the task stays in their "assigned by me".
+  if (!row.origAssignedById && ctx.boardId && !current.has(ctx.boardId)) { row.origAssignedById = ctx.boardId; row.origAssignedByName = ctx.actorName; }
+  row.assignedById = row.origAssignedById || row.assignedById || (primary !== ctx.boardId ? ctx.boardId : null);
   row.assignedByName = row.origAssignedByName || row.assignedByName || ctx.actorName;
+  // Group id no longer needed in the shared model, but keep for any legacy rows.
+  row.assigneeGroupId = null;
   await row.save();
+
+  // Log + notify only the newly added people.
+  for (const id of toAdd) {
+    if (id > 0 && id !== ctx.boardId) { try { await notifyAssignee(id, ctx, row); } catch {} await logActivity(row.id, ctx, 'assigned', `added ${(byId[id] && byId[id].name) || 'an assignee'}`); }
+  }
+  // Log removed people.
+  for (const id of current) { if (!wantSet.has(id)) await logActivity(row.id, ctx, 'assigned', `removed ${(byId[id] && byId[id].name) || 'an assignee'}`); }
   return { ok: true };
 }
+
 
 
 function decorateWith(pById, adminById) {
@@ -243,13 +209,25 @@ async function buildBoard(viewerId, ctx) {
     viewer = { id: viewerId, name: admin ? admin.name : 'Admin', designation: 'Admin', department: '', branch: '', avatar: null, isAdmin: true };
   }
 
-  const tasks = await Task.findAll({
+  // A viewer sees a top-level task if they are: the (primary) assignee, a
+  // co-assignee (in assigneeIds), or the assigner. assigneeIds is JSON so we
+  // fetch the candidate set and filter membership in JS (portable across DBs).
+  const dbTasks = await Task.findAll({
     where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }, { origAssignedById: viewerId }] },
     order: [['order', 'ASC'], ['id', 'ASC']],
   });
+  // Fetch top-level tasks that HAVE a multi-assignee list, to catch shared tasks
+  // where the viewer is a co-assignee but not the primary/assigner.
+  const seenIds = new Set(dbTasks.map((t) => t.id));
+  const sharedCand = await Task.findAll({ where: { parentTaskId: null, assigneeIds: { [Op.ne]: null } }, order: [['order', 'ASC'], ['id', 'ASC']] });
+  for (const t of sharedCand) {
+    if (seenIds.has(t.id)) continue;
+    const ids = Array.isArray(t.assigneeIds) ? t.assigneeIds : [];
+    if (ids.includes(viewerId)) { dbTasks.push(t); seenIds.add(t.id); }
+  }
+  const tasks = dbTasks;
   // Also surface SUBTASKS the viewer is (co-)assigned to whose PARENT they don't
   // already have on their board — so a subtask co-assignee still sees their work.
-  // Subtasks store extra assignees inline in assigneeIds (JSON), so filter in JS.
   const parentIdSet = new Set(tasks.map((t) => t.id));
   const allSubs = await Task.findAll({ where: { parentTaskId: { [Op.ne]: null } } });
   const myOrphanSubs = allSubs.filter((s) => {
@@ -306,56 +284,26 @@ async function buildBoard(viewerId, ctx) {
   const mine = [];
   const tracking = [];
   const completed = [];
-  // Group tasks by their assignee-group so multi-assignee copies are treated as
-  // ONE logical task. For each group we pick a single representative row and the
-  // merged list of assignees.
-  const groups = new Map(); // groupKey -> { rep, assigneeIds:Set, tasks:[] }
-  const singles = [];
-  for (const t of tasks) {
-    if (t.assigneeGroupId) {
-      const g = groups.get(t.assigneeGroupId) || { tasks: [], assigneeIds: new Set() };
-      g.tasks.push(t); if (t.assigneeId) g.assigneeIds.add(t.assigneeId);
-      groups.set(t.assigneeGroupId, g);
-    } else singles.push(t);
-  }
-
-  const classify = (t, allAssignees) => {
+  const classify = (t) => {
     const o = decorate(t);
     if (t._parentTitle) { o.parentTitle = t._parentTitle; o.isSubtaskOnBoard = true; }
-    o.assignees = allAssignees || assigneesFor(t);
+    o.assignees = assigneesFor(t);
     const sc = subBy[t.id]; o.subtaskCount = sc ? sc.total : 0; o.subtaskDone = sc ? sc.done : 0;
     o.subtasks = subsByParent[t.id] || [];
     const iAmAssigner = t.assignedById === viewerId || t.origAssignedById === viewerId;
     const iAmAssignee = t.assigneeId === viewerId || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(viewerId));
-    // Rule: if I ASSIGNED this task → it lives in "Assigned by me" (tracking),
-    // shown once, even if I'm also one of the assignees. Otherwise, if it was
-    // assigned TO me by someone else → it's on my own board.
-    if (iAmAssigner) {
-      o.relation = 'tracking';
-      (t.stage === 'completed' ? completed : tracking).push(o);
-    } else if (iAmAssignee) {
+    // If I'm an ASSIGNEE (or co-assignee), the shared task is on MY board — even
+    // if I also assigned it (I share responsibility). Only if I purely assigned
+    // it to others (not myself) does it live in "Assigned by me" (tracking).
+    if (iAmAssignee) {
       o.relation = 'mine';
       (t.stage === 'completed' ? completed : mine).push(o);
+    } else if (iAmAssigner) {
+      o.relation = 'tracking';
+      (t.stage === 'completed' ? completed : tracking).push(o);
     }
   };
-
-  // Singles: classify directly.
-  for (const t of singles) classify(t);
-
-  // Groups: one representative row with all assignees merged.
-  for (const [, g] of groups) {
-    const people2 = await HrUser.findAll({ where: { id: { [Op.in]: [...g.assigneeIds].filter((x) => x > 0).length ? [...g.assigneeIds].filter((x) => x > 0) : [0] } }, attributes: ['id', 'name', 'avatar'] });
-    const pMap = Object.fromEntries(people2.map((u) => [u.id, u]));
-    const allAssignees = dedupeByName([...g.assigneeIds].map((id) => { const u = pMap[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean));
-    // Representative: the copy I assigned (my origAssignedById) OR the one I'm the
-    // assignee of, whichever makes it appear in the right section. Prefer the
-    // assigner-view so a task I delegated shows once under "Assigned by me".
-    const iAssignedThis = g.tasks.some((t) => t.assignedById === viewerId || t.origAssignedById === viewerId);
-    let rep;
-    if (iAssignedThis) rep = g.tasks.find((t) => t.assignedById === viewerId || t.origAssignedById === viewerId) || g.tasks[0];
-    else rep = g.tasks.find((t) => t.assigneeId === viewerId) || g.tasks[0];
-    classify(rep, allAssignees);
-  }
+  for (const t of tasks) classify(t);
   const buckets = BUCKETS.map((key) => ({ key, label: BUCKET_LABELS[key], tasks: mine.filter((t) => (t.bucket || 'recently_assigned') === key) }));
 
   return { viewer, buckets, tracking, completed, canManage: true };
@@ -515,26 +463,22 @@ router.post('/tasks', guard, async (req, res, next) => {
     });
     await logActivity(row.id, ctx, 'created', parentTaskId ? 'created subtask' : 'created task');
     if (isAssignedByOther && assigneeId > 0) await notifyAssignee(assigneeId, ctx, row);
-    // Extra assignees: create a linked copy on each of their boards + notify.
+    // Extra assignees: SHARED model — store all on the one row (no copies) and
+    // notify each. The single row appears on every assignee's board.
     if (extraIds.length && !parentTaskId) {
+      const validExtra = [];
       for (const aid of extraIds) {
         const target = people.find((u) => u.id === aid);
         if (!target || !canAssign(ctx.actorUser, target, ctx, people)) continue;
-        const emax = await Task.max('order', { where: { assigneeId: aid, bucket: 'recently_assigned', parentTaskId: null } });
-        const copy = await Task.create({
-          boardOwnerId: aid, bucket: 'recently_assigned', parentTaskId: null, title,
-          description: String(b.description || '').slice(0, 20000), assigneeId: aid,
-          assigneeIds: [assigneeId, ...extraIds], assigneeGroupId: `ag${row.id}`,
-          priority: row.priority, stage: 'not_started', dueDate: b.dueDate || null,
-          order: (Number.isFinite(emax) ? emax : 0) + 1,
-          createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
-          assignedById: ctx.boardId || null, assignedByName: ctx.actorName,
-          origAssignedById: ctx.boardId || null, origAssignedByName: ctx.actorName,
-        });
-        await logActivity(copy.id, ctx, 'created', 'created task');
-        await notifyAssignee(aid, ctx, copy);
+        validExtra.push(aid);
       }
-      row.assigneeGroupId = `ag${row.id}`; await row.save();
+      if (validExtra.length) {
+        row.assigneeIds = [assigneeId, ...validExtra]; row.changed('assigneeIds', true); await row.save();
+        for (const aid of validExtra) { await notifyAssignee(aid, ctx, row); await logActivity(row.id, ctx, 'assigned', 'added an assignee'); }
+      }
+    } else if (assigneeId > 0) {
+      // Single assignee — still record the assigneeIds list for consistency.
+      row.assigneeIds = [assigneeId]; row.changed('assigneeIds', true); await row.save();
     }
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }

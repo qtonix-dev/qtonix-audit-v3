@@ -2924,7 +2924,17 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   const retoneNote = async (mode) => { if (!note.trim()) return; setNoteAiBusy(mode); try { const r = await hrApi('/tasks/ai/retone-note', { method: 'POST', body: JSON.stringify({ text: note, mode }) }); if (r.text) setNote(r.text); } catch (e) { toast(e.message || 'AI failed'); } setNoteAiBusy(''); };
   const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
   const toggleSub = async (s) => { await hrApi(`/tasks/tasks/${s._id}`, { method: 'PATCH', body: JSON.stringify({ stage: s.stage === 'completed' ? 'not_started' : 'completed' }) }); load(); };
-  const onPickFile = (e) => { const f = e.target.files && e.target.files[0]; if (!f) return; setUpErr(''); setUploading(true); uploadTaskFile(taskId, f, () => { setUploading(false); load(); }, (m) => { setUploading(false); setUpErr(m); }); e.target.value = ''; };
+  const onPickFile = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    setUpErr(''); setUploading(true);
+    // Upload each selected file in sequence so all attachments land, not just one.
+    for (const f of files) {
+      await new Promise((resolve) => uploadTaskFile(taskId, f, () => resolve(), (m) => { setUpErr(m); resolve(); }));
+    }
+    setUploading(false); load();
+  };
   const delAttach = async (id) => { await hrApi(`/tasks/attachments/${id}`, { method: 'DELETE' }); load(); };
 
   if (!data) return null;
@@ -2989,7 +2999,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             <div className="flex items-center justify-between mb-1">
               <div className="text-xs font-bold text-slate-500">Attachments</div>
               <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="text-[11px] font-bold text-orange-500 disabled:opacity-50">{uploading ? 'Uploading…' : '+ Attach file'}</button>
-              <input ref={fileRef} type="file" className="hidden" onChange={onPickFile} />
+              <input ref={fileRef} type="file" multiple className="hidden" onChange={onPickFile} />
             </div>
             {upErr && <div className="text-[11px] text-red-500 mb-1">{upErr}</div>}
             {data.attachments.length === 0
