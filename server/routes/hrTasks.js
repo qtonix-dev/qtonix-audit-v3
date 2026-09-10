@@ -234,6 +234,23 @@ async function buildBoard(viewerId, ctx) {
     where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }, { origAssignedById: viewerId }] },
     order: [['order', 'ASC'], ['id', 'ASC']],
   });
+  // Also surface SUBTASKS the viewer is (co-)assigned to whose PARENT they don't
+  // already have on their board — so a subtask co-assignee still sees their work.
+  // Subtasks store extra assignees inline in assigneeIds (JSON), so filter in JS.
+  const parentIdSet = new Set(tasks.map((t) => t.id));
+  const allSubs = await Task.findAll({ where: { parentTaskId: { [Op.ne]: null } } });
+  const myOrphanSubs = allSubs.filter((s) => {
+    if (parentIdSet.has(s.parentTaskId)) return false; // parent already shown → subtask nests under it
+    const ids = new Set([s.assigneeId, ...((Array.isArray(s.assigneeIds) ? s.assigneeIds : []))].filter(Boolean));
+    return ids.has(viewerId);
+  });
+  // Pull parent titles for labelling.
+  const parentIds = [...new Set(myOrphanSubs.map((s) => s.parentTaskId))];
+  const parents = parentIds.length ? await Task.findAll({ where: { id: { [Op.in]: parentIds } }, attributes: ['id', 'title'] }) : [];
+  const parentTitleById = Object.fromEntries(parents.map((p) => [p.id, p.title]));
+  // Treat these orphan subtasks like top-level tasks on this board.
+  myOrphanSubs.forEach((s) => { s._parentTitle = parentTitleById[s.parentTaskId] || ''; });
+  tasks.push(...myOrphanSubs);
   const ids = tasks.map((t) => t.id);
   const subCounts = ids.length ? await Task.findAll({ attributes: ['parentTaskId', 'stage', [sequelize.fn('COUNT', sequelize.col('id')), 'n']], where: { parentTaskId: { [Op.in]: ids } }, group: ['parentTaskId', 'stage'], raw: true }) : [];
   const subBy = {};
@@ -291,11 +308,12 @@ async function buildBoard(viewerId, ctx) {
 
   const classify = (t, allAssignees) => {
     const o = decorate(t);
+    if (t._parentTitle) { o.parentTitle = t._parentTitle; o.isSubtaskOnBoard = true; }
     o.assignees = allAssignees || assigneesFor(t);
     const sc = subBy[t.id]; o.subtaskCount = sc ? sc.total : 0; o.subtaskDone = sc ? sc.done : 0;
     o.subtasks = subsByParent[t.id] || [];
     const iAmAssigner = t.assignedById === viewerId || t.origAssignedById === viewerId;
-    const iAmAssignee = t.assigneeId === viewerId;
+    const iAmAssignee = t.assigneeId === viewerId || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(viewerId));
     // Rule: if I ASSIGNED this task → it lives in "Assigned by me" (tracking),
     // shown once, even if I'm also one of the assignees. Otherwise, if it was
     // assigned TO me by someone else → it's on my own board.
