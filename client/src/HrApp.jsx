@@ -243,6 +243,24 @@ function HoverName({ label, children }) {
 }
 
 // WhatsApp-style double-tick: grey = sent/unread, green = read (same as CRM email).
+// Circular progress ring with a gradient stroke and centered content.
+function ProgressRing({ pct = 0, size = 58, stroke = 6, from = '#FF6A00', to = '#FF4500', children }) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ - (Math.max(0, Math.min(100, pct)) / 100) * circ;
+  const gid = `pr${Math.round(Math.random() * 1e6)}`;
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f5f9" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`url(#${gid})`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off} style={{ transition: 'stroke-dashoffset .6s ease' }} />
+        <defs><linearGradient id={gid} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor={from} /><stop offset="1" stopColor={to} /></linearGradient></defs>
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{children}</div>
+    </div>
+  );
+}
+
 function ReadTick({ read, size = 18 }) {
   const color = read ? '#16A34A' : '#94A3B8';
   const w = size; const h = Math.round(size * 14 / 22);
@@ -1780,7 +1798,18 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
     } catch (e) { toast(e.message); setEditor(body); }
     setSending(false);
   };
-  // Convert the contentEditable HTML into our storage markers (**bold**, _italic_).
+  // Send a specific text directly (used by AI reply suggestions — one click sends).
+  const sendText = async (msg) => {
+    const body = String(msg || '').trim();
+    if (!active || !body) return;
+    setSending(true);
+    try {
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      loadConversations();
+    } catch (e) { toast(e.message); }
+    setSending(false);
+  };
   const htmlToMarkers = (html) => {
     let s = String(html || '');
     // Normalize <b>/<strong> → **, <i>/<em> → _
@@ -2124,7 +2153,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             )}
             {aiSuggests.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
-                {aiSuggests.map((s, i) => <button key={i} onClick={() => { setEditor(s); setAiSuggests([]); }} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800" style={{ background: '#faf5ff', borderColor: '#ede9fe' }}>{s}</button>)}
+                {aiSuggests.map((s, i) => <button key={i} onClick={() => { setAiSuggests([]); sendText(s); }} className="rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold text-violet-800 hover:bg-violet-100 transition" style={{ background: '#faf5ff', borderColor: '#ede9fe' }} title="Click to send">{s}</button>)}
               </div>
             )}
             <div className="relative">
@@ -3633,6 +3662,7 @@ function JoinConfirmReview({ it, onConfirm, NAME, SUBT }) {
 
 function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const [clock, setClock] = useState(null);
+  const [taskSummary, setTaskSummary] = useState(null);
   const [myRec, setMyRec] = useState(null);      // the viewer's own recognition
   const [myRecOpen, setMyRecOpen] = useState(false);
   const [leave, setLeave] = useState(null);
@@ -3670,6 +3700,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   useEffect(() => {
     loadClock(); loadLeave(); loadReviews(); loadInterviews();
     hrApi('/me/whos-in').then(setWhos).catch(() => {});
+    hrApi('/tasks/my-summary').then(setTaskSummary).catch(() => {});
     hrApi('/me/celebrations').then(setCel).catch(() => {});
     hrApi('/announcements').then((r) => setAnn(Array.isArray(r) ? r : (r.announcements || []))).catch(() => {});
     hrApi('/holidays').then((r) => setHolidays(Array.isArray(r) ? r : (r.holidays || []))).catch(() => {});
@@ -3738,6 +3769,33 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
           </div>
         </div>
       </div>
+
+      {/* TODAY'S FOCUS — progress ring + pills nudge */}
+      {taskSummary && (taskSummary.pending > 0) && (
+        <div className="mb-4 rounded-2xl bg-white p-5 shadow-sm" style={{ border: '1px solid #eef0f4' }}>
+          <div className="flex items-center gap-4">
+            <ProgressRing pct={taskSummary.pct || 0} size={58} stroke={6}>
+              <div className="text-[15px] font-black text-[#050A1F] leading-none">{taskSummary.pct || 0}%</div>
+            </ProgressRing>
+            <div className="flex-1 min-w-0">
+              <div className="text-[16px] font-extrabold text-[#050A1F] flex items-center gap-2 flex-wrap">Today's focus {taskSummary.totalToday > 0 && <span className="text-[12px] font-bold text-slate-400">· {taskSummary.completedToday} of {taskSummary.totalToday} done</span>}</div>
+              <div className="text-[12.5px] text-slate-500 mt-0.5">{taskSummary.overdue > 0 ? 'Some tasks slipped — let\u2019s catch up.' : (taskSummary.dueToday - taskSummary.completedToday > 0 ? `You\u2019re making progress — ${Math.max(0, taskSummary.dueToday)} more due today!` : 'Keep the momentum going!')}</div>
+            </div>
+            <button onClick={() => onNav && onNav('tasks')} className="text-[12.5px] font-extrabold whitespace-nowrap shrink-0" style={{ color: '#FF6A00' }}>Open board →</button>
+          </div>
+          <div className="flex gap-2 mt-3.5 flex-wrap">
+            {taskSummary.overdue > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEF2F2', color: '#DC2626' }}>⚠️ {taskSummary.overdue} overdue</span>}
+            {taskSummary.dueToday > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FFF7ED', color: '#EA580C' }}>🔥 {taskSummary.dueToday} due today</span>}
+            {taskSummary.highPriority > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEFCE8', color: '#A16207' }}>⚡ {taskSummary.highPriority} high priority</span>}
+          </div>
+        </div>
+      )}
+      {taskSummary && taskSummary.pending === 0 && (
+        <div className="mb-4 rounded-2xl p-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#ecfdf5,#f0fdf4)', border: '1px solid #bbf7d0' }}>
+          <div className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center text-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)' }}>🎉</div>
+          <div className="flex-1"><div className="text-[16px] font-extrabold text-[#050A1F]">All clear for today!</div><div className="text-[12.5px] text-green-700 mt-0.5">No pending tasks. Enjoy the momentum — you've earned it. 🙌</div></div>
+        </div>
+      )}
 
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
       {ann.length > 0 && (
@@ -10259,6 +10317,12 @@ export default function HrApp() {
 
   const refreshUser = () => hrApi('/me').then(setUser).catch(() => {});
   const logout = () => { hrApi('/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { localStorage.removeItem(HR_TOKEN_KEY); setUser(null); window.location.href = `${HR_BASE}/login`; }); };
+  // Before logging out, fetch a task summary and show a friendly wrap-up popup.
+  const [logoutSummary, setLogoutSummary] = useState(null);
+  const startLogout = async () => {
+    try { const s = await hrApi('/tasks/my-summary'); setLogoutSummary(s || {}); }
+    catch { logout(); }
+  };
 
   // ---- Auto-logout after 30 min of inactivity (with a 5-min warning popup) ----
   const [idleWarn, setIdleWarn] = useState(false);
@@ -10340,6 +10404,7 @@ export default function HrApp() {
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       {idleWarn && <HrIdleWarning onContinue={() => idleResetRef.current && idleResetRef.current()} onSignOut={logout} />}
+      {logoutSummary && <LogoutSummary summary={logoutSummary} onStay={() => setLogoutSummary(null)} onLogout={logout} name={(user && user.name || '').split(' ')[0]} />}
       <header className="bg-[#050A1F] text-white">
         <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14 gap-2">
           <div className="flex items-center gap-3 md:gap-6 min-w-0">
@@ -10376,7 +10441,7 @@ export default function HrApp() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <NotificationBell onOpenCandidate={(id) => { setView('recruitment'); setNavKey((k) => k + 1); }} />
-            <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={logout} isAdmin={isAdmin} />
+            <UserMenu user={user} onNavigate={(v) => { setView(v); setProfileTarget(null); setNavKey((k) => k + 1); }} onLogout={startLogout} isAdmin={isAdmin} />
             {/* Mobile menu toggle */}
             <button onClick={() => setMobileNav((v) => !v)} className="md:hidden rounded-lg p-2 text-slate-300 hover:text-white hover:bg-white/10" aria-label="Menu">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d={mobileNav ? 'M6 6l12 12M6 18L18 6' : 'M4 7h16M4 12h16M4 17h16'} strokeLinecap="round" /></svg>
@@ -10503,6 +10568,44 @@ function NotificationBell({ onOpenCandidate }) {
 }
 
 // Top-right user dropdown: My Profile, Email Template, Email Signature, Logout.
+// Friendly wrap-up shown when signing out: what you did today + what's pending.
+function LogoutSummary({ summary, onStay, onLogout, name }) {
+  const done = summary.completedToday || 0;
+  const total = summary.totalToday || (done + (summary.pending || 0));
+  const pending = summary.pending || 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : (pending === 0 ? 100 : 0);
+  const lines = done > 0
+    ? ['Rest well — tomorrow\u2019s another win. 🌙', 'Nice work today! See you tomorrow. 🌙', 'Another productive day in the books. 🌙']
+    : ['Tomorrow\u2019s a fresh start. 💪', 'Every day is a new opportunity. 🌱', 'See you tomorrow! 🌙'];
+  const line = lines[Math.floor(Math.random() * lines.length)];
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+      <div className="bg-white rounded-2xl p-7 w-full max-w-sm shadow-2xl text-center">
+        <div className="mx-auto mb-2" style={{ width: 110 }}>
+          <ProgressRing pct={pct} size={110} stroke={9} from="#22c55e" to="#16a34a"><div className="text-3xl">{done > 0 ? '🌙' : '👋'}</div></ProgressRing>
+        </div>
+        <div className="text-[19px] font-extrabold text-[#050A1F]">{done > 0 ? 'Great day' : 'Wrapping up'}{name ? `, ${name}` : ''}!</div>
+        <div className="text-[12.5px] text-slate-500 mt-0.5">You completed <b className="text-green-600">{done} of {total}</b> tasks today</div>
+        <div className="grid grid-cols-2 gap-3 my-4">
+          <div className="rounded-xl p-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+            <div className="text-2xl font-black text-green-600 leading-none">{done}</div>
+            <div className="text-[9.5px] font-extrabold text-green-700 uppercase tracking-wide mt-1.5">✓ Done today</div>
+          </div>
+          <div className="rounded-xl p-3" style={{ background: pending > 0 ? '#FFF7ED' : '#F8FAFC', border: `1px solid ${pending > 0 ? '#FED7AA' : '#E2E8F0'}` }}>
+            <div className="text-2xl font-black leading-none" style={{ color: pending > 0 ? '#EA580C' : '#94A3B8' }}>{pending}</div>
+            <div className="text-[9.5px] font-extrabold uppercase tracking-wide mt-1.5" style={{ color: pending > 0 ? '#C2410C' : '#94A3B8' }}>⏳ Pending</div>
+          </div>
+        </div>
+        <p className="text-[12.5px] text-slate-500 mb-4">{line}</p>
+        <div className="flex flex-col gap-2">
+          <button onClick={onLogout} className="w-full rounded-xl px-4 py-3 text-sm font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Finish for the day →</button>
+          <button onClick={onStay} className="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Actually, stay a bit</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Idle-timeout warning: counts down 5 minutes, then auto signs out.
 function HrIdleWarning({ onContinue, onSignOut }) {
   const [left, setLeft] = useState(5 * 60);

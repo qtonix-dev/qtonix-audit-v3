@@ -317,6 +317,35 @@ router.get('/my-board', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Compact task summary for the dashboard nudge + logout summary.
+router.get('/my-summary', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const viewerId = ctx.boardId;
+    const ist = new Date(Date.now() + 330 * 60000);
+    const today = ist.toISOString().slice(0, 10);
+    // All my (co-)assigned top-level tasks.
+    const dbTasks = await Task.findAll({ where: { parentTaskId: null } });
+    const mine = dbTasks.filter((t) => t.assigneeId === viewerId || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(viewerId)));
+    let dueToday = 0, highPriority = 0, pending = 0, overdue = 0, completedToday = 0, totalToday = 0;
+    for (const t of mine) {
+      if (t.stage === 'completed') {
+        const cd = t.completedAt ? new Date(new Date(t.completedAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : '';
+        if (cd === today) { completedToday++; totalToday++; }
+        continue;
+      }
+      pending++;
+      if (['urgent', 'high'].includes(t.priority)) highPriority++;
+      const due = t.dueDate ? String(t.dueDate).slice(0, 10) : (t.bucket === 'today' ? today : '');
+      if (due && due === today) { dueToday++; totalToday++; }
+      if (due && due < today) overdue++;
+    }
+    // Progress = tasks completed today out of everything that was on today's plate.
+    const pct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : (pending === 0 ? 100 : 0);
+    res.json({ dueToday, highPriority, pending, overdue, completedToday, totalToday, pct });
+  } catch (e) { next(e); }
+});
+
 router.get('/board/:viewerId', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
