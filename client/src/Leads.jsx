@@ -97,6 +97,28 @@ function extractQuotedTail(html) {
   return html.slice(spacer ? at - spacer[0].length : at);
 }
 
+// Signature block helpers. The signature is wrapped in <div data-sig="1">…</div>
+// and must sit ABOVE the quoted chain. Real signatures contain nested <div>s,
+// so a non-greedy regex like /<div data-sig="1">[\s\S]*?<\/div>/ matches only up
+// to the FIRST </div> and mangles the block. We parse the DOM instead so the
+// whole marked block is found and replaced correctly, keeping it above the chain.
+function hasSigBlock(html) {
+  if (!html || typeof document === 'undefined') return /data-sig=["']1["']/.test(html || '');
+  const d = document.createElement('div'); d.innerHTML = html;
+  return !!d.querySelector('[data-sig="1"]');
+}
+// Replace the existing signature block's contents with `sig` (or remove it when
+// sig is empty), leaving everything else — including the quoted chain — in place.
+function replaceSigBlock(html, sig) {
+  if (typeof document === 'undefined') return html;
+  const d = document.createElement('div'); d.innerHTML = html || '';
+  const el = d.querySelector('[data-sig="1"]');
+  if (!el) return html;
+  if (!sig) { el.remove(); return d.innerHTML; }
+  el.innerHTML = `<br><br>${sig}`;
+  return d.innerHTML;
+}
+
 function IconBase({ size = 15, children }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2651,10 +2673,10 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
     prevFromRef.current = from;
     const newSig = sigForValue(from);
     setBody((b) => {
-      const hasBlock = /<div data-sig="1">[\s\S]*?<\/div>/.test(b || '');
+      const hasBlock = hasSigBlock(b || '');
       if (hasBlock) {
-        // Swap the existing signature block in place.
-        return (b || '').replace(/<div data-sig="1">[\s\S]*?<\/div>/, newSig ? `<div data-sig="1"><br><br>${newSig}</div>` : '');
+        // Swap the existing signature block's contents in place (handles nested divs).
+        return replaceSigBlock(b || '', newSig);
       }
       if (!newSig) return b || '';
       // No block yet — insert above the quoted chain if present, else append.
@@ -2692,7 +2714,7 @@ function Composer({ lead, initial, fromOptions, onClose, onSent, defaultSignatur
     setBody((b) => {
       const cur = b || '';
       // Replace an existing block if present; else place above the quoted chain.
-      if (/<div data-sig="1">[\s\S]*?<\/div>/.test(cur)) return cur.replace(/<div data-sig="1">[\s\S]*?<\/div>/, `<div data-sig="1"><br><br>${sig}</div>`);
+      if (hasSigBlock(cur)) return replaceSigBlock(cur, sig);
       const tail = extractQuotedTail(cur);
       if (tail) { const head = cur.slice(0, cur.length - tail.length); return `${head}<div data-sig="1"><br><br>${sig}</div>${tail}`; }
       return `${cur}<div data-sig="1"><br><br>${sig}</div>`;
