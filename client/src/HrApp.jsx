@@ -2945,7 +2945,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
         </div>
         <div className="p-5">
           {isSubtask && <div className="text-[11px] text-slate-400 mb-2">Subtask{parentTitle ? <> of <span className="font-semibold text-slate-500">{parentTitle}</span></> : ''}</div>}
-          <input defaultValue={t.title} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none" />
+          <textarea defaultValue={t.title} rows={1} onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value.trim() })} className="w-full text-xl font-extrabold text-[#050A1F] mb-4 focus:outline-none resize-none leading-snug overflow-hidden" style={{ minHeight: '1.6em' }} ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }} />
           <div className="space-y-3 mb-5">
             {!t.parentTaskId ? (
               <TField label="Assignees">
