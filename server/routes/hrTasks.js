@@ -34,6 +34,7 @@ const guard = ADMIN_ONLY ? [requireHrAccess, requireHrAdmin] : [requireHrAccess]
 
 const BUCKETS = ['recently_assigned', 'today', 'tomorrow', 'next_week', 'later'];
 const BUCKET_LABELS = { recently_assigned: 'Recently Assigned', today: 'Do Today', tomorrow: 'Do Tomorrow', next_week: 'Do Next Week', later: 'Do Later' };
+const STAGE_LABEL = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed' };
 
 async function actingContext(req) {
   const isAdmin = !!req.isHrAdmin || (req.hrActor && req.hrActor.kind === 'admin');
@@ -360,35 +361,73 @@ async function reportActor(req) {
   return { id: ctx.boardId, name: ctx.actorName, isAdmin };
 }
 
-// List the dates that have any activity for this senior's team, newest first,
-// each with present/absent counts and the cached AI day-verdict (if any).
+// List the dates that have any activity for this senior's team (or, for an
+// admin, the whole org), newest first, with present/absent counts + AI verdict.
 router.get('/team-report/dates', guard, async (req, res, next) => {
   try {
     const actor = await reportActor(req);
     const days = Math.min(60, Number(req.query.days) || 21);
     const today = teamReport.istDateStr();
     const out = [];
+    // Admins see org-wide (department grouping); everyone else sees their team.
+    const roster = actor.isAdmin ? null : await teamReport.teamOf(actor.id);
     for (let i = 0; i < days; i++) {
       const d = new Date(new Date(today + 'T00:00:00Z').getTime() - i * 86400000).toISOString().slice(0, 10);
-      const day = await teamReport.buildTeamDay(actor.id, d, {});
-      if (!day.employees.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
-      const cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date: d } });
-      out.push({ date: d, present: day.present, absent: day.absent, totalDone: day.totalDone, totalPlanned: day.totalPlanned, verdict: cached ? cached.dayVerdict : null });
+      if (actor.isAdmin) {
+        const adminDay = await teamReport.buildAdminDay(d, {});
+        const present = adminDay.departments.reduce((s, g) => s + g.present, 0);
+        const absent = adminDay.departments.reduce((s, g) => s + g.absent, 0);
+        if (present + absent === 0) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
+        const totalDone = adminDay.departments.reduce((s, g) => s + g.totalDone, 0);
+        out.push({ date: d, present, absent, totalDone, departments: adminDay.departments.length });
+      } else {
+        const day = await teamReport.buildTeamDay(actor.id, d, { roster });
+        if (!day.employees.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
+        const cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date: d } });
+        out.push({ date: d, present: day.present, absent: day.absent, totalDone: day.totalDone, totalPlanned: day.totalPlanned, verdict: cached ? cached.dayVerdict : null });
+      }
     }
-    res.json({ dates: out, hasTeam: (await teamReport.directReports(actor.id)).length > 0 });
+    const hasTeam = actor.isAdmin ? true : (roster && roster.length > 0);
+    res.json({ dates: out, hasTeam, isAdmin: actor.isAdmin });
   } catch (e) { next(e); }
 });
 
 // Full detail for one date. ?employee=<id> filters to a single report.
-// Runs (or reuses cached) Claude review and merges the verdicts in.
+// ?department=<name> filters admin view. Runs (or reuses cached) Claude review.
 router.get('/team-report/:date', guard, async (req, res, next) => {
   try {
     const actor = await reportActor(req);
     const date = String(req.params.date).slice(0, 10);
     const employeeId = req.query.employee ? Number(req.query.employee) : null;
-    const day = await teamReport.buildTeamDay(actor.id, date, employeeId ? { employeeId } : {});
 
-    // AI review — cache per senior+date, regenerate on fingerprint change.
+    // ----- ADMIN: department-grouped org-wide view -----
+    if (actor.isAdmin) {
+      const adminDay = await teamReport.buildAdminDay(date, { employeeId, department: req.query.department || null });
+      // One shared AI review for the whole org day (cached under a sentinel id 0).
+      const flat = { date, employees: adminDay.departments.flatMap((g) => g.employees), totalDone: adminDay.departments.reduce((s, g) => s + g.totalDone, 0), totalPlanned: adminDay.departments.reduce((s, g) => s + g.employees.reduce((a, e) => a + e.counts.total, 0), 0) };
+      let review = null;
+      if (flat.employees.length) {
+        const fp = teamReport.dayFingerprint(flat);
+        let cached = await HrTeamReview.findOne({ where: { seniorId: 0, date } });
+        if (!cached || cached.fingerprint !== fp || req.query.refresh) {
+          const r = await teamReviewAi.reviewTeamDay(flat);
+          await HrTeamReview.upsert({ seniorId: 0, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp });
+          cached = await HrTeamReview.findOne({ where: { seniorId: 0, date } });
+        }
+        review = cached ? { dayVerdict: cached.dayVerdict, daySummary: cached.daySummary, perEmployee: cached.perEmployee || {}, perTask: cached.perTask || {} } : null;
+      }
+      if (review) {
+        for (const g of adminDay.departments) for (const e of g.employees) {
+          const ev = review.perEmployee[e.employee.id] || review.perEmployee[String(e.employee.id)] || {};
+          e.aiVerdict = ev.verdict || null; e.aiSummary = ev.summary || '';
+          for (const t of e.tasks) { const tv = review.perTask[t.id] || review.perTask[String(t.id)] || {}; t.aiPace = tv.pace || null; t.aiReason = tv.reason || ''; }
+        }
+      }
+      return res.json({ date, admin: true, departments: adminDay.departments, dayVerdict: review ? review.dayVerdict : null, daySummary: review ? review.daySummary : '' });
+    }
+
+    // ----- SENIOR: their team -----
+    const day = await teamReport.buildTeamDay(actor.id, date, employeeId ? { employeeId } : {});
     let review = null;
     if (day.employees.length) {
       const fp = teamReport.dayFingerprint(await teamReport.buildTeamDay(actor.id, date, {}));
@@ -396,12 +435,11 @@ router.get('/team-report/:date', guard, async (req, res, next) => {
       if (!cached || cached.fingerprint !== fp || req.query.refresh) {
         const full = await teamReport.buildTeamDay(actor.id, date, {});
         const r = await teamReviewAi.reviewTeamDay(full);
-        [cached] = await HrTeamReview.upsert({ seniorId: actor.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp }, { returning: true }).then(() => HrTeamReview.findOne({ where: { seniorId: actor.id, date } })).then((row) => [row]);
+        await HrTeamReview.upsert({ seniorId: actor.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp });
+        cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date } });
       }
       review = cached ? { dayVerdict: cached.dayVerdict, daySummary: cached.daySummary, perEmployee: cached.perEmployee || {}, perTask: cached.perTask || {} } : null;
     }
-
-    // Merge AI verdicts onto the payload.
     if (review) {
       for (const e of day.employees) {
         const ev = review.perEmployee[e.employee.id] || review.perEmployee[String(e.employee.id)] || {};
@@ -410,6 +448,42 @@ router.get('/team-report/:date', guard, async (req, res, next) => {
       }
     }
     res.json({ ...day, dayVerdict: review ? review.dayVerdict : null, daySummary: review ? review.daySummary : '' });
+  } catch (e) { next(e); }
+});
+
+// ADMIN: export a date's org-wide report to Excel (.xlsx). Admin-only.
+router.get('/team-report/:date/export', guard, async (req, res, next) => {
+  try {
+    const actor = await reportActor(req);
+    if (!actor.isAdmin) return res.status(403).json({ error: 'Only an admin can export reports.' });
+    const date = String(req.params.date).slice(0, 10);
+    const adminDay = await teamReport.buildAdminDay(date, { department: req.query.department || null });
+    const cached = await HrTeamReview.findOne({ where: { seniorId: 0, date } });
+    const perTask = (cached && cached.perTask) || {};
+
+    const XLSX = require('xlsx');
+    const rows = [];
+    for (const g of adminDay.departments) {
+      for (const e of g.employees) {
+        const a = e.attendance;
+        if (!e.tasks.length) {
+          rows.push({ Date: date, Department: g.department, Employee: e.employee.name, Designation: e.employee.designation || '', Attendance: a.present ? 'Present' : 'Absent', Login: a.loginTime || '', Logout: a.logoutTime || '', Hours: a.hoursLabel || '', Task: '(no tasks)', Status: '', 'Time Taken': '', 'AI Pace': '', Note: e.note || '' });
+          continue;
+        }
+        for (const t of e.tasks) {
+          const pace = (perTask[t.id] || perTask[String(t.id)] || {}).pace || '';
+          rows.push({ Date: date, Department: g.department, Employee: e.employee.name, Designation: e.employee.designation || '', Attendance: a.present ? 'Present' : 'Absent', Login: a.loginTime || '', Logout: a.logoutTime || '', Hours: a.hoursLabel || '', Task: t.title, Status: t.seniorFlag === 'need_update' ? 'Need update' : (STAGE_LABEL[t.stage] || t.stage), 'Time Taken': t.timeLabel || '', 'AI Pace': pace, Note: e.note || '' });
+        }
+      }
+    }
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Date: date, Note: 'No data for this date' }]);
+    ws['!cols'] = [{ wch: 11 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 34 }, { wch: 13 }, { wch: 11 }, { wch: 9 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Day-End Report');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="team-report-${date}.xlsx"`);
+    res.send(buf);
   } catch (e) { next(e); }
 });
 

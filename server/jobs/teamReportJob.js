@@ -76,24 +76,27 @@ async function runDailies(models) {
   const date = now.toISOString().slice(0, 10);
   const hrEmail = require('../services/hrEmailTemplate');
 
-  // Every distinct senior (someone who has at least one direct report).
   const seniors = await HrUser.findAll({ where: { active: true } });
   for (const senior of seniors) {
-    const reports = await teamReport.directReports(senior.id);
+    const reports = await teamReport.teamOf(senior.id);
     if (!reports.length) continue;
 
-    const day = await teamReport.buildTeamDay(senior.id, date, {});
+    // Only proceed once EVERY team member's working day has ended (shift end
+    // passed or they've logged out / are absent). Replaces the fixed hour.
+    let allDone = true;
+    for (const emp of reports) { if (!(await teamReport.employeeDayEnded(emp, date))) { allDone = false; break; } }
+    if (!allDone) continue;
+
+    const day = await teamReport.buildTeamDay(senior.id, date, { roster: reports });
     if (!day.employees.length) continue;
     const fp = teamReport.dayFingerprint(day);
 
-    // Generate + cache the review if needed.
     let cached = await HrTeamReview.findOne({ where: { seniorId: senior.id, date } });
     if (!cached || cached.fingerprint !== fp) {
       const r = await teamReviewAi.reviewTeamDay(day);
       await HrTeamReview.upsert({ seniorId: senior.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp });
       cached = await HrTeamReview.findOne({ where: { seniorId: senior.id, date } });
     }
-    // Email only if away and not already emailed today.
     if (cached && !cached.emailedAt) {
       const away = await seniorIsAway(models, senior, date);
       if (away) {
@@ -116,7 +119,7 @@ async function runWeekly(models) {
   const hrEmail = require('../services/hrEmailTemplate');
   const seniors = await HrUser.findAll({ where: { active: true } });
   for (const senior of seniors) {
-    const reports = await teamReport.directReports(senior.id);
+    const reports = await teamReport.teamOf(senior.id);
     if (!reports.length) continue;
     // Aggregate last 7 days.
     const perEmp = {};
@@ -150,12 +153,12 @@ async function runWeekly(models) {
 async function tick(models) {
   if (running) return; running = true;
   try {
+    // Dailies are self-gating per employee (shift end / logout), so we can run
+    // them on every tick — they only send once each team's day is fully done.
+    await runDailies(models);
+    // Weekly digest only fires on the configured weekday, in the EOD hour.
     const now = istNow();
-    // Only fire the heavy work in the end-of-day hour window.
-    if (now.getHours() === EOD_HOUR) {
-      await runDailies(models);
-      await runWeekly(models);
-    }
+    if (now.getDay() === WEEKLY_DAY && now.getHours() === EOD_HOUR) await runWeekly(models);
   } catch (e) { console.error('[team-report] tick failed:', e.message); }
   running = false;
 }

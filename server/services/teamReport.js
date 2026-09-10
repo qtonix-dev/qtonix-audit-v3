@@ -4,7 +4,7 @@
 // their tasks with statuses, time-per-task (from status-change history), and
 // their end-of-day note. Also formats the payload for Claude's review.
 // ===========================================================================
-const { Op, HrUser, Task, TaskActivity, TaskComment, HrAttendance, HrDayNote } = require('../models');
+const { Op, HrUser, Task, TaskActivity, TaskComment, HrAttendance, HrDayNote, HrShift } = require('../models');
 
 const IST_OFFSET = 330 * 60000;
 function istDateStr(d = new Date()) { return new Date(new Date(d).getTime() + IST_OFFSET).toISOString().slice(0, 10); }
@@ -27,6 +27,73 @@ function hoursBetween(login, logout) {
 async function directReports(seniorId) {
   return HrUser.findAll({ where: { reportsToId: seniorId, active: true, chatOnly: { [Op.not]: true } }, order: [['name', 'ASC']] });
 }
+
+// The senior who should receive an employee's day-end report. Normally their
+// direct manager (reportsToId). If they have none, walk UP is impossible, so we
+// return null and the employee rolls up to Admin's department view instead.
+// (The reverse — a manager's reports — is directReports above.)
+async function seniorOf(emp) {
+  if (!emp || !emp.reportsToId) return null;
+  const mgr = await HrUser.findByPk(emp.reportsToId);
+  return mgr && mgr.active ? mgr : null;
+}
+
+// Everyone in an employee's team for a senior, following the chain DOWN so that
+// reports of reports with no direct manager still surface. We include:
+//   - direct reports, and
+//   - any active employee whose nearest active manager up the chain is this senior.
+async function teamOf(seniorId) {
+  const all = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+  const byId = Object.fromEntries(all.map((u) => [u.id, u]));
+  const out = [];
+  for (const u of all) {
+    if (u.id === seniorId) continue;
+    // Walk up from u to the first active manager.
+    let cur = u; let hops = 0; const seen = new Set([u.id]);
+    while (cur && cur.reportsToId && hops < 8) {
+      if (seen.has(cur.reportsToId)) break;
+      seen.add(cur.reportsToId);
+      const mgr = byId[cur.reportsToId];
+      if (!mgr) break;
+      if (mgr.id === seniorId) { out.push(u); break; }
+      cur = mgr; hops += 1;
+    }
+  }
+  // De-dup and sort by name.
+  const uniq = Array.from(new Map(out.map((u) => [u.id, u])).values());
+  uniq.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return uniq;
+}
+
+// An employee's effective end-of-day time (HH:MM, IST) from their shift, or a
+// default. Used by the scheduler to know when their day is "done".
+async function employeeShiftEnd(emp) {
+  if (emp && emp.shiftId) {
+    const shift = await HrShift.findByPk(emp.shiftId);
+    if (shift && shift.endTime) return shift.endTime; // "18:00"
+  }
+  return null;
+}
+
+// Has this employee's working day ended for the given date? True if they've
+// logged out, OR their shift end-time has passed (IST now), OR they're absent.
+async function employeeDayEnded(emp, date) {
+  const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
+  if (att && ['absent', 'leave'].includes(att.status)) return true;   // nothing more coming
+  if (att && att.logoutTime) return true;                             // logged out
+  const end = await employeeShiftEnd(emp);
+  if (end) {
+    const now = istNow();
+    const [h, m] = end.split(':').map(Number);
+    const endMin = h * 60 + m;
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    // Handles same-day shifts; midnight-crossing shifts fall through to false
+    // until the next tick after their end time.
+    if (nowMin >= endMin) return true;
+  }
+  return false;
+}
+function istNow() { return new Date(Date.now() + IST_OFFSET); }
 
 // Compute per-task time from the TaskActivity trail for a given task, using the
 // in_progress → completed spans. Falls back to startedAt/completedAt or workMs.
@@ -123,9 +190,11 @@ async function buildEmployeeDay(emp, date, opts = {}) {
   };
 }
 
-// Assemble a full day for a senior: every direct report's slice + roll-up.
+// Assemble a full day for a senior: every team member's slice + roll-up.
+// Uses the chain-aware team (includes reports-of-reports whose nearest active
+// manager is this senior), so nobody is missed when middle managers are absent.
 async function buildTeamDay(seniorId, date, opts = {}) {
-  const reports = await directReports(seniorId);
+  const reports = opts.roster || await teamOf(seniorId);
   const employees = [];
   for (const emp of reports) {
     if (opts.employeeId && emp.id !== opts.employeeId) continue;
@@ -136,6 +205,25 @@ async function buildTeamDay(seniorId, date, opts = {}) {
   const totalDone = employees.reduce((s, e) => s + e.counts.done, 0);
   const totalPlanned = employees.reduce((s, e) => s + e.counts.total, 0);
   return { date, present, absent, totalDone, totalPlanned, employees };
+}
+
+// Admin view: every active employee grouped by department, for one date.
+async function buildAdminDay(date, opts = {}) {
+  const all = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, order: [['department', 'ASC'], ['name', 'ASC']] });
+  const groups = {};
+  for (const emp of all) {
+    if (opts.department && (emp.department || 'Unassigned') !== opts.department) continue;
+    if (opts.employeeId && emp.id !== opts.employeeId) continue;
+    const dept = emp.department || 'Unassigned';
+    groups[dept] = groups[dept] || [];
+    groups[dept].push(await buildEmployeeDay(emp, date, opts));
+  }
+  const departments = Object.keys(groups).sort().map((dept) => {
+    const employees = groups[dept];
+    const present = employees.filter((e) => e.attendance.present).length;
+    return { department: dept, present, absent: employees.length - present, totalDone: employees.reduce((s, e) => s + e.counts.done, 0), employees };
+  });
+  return { date, departments };
 }
 
 // A stable fingerprint of a day's task states, so we know when to re-run Claude.
@@ -150,4 +238,4 @@ function dayFingerprint(day) {
   return String(h);
 }
 
-module.exports = { istDateStr, fmtDur, directReports, buildEmployeeDay, buildTeamDay, dayFingerprint };
+module.exports = { istDateStr, fmtDur, directReports, teamOf, seniorOf, employeeShiftEnd, employeeDayEnded, buildEmployeeDay, buildTeamDay, buildAdminDay, dayFingerprint };

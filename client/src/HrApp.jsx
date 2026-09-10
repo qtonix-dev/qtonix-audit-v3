@@ -50,6 +50,17 @@ export const hrApiRaw = async (path, opts = {}) => {
   return text;
 };
 
+// Like hrApi, but returns a Blob (used for file downloads like Excel export).
+export const hrApiBlob = async (path, opts = {}) => {
+  const token = localStorage.getItem(HR_TOKEN_KEY);
+  const res = await fetch(`${API_BASE}/api/hr${path}`, {
+    ...opts,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+  });
+  if (!res.ok) { let msg = 'Download failed.'; try { const j = await res.json(); msg = j.error || msg; } catch {} throw new Error(msg); }
+  return res.blob();
+};
+
 const ORANGE = 'linear-gradient(90deg,#FF6A00,#FF4500)';
 // URL base for the HR app. On the HRMS domain (people.qtonix.com) the app is
 // mounted at the clean root, so there's no prefix and URLs are /dashboard. On
@@ -1592,33 +1603,43 @@ const STAGE_PILL = {
 function RPill({ s, children }) { return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold" style={{ background: s.bg, color: s.color }}>{children || s.label}</span>; }
 
 function TeamReportView({ user, isAdmin, hasReports }) {
-  if (hasReports) return <SeniorReport user={user} />;
+  if (hasReports) return <SeniorReport user={user} isAdmin={isAdmin} />;
   return <SelfReport user={user} />;
 }
 
-// ---------- Senior: team-wide, day-wise ----------
-function SeniorReport({ user }) {
+// ---------- Senior/Admin: day-wise (admin gets department grouping + export) ----------
+function SeniorReport({ user, isAdmin }) {
   const [dates, setDates] = useState(null);
+  const [adminView, setAdminView] = useState(false);
   const [openDate, setOpenDate] = useState(null);
   const [empFilter, setEmpFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
-  useEffect(() => { hrApi('/tasks/team-report/dates?days=30').then((r) => { setDates(r.dates || []); if (r.dates && r.dates[0] && !r.dates[0].empty) setOpenDate(r.dates[0].date); }).catch(() => setDates([])); }, []);
-  if (!dates) return <div className="p-8 text-center text-slate-400 text-sm">Loading team reports…</div>;
+  const [exporting, setExporting] = useState('');
+  useEffect(() => { hrApi('/tasks/team-report/dates?days=30').then((r) => { setDates(r.dates || []); setAdminView(!!r.isAdmin); if (r.dates && r.dates[0] && !r.dates[0].empty) setOpenDate(r.dates[0].date); }).catch(() => setDates([])); }, []);
+  if (!dates) return <div className="p-8 text-center text-slate-400 text-sm">Loading reports…</div>;
   const shown = dates.filter((d) => !d.empty && (!dateFilter || d.date === dateFilter));
-  const allEmps = []; // populated from open day
+  const exportXlsx = async (date) => {
+    setExporting(date);
+    try {
+      const blob = await hrApiBlob(`/tasks/team-report/${date}/export`);
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = `team-report-${date}.xlsx`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { toast(e.message || 'Export failed'); }
+    setExporting('');
+  };
   return (
     <div className="pb-6">
-      {/* filters */}
       <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center gap-3 flex-wrap mb-4">
         <span className="text-[13px] font-extrabold text-[#050A1F]">Filter</span>
         <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
         <input placeholder="Employee name…" value={empFilter} onChange={(e) => setEmpFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
         {(dateFilter || empFilter) && <button onClick={() => { setDateFilter(''); setEmpFilter(''); }} className="text-[12px] font-bold text-slate-400 hover:text-slate-600">Clear</button>}
         <div className="flex-1" />
+        {adminView && <span className="text-[11px] font-extrabold px-2 py-1 rounded-full" style={{ background: '#eef2ff', color: '#4f46e5' }}>Admin · all departments</span>}
       </div>
       {shown.length === 0 && <div className="p-8 text-center text-slate-400 text-sm">No reports for the selected filters.</div>}
       {shown.map((d) => (
-        <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} />
+        <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} adminView={adminView} onExport={adminView ? () => exportXlsx(d.date) : null} exporting={exporting === d.date} />
       ))}
     </div>
   );
@@ -1634,19 +1655,21 @@ function labelDate(dateStr) {
   return nice;
 }
 
-function DayCard({ d, open, onToggle, empFilter }) {
+function DayCard({ d, open, onToggle, empFilter, adminView, onExport, exporting }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     if (open && !detail) { setLoading(true); hrApi(`/tasks/team-report/${d.date}`).then((r) => { setDetail(r); setLoading(false); }).catch(() => setLoading(false)); }
   }, [open]);
   const v = VERDICT_STYLE[d.verdict] || null;
+  const filt = (list) => list.filter((e) => !empFilter || e.employee.name.toLowerCase().includes(empFilter.toLowerCase()));
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
       <button onClick={onToggle} className="w-full flex items-center gap-3 px-4 py-3.5 text-left" style={{ background: open ? 'linear-gradient(90deg,#FFF7ED,#fff)' : '#fff' }}>
         <div className="text-[15px] font-black text-[#050A1F]">{labelDate(d.date)}</div>
         <RPill s={{ bg: '#F0FDF4', color: '#16a34a' }}>{d.present} present</RPill>
         {d.absent > 0 && <RPill s={{ bg: '#FEF2F2', color: '#dc2626' }}>{d.absent} absent</RPill>}
+        {adminView && d.departments != null && <RPill s={{ bg: '#eef2ff', color: '#4f46e5' }}>{d.departments} depts</RPill>}
         <div className="flex-1" />
         {v && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>✦ AI: {v.label}</span>}
         <span className="text-slate-300 text-sm">{open ? '▾' : '▸'}</span>
@@ -1655,9 +1678,30 @@ function DayCard({ d, open, onToggle, empFilter }) {
         <div className="border-t border-slate-100">
           {loading && <div className="p-6 text-center text-slate-400 text-sm">Assembling report…</div>}
           {detail && detail.daySummary && (
-            <div className="px-4 py-2.5 text-[12px] text-slate-600" style={{ background: '#faf9ff' }}><b style={{ color: '#6d28d9' }}>✦ AI summary:</b> {detail.daySummary}</div>
+            <div className="px-4 py-2.5 text-[12px] text-slate-600 flex items-start justify-between gap-3" style={{ background: '#faf9ff' }}>
+              <div><b style={{ color: '#6d28d9' }}>✦ AI summary:</b> {detail.daySummary}</div>
+              {adminView && onExport && <button onClick={onExport} disabled={exporting} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-extrabold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button>}
+            </div>
           )}
-          {detail && detail.employees.filter((e) => !empFilter || e.employee.name.toLowerCase().includes(empFilter.toLowerCase())).map((e) => (
+          {detail && adminView && !detail.daySummary && onExport && (
+            <div className="px-4 py-2 flex justify-end"><button onClick={onExport} disabled={exporting} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-extrabold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button></div>
+          )}
+          {/* ADMIN: grouped by department */}
+          {detail && detail.admin && detail.departments.map((g) => {
+            const emps = filt(g.employees);
+            if (!emps.length) return null;
+            return (
+              <div key={g.department}>
+                <div className="px-4 py-2 text-[12px] font-extrabold uppercase tracking-wide flex items-center gap-2" style={{ background: '#f8fafc', color: '#475569' }}>
+                  <span style={{ color: '#4f46e5' }}>▎</span>{g.department}
+                  <span className="font-bold text-slate-400 normal-case">· {g.present} present{g.absent ? `, ${g.absent} absent` : ''}</span>
+                </div>
+                {emps.map((e) => <EmployeeRow key={e.employee.id} e={e} date={d.date} />)}
+              </div>
+            );
+          })}
+          {/* SENIOR: flat list */}
+          {detail && !detail.admin && filt(detail.employees).map((e) => (
             <EmployeeRow key={e.employee.id} e={e} date={d.date} />
           ))}
         </div>
