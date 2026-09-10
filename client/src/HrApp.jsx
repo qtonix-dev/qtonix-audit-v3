@@ -1564,14 +1564,248 @@ function GiveRecognitionPicker({ onClose, onSaved }) {
 }
 
 // ===== WORKSPACE — Task + Buzz (chat) under one section with top tabs =====
+// ===== TEAM DAY-END REPORTS =====
+// Senior sees "Team Reports" (all direct reports, day-wise, with review actions).
+// Employee sees "Daily Report" (only themselves, softer, no senior flags).
+const VERDICT_STYLE = {
+  productive: { bg: '#ecfdf5', color: '#059669', label: 'Productive day' },
+  light: { bg: '#fffbeb', color: '#b45309', label: 'Light day' },
+  slow: { bg: '#fef2f2', color: '#dc2626', label: 'Slow day' },
+};
+const EMP_VERDICT = {
+  productive: { bg: '#ecfdf5', color: '#059669', label: 'Productive ✓' },
+  steady: { bg: '#eff6ff', color: '#2563eb', label: 'Steady' },
+  needs_attention: { bg: '#fffbeb', color: '#d97706', label: 'Needs attention ⚠' },
+};
+const PACE_STYLE = {
+  fast: { bg: '#ecfdf5', color: '#059669', label: 'Fast ⚡' },
+  good: { bg: '#eff6ff', color: '#2563eb', label: 'Good ✓' },
+  slow: { bg: '#fffbeb', color: '#d97706', label: 'Slow 🐢' },
+  na: { bg: '#f1f5f9', color: '#94a3b8', label: '—' },
+};
+const STAGE_PILL = {
+  completed: { bg: '#F0FDF4', color: '#16a34a', label: 'Completed' },
+  in_progress: { bg: '#FFF7ED', color: '#ea580c', label: 'In progress' },
+  not_started: { bg: '#F1F5F9', color: '#64748b', label: 'Not started' },
+};
+
+function RPill({ s, children }) { return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold" style={{ background: s.bg, color: s.color }}>{children || s.label}</span>; }
+
+function TeamReportView({ user, isAdmin, hasReports }) {
+  if (hasReports) return <SeniorReport user={user} />;
+  return <SelfReport user={user} />;
+}
+
+// ---------- Senior: team-wide, day-wise ----------
+function SeniorReport({ user }) {
+  const [dates, setDates] = useState(null);
+  const [openDate, setOpenDate] = useState(null);
+  const [empFilter, setEmpFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+  useEffect(() => { hrApi('/tasks/team-report/dates?days=30').then((r) => { setDates(r.dates || []); if (r.dates && r.dates[0] && !r.dates[0].empty) setOpenDate(r.dates[0].date); }).catch(() => setDates([])); }, []);
+  if (!dates) return <div className="p-8 text-center text-slate-400 text-sm">Loading team reports…</div>;
+  const shown = dates.filter((d) => !d.empty && (!dateFilter || d.date === dateFilter));
+  const allEmps = []; // populated from open day
+  return (
+    <div className="pb-6">
+      {/* filters */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center gap-3 flex-wrap mb-4">
+        <span className="text-[13px] font-extrabold text-[#050A1F]">Filter</span>
+        <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
+        <input placeholder="Employee name…" value={empFilter} onChange={(e) => setEmpFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
+        {(dateFilter || empFilter) && <button onClick={() => { setDateFilter(''); setEmpFilter(''); }} className="text-[12px] font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+        <div className="flex-1" />
+      </div>
+      {shown.length === 0 && <div className="p-8 text-center text-slate-400 text-sm">No reports for the selected filters.</div>}
+      {shown.map((d) => (
+        <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} />
+      ))}
+    </div>
+  );
+}
+
+function labelDate(dateStr) {
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const yest = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
+  const d = new Date(dateStr + 'T00:00:00');
+  const nice = d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+  if (dateStr === today) return `Today · ${nice}`;
+  if (dateStr === yest) return `Yesterday · ${nice}`;
+  return nice;
+}
+
+function DayCard({ d, open, onToggle, empFilter }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (open && !detail) { setLoading(true); hrApi(`/tasks/team-report/${d.date}`).then((r) => { setDetail(r); setLoading(false); }).catch(() => setLoading(false)); }
+  }, [open]);
+  const v = VERDICT_STYLE[d.verdict] || null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
+      <button onClick={onToggle} className="w-full flex items-center gap-3 px-4 py-3.5 text-left" style={{ background: open ? 'linear-gradient(90deg,#FFF7ED,#fff)' : '#fff' }}>
+        <div className="text-[15px] font-black text-[#050A1F]">{labelDate(d.date)}</div>
+        <RPill s={{ bg: '#F0FDF4', color: '#16a34a' }}>{d.present} present</RPill>
+        {d.absent > 0 && <RPill s={{ bg: '#FEF2F2', color: '#dc2626' }}>{d.absent} absent</RPill>}
+        <div className="flex-1" />
+        {v && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>✦ AI: {v.label}</span>}
+        <span className="text-slate-300 text-sm">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-slate-100">
+          {loading && <div className="p-6 text-center text-slate-400 text-sm">Assembling report…</div>}
+          {detail && detail.daySummary && (
+            <div className="px-4 py-2.5 text-[12px] text-slate-600" style={{ background: '#faf9ff' }}><b style={{ color: '#6d28d9' }}>✦ AI summary:</b> {detail.daySummary}</div>
+          )}
+          {detail && detail.employees.filter((e) => !empFilter || e.employee.name.toLowerCase().includes(empFilter.toLowerCase())).map((e) => (
+            <EmployeeRow key={e.employee.id} e={e} date={d.date} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmployeeRow({ e, date }) {
+  const [open, setOpen] = useState(false);
+  const [tasks, setTasks] = useState(e.tasks);
+  const ev = EMP_VERDICT[e.aiVerdict] || null;
+  const att = e.attendance;
+  return (
+    <div className="border-t border-slate-50">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50/60">
+        <span className="text-slate-400 text-xs w-3">{open ? '▾' : '▸'}</span>
+        <div className="flex-1 min-w-0"><span className="font-extrabold text-[#050A1F] text-[13.5px]">{e.employee.name}</span> <span className="text-[11px] text-slate-400">· {e.employee.designation || '—'}</span></div>
+        {att.present
+          ? <RPill s={{ bg: '#F0FDF4', color: '#16a34a' }}>● Present{att.hoursLabel ? ` · ${att.hoursLabel}` : ''}</RPill>
+          : <RPill s={{ bg: '#FEF2F2', color: '#dc2626' }}>● Absent</RPill>}
+        <span className="text-[12px] font-extrabold text-green-600">{e.counts.done} done</span>
+        {e.counts.inProgress > 0 && <span className="text-[12px] font-bold text-orange-500">{e.counts.inProgress} in prog</span>}
+        {ev && <RPill s={ev} />}
+      </button>
+      {open && (
+        <div className="px-4 pb-3.5 pl-11">
+          {att.present && att.loginTime && <div className="text-[11px] text-slate-400 mb-2">🕐 {att.loginTime} – {att.logoutTime || '…'}{att.late ? ' · late' : ''}</div>}
+          {tasks.length === 0 && <div className="text-[12px] text-slate-400 py-2">No tasks logged for this day.</div>}
+          {tasks.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.5px]" style={{ borderCollapse: 'collapse' }}>
+                <thead><tr className="text-left text-slate-400" style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase' }}>
+                  <th className="py-2 pr-2">Task</th><th className="py-2 px-2">Status</th><th className="py-2 px-2">Time taken</th><th className="py-2 px-2">AI pace</th><th className="py-2 pl-2 text-right">Senior review</th>
+                </tr></thead>
+                <tbody>
+                  {tasks.map((t) => <TaskReviewRow key={t.id} t={t} onFlag={(nt) => setTasks((prev) => prev.map((x) => x.id === t.id ? { ...x, ...nt } : x))} />)}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {e.note && <div className="mt-3 rounded-xl px-3 py-2.5 text-[12px] text-slate-600" style={{ background: '#faf9ff', border: '1px solid #f0edff' }}><b style={{ color: '#6d28d9' }}>📝 {e.employee.name.split(' ')[0]}'s note:</b> {e.note}</div>}
+          {e.aiSummary && <div className="mt-2 text-[11.5px] text-slate-500 italic">✦ {e.aiSummary}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskReviewRow({ t, onFlag }) {
+  const [askNote, setAskNote] = useState(false);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const flagged = t.seniorFlag === 'need_update';
+  const stage = STAGE_PILL[t.stage] || STAGE_PILL.not_started;
+  const pace = PACE_STYLE[t.aiPace] || PACE_STYLE.na;
+  const review = async (verdict, n) => {
+    setBusy(true);
+    try { const r = await hrApi(`/tasks/${t.id}/senior-review`, { method: 'POST', body: JSON.stringify({ verdict, note: n || '' }) }); onFlag({ seniorFlag: r.seniorFlag }); toast(verdict === 'not_done' ? 'Flagged for update' : 'Marked completed ✓'); }
+    catch (e) { toast(e.message); }
+    setBusy(false); setAskNote(false); setNote('');
+  };
+  return (
+    <>
+      <tr style={{ borderTop: '1px solid #f1f5f9' }}>
+        <td className="py-2.5 pr-2 font-bold text-[#050A1F]">{t.title}{t.overdue && <span className="ml-1.5 text-[10px] font-extrabold text-red-500">overdue</span>}</td>
+        <td className="py-2.5 px-2">{flagged ? <RPill s={{ bg: '#fef2f2', color: '#dc2626' }}>Need update ⚠</RPill> : <RPill s={stage} />}</td>
+        <td className="py-2.5 px-2 font-semibold text-slate-600">{t.timeLabel || '—'}</td>
+        <td className="py-2.5 px-2"><RPill s={pace} /></td>
+        <td className="py-2.5 pl-2">
+          <div className="flex items-center gap-1.5 justify-end">
+            <button disabled={busy} onClick={() => review('completed')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={!flagged && t.seniorReviewed !== 'not_done' ? { background: '#16a34a', color: '#fff', borderColor: '#16a34a' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>✓ Completed</button>
+            <button disabled={busy} onClick={() => setAskNote(!askNote)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={flagged ? { background: '#dc2626', color: '#fff', borderColor: '#dc2626' } : { background: '#fff', color: '#dc2626', borderColor: '#fecaca' }}>✕ Not Done</button>
+          </div>
+        </td>
+      </tr>
+      {askNote && (
+        <tr><td colSpan={5} className="pb-3 px-2">
+          <div className="rounded-xl border border-red-100 bg-red-50/40 p-3">
+            <div className="text-[11.5px] font-bold text-slate-600 mb-1.5">Note for the employee (posted to the task):</div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="What needs to be fixed or updated…" className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-[12.5px]" />
+            <div className="flex gap-2 mt-2 justify-end">
+              <button onClick={() => { setAskNote(false); setNote(''); }} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 bg-slate-100">Cancel</button>
+              <button disabled={busy || !note.trim()} onClick={() => review('not_done', note)} className="px-3 py-1.5 rounded-lg text-[12px] font-extrabold text-white" style={{ background: '#dc2626', opacity: busy || !note.trim() ? 0.5 : 1 }}>Send &amp; flag</button>
+            </div>
+          </div>
+        </td></tr>
+      )}
+    </>
+  );
+}
+
+// ---------- Employee: own report, softer ----------
+function SelfReport({ user }) {
+  const [rep, setRep] = useState(null);
+  useEffect(() => { hrApi('/tasks/my-report').then(setRep).catch(() => setRep({ tasks: [] })); }, []);
+  if (!rep) return <div className="p-8 text-center text-slate-400 text-sm">Loading your report…</div>;
+  const done = (rep.counts && rep.counts.done) || 0;
+  const total = (rep.counts && rep.counts.total) || 0;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="pb-6 max-w-3xl">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="flex items-center gap-4 mb-4">
+          <ProgressRing pct={pct} size={56} stroke={6} from="#8b5cf6" to="#6d28d9"><div className="text-[13px] font-black text-[#050A1F]">{pct}%</div></ProgressRing>
+          <div className="flex-1">
+            <div className="text-[16px] font-extrabold text-[#050A1F]">Your day — {labelDate(rep.date)}</div>
+            <div className="text-[12px] text-slate-500">{rep.attendance && rep.attendance.present ? `Present${rep.attendance.hoursLabel ? ` · ${rep.attendance.hoursLabel}` : ''}` : 'Not marked present'} · {done} of {total} tasks done</div>
+          </div>
+        </div>
+        {rep.tasks.length === 0 && <div className="text-[13px] text-slate-400 py-4 text-center">No tasks logged today yet.</div>}
+        {rep.tasks.length > 0 && (
+          <table className="w-full text-[12.5px]" style={{ borderCollapse: 'collapse' }}>
+            <thead><tr className="text-left text-slate-400" style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase' }}>
+              <th className="py-2 pr-2">Task</th><th className="py-2 px-2">Status</th><th className="py-2 px-2">Time taken</th>
+            </tr></thead>
+            <tbody>
+              {rep.tasks.map((t) => { const s = STAGE_PILL[t.stage] || STAGE_PILL.not_started; return (
+                <tr key={t.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <td className="py-2.5 pr-2 font-bold text-[#050A1F]">{t.title}</td>
+                  <td className="py-2.5 px-2"><RPill s={s} /></td>
+                  <td className="py-2.5 px-2 font-semibold text-slate-600">{t.timeLabel || (t.stage === 'in_progress' ? 'in progress' : '—')}</td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        )}
+        {rep.note && <div className="mt-4 rounded-xl px-3.5 py-3 text-[12.5px] text-slate-600" style={{ background: '#faf9ff', border: '1px solid #f0edff' }}><b style={{ color: '#6d28d9' }}>📝 Your note:</b> {rep.note}</div>}
+        {rep.aiSummary && <div className="mt-3 rounded-xl px-3.5 py-3 text-[12.5px] text-slate-600" style={{ background: '#faf9ff', border: '1px solid #f0edff' }}><b style={{ color: '#6d28d9' }}>✦ Your productivity insight:</b> {rep.aiSummary}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Lets other screens deep-link into a specific Workspace pane (e.g. dashboard
+// "Review" → reports). Read once on mount, then cleared.
+let __wsInitialPane = null;
 function WorkspaceView({ user, isAdmin }) {
-  const [pane, setPane] = useState('tasks'); // tasks | chat
+  const [pane, setPane] = useState(__wsInitialPane || 'tasks'); // tasks | chat | reports
+  useEffect(() => { __wsInitialPane = null; }, []);
   const [chatUnread, setChatUnread] = useState(0);
   const [openTaskId, setOpenTaskId] = useState(null);
+  const [hasReports, setHasReports] = useState(false);
   useEffect(() => {
     let alive = true;
     const tick = () => hrApi('/chat/poll').then((r) => { if (alive) setChatUnread(r.totalUnread || 0); }).catch(() => {});
     tick(); const iv = setInterval(tick, 8000);
+    hrApi('/tasks/team-report/dates?days=1').then((r) => { if (alive) setHasReports(!!(r && r.hasTeam)); }).catch(() => {});
     return () => { alive = false; clearInterval(iv); };
   }, []);
   const Tab = ({ id, icon, label, badge, dot }) => (
@@ -1589,11 +1823,14 @@ function WorkspaceView({ user, isAdmin }) {
         <div className="flex items-center gap-1 bg-white border-b border-slate-100" style={{ marginBottom: 12 }}>
           <Tab id="tasks" icon="✅" label="Task" badge={0} />
           <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
+          <Tab id="reports" icon="📊" label={hasReports ? 'Team Reports' : 'Daily Report'} badge={0} />
         </div>
       </div>
       <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3">
         {pane === 'chat'
           ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
+          : pane === 'reports'
+          ? <div className="h-full overflow-auto no-scrollbar"><TeamReportView user={user} isAdmin={isAdmin} hasReports={hasReports} /></div>
           : <div className="h-full overflow-auto no-scrollbar"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
       </div>
     </div>
@@ -3796,6 +4033,13 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
           <div className="flex-1"><div className="text-[16px] font-extrabold text-[#050A1F]">All clear for today!</div><div className="text-[12.5px] text-green-700 mt-0.5">No pending tasks. Enjoy the momentum — you've earned it. 🙌</div></div>
         </div>
       )}
+
+      {/* REVIEW — link to the employee's own day-end report */}
+      <button onClick={() => { __wsInitialPane = 'reports'; onNav && onNav('tasks'); }} className="w-full text-left mb-4 rounded-2xl bg-white p-4 flex items-center gap-3.5 shadow-sm hover:shadow-md transition" style={{ border: '1px solid #eef0f4' }}>
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>📊</div>
+        <div className="flex-1"><div className="text-[14px] font-extrabold text-[#050A1F]">Your day-end report</div><div className="text-[11.5px] text-slate-400">See your tasks, time spent & productivity insight</div></div>
+        <span className="text-[12.5px] font-extrabold" style={{ color: '#6d28d9' }}>View →</span>
+      </button>
 
       {/* ANNOUNCEMENTS — directly under the greeting, only when present */}
       {ann.length > 0 && (
@@ -10574,10 +10818,17 @@ function LogoutSummary({ summary, onStay, onLogout, name }) {
   const total = summary.totalToday || (done + (summary.pending || 0));
   const pending = summary.pending || 0;
   const pct = total > 0 ? Math.round((done / total) * 100) : (pending === 0 ? 100 : 0);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
   const lines = done > 0
     ? ['Rest well — tomorrow\u2019s another win. 🌙', 'Nice work today! See you tomorrow. 🌙', 'Another productive day in the books. 🌙']
     : ['Tomorrow\u2019s a fresh start. 💪', 'Every day is a new opportunity. 🌱', 'See you tomorrow! 🌙'];
   const line = lines[Math.floor(Math.random() * lines.length)];
+  const finish = async () => {
+    setSaving(true);
+    if (note.trim()) { try { await hrApi('/tasks/day-note', { method: 'POST', body: JSON.stringify({ note: note.trim() }) }); } catch {} }
+    onLogout();
+  };
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
       <div className="bg-white rounded-2xl p-7 w-full max-w-sm shadow-2xl text-center">
@@ -10596,9 +10847,11 @@ function LogoutSummary({ summary, onStay, onLogout, name }) {
             <div className="text-[9.5px] font-extrabold uppercase tracking-wide mt-1.5" style={{ color: pending > 0 ? '#C2410C' : '#94A3B8' }}>⏳ Pending</div>
           </div>
         </div>
-        <p className="text-[12.5px] text-slate-500 mb-4">{line}</p>
+        <div className="text-left mb-1 text-[11.5px] font-extrabold text-slate-600">📝 What did you accomplish today? <span className="font-semibold text-slate-300">(optional)</span></div>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="e.g. Finished the payment API, started the refund flow…" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[12.5px] mb-1" />
+        <p className="text-[12px] text-slate-500 mb-3 mt-1">{line}</p>
         <div className="flex flex-col gap-2">
-          <button onClick={onLogout} className="w-full rounded-xl px-4 py-3 text-sm font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>Finish for the day →</button>
+          <button disabled={saving} onClick={finish} className="w-full rounded-xl px-4 py-3 text-sm font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: saving ? 0.6 : 1 }}>Finish for the day →</button>
           <button onClick={onStay} className="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Actually, stay a bit</button>
         </div>
       </div>

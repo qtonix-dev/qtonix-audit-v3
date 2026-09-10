@@ -2049,8 +2049,34 @@ const HrDailyReport = sequelize.define('HrDailyReport', {
 ] });
 HrDailyReport.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Employee's optional end-of-day accomplishment note (entered at logout).
+// One per employee per day; shown in their own review and the senior's report.
+const HrDayNote = sequelize.define('HrDayNote', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  date: { type: DataTypes.STRING(10), allowNull: false }, // YYYY-MM-DD (IST)
+  note: { type: DataTypes.TEXT, defaultValue: '' },
+}, { tableName: 'hr_day_notes', indexes: [
+  { name: 'idx_hr_daynote_emp_date', unique: true, fields: ['employeeId', 'date'] },
+] });
+
+// Cached Claude review for a team-report day, so we don't re-run the model on
+// every page open. Keyed by senior + date; regenerated if tasks change materially.
+const HrTeamReview = sequelize.define('HrTeamReview', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  seniorId: { type: DataTypes.INTEGER, allowNull: false },
+  date: { type: DataTypes.STRING(10), allowNull: false },
+  dayVerdict: { type: DataTypes.STRING(24), defaultValue: '' }, // 'productive'|'slow'|'light'
+  daySummary: { type: DataTypes.TEXT, defaultValue: '' },
+  perEmployee: { type: DataTypes.JSON, defaultValue: {} }, // { [empId]: { verdict, summary } }
+  perTask: { type: DataTypes.JSON, defaultValue: {} },     // { [taskId]: { pace, reason } }
+  fingerprint: { type: DataTypes.STRING(40), defaultValue: '' }, // hash of inputs to detect staleness
+  emailedAt: { type: DataTypes.DATE, allowNull: true }, // set when the daily digest email went out
+}, { tableName: 'hr_team_reviews', indexes: [
+  { name: 'idx_hr_teamreview_senior_date', unique: true, fields: ['seniorId', 'date'] },
+] });
+
 // ===========================================================================
-// ===== REWARDS & RECOGNITION SYSTEM ========================================
 // A configurable points economy layered on the existing recognition system.
 // Core principle: NOTHING hardcodes points — a Rules table drives values, and
 // an immutable Ledger records every point movement. The Wallet is a cached
@@ -2478,6 +2504,16 @@ const Task = sequelize.define('Task', {
   assignedById: { type: DataTypes.INTEGER, allowNull: true },
   assignedByName: { type: DataTypes.STRING(120), defaultValue: '' },
   completedAt: { type: DataTypes.DATE, allowNull: true },
+  startedAt: { type: DataTypes.DATE, allowNull: true },   // first time it moved to in_progress (for time-to-complete)
+  workMs: { type: DataTypes.INTEGER, defaultValue: 0 },   // accumulated active work time (in_progress → completed spans), ms
+  workSegStart: { type: DataTypes.DATE, allowNull: true }, // start of the currently-open in_progress span (null when not active)
+  // Senior end-of-day review. seniorFlag='need_update' is set ONLY by a senior
+  // from the Team Report; it never appears on the employee's own board/view.
+  seniorFlag: { type: DataTypes.STRING(14), allowNull: true }, // null | 'need_update'
+  seniorFlagNote: { type: DataTypes.TEXT, allowNull: true },
+  seniorFlagById: { type: DataTypes.INTEGER, allowNull: true },
+  seniorFlagByName: { type: DataTypes.STRING(120), allowNull: true },
+  seniorFlagAt: { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'tasks', indexes: [
   { name: 'idx_tasks_board', fields: ['boardOwnerId'] },
   { name: 'idx_tasks_assignee', fields: ['assigneeId'] },
@@ -2520,7 +2556,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
   TvPoll, TvCheer,

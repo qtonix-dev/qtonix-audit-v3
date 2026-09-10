@@ -20,10 +20,12 @@
 const express = require('express');
 const router = express.Router();
 const {
-  Op, sequelize, HrUser, User, Task, TaskComment, TaskAttachment, TaskActivity, HrNotification,
+  Op, sequelize, HrUser, User, Task, TaskComment, TaskAttachment, TaskActivity, HrNotification, HrDayNote, HrTeamReview,
 } = require('../models');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const { canAssign, canViewBoard, viewableBoardIds } = require('../services/taskPermissions');
+const teamReport = require('../services/teamReport');
+const teamReviewAi = require('../services/teamReviewAi');
 
 // Open to all HR users (and admins). Every person lands on their own board;
 // per-user permission logic (canAssign, creator/admin delete) governs actions.
@@ -346,6 +348,149 @@ router.get('/my-summary', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===========================================================================
+// TEAM DAY-END REPORTS
+// ===========================================================================
+
+// Resolve the acting HrUser id for report scoping (admins act on their linked
+// HrUser; if none, admins see everyone via a sentinel).
+async function reportActor(req) {
+  const ctx = await actingContext(req);
+  const isAdmin = req.hrActor && req.hrActor.kind === 'admin';
+  return { id: ctx.boardId, name: ctx.actorName, isAdmin };
+}
+
+// List the dates that have any activity for this senior's team, newest first,
+// each with present/absent counts and the cached AI day-verdict (if any).
+router.get('/team-report/dates', guard, async (req, res, next) => {
+  try {
+    const actor = await reportActor(req);
+    const days = Math.min(60, Number(req.query.days) || 21);
+    const today = teamReport.istDateStr();
+    const out = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(new Date(today + 'T00:00:00Z').getTime() - i * 86400000).toISOString().slice(0, 10);
+      const day = await teamReport.buildTeamDay(actor.id, d, {});
+      if (!day.employees.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
+      const cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date: d } });
+      out.push({ date: d, present: day.present, absent: day.absent, totalDone: day.totalDone, totalPlanned: day.totalPlanned, verdict: cached ? cached.dayVerdict : null });
+    }
+    res.json({ dates: out, hasTeam: (await teamReport.directReports(actor.id)).length > 0 });
+  } catch (e) { next(e); }
+});
+
+// Full detail for one date. ?employee=<id> filters to a single report.
+// Runs (or reuses cached) Claude review and merges the verdicts in.
+router.get('/team-report/:date', guard, async (req, res, next) => {
+  try {
+    const actor = await reportActor(req);
+    const date = String(req.params.date).slice(0, 10);
+    const employeeId = req.query.employee ? Number(req.query.employee) : null;
+    const day = await teamReport.buildTeamDay(actor.id, date, employeeId ? { employeeId } : {});
+
+    // AI review — cache per senior+date, regenerate on fingerprint change.
+    let review = null;
+    if (day.employees.length) {
+      const fp = teamReport.dayFingerprint(await teamReport.buildTeamDay(actor.id, date, {}));
+      let cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date } });
+      if (!cached || cached.fingerprint !== fp || req.query.refresh) {
+        const full = await teamReport.buildTeamDay(actor.id, date, {});
+        const r = await teamReviewAi.reviewTeamDay(full);
+        [cached] = await HrTeamReview.upsert({ seniorId: actor.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp }, { returning: true }).then(() => HrTeamReview.findOne({ where: { seniorId: actor.id, date } })).then((row) => [row]);
+      }
+      review = cached ? { dayVerdict: cached.dayVerdict, daySummary: cached.daySummary, perEmployee: cached.perEmployee || {}, perTask: cached.perTask || {} } : null;
+    }
+
+    // Merge AI verdicts onto the payload.
+    if (review) {
+      for (const e of day.employees) {
+        const ev = review.perEmployee[e.employee.id] || review.perEmployee[String(e.employee.id)] || {};
+        e.aiVerdict = ev.verdict || null; e.aiSummary = ev.summary || '';
+        for (const t of e.tasks) { const tv = review.perTask[t.id] || review.perTask[String(t.id)] || {}; t.aiPace = tv.pace || null; t.aiReason = tv.reason || ''; }
+      }
+    }
+    res.json({ ...day, dayVerdict: review ? review.dayVerdict : null, daySummary: review ? review.daySummary : '' });
+  } catch (e) { next(e); }
+});
+
+// Employee's own report (self only, soft framing, includes their logout note,
+// hides senior flags). date defaults to today.
+router.get('/my-report/:date?', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const date = req.params.date ? String(req.params.date).slice(0, 10) : teamReport.istDateStr();
+    const emp = await HrUser.findByPk(ctx.boardId);
+    if (!emp) return res.json({ date, self: true, tasks: [] });
+    const slice = await teamReport.buildEmployeeDay(emp, date, {});
+    // Strip senior-only signals from the self view.
+    slice.tasks = slice.tasks.map((t) => { const { seniorFlag, seniorFlagNote, ...rest } = t; return rest; });
+    // A gentle, self-directed insight (uses cached team review if the senior's
+    // ran, else a light heuristic line — never harsh, never comparative).
+    let aiSummary = '';
+    try {
+      if (emp.reportsToId) {
+        const cached = await HrTeamReview.findOne({ where: { seniorId: emp.reportsToId, date } });
+        if (cached && cached.perEmployee) { const ev = cached.perEmployee[emp.id] || cached.perEmployee[String(emp.id)]; if (ev && ev.summary) aiSummary = ev.summary; }
+      }
+    } catch {}
+    if (!aiSummary) {
+      const done = slice.counts.done, total = slice.counts.total;
+      if (total === 0) aiSummary = 'No tasks logged yet today — add a few to track your progress.';
+      else if (done === total) aiSummary = `You cleared all ${total} of today's tasks. Excellent momentum — keep it going! 💪`;
+      else if (done > 0) aiSummary = `Nice progress — ${done} of ${total} done. A steady finish tomorrow will clear the rest.`;
+      else aiSummary = 'A fresh set of tasks today — pick one and get the ball rolling. You\u2019ve got this!';
+    }
+    res.json({ date, self: true, ...slice, aiSummary });
+  } catch (e) { next(e); }
+});
+
+// Senior marks a task Completed / Not Done from the report. "Not Done" sets the
+// senior-only need_update flag, records a note, posts it to the task, and
+// notifies the employee. "Completed" clears any flag.
+router.post('/:id/senior-review', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const row = await Task.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Task not found' });
+    const verdict = String(req.body.verdict || '').toLowerCase(); // 'completed' | 'not_done'
+    const note = String(req.body.note || '').trim();
+
+    if (verdict === 'not_done') {
+      row.seniorFlag = 'need_update';
+      row.seniorFlagNote = note || null;
+      row.seniorFlagById = ctx.actorId || null;
+      row.seniorFlagByName = ctx.actorName;
+      row.seniorFlagAt = new Date();
+      await row.save();
+      if (note) { try { await TaskComment.create({ taskId: row.id, authorId: ctx.actorId || null, authorName: ctx.actorName, body: `🔎 Review — needs update: ${note}` }); } catch {} }
+      // Notify the assignee(s) so the rework actually happens.
+      const targets = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter((x) => x > 0));
+      for (const uid of targets) {
+        try { await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'task_need_update', text: `🔎 ${ctx.actorName} asked for an update on "${String(row.title).slice(0, 60)}"`, meta: { taskId: row.id } }); } catch {}
+        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: 'task_need_update', taskId: row.id, body: `${ctx.actorName} asked you to revisit "${String(row.title).slice(0, 80)}"${note ? `: ${note}` : ''}` }); } catch {}
+      }
+      await logActivity(row.id, ctx, 'review', 'flagged: needs update');
+    } else if (verdict === 'completed') {
+      row.seniorFlag = null; row.seniorFlagNote = null; await row.save();
+      await logActivity(row.id, ctx, 'review', 'confirmed completed');
+    } else {
+      return res.status(400).json({ error: 'verdict must be "completed" or "not_done"' });
+    }
+    res.json({ ok: true, seniorFlag: row.seniorFlag });
+  } catch (e) { next(e); }
+});
+
+// Save the employee's end-of-day accomplishment note (from the logout popup).
+router.post('/day-note', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const date = req.body.date ? String(req.body.date).slice(0, 10) : teamReport.istDateStr();
+    const note = String(req.body.note || '').trim().slice(0, 1000);
+    await HrDayNote.upsert({ employeeId: ctx.boardId, date, note });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.get('/board/:viewerId', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
@@ -532,8 +677,24 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
     }
 
     if (b.stage && ['not_started', 'in_progress', 'completed'].includes(b.stage) && b.stage !== row.stage) {
+      const prevStage = row.stage;
+      const now = new Date();
+      // Time tracking: clock starts when work begins (→ in_progress), accumulates
+      // each in_progress → completed span into workMs.
+      if (b.stage === 'in_progress') {
+        if (!row.startedAt) row.startedAt = now;
+        row.workSegStart = now;
+      }
+      if (b.stage === 'completed') {
+        if (row.workSegStart) { row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart)); row.workSegStart = null; }
+        else if (row.startedAt) { /* completed without an open segment; leave workMs as-is */ }
+      }
+      if (b.stage === 'not_started') { row.workSegStart = null; }
       row.stage = b.stage;
-      row.completedAt = b.stage === 'completed' ? new Date() : null;
+      row.completedAt = b.stage === 'completed' ? now : null;
+      // Any stage change by the employee clears a senior "need_update" flag
+      // (they've acted on it) — the senior can re-flag if still not right.
+      if (prevStage !== b.stage && row.seniorFlag === 'need_update') { row.seniorFlag = null; }
       await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + b.stage.replace('_', ' '));
       // Notify the assignee in their #task chat (unless they made the change).
       try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${b.stage.replace('_', ' ')}` }); } catch {}
