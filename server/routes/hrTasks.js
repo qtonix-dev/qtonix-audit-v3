@@ -38,11 +38,24 @@ async function actingContext(req) {
   let actorUser = null;
   if (req.hrUser) actorUser = req.hrUser;
   else if (req.hrActor && req.hrActor.kind === 'hr') actorUser = await HrUser.findByPk(req.hrActor.id);
-  // If an admin also has a matching HR profile (same email), act AS that Hr
-  // profile so they don't appear twice (once as "(me)" admin board, once as
-  // their HrUser). This unifies their identity across the task system.
-  if (!actorUser && isAdmin && req.adminUser && req.adminUser.email) {
-    try { const hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true, chatOnly: { [require('sequelize').Op.not]: true } } }); if (hr) actorUser = hr; } catch {}
+  // If an admin also has a matching HR profile, act AS that HR profile so they
+  // have ONE unified board (not a separate negative-id admin board + an HR board).
+  // Match by email first, then fall back to an exact name match — because the
+  // admin account and their HR profile often have different email addresses.
+  if (!actorUser && isAdmin) {
+    try {
+      const { Op } = require('sequelize');
+      let hr = null;
+      if (req.adminUser && req.adminUser.email) hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true, chatOnly: { [Op.not]: true } } });
+      if (!hr) {
+        const nm = (req.adminUser && req.adminUser.name) || (req.hrActor && req.hrActor.name);
+        if (nm) {
+          const matches = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+          hr = matches.find((u) => String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase()) || null;
+        }
+      }
+      if (hr) actorUser = hr;
+    } catch {}
   }
   const rawId = req.hrActor && req.hrActor.id;
   const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
