@@ -3221,6 +3221,8 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   const [note, setNote] = useState('');
   const [noteSuggestions, setNoteSuggestions] = useState([]);
   const [noteAiBusy, setNoteAiBusy] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
   const [newSub, setNewSub] = useState('');
   const [subOpen, setSubOpen] = useState(null);   // open a subtask in its own drawer
   const [uploading, setUploading] = useState(false);
@@ -3230,6 +3232,16 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   useEffect(() => { load(); }, [taskId]);
   const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
   const addNote = async () => { if (!note.trim()) return; await hrApi(`/tasks/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: note.trim() }) }); setNote(''); setNoteSuggestions([]); load(); };
+  const saveEditNote = async (commentId) => {
+    if (!editingNoteText.trim()) return;
+    try { await hrApi(`/tasks/tasks/${taskId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ body: editingNoteText.trim() }) }); setEditingNoteId(null); setEditingNoteText(''); load(); }
+    catch (e) { toast(e.message || 'Could not edit note'); }
+  };
+  const deleteNote = async (commentId) => {
+    if (!window.confirm('Delete this note? This can\u2019t be undone.')) return;
+    try { await hrApi(`/tasks/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }); load(); }
+    catch (e) { toast(e.message || 'Could not delete note'); }
+  };
   const suggestNotes = async () => { setNoteAiBusy('suggest'); try { const t = data && data.task; const r = await hrApi('/tasks/ai/suggest-notes', { method: 'POST', body: JSON.stringify({ title: t && t.title, description: t && t.description, status: t && t.stage }) }); setNoteSuggestions(r.suggestions || []); } catch (e) { toast(e.message || 'AI failed'); } setNoteAiBusy(''); };
   const retoneNote = async (mode) => { if (!note.trim()) return; setNoteAiBusy(mode); try { const r = await hrApi('/tasks/ai/retone-note', { method: 'POST', body: JSON.stringify({ text: note, mode }) }); if (r.text) setNote(r.text); } catch (e) { toast(e.message || 'AI failed'); } setNoteAiBusy(''); };
   const addSub = async () => { if (!newSub.trim()) return; await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newSub.trim(), parentTaskId: taskId, assigneeId: data && data.task && data.task.assignee ? data.task.assignee.id : undefined }) }); setNewSub(''); load(); onChange && onChange(); };
@@ -3344,12 +3356,37 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
           <div className="mb-3">
             <div className="text-xs font-bold text-slate-500 mb-1">Notes</div>
             <div className="space-y-2 mb-2">
-              {data.comments.map((c) => (
-                <div key={c._id} className="rounded-lg bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-bold text-[#050A1F]">{c.authorName} <span className="text-slate-400 font-normal">{new Date(c.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span></div>
-                  <div className="text-sm text-slate-700 whitespace-pre-wrap">{c.body}</div>
-                </div>
-              ))}
+              {data.comments.map((c) => {
+                const mine = data.myActorId && c.authorId === data.myActorId;
+                const canDeleteNote = mine || data.isAdmin;
+                const isReviewNote = /^🔎/.test(c.body || ''); // senior "needs update" review notes aren't user-editable
+                const edited = c.updatedAt && c.createdAt && new Date(c.updatedAt) - new Date(c.createdAt) > 1500;
+                if (editingNoteId === c._id) {
+                  return (
+                    <div key={c._id} className="rounded-lg bg-white border border-orange-200 px-3 py-2">
+                      <textarea value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" autoFocus />
+                      <div className="flex gap-2 mt-1.5 justify-end">
+                        <button onClick={() => { setEditingNoteId(null); setEditingNoteText(''); }} className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-slate-500 bg-slate-100">Cancel</button>
+                        <button onClick={() => saveEditNote(c._id)} disabled={!editingNoteText.trim()} className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold text-white" style={{ background: ORANGE, opacity: editingNoteText.trim() ? 1 : 0.5 }}>Save</button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={c._id} className="group rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-[11px] font-bold text-[#050A1F]">{c.authorName} <span className="text-slate-400 font-normal">{new Date(c.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>{edited && <span className="text-slate-300 font-normal italic"> · edited</span>}</div>
+                      {(mine || canDeleteNote) && !isReviewNote && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                          {mine && <button onClick={() => { setEditingNoteId(c._id); setEditingNoteText(c.body); }} title="Edit note" className="text-[11px] font-bold text-slate-400 hover:text-orange-600 px-1">Edit</button>}
+                          {canDeleteNote && <button onClick={() => deleteNote(c._id)} title="Delete note" className="text-[11px] font-bold text-slate-400 hover:text-red-600 px-1">Delete</button>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-sm text-slate-700 whitespace-pre-wrap">{c.body}</div>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex items-stretch gap-2">
               <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note… (type @name to tag someone)" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />

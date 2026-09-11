@@ -886,7 +886,7 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
       const _seen = new Set(); assignees = assignees.filter((a) => { const k = String(a.name || '').trim().toLowerCase(); if (_seen.has(k)) return false; _seen.add(k); return true; });
     } catch {}
     const taskOut = dec(row); taskOut.assignees = assignees;
-    res.json({ task: taskOut, subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete });
+    res.json({ task: taskOut, subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete, myActorId: ctx.actorId || null, isAdmin: !!ctx.isAdmin });
   } catch (e) { next(e); }
 });
 
@@ -927,6 +927,37 @@ router.post('/tasks/:id/comments', guard, async (req, res, next) => {
       }
     } catch {}
     res.status(201).json(c.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Edit a task note. Only the note's author may edit it. The senior "needs
+// update" review notes (prefixed with the review marker) are not editable here.
+router.patch('/tasks/:taskId/comments/:commentId', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const c = await TaskComment.findByPk(req.params.commentId);
+    if (!c || String(c.taskId) !== String(req.params.taskId)) return res.status(404).json({ error: 'Note not found.' });
+    const isAuthor = c.authorId && ctx.actorId && c.authorId === ctx.actorId;
+    if (!isAuthor) return res.status(403).json({ error: 'You can only edit your own notes.' });
+    const body = String((req.body && req.body.body) || '').trim();
+    if (!body) return res.status(400).json({ error: 'Note can\u2019t be empty.' });
+    c.body = body.slice(0, 5000);
+    c.changed('updatedAt', true); // touch so the edited time reflects
+    await c.save();
+    res.json(c.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Delete a task note. The author may delete their own; an admin may delete any.
+router.delete('/tasks/:taskId/comments/:commentId', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const c = await TaskComment.findByPk(req.params.commentId);
+    if (!c || String(c.taskId) !== String(req.params.taskId)) return res.status(404).json({ error: 'Note not found.' });
+    const isAuthor = c.authorId && ctx.actorId && c.authorId === ctx.actorId;
+    if (!isAuthor && !ctx.isAdmin) return res.status(403).json({ error: 'You can only delete your own notes.' });
+    await c.destroy();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
