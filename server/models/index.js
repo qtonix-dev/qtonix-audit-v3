@@ -1884,6 +1884,7 @@ const HrAttendance = sequelize.define('HrAttendance', {
   timeEditedAt: { type: DataTypes.DATE, allowNull: true },
   originalLoginTime: { type: DataTypes.STRING(5), allowNull: true },
   originalLogoutTime: { type: DataTypes.STRING(5), allowNull: true },
+  logoutReminderAt: { type: DataTypes.DATE, allowNull: true }, // when the "please log out" HR email was sent (once per day)
 }, { tableName: 'hr_attendance', indexes: [
   { name: 'idx_hr_att_emp_date', unique: true, fields: ['employeeId', 'date'] },
   { name: 'idx_hr_att_emp', fields: ['employeeId'] },
@@ -2070,6 +2071,7 @@ const HrTeamReview = sequelize.define('HrTeamReview', {
   daySummary: { type: DataTypes.TEXT, defaultValue: '' },
   perEmployee: { type: DataTypes.JSON, defaultValue: {} }, // { [empId]: { verdict, summary } }
   perTask: { type: DataTypes.JSON, defaultValue: {} },     // { [taskId]: { pace, reason } }
+  snapshot: { type: DataTypes.JSON, allowNull: true },     // full assembled day payload, stored at EOD for instant loads
   fingerprint: { type: DataTypes.STRING(40), defaultValue: '' }, // hash of inputs to detect staleness
   emailedAt: { type: DataTypes.DATE, allowNull: true }, // set when the daily digest email went out
 }, { tableName: 'hr_team_reviews', indexes: [

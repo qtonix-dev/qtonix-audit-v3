@@ -427,6 +427,15 @@ router.get('/team-report/:date', guard, async (req, res, next) => {
     }
 
     // ----- SENIOR: their team -----
+    const todayStr = teamReport.istDateStr();
+    // Fast path: for a PAST day we have a stored snapshot, serve it directly
+    // (no live re-assembly, no AI call) unless a refresh is forced.
+    if (date < todayStr && !employeeId && !req.query.refresh) {
+      const snap = await HrTeamReview.findOne({ where: { seniorId: actor.id, date } });
+      if (snap && snap.snapshot) {
+        return res.json({ ...snap.snapshot, dayVerdict: snap.dayVerdict, daySummary: snap.daySummary, cached: true });
+      }
+    }
     const day = await teamReport.buildTeamDay(actor.id, date, employeeId ? { employeeId } : {});
     let review = null;
     if (day.employees.length) {
@@ -447,7 +456,10 @@ router.get('/team-report/:date', guard, async (req, res, next) => {
         for (const t of e.tasks) { const tv = review.perTask[t.id] || review.perTask[String(t.id)] || {}; t.aiPace = tv.pace || null; t.aiReason = tv.reason || ''; }
       }
     }
-    res.json({ ...day, dayVerdict: review ? review.dayVerdict : null, daySummary: review ? review.daySummary : '' });
+    const out = { ...day, dayVerdict: review ? review.dayVerdict : null, daySummary: review ? review.daySummary : '' };
+    // Persist a snapshot for past days so subsequent loads are instant.
+    if (date < todayStr && !employeeId) { try { await HrTeamReview.update({ snapshot: out }, { where: { seniorId: actor.id, date } }); } catch {} }
+    res.json(out);
   } catch (e) { next(e); }
 });
 
@@ -781,13 +793,11 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       desired = b.assigneeIds.map(Number).filter(Boolean);
     } else if (b.toggleAssignee !== undefined) {
       const pid = Number(b.toggleAssignee);
-      let current;
-      if (row.parentTaskId) {
-        // Subtask: current assignees are stored inline.
-        current = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
-      } else {
-        current = new Set([row.assigneeId, ...(row.assigneeGroupId ? (await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] })).map((g) => g.assigneeId) : [])].filter(Boolean));
-      }
+      // SHARED model: current assignees live in assigneeIds for BOTH top-level
+      // tasks and subtasks. (The old assigneeGroupId copy-model is gone; reading
+      // it here made removing a co-assignee impossible — the list looked like it
+      // held only the primary, so removing the primary emptied it and errored.)
+      const current = new Set([row.assigneeId, ...((Array.isArray(row.assigneeIds) ? row.assigneeIds : []))].filter(Boolean));
       if (current.has(pid)) current.delete(pid); else current.add(pid);
       desired = [...current];
     } else if (b.assigneeId !== undefined) {
@@ -877,10 +887,11 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
     const ctx = await actingContext(req);
     const canDelete = !!ctx.isAdmin || (row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId));
     // Resolve the full assignee group (all people this task is assigned to).
+    // SHARED model: read from assigneeIds (not the legacy assigneeGroupId copies).
     let assignees = [];
     try {
       const ids = new Set([row.assigneeId].filter(Boolean));
-      if (row.assigneeGroupId) { const grp = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['assigneeId'] }); grp.forEach((g) => { if (g.assigneeId) ids.add(g.assigneeId); }); }
+      if (Array.isArray(row.assigneeIds)) row.assigneeIds.forEach((id) => { if (id) ids.add(id); });
       assignees = [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean);
       // Collapse duplicate identities by name.
       const _seen = new Set(); assignees = assignees.filter((a) => { const k = String(a.name || '').trim().toLowerCase(); if (_seen.has(k)) return false; _seen.add(k); return true; });

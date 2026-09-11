@@ -46,19 +46,72 @@ function dailyDigestHtml(shell, senior, day, review) {
 }
 
 async function sendSeniorEmail(models, senior, html, subject) {
+  return sendHrEmailTo(models, senior.email, html, subject);
+}
+
+// Generic HR-mailbox sender (used for both the digest and the logout reminder).
+async function sendHrEmailTo(models, toEmail, html, subject) {
   try {
     const { Settings } = models;
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     if (!s || !s.getKey) return false;
     const token = s.getKey('hrMailboxToken');
-    if (!token || !senior.email) return false;
+    if (!token || !toEmail) return false;
     const { sendAndLog } = require('../services/hrEmailLog');
     await sendAndLog(s, token, 'career@qtonix.com', {
-      to: senior.email, from: 'HR Qtonix <career@qtonix.com>', fromName: 'HR Qtonix',
+      to: toEmail, from: 'HR Qtonix <career@qtonix.com>', fromName: 'HR Qtonix',
       subject, bodyHtml: html,
     }, {});
     return true;
   } catch (e) { console.error('[team-report] email failed:', e.message); return false; }
+}
+
+// Build the strict "please log out" reminder email (red header).
+function logoutReminderHtml(shell, emp, shiftEnd) {
+  return shell({
+    headerColor: '#DC2626',
+    kicker: 'Qtonix HR · Action Required',
+    headline: 'You haven\u2019t logged out yet',
+    greetingName: (emp.name || '').split(' ')[0],
+    rawBody: `
+      <p style="margin:0 0 14px;">Our records show your shift ended at <b>${shiftEnd}</b>, but you have <b>not logged out</b> of the system.</p>
+      <p style="margin:0 0 14px;">Logging out on time is <b>mandatory</b> — it is how your working hours are recorded. Repeatedly failing to log out affects your attendance and may be treated as a compliance issue.</p>
+      <p style="margin:0 0 14px;">Please <b>log out immediately</b>. If you are still working, please log your extra time with your manager.</p>
+      <p style="margin:0;color:#B91C1C;font-weight:700;">Kindly make sure this does not repeat.</p>`,
+    signature: { name: 'HR Qtonix', title: 'Human Resources', email: 'career@qtonix.com' },
+    footerLine: 'Automated attendance reminder from Qtonix HR.',
+  });
+}
+
+// Send a strict logout reminder to anyone who is 10+ minutes past their shift
+// end today with no logout recorded. One email per person per day.
+async function runLogoutReminders(models) {
+  const { HrUser, HrAttendance } = models;
+  const hrEmail = require('../services/hrEmailTemplate');
+  const now = istNow();
+  const date = now.toISOString().slice(0, 10);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const GRACE = Number(process.env.LOGOUT_REMINDER_GRACE_MIN || 10);
+
+  const users = await HrUser.findAll({ where: { active: true, chatOnly: { [require('sequelize').Op.not]: true } } });
+  for (const emp of users) {
+    const shiftEnd = await teamReport.employeeShiftEnd(emp); // "HH:MM" or null
+    if (!shiftEnd) continue;
+    const [h, m] = shiftEnd.split(':').map(Number);
+    const endMin = h * 60 + m;
+    // Only same-day shifts (skip midnight-crossing to avoid false positives).
+    if (nowMin < endMin + GRACE) continue;
+    const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
+    // Must have logged in, not be absent/leave, and have NO logout time.
+    if (!att || !att.loginTime) continue;
+    if (['absent', 'leave', 'week_off', 'holiday'].includes(att.status)) continue;
+    if (att.logoutTime) continue;
+    if (att.logoutReminderAt) continue; // already reminded today
+    if (!emp.email) continue;
+    const html = logoutReminderHtml(hrEmail.shell, emp, shiftEnd);
+    const sent = await sendHrEmailTo(models, emp.email, html, 'Action required: please log out');
+    if (sent) { att.logoutReminderAt = new Date(); await att.save(); }
+  }
 }
 
 // Is the senior "away" (logged out / absent) → should receive the email?
@@ -94,7 +147,14 @@ async function runDailies(models) {
     let cached = await HrTeamReview.findOne({ where: { seniorId: senior.id, date } });
     if (!cached || cached.fingerprint !== fp) {
       const r = await teamReviewAi.reviewTeamDay(day);
-      await HrTeamReview.upsert({ seniorId: senior.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp });
+      // Build the merged snapshot (day + AI verdicts) so the report loads instantly later.
+      for (const e of day.employees) {
+        const ev = (r.perEmployee && (r.perEmployee[e.employee.id] || r.perEmployee[String(e.employee.id)])) || {};
+        e.aiVerdict = ev.verdict || null; e.aiSummary = ev.summary || '';
+        for (const t of e.tasks) { const tv = (r.perTask && (r.perTask[t.id] || r.perTask[String(t.id)])) || {}; t.aiPace = tv.pace || null; t.aiReason = tv.reason || ''; }
+      }
+      const snapshot = { ...day, dayVerdict: r.dayVerdict, daySummary: r.daySummary };
+      await HrTeamReview.upsert({ seniorId: senior.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp, snapshot });
       cached = await HrTeamReview.findOne({ where: { seniorId: senior.id, date } });
     }
     if (cached && !cached.emailedAt) {
@@ -156,6 +216,8 @@ async function tick(models) {
     // Dailies are self-gating per employee (shift end / logout), so we can run
     // them on every tick — they only send once each team's day is fully done.
     await runDailies(models);
+    // Strict logout reminders — 10 min past shift end with no logout recorded.
+    await runLogoutReminders(models);
     // Weekly digest only fires on the configured weekday, in the EOD hour.
     const now = istNow();
     if (now.getDay() === WEEKLY_DAY && now.getHours() === EOD_HOUR) await runWeekly(models);
@@ -165,9 +227,8 @@ async function tick(models) {
 
 function start(models) {
   if (timer) return;
-  // HrTeamReview needs an emailedAt column for the daily guard.
   timer = setInterval(() => tick(models), INTERVAL_MS);
-  console.log('[team-report] scheduler started (EOD hour', EOD_HOUR, 'IST)');
+  console.log('[team-report] scheduler started (shift-based EOD + logout reminders)');
 }
 
-module.exports = { start, tick, runDailies, runWeekly };
+module.exports = { start, tick, runDailies, runWeekly, runLogoutReminders };

@@ -43,6 +43,7 @@ function shell(opts) {
     kicker = 'Qtonix Recruitment', headline = '', subhead = '',
     greetingName = '', introHtml = '', details = [], ctaLabel, ctaUrl, ctaNote = '',
     outroHtml = '', signature = {}, rawBody = null,
+    headerColor = null, // optional override for the top banner (e.g. red for warnings)
     footerLine = 'This message was sent by the Qtonix recruitment team.',
   } = opts;
 
@@ -85,10 +86,10 @@ function shell(opts) {
   <tr><td style="background:#ffffff;border-radius:16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:16px;">
 
-      <tr><td style="background:${NAVY};background:linear-gradient(135deg,${NAVY} 0%,${NAVY2} 100%);border-radius:16px 16px 0 0;padding:38px 44px 34px;">
-        <div style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#8FB4FF;">${esc(kicker)}</div>
+      <tr><td style="background:${headerColor || NAVY};background:${headerColor ? headerColor : `linear-gradient(135deg,${NAVY} 0%,${NAVY2} 100%)`};border-radius:16px 16px 0 0;padding:38px 44px 34px;">
+        <div style="font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:${headerColor ? '#FFD9D9' : '#8FB4FF'};">${esc(kicker)}</div>
         <div style="font-size:27px;font-weight:800;color:#ffffff;line-height:1.2;margin-top:10px;">${headline}</div>
-        ${subhead ? `<div style="font-size:15px;color:#C9D8FF;margin-top:11px;">${esc(subhead)}</div>` : ''}
+        ${subhead ? `<div style="font-size:15px;color:${headerColor ? '#FFE4E4' : '#C9D8FF'};margin-top:11px;">${esc(subhead)}</div>` : ''}
       </td></tr>
 
       <tr><td style="padding:32px 44px 6px;">

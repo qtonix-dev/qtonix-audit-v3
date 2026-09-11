@@ -1614,9 +1614,11 @@ function SeniorReport({ user, isAdmin }) {
   const [openDate, setOpenDate] = useState(null);
   const [empFilter, setEmpFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(''); // '' | completed | in_progress | not_started
+  const [deptFilter, setDeptFilter] = useState('');
   const [exporting, setExporting] = useState('');
   useEffect(() => { hrApi('/tasks/team-report/dates?days=30').then((r) => { setDates(r.dates || []); setAdminView(!!r.isAdmin); if (r.dates && r.dates[0] && !r.dates[0].empty) setOpenDate(r.dates[0].date); }).catch(() => setDates([])); }, []);
-  if (!dates) return <div className="p-8 text-center text-slate-400 text-sm">Loading reports…</div>;
+  if (!dates) return <div className="p-8 text-center text-slate-400 text-sm font-normal">Loading reports…</div>;
   const shown = dates.filter((d) => !d.empty && (!dateFilter || d.date === dateFilter));
   const exportXlsx = async (date) => {
     setExporting(date);
@@ -1627,19 +1629,31 @@ function SeniorReport({ user, isAdmin }) {
     } catch (e) { toast(e.message || 'Export failed'); }
     setExporting('');
   };
+  const anyFilter = dateFilter || empFilter || statusFilter || deptFilter;
   return (
     <div className="pb-6">
-      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center gap-3 flex-wrap mb-4">
-        <span className="text-[13px] font-extrabold text-[#050A1F]">Filter</span>
-        <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
-        <input placeholder="Employee name…" value={empFilter} onChange={(e) => setEmpFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 font-semibold" />
-        {(dateFilter || empFilter) && <button onClick={() => { setDateFilter(''); setEmpFilter(''); }} className="text-[12px] font-bold text-slate-400 hover:text-slate-600">Clear</button>}
+      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center gap-2.5 flex-wrap mb-4">
+        <span className="text-[13px] font-semibold text-[#050A1F]">Filter</span>
+        <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600" />
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white">
+          <option value="">All task statuses</option>
+          <option value="completed">Completed</option>
+          <option value="in_progress">In progress</option>
+          <option value="not_started">Not started</option>
+          <option value="need_update">Need update</option>
+        </select>
+        {adminView && <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white">
+          <option value="">All departments</option>
+          {[...new Set(dates.flatMap((d) => d._depts || []))].sort().map((dp) => <option key={dp} value={dp}>{dp}</option>)}
+        </select>}
+        <input placeholder="Employee name…" value={empFilter} onChange={(e) => setEmpFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600" />
+        {anyFilter && <button onClick={() => { setDateFilter(''); setEmpFilter(''); setStatusFilter(''); setDeptFilter(''); }} className="text-[12px] font-semibold text-slate-400 hover:text-slate-600">Clear</button>}
         <div className="flex-1" />
-        {adminView && <span className="text-[11px] font-extrabold px-2 py-1 rounded-full" style={{ background: '#eef2ff', color: '#4f46e5' }}>Admin · all departments</span>}
+        {adminView && <span className="text-[11px] font-semibold px-2 py-1 rounded-full" style={{ background: '#eef2ff', color: '#4f46e5' }}>Admin · all departments</span>}
       </div>
-      {shown.length === 0 && <div className="p-8 text-center text-slate-400 text-sm">No reports for the selected filters.</div>}
+      {shown.length === 0 && <div className="p-8 text-center text-slate-400 text-sm font-normal">No reports for the selected filters.</div>}
       {shown.map((d) => (
-        <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} adminView={adminView} onExport={adminView ? () => exportXlsx(d.date) : null} exporting={exporting === d.date} />
+        <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} statusFilter={statusFilter} deptFilter={deptFilter} adminView={adminView} onExport={adminView ? () => exportXlsx(d.date) : null} exporting={exporting === d.date} onDepts={(deps) => { d._depts = deps; }} />
       ))}
     </div>
   );
@@ -1655,46 +1669,56 @@ function labelDate(dateStr) {
   return nice;
 }
 
-function DayCard({ d, open, onToggle, empFilter, adminView, onExport, exporting }) {
+function DayCard({ d, open, onToggle, empFilter, statusFilter, deptFilter, adminView, onExport, exporting, onDepts }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (open && !detail) { setLoading(true); hrApi(`/tasks/team-report/${d.date}`).then((r) => { setDetail(r); setLoading(false); }).catch(() => setLoading(false)); }
+    if (open && !detail) { setLoading(true); hrApi(`/tasks/team-report/${d.date}`).then((r) => { setDetail(r); setLoading(false); if (onDepts && r.admin) onDepts((r.departments || []).map((g) => g.department)); }).catch(() => setLoading(false)); }
   }, [open]);
   const v = VERDICT_STYLE[d.verdict] || null;
-  const filt = (list) => list.filter((e) => !empFilter || e.employee.name.toLowerCase().includes(empFilter.toLowerCase()));
+  // Apply employee-name + task-status filters. A status filter also hides
+  // employees who have no task in that status.
+  const matchStatus = (t) => !statusFilter || (statusFilter === 'need_update' ? t.seniorFlag === 'need_update' : t.stage === statusFilter);
+  const applyEmp = (e) => {
+    if (empFilter && !e.employee.name.toLowerCase().includes(empFilter.toLowerCase())) return null;
+    if (!statusFilter) return e;
+    const tasks = (e.tasks || []).filter(matchStatus);
+    if (!tasks.length) return null;
+    return { ...e, tasks };
+  };
+  const filt = (list) => list.map(applyEmp).filter(Boolean);
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
       <button onClick={onToggle} className="w-full flex items-center gap-3 px-4 py-3.5 text-left" style={{ background: open ? 'linear-gradient(90deg,#FFF7ED,#fff)' : '#fff' }}>
-        <div className="text-[15px] font-black text-[#050A1F]">{labelDate(d.date)}</div>
-        <RPill s={{ bg: '#F0FDF4', color: '#16a34a' }}>{d.present} present</RPill>
-        {d.absent > 0 && <RPill s={{ bg: '#FEF2F2', color: '#dc2626' }}>{d.absent} absent</RPill>}
-        {adminView && d.departments != null && <RPill s={{ bg: '#eef2ff', color: '#4f46e5' }}>{d.departments} depts</RPill>}
+        <div className="text-[15px] font-bold text-[#050A1F]">{labelDate(d.date)}</div>
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-slate-500"><span className="w-2 h-2 rounded-full" style={{ background: '#16a34a' }} />{d.present}</span>
+        {d.absent > 0 && <span className="inline-flex items-center gap-1.5 text-[12px] text-slate-500"><span className="w-2 h-2 rounded-full" style={{ background: '#dc2626' }} />{d.absent}</span>}
+        {adminView && d.departments != null && <span className="text-[11px] text-slate-400">{d.departments} depts</span>}
         <div className="flex-1" />
-        {v && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>✦ AI: {v.label}</span>}
+        {v && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold text-white" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>✦ AI: {v.label}</span>}
         <span className="text-slate-300 text-sm">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <div className="border-t border-slate-100">
-          {loading && <div className="p-6 text-center text-slate-400 text-sm">Assembling report…</div>}
+          {loading && <div className="p-6 text-center text-slate-400 text-sm font-normal">Assembling report…</div>}
           {detail && detail.daySummary && (
-            <div className="px-4 py-2.5 text-[12px] text-slate-600 flex items-start justify-between gap-3" style={{ background: '#faf9ff' }}>
-              <div><b style={{ color: '#6d28d9' }}>✦ AI summary:</b> {detail.daySummary}</div>
-              {adminView && onExport && <button onClick={onExport} disabled={exporting} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-extrabold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button>}
+            <div className="px-4 py-2.5 text-[12px] text-slate-600 font-normal flex items-start justify-between gap-3" style={{ background: '#faf9ff' }}>
+              <div><b style={{ color: '#6d28d9', fontWeight: 600 }}>✦ AI summary:</b> {detail.daySummary}</div>
+              {adminView && onExport && <button onClick={onExport} disabled={exporting} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-semibold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button>}
             </div>
           )}
           {detail && adminView && !detail.daySummary && onExport && (
-            <div className="px-4 py-2 flex justify-end"><button onClick={onExport} disabled={exporting} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-extrabold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button></div>
+            <div className="px-4 py-2 flex justify-end"><button onClick={onExport} disabled={exporting} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11.5px] font-semibold text-white" style={{ background: '#16a34a', opacity: exporting ? 0.6 : 1 }}>⤓ {exporting ? 'Exporting…' : 'Export to Excel'}</button></div>
           )}
-          {/* ADMIN: grouped by department */}
-          {detail && detail.admin && detail.departments.map((g) => {
+          {/* ADMIN: grouped by department (dept filter applies) */}
+          {detail && detail.admin && detail.departments.filter((g) => !deptFilter || g.department === deptFilter).map((g) => {
             const emps = filt(g.employees);
             if (!emps.length) return null;
             return (
               <div key={g.department}>
-                <div className="px-4 py-2 text-[12px] font-extrabold uppercase tracking-wide flex items-center gap-2" style={{ background: '#f8fafc', color: '#475569' }}>
+                <div className="px-4 py-2 text-[12px] font-semibold uppercase tracking-wide flex items-center gap-2" style={{ background: '#f8fafc', color: '#475569' }}>
                   <span style={{ color: '#4f46e5' }}>▎</span>{g.department}
-                  <span className="font-bold text-slate-400 normal-case">· {g.present} present{g.absent ? `, ${g.absent} absent` : ''}</span>
+                  <span className="font-normal text-slate-400 normal-case">· {g.present} present{g.absent ? `, ${g.absent} absent` : ''}</span>
                 </div>
                 {emps.map((e) => <EmployeeRow key={e.employee.id} e={e} date={d.date} />)}
               </div>
@@ -1704,6 +1728,9 @@ function DayCard({ d, open, onToggle, empFilter, adminView, onExport, exporting 
           {detail && !detail.admin && filt(detail.employees).map((e) => (
             <EmployeeRow key={e.employee.id} e={e} date={d.date} />
           ))}
+          {detail && !loading && ((detail.admin && detail.departments.filter((g) => !deptFilter || g.department === deptFilter).every((g) => filt(g.employees).length === 0)) || (!detail.admin && filt(detail.employees).length === 0)) && (
+            <div className="p-6 text-center text-slate-400 text-sm font-normal">No matching records for the selected filters.</div>
+          )}
         </div>
       )}
     </div>
@@ -1719,22 +1746,21 @@ function EmployeeRow({ e, date }) {
     <div className="border-t border-slate-50">
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50/60">
         <span className="text-slate-400 text-xs w-3">{open ? '▾' : '▸'}</span>
-        <div className="flex-1 min-w-0"><span className="font-extrabold text-[#050A1F] text-[13.5px]">{e.employee.name}</span> <span className="text-[11px] text-slate-400">· {e.employee.designation || '—'}</span></div>
-        {att.present
-          ? <RPill s={{ bg: '#F0FDF4', color: '#16a34a' }}>● Present{att.hoursLabel ? ` · ${att.hoursLabel}` : ''}</RPill>
-          : <RPill s={{ bg: '#FEF2F2', color: '#dc2626' }}>● Absent</RPill>}
-        <span className="text-[12px] font-extrabold text-green-600">{e.counts.done} done</span>
-        {e.counts.inProgress > 0 && <span className="text-[12px] font-bold text-orange-500">{e.counts.inProgress} in prog</span>}
+        {/* Green dot = present, red dot = absent (replaces the Present/Absent text). */}
+        <span title={att.present ? 'Present' : 'Absent'} className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: att.present ? '#16a34a' : '#dc2626' }} />
+        <div className="flex-1 min-w-0"><span className="font-semibold text-[#050A1F] text-[13.5px]">{e.employee.name}</span> <span className="text-[11px] text-slate-400 font-normal">· {e.employee.designation || '—'}</span>{att.present && att.hoursLabel && <span className="text-[11px] text-slate-400 font-normal"> · {att.hoursLabel}</span>}</div>
+        <span className="text-[12px] font-semibold text-green-600">{e.counts.done} done</span>
+        {e.counts.inProgress > 0 && <span className="text-[12px] font-normal text-orange-500">{e.counts.inProgress} in prog</span>}
         {ev && <RPill s={ev} />}
       </button>
       {open && (
         <div className="px-4 pb-3.5 pl-11">
-          {att.present && att.loginTime && <div className="text-[11px] text-slate-400 mb-2">🕐 {att.loginTime} – {att.logoutTime || '…'}{att.late ? ' · late' : ''}</div>}
-          {tasks.length === 0 && <div className="text-[12px] text-slate-400 py-2">No tasks logged for this day.</div>}
+          {att.present && att.loginTime && <div className="text-[11px] text-slate-400 mb-2 font-normal">🕐 {att.loginTime} – {att.logoutTime || '…'}{att.late ? ' · late' : ''}</div>}
+          {tasks.length === 0 && <div className="text-[12px] text-slate-400 py-2 font-normal">No tasks logged for this day.</div>}
           {tasks.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]" style={{ borderCollapse: 'collapse' }}>
-                <thead><tr className="text-left text-slate-400" style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase' }}>
+                <thead><tr className="text-left text-slate-400" style={{ fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase' }}>
                   <th className="py-2 pr-2">Task</th><th className="py-2 px-2">Status</th><th className="py-2 px-2">Time taken</th><th className="py-2 px-2">AI pace</th><th className="py-2 pl-2 text-right">Senior review</th>
                 </tr></thead>
                 <tbody>
@@ -1743,8 +1769,8 @@ function EmployeeRow({ e, date }) {
               </table>
             </div>
           )}
-          {e.note && <div className="mt-3 rounded-xl px-3 py-2.5 text-[12px] text-slate-600" style={{ background: '#faf9ff', border: '1px solid #f0edff' }}><b style={{ color: '#6d28d9' }}>📝 {e.employee.name.split(' ')[0]}'s note:</b> {e.note}</div>}
-          {e.aiSummary && <div className="mt-2 text-[11.5px] text-slate-500 italic">✦ {e.aiSummary}</div>}
+          {e.note && <div className="mt-3 rounded-xl px-3 py-2.5 text-[12px] text-slate-600 font-normal" style={{ background: '#faf9ff', border: '1px solid #f0edff' }}><b style={{ color: '#6d28d9' }}>📝 {e.employee.name.split(' ')[0]}'s note:</b> {e.note}</div>}
+          {e.aiSummary && <div className="mt-2 text-[11.5px] text-slate-500 italic font-normal">✦ {e.aiSummary}</div>}
         </div>
       )}
     </div>
@@ -4088,33 +4114,6 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
         </div>
       </div>
 
-      {/* TODAY'S FOCUS — progress ring + pills nudge */}
-      {taskSummary && (taskSummary.pending > 0) && (
-        <div className="mb-4 rounded-2xl bg-white p-5 shadow-sm" style={{ border: '1px solid #eef0f4' }}>
-          <div className="flex items-center gap-4">
-            <ProgressRing pct={taskSummary.pct || 0} size={58} stroke={6}>
-              <div className="text-[15px] font-black text-[#050A1F] leading-none">{taskSummary.pct || 0}%</div>
-            </ProgressRing>
-            <div className="flex-1 min-w-0">
-              <div className="text-[16px] font-extrabold text-[#050A1F] flex items-center gap-2 flex-wrap">Today's focus {taskSummary.totalToday > 0 && <span className="text-[12px] font-bold text-slate-400">· {taskSummary.completedToday} of {taskSummary.totalToday} done</span>}</div>
-              <div className="text-[12.5px] text-slate-500 mt-0.5">{taskSummary.overdue > 0 ? 'Some tasks slipped — let\u2019s catch up.' : (taskSummary.dueToday - taskSummary.completedToday > 0 ? `You\u2019re making progress — ${Math.max(0, taskSummary.dueToday)} more due today!` : 'Keep the momentum going!')}</div>
-            </div>
-            <button onClick={() => onNav && onNav('tasks')} className="text-[12.5px] font-extrabold whitespace-nowrap shrink-0" style={{ color: '#FF6A00' }}>Open board →</button>
-          </div>
-          <div className="flex gap-2 mt-3.5 flex-wrap">
-            {taskSummary.overdue > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEF2F2', color: '#DC2626' }}>⚠️ {taskSummary.overdue} overdue</span>}
-            {taskSummary.dueToday > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FFF7ED', color: '#EA580C' }}>🔥 {taskSummary.dueToday} due today</span>}
-            {taskSummary.highPriority > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEFCE8', color: '#A16207' }}>⚡ {taskSummary.highPriority} high priority</span>}
-          </div>
-        </div>
-      )}
-      {taskSummary && taskSummary.pending === 0 && (
-        <div className="mb-4 rounded-2xl p-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#ecfdf5,#f0fdf4)', border: '1px solid #bbf7d0' }}>
-          <div className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center text-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)' }}>🎉</div>
-          <div className="flex-1"><div className="text-[16px] font-extrabold text-[#050A1F]">All clear for today!</div><div className="text-[12.5px] text-green-700 mt-0.5">No pending tasks. Enjoy the momentum — you've earned it. 🙌</div></div>
-        </div>
-      )}
-
       {/* REVIEW — link to the employee's own day-end report */}
       <button onClick={() => { __wsInitialPane = 'reports'; onNav && onNav('tasks'); }} className="w-full text-left mb-4 rounded-2xl bg-white p-4 flex items-center gap-3.5 shadow-sm hover:shadow-md transition" style={{ border: '1px solid #eef0f4' }}>
         <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: 'linear-gradient(135deg,#8b5cf6,#6d28d9)' }}>📊</div>
@@ -4374,6 +4373,33 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
               </>
             )}
           </div>
+
+          {/* TODAY'S FOCUS — progress ring + pills nudge (below Review) */}
+          {taskSummary && (taskSummary.pending > 0) && (
+            <div className="rounded-2xl bg-white p-5 shadow-sm" style={{ border: '1px solid #eef0f4' }}>
+              <div className="flex items-center gap-4">
+                <ProgressRing pct={taskSummary.pct || 0} size={58} stroke={6}>
+                  <div className="text-[15px] font-black text-[#050A1F] leading-none">{taskSummary.pct || 0}%</div>
+                </ProgressRing>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[16px] font-extrabold text-[#050A1F] flex items-center gap-2 flex-wrap">Today's focus {taskSummary.totalToday > 0 && <span className="text-[12px] font-bold text-slate-400">· {taskSummary.completedToday} of {taskSummary.totalToday} done</span>}</div>
+                  <div className="text-[12.5px] text-slate-500 mt-0.5">{taskSummary.overdue > 0 ? 'Some tasks slipped — let\u2019s catch up.' : (taskSummary.dueToday - taskSummary.completedToday > 0 ? `You\u2019re making progress — ${Math.max(0, taskSummary.dueToday)} more due today!` : 'Keep the momentum going!')}</div>
+                </div>
+                <button onClick={() => onNav && onNav('tasks')} className="text-[12.5px] font-extrabold whitespace-nowrap shrink-0" style={{ color: '#FF6A00' }}>Open board →</button>
+              </div>
+              <div className="flex gap-2 mt-3.5 flex-wrap">
+                {taskSummary.overdue > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEF2F2', color: '#DC2626' }}>⚠️ {taskSummary.overdue} overdue</span>}
+                {taskSummary.dueToday > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FFF7ED', color: '#EA580C' }}>🔥 {taskSummary.dueToday} due today</span>}
+                {taskSummary.highPriority > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEFCE8', color: '#A16207' }}>⚡ {taskSummary.highPriority} high priority</span>}
+              </div>
+            </div>
+          )}
+          {taskSummary && taskSummary.pending === 0 && (
+            <div className="rounded-2xl p-4 flex items-center gap-4" style={{ background: 'linear-gradient(90deg,#ecfdf5,#f0fdf4)', border: '1px solid #bbf7d0' }}>
+              <div className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center text-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)' }}>🎉</div>
+              <div className="flex-1"><div className="text-[16px] font-extrabold text-[#050A1F]">All clear for today!</div><div className="text-[12.5px] text-green-700 mt-0.5">No pending tasks. Enjoy the momentum — you've earned it. 🙌</div></div>
+            </div>
+          )}
 
           {/* INTERVIEWS */}
           {interviews.length > 0 && (

@@ -3293,9 +3293,14 @@ router.get('/me/org-chart', requireHrAccess, async (req, res, next) => {
       phone: full ? (u.phone || '') : '', email: full ? (u.email || '') : '', masked: !full,
     });
 
-    // Group by department.
+    // Group by department. Exclude HrUsers that ARE one of the admins shown on
+    // top (matched by email or name) — otherwise Monalisa/Sandeep appear both at
+    // the top AND duplicated inside an "Unassigned" department group.
+    const adminEmails = new Set(admins.map((a) => String(a.email || '').trim().toLowerCase()).filter(Boolean));
+    const adminNames = new Set(admins.map((a) => String(a.name || '').trim().toLowerCase()).filter(Boolean));
+    const isAdminDup = (u) => adminEmails.has(String(u.email || '').trim().toLowerCase()) || adminNames.has(String(u.name || '').trim().toLowerCase());
     const byDept = {};
-    all.forEach((u) => { const d = (u.department && String(u.department).trim()) || 'Unassigned'; (byDept[d] = byDept[d] || []).push(u); });
+    all.filter((u) => !isAdminDup(u)).forEach((u) => { const d = (u.department && String(u.department).trim()) || 'Unassigned'; (byDept[d] = byDept[d] || []).push(u); });
 
     const myDept = String((req.hrUser && req.hrUser.department) || '').trim().toLowerCase();
 
