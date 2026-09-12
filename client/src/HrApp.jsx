@@ -2915,16 +2915,22 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     return (
       <>
         <div
-          draggable={!tracking && !isSub}
-          onDragStart={() => !tracking && !isSub && setDragId(t._id)}
-          onDragEnd={() => { setDragId(null); setDragOver(null); }}
           className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${dragId === t._id ? 'opacity-40' : ''} ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
           style={{ gridTemplateColumns: GRID_COLS }}
+          onDragOver={(e) => { if (dragId && dragId !== t._id && !tracking && !isSub) { e.preventDefault(); } }}
         >
-          {/* expander */}
+          {/* expander / drag handle */}
           <div className="flex items-center justify-center h-9 border-r border-slate-100">
             {hasSubs ? <button onClick={() => setExpandedTasks((e) => ({ ...e, [t._id]: !e[t._id] }))} className={`text-slate-400 text-[10px] transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</button>
-              : (!tracking && !isSub) ? <span className="text-slate-200 cursor-grab text-xs" title="Drag">⠿</span> : null}
+              : (!tracking && !isSub)
+                ? <span
+                    draggable
+                    onDragStart={(e) => { e.stopPropagation(); setDragId(t._id); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} }}
+                    onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                    className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
+                    title="Drag to move between sections"
+                  >⠿</span>
+                : null}
           </div>
           {/* checkbox */}
           <div className="flex items-center justify-center h-9 border-r border-slate-100">
@@ -4383,15 +4389,17 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
                 </ProgressRing>
                 <div className="flex-1 min-w-0">
                   <div className="text-[16px] font-extrabold text-[#050A1F] flex items-center gap-2 flex-wrap">Today's focus {taskSummary.totalToday > 0 && <span className="text-[12px] font-bold text-slate-400">· {taskSummary.completedToday} of {taskSummary.totalToday} done</span>}</div>
-                  <div className="text-[12.5px] text-slate-500 mt-0.5">{taskSummary.overdue > 0 ? 'Some tasks slipped — let\u2019s catch up.' : (taskSummary.dueToday - taskSummary.completedToday > 0 ? `You\u2019re making progress — ${Math.max(0, taskSummary.dueToday)} more due today!` : 'Keep the momentum going!')}</div>
+                  {/* Pills directly under the title — overdue first. */}
+                  <div className="flex gap-2 mt-1.5 flex-wrap">
+                    {taskSummary.overdue > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEF2F2', color: '#DC2626' }}>⚠️ {taskSummary.overdue} overdue</span>}
+                    {taskSummary.dueToday > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FFF7ED', color: '#EA580C' }}>🔥 {taskSummary.dueToday} due today</span>}
+                    {taskSummary.highPriority > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEFCE8', color: '#A16207' }}>⚡ {taskSummary.highPriority} high priority</span>}
+                  </div>
                 </div>
-                <button onClick={() => onNav && onNav('tasks')} className="text-[12.5px] font-extrabold whitespace-nowrap shrink-0" style={{ color: '#FF6A00' }}>Open board →</button>
+                <button onClick={() => onNav && onNav('tasks')} className="text-[12.5px] font-extrabold whitespace-nowrap shrink-0 self-start" style={{ color: '#FF6A00' }}>Open board →</button>
               </div>
-              <div className="flex gap-2 mt-3.5 flex-wrap">
-                {taskSummary.overdue > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEF2F2', color: '#DC2626' }}>⚠️ {taskSummary.overdue} overdue</span>}
-                {taskSummary.dueToday > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FFF7ED', color: '#EA580C' }}>🔥 {taskSummary.dueToday} due today</span>}
-                {taskSummary.highPriority > 0 && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12.5px] font-extrabold" style={{ background: '#FEFCE8', color: '#A16207' }}>⚡ {taskSummary.highPriority} high priority</span>}
-              </div>
+              {/* Encouraging line moved to the bottom. */}
+              <div className="text-[12.5px] text-slate-500 mt-3">{taskSummary.overdue > 0 ? 'Some tasks slipped — let\u2019s catch up.' : (taskSummary.dueToday - taskSummary.completedToday > 0 ? `You\u2019re making progress — ${Math.max(0, taskSummary.dueToday)} more due today!` : 'Keep the momentum going!')}</div>
             </div>
           )}
           {taskSummary && taskSummary.pending === 0 && (

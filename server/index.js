@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v469';
+const APP_VERSION = 'v470';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -764,6 +764,62 @@ connectWithRetry()
       if (fixed) console.log(`[migrate] backfilled decided fields on ${fixed} leave row(s)`);
     } catch (e) {
       console.error('[migrate] leave decided-field backfill skipped:', e.message);
+    }
+
+    // One-time (idempotent) migration: consolidate legacy multi-assignee TASK
+    // COPIES into the shared-task model. Before the shared rewrite, a task with N
+    // assignees was stored as N physical rows linked by assigneeGroupId. Those
+    // leftover copies still exist and show up as DUPLICATES (one has the real
+    // description/notes, the others are blank) — and deleting a blank one used to
+    // cascade-delete the real task. Here we collapse each group to a SINGLE row:
+    // keep the richest row (most notes/description/attachments), fold every
+    // assignee into its assigneeIds, then delete the redundant copies (moving any
+    // stray comments/attachments onto the survivor first).
+    try {
+      const { Task, TaskComment, TaskAttachment, Op } = require('./models');
+      const grouped = await Task.findAll({ where: { assigneeGroupId: { [Op.ne]: null }, parentTaskId: null } });
+      const byGroup = {};
+      for (const t of grouped) { (byGroup[t.assigneeGroupId] = byGroup[t.assigneeGroupId] || []).push(t); }
+      let collapsed = 0, removed = 0;
+      for (const gid of Object.keys(byGroup)) {
+        const rows = byGroup[gid];
+        if (rows.length < 1) continue;
+        // Score each row by how much real content it holds.
+        const score = async (t) => {
+          const [nc, na] = await Promise.all([
+            TaskComment.count({ where: { taskId: t.id } }),
+            TaskAttachment.count({ where: { taskId: t.id } }),
+          ]);
+          return (t.description ? t.description.length : 0) + nc * 500 + na * 500 + (t.stage === 'completed' ? 10 : 0);
+        };
+        let survivor = rows[0]; let best = await score(survivor);
+        for (const t of rows.slice(1)) { const s = await score(t); if (s > best) { best = s; survivor = t; } }
+        // Fold all assignees into the survivor.
+        const allAssignees = new Set([survivor.assigneeId, ...(Array.isArray(survivor.assigneeIds) ? survivor.assigneeIds : [])].filter(Boolean));
+        for (const t of rows) { if (t.assigneeId) allAssignees.add(t.assigneeId); if (Array.isArray(t.assigneeIds)) t.assigneeIds.forEach((x) => x && allAssignees.add(x)); }
+        survivor.assigneeIds = [survivor.assigneeId, ...[...allAssignees].filter((x) => x !== survivor.assigneeId)];
+        survivor.assigneeGroupId = null;
+        survivor.changed('assigneeIds', true);
+        await survivor.save();
+        collapsed += 1;
+        // Delete the redundant copies, moving their comments/attachments over.
+        for (const t of rows) {
+          if (t.id === survivor.id) continue;
+          try {
+            await TaskComment.update({ taskId: survivor.id }, { where: { taskId: t.id } });
+            await TaskAttachment.update({ taskId: survivor.id }, { where: { taskId: t.id } });
+            // Re-parent any subtasks of the dead copy onto the survivor.
+            await Task.update({ parentTaskId: survivor.id }, { where: { parentTaskId: t.id } });
+            await t.destroy();
+            removed += 1;
+          } catch {}
+        }
+      }
+      // Also clear any stray assigneeGroupId on rows that weren't in a multi-row group.
+      await Task.update({ assigneeGroupId: null }, { where: { assigneeGroupId: { [Op.ne]: null } } });
+      if (collapsed) console.log(`[migrate] consolidated ${collapsed} task group(s), removed ${removed} duplicate copy row(s)`);
+    } catch (e) {
+      console.error('[migrate] task copy consolidation skipped:', e.message);
     }
 
     // One-time backfill: normalise candidate joining dates to yyyy-mm-dd. Dates

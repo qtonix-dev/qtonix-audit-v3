@@ -120,11 +120,10 @@ function computeTaskTime(task, acts) {
 
 // Historical baseline: this employee's median completion time on prior tasks
 // (for Claude to judge "fast/slow" relative to their own past pace).
-async function employeeBaseline(empId, beforeDate) {
-  const done = await Task.findAll({
-    where: { assigneeId: empId, stage: 'completed', parentTaskId: null },
-    order: [['completedAt', 'DESC']], limit: 40,
-  });
+async function employeeBaseline(empId, beforeDate, cache) {
+  const done = cache
+    ? (cache.allTasks.filter((t) => t.assigneeId === empId && t.stage === 'completed')).sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0)).slice(0, 40)
+    : await Task.findAll({ where: { assigneeId: empId, stage: 'completed', parentTaskId: null }, order: [['completedAt', 'DESC']], limit: 40 });
   const times = done
     .filter((t) => (t.completedAt ? istDateStr(t.completedAt) < beforeDate : false))
     .map((t) => (t.workMs && t.workMs > 0 ? t.workMs : (t.startedAt && t.completedAt ? new Date(t.completedAt) - new Date(t.startedAt) : 0)))
@@ -137,25 +136,46 @@ async function employeeBaseline(empId, beforeDate) {
 }
 
 // Build one employee's slice for a date: attendance + tasks + note.
+// Preload everything a whole report day needs in a few bulk queries, so we don't
+// re-scan the tasks table once per employee (the main cause of slow reports).
+async function loadDayCache(empIds, date) {
+  const allTasks = await Task.findAll({ where: { parentTaskId: null } });
+  // Index tasks by assignee for O(1) per-employee lookup.
+  const tasksByEmp = {};
+  for (const t of allTasks) {
+    const owners = new Set([t.assigneeId, ...(Array.isArray(t.assigneeIds) ? t.assigneeIds : [])].filter(Boolean));
+    for (const oid of owners) { if (!tasksByEmp[oid]) tasksByEmp[oid] = []; tasksByEmp[oid].push(t); }
+  }
+  const [atts, notes] = await Promise.all([
+    HrAttendance.findAll({ where: { employeeId: { [Op.in]: empIds }, date } }),
+    HrDayNote.findAll({ where: { employeeId: { [Op.in]: empIds }, date } }),
+  ]);
+  const attByEmp = Object.fromEntries(atts.map((a) => [a.employeeId, a]));
+  const noteByEmp = Object.fromEntries(notes.map((n) => [n.employeeId, n.note]));
+  return { allTasks, tasksByEmp, attByEmp, noteByEmp };
+}
+
 async function buildEmployeeDay(emp, date, opts = {}) {
-  const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
+  const cache = opts.cache || null;
+  const att = cache ? (cache.attByEmp[emp.id] || null) : await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
   const present = att ? !['absent', 'leave'].includes(att.status) : false;
   const mins = att ? hoursBetween(att.loginTime, att.logoutTime) : null;
 
   // Tasks the employee is assigned to that were active/updated on this date:
-  // completed today OR currently open (any non-completed) OR started today.
-  const all = await Task.findAll({ where: { parentTaskId: null } });
-  const mine = all.filter((t) => t.assigneeId === emp.id || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(emp.id)));
+  // completed today OR currently open (any non-completed).
+  const mine = cache ? (cache.tasksByEmp[emp.id] || []) : (await Task.findAll({ where: { parentTaskId: null } })).filter((t) => t.assigneeId === emp.id || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(emp.id)));
   const dayTasks = mine.filter((t) => {
-    const comp = t.completedAt ? istDateStr(t.completedAt) : null;
-    const started = t.startedAt ? istDateStr(t.startedAt) : null;
-    if (t.stage === 'completed') return comp === date;              // completed that day
-    return true;                                                    // still-open tasks always relevant
+    if (t.stage === 'completed') { const comp = t.completedAt ? istDateStr(t.completedAt) : null; return comp === date; }
+    return true;
   });
 
   const taskIds = dayTasks.map((t) => t.id);
-  const acts = taskIds.length ? await TaskActivity.findAll({ where: { taskId: { [Op.in]: taskIds } } }) : [];
-  const comments = taskIds.length ? await TaskComment.findAll({ where: { taskId: { [Op.in]: taskIds } }, order: [['createdAt', 'ASC']] }) : [];
+  const [acts, comments] = taskIds.length
+    ? await Promise.all([
+        TaskActivity.findAll({ where: { taskId: { [Op.in]: taskIds } } }),
+        TaskComment.findAll({ where: { taskId: { [Op.in]: taskIds } }, order: [['createdAt', 'ASC']] }),
+      ])
+    : [[], []];
 
   const tasks = dayTasks.map((t) => {
     const time = computeTaskTime(t, acts);
@@ -169,8 +189,10 @@ async function buildEmployeeDay(emp, date, opts = {}) {
     };
   });
 
-  const note = await HrDayNote.findOne({ where: { employeeId: emp.id, date } });
-  const baseline = await employeeBaseline(emp.id, date);
+  const note = cache ? (cache.noteByEmp[emp.id] || '') : ((await HrDayNote.findOne({ where: { employeeId: emp.id, date } }))?.note || '');
+  // Baseline is only needed when Claude will actually review (i.e. not for the
+  // fast list assembly). Skip it unless requested to save a query per employee.
+  const baseline = opts.withBaseline === false ? null : await employeeBaseline(emp.id, date, cache);
 
   const doneCount = tasks.filter((t) => t.stage === 'completed').length;
   const inProg = tasks.filter((t) => t.stage === 'in_progress').length;
@@ -186,7 +208,7 @@ async function buildEmployeeDay(emp, date, opts = {}) {
       hoursLabel: mins ? fmtDur(mins * 60000) : null, late: att ? !!att.late : false,
     },
     counts: { done: doneCount, inProgress: inProg, notStarted, highOpen, overdue, total: tasks.length },
-    tasks, note: note ? note.note : '', baseline,
+    tasks, note: note || '', baseline,
   };
 }
 
@@ -195,10 +217,11 @@ async function buildEmployeeDay(emp, date, opts = {}) {
 // manager is this senior), so nobody is missed when middle managers are absent.
 async function buildTeamDay(seniorId, date, opts = {}) {
   const reports = opts.roster || await teamOf(seniorId);
+  const roster = opts.employeeId ? reports.filter((e) => e.id === opts.employeeId) : reports;
+  const cache = opts.cache || await loadDayCache(roster.map((e) => e.id), date);
   const employees = [];
-  for (const emp of reports) {
-    if (opts.employeeId && emp.id !== opts.employeeId) continue;
-    employees.push(await buildEmployeeDay(emp, date, opts));
+  for (const emp of roster) {
+    employees.push(await buildEmployeeDay(emp, date, { ...opts, cache }));
   }
   const present = employees.filter((e) => e.attendance.present).length;
   const absent = employees.length - present;
@@ -210,13 +233,13 @@ async function buildTeamDay(seniorId, date, opts = {}) {
 // Admin view: every active employee grouped by department, for one date.
 async function buildAdminDay(date, opts = {}) {
   const all = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, order: [['department', 'ASC'], ['name', 'ASC']] });
+  const roster = all.filter((emp) => (!opts.department || (emp.department || 'Unassigned') === opts.department) && (!opts.employeeId || emp.id === opts.employeeId));
+  const cache = opts.cache || await loadDayCache(roster.map((e) => e.id), date);
   const groups = {};
-  for (const emp of all) {
-    if (opts.department && (emp.department || 'Unassigned') !== opts.department) continue;
-    if (opts.employeeId && emp.id !== opts.employeeId) continue;
+  for (const emp of roster) {
     const dept = emp.department || 'Unassigned';
     groups[dept] = groups[dept] || [];
-    groups[dept].push(await buildEmployeeDay(emp, date, opts));
+    groups[dept].push(await buildEmployeeDay(emp, date, { ...opts, cache }));
   }
   const departments = Object.keys(groups).sort().map((dept) => {
     const employees = groups[dept];
@@ -238,4 +261,21 @@ function dayFingerprint(day) {
   return String(h);
 }
 
-module.exports = { istDateStr, fmtDur, directReports, teamOf, seniorOf, employeeShiftEnd, employeeDayEnded, buildEmployeeDay, buildTeamDay, buildAdminDay, dayFingerprint };
+// Lightweight present/absent + done counts for a roster on a date, WITHOUT the
+// heavy per-task assembly. Used by the dates list (which spans many days).
+async function dayCounts(roster, date, cache) {
+  const c = cache || await loadDayCache(roster.map((e) => e.id), date);
+  let present = 0, done = 0, total = 0;
+  for (const emp of roster) {
+    const att = c.attByEmp[emp.id];
+    if (att && !['absent', 'leave'].includes(att.status)) present++;
+    const mine = c.tasksByEmp[emp.id] || [];
+    for (const t of mine) {
+      if (t.stage === 'completed') { if (t.completedAt && istDateStr(t.completedAt) === date) { done++; total++; } }
+      else total++;
+    }
+  }
+  return { present, absent: roster.length - present, totalDone: done, totalPlanned: total };
+}
+
+module.exports = { istDateStr, fmtDur, directReports, teamOf, seniorOf, employeeShiftEnd, employeeDayEnded, loadDayCache, dayCounts, buildEmployeeDay, buildTeamDay, buildAdminDay, dayFingerprint };

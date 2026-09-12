@@ -369,23 +369,29 @@ router.get('/team-report/dates', guard, async (req, res, next) => {
     const days = Math.min(60, Number(req.query.days) || 21);
     const today = teamReport.istDateStr();
     const out = [];
-    // Admins see org-wide (department grouping); everyone else sees their team.
-    const roster = actor.isAdmin ? null : await teamReport.teamOf(actor.id);
+    // Resolve the roster ONCE (admins: whole org; others: their team).
+    let roster;
+    if (actor.isAdmin) {
+      const { HrUser } = require('../models');
+      roster = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+    } else {
+      roster = await teamReport.teamOf(actor.id);
+    }
+    const empIds = roster.map((e) => e.id);
+    // Preload cached verdicts for the whole window in one query.
+    const seniorKey = actor.isAdmin ? 0 : actor.id;
+    const cachedRows = await HrTeamReview.findAll({ where: { seniorId: seniorKey } });
+    const verdictByDate = Object.fromEntries(cachedRows.map((r) => [r.date, r.dayVerdict]));
     for (let i = 0; i < days; i++) {
       const d = new Date(new Date(today + 'T00:00:00Z').getTime() - i * 86400000).toISOString().slice(0, 10);
-      if (actor.isAdmin) {
-        const adminDay = await teamReport.buildAdminDay(d, {});
-        const present = adminDay.departments.reduce((s, g) => s + g.present, 0);
-        const absent = adminDay.departments.reduce((s, g) => s + g.absent, 0);
-        if (present + absent === 0) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
-        const totalDone = adminDay.departments.reduce((s, g) => s + g.totalDone, 0);
-        out.push({ date: d, present, absent, totalDone, departments: adminDay.departments.length });
-      } else {
-        const day = await teamReport.buildTeamDay(actor.id, d, { roster });
-        if (!day.employees.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
-        const cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date: d } });
-        out.push({ date: d, present: day.present, absent: day.absent, totalDone: day.totalDone, totalPlanned: day.totalPlanned, verdict: cached ? cached.dayVerdict : null });
-      }
+      // Lightweight counts only (no per-task assembly, no AI).
+      const cache = await teamReport.loadDayCache(empIds, d);
+      const counts = await teamReport.dayCounts(roster, d, cache);
+      if (counts.present + counts.absent === 0 || !roster.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: !roster.length }); continue; }
+      // "empty" day (nobody marked + no tasks) — only surface today so the list isn't blank.
+      const anyActivity = counts.present > 0 || counts.totalPlanned > 0 || Object.values(cache.attByEmp).length > 0;
+      if (!anyActivity && i !== 0) continue;
+      out.push({ date: d, present: counts.present, absent: counts.absent, totalDone: counts.totalDone, totalPlanned: counts.totalPlanned, verdict: verdictByDate[d] || null, departments: actor.isAdmin ? new Set(roster.map((e) => e.department || 'Unassigned')).size : undefined });
     }
     const hasTeam = actor.isAdmin ? true : (roster && roster.length > 0);
     res.json({ dates: out, hasTeam, isAdmin: actor.isAdmin });
@@ -837,13 +843,15 @@ router.delete('/tasks/:id', guard, async (req, res, next) => {
     const isCreator = row.createdById != null && ctx.actorId != null && Number(row.createdById) === Number(ctx.actorId);
     if (!ctx.isAdmin && !isCreator) return res.status(403).json({ error: 'Only the task creator or an admin can delete this task.' });
 
-    // Gather this task + all its subtasks + any multi-assignee GROUP copies,
-    // then remove their comments, attachments, activity, chat cards and
-    // notifications, then the tasks themselves.
+    // Gather this task + all its subtasks, then remove their comments,
+    // attachments, activity, chat cards and notifications, then the tasks.
+    // NOTE: we deliberately do NOT cascade by the legacy assigneeGroupId. In the
+    // shared-task model there are no per-assignee copies; a task is one row. Old
+    // data may still carry an assigneeGroupId, and cascading on it caused
+    // deleting one (often a blank leftover copy) to also delete the real task
+    // that happened to share the group id. Each row now deletes independently.
     const subs = await Task.findAll({ where: { parentTaskId: row.id }, attributes: ['id'] });
-    let groupCopies = [];
-    if (row.assigneeGroupId) groupCopies = await Task.findAll({ where: { assigneeGroupId: row.assigneeGroupId }, attributes: ['id'] });
-    const allIds = [...new Set([row.id, ...subs.map((s) => s.id), ...groupCopies.map((g) => g.id)])];
+    const allIds = [...new Set([row.id, ...subs.map((s) => s.id)])];
     await TaskComment.destroy({ where: { taskId: { [Op.in]: allIds } } });
     // Remove attached files from ImageKit before dropping the DB rows.
     const attachs = await TaskAttachment.findAll({ where: { taskId: { [Op.in]: allIds } } });
