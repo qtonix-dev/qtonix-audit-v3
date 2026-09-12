@@ -881,6 +881,74 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Reorder a task within a section (bucket) or status column, and optionally move
+// it to a different bucket/stage at a specific position. Renumbers the affected
+// group's `order` values cleanly so the new order persists.
+//   body: { bucket?, stage?, beforeId? , afterId? }
+// The moved task is placed immediately AFTER `afterId`, or BEFORE `beforeId`, or
+// at the end if neither is given. `bucket`/`stage` set the destination group.
+router.post('/tasks/:id/reorder', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const row = await Task.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Task not found.' });
+    const b = req.body || {};
+
+    // Apply a destination bucket/stage change if provided (same rules as PATCH).
+    if (b.bucket && BUCKETS.includes(b.bucket) && b.bucket !== row.bucket) {
+      row.bucket = b.bucket;
+      await logActivity(row.id, ctx, 'section', 'moved to ' + BUCKET_LABELS[b.bucket]);
+    }
+    if (b.stage && STAGES.includes(b.stage) && b.stage !== row.stage) {
+      // Reuse the same timer transition logic as PATCH by delegating through a
+      // minimal inline apply (kept simple: reorder within a status rarely changes
+      // stage, but a cross-column board drop does).
+      const prevStage = row.stage; const now = new Date();
+      const wasActive = TIMER_ACTIVE_STAGES.includes(prevStage); const willActive = TIMER_ACTIVE_STAGES.includes(b.stage);
+      if (willActive && !row.startedAt) row.startedAt = now;
+      if (wasActive && !willActive) { if (row.workSegStart) row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart)); row.workSegStart = null; }
+      else if (!wasActive && willActive) row.workSegStart = now;
+      row.stage = b.stage;
+      row.completedAt = b.stage === 'completed' ? now : (b.stage === prevStage ? row.completedAt : null);
+      await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + STAGE_LABEL[b.stage]);
+    }
+
+    // Gather the sibling group the task now belongs to. For the board (status)
+    // view the group is "all my top-level tasks in this stage"; for the list
+    // (bucket) view it's "all my top-level tasks in this bucket". We renumber the
+    // whole viewer-visible set to keep it simple and consistent, then order the
+    // group members and splice the moved row into position.
+    const board = await buildBoardRaw(ctx);              // viewer's tasks (raw rows)
+    const groupKey = b.stage ? 'stage' : 'bucket';
+    const groupVal = b.stage ? row.stage : (row.bucket || 'recently_assigned');
+    let group = board.filter((t) => t.id !== row.id && (groupKey === 'stage' ? t.stage === groupVal : (t.bucket || 'recently_assigned') === groupVal));
+    group.sort((a, c) => (a.order || 0) - (c.order || 0) || a.id - c.id);
+
+    // Find the insertion index.
+    let idx = group.length; // default: end
+    if (b.afterId != null) { const i = group.findIndex((t) => t.id === Number(b.afterId)); if (i >= 0) idx = i + 1; }
+    else if (b.beforeId != null) { const i = group.findIndex((t) => t.id === Number(b.beforeId)); if (i >= 0) idx = i; }
+
+    const ordered = [...group.slice(0, idx), row, ...group.slice(idx)];
+    // Renumber sequentially (10-step gaps leave room but we keep it simple).
+    for (let i = 0; i < ordered.length; i++) {
+      const t = ordered[i];
+      if (t.order !== i) { t.order = i; if (t.id === row.id) { /* saved below */ } else { await Task.update({ order: i }, { where: { id: t.id } }); } }
+    }
+    row.order = ordered.findIndex((t) => t.id === row.id);
+    await row.save();
+    res.json({ ok: true, order: row.order, bucket: row.bucket, stage: row.stage });
+  } catch (e) { next(e); }
+});
+
+// Raw list of the viewer's top-level tasks (ids/order/bucket/stage) — used by
+// reorder to renumber cleanly. Reuses the same identity matching as the board.
+async function buildBoardRaw(ctx) {
+  const myIds = new Set([...(ctx.linkedIds || [ctx.boardId]), ctx.boardId].filter((x) => x != null));
+  const all = await Task.findAll({ where: { parentTaskId: null }, attributes: ['id', 'order', 'bucket', 'stage', 'assigneeId', 'assigneeIds', 'assignedById', 'origAssignedById'] });
+  return all.filter((t) => myIds.has(t.assigneeId) || (Array.isArray(t.assigneeIds) && t.assigneeIds.some((id) => myIds.has(id))) || myIds.has(t.assignedById) || myIds.has(t.origAssignedById));
+}
+
 router.delete('/tasks/:id', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);

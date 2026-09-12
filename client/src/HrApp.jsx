@@ -2870,30 +2870,36 @@ function ChatForwardModal({ message, directory, conversations, onClose, onDone }
 // ===== TASK KANBAN — status-based board (uniform with Recruitment Pipeline) =====
 // Horizontal columns = the 7 workflow statuses. Cards drag between columns with
 // a real "lifted row" feel; the target column highlights and shows a drop line.
-function TaskKanban({ allTasks, onMove, onOpen, prep }) {
+function TaskKanban({ allTasks, onMove, onReorder, onOpen, prep }) {
   const [dragId, setDragId] = useState(null);
   const [overStage, setOverStage] = useState(null);
+  const [overCardId, setOverCardId] = useState(null); // card we'd drop BEFORE
   const [moveFor, setMoveFor] = useState(null); // card → status picker popup
   const dragRef = useRef(null);   // synchronous id of the card being dragged
+  const dragStageRef = useRef(null); // source stage of the dragged card
   const rafRef = useRef(null);
   const softBg = (hex) => `${hex}14`;
-  const move = (t, stage) => { if (t && t.stage !== stage) onMove(t._id, stage); dragRef.current = null; setDragId(null); setOverStage(null); setMoveFor(null); };
   const prioDot = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
   const startDrag = (e, t) => {
-    // Record the id synchronously so drop works even before React re-renders.
-    dragRef.current = t._id;
+    dragRef.current = t._id; dragStageRef.current = t.stage;
     try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {}
-    // IMPORTANT: defer the visual "lifted" state to the NEXT frame. Changing the
-    // dragged element's opacity/transform synchronously inside dragstart makes
-    // the browser abort the drag (the first attempt would only dim the card and
-    // not move it). By waiting a frame, the drag image is already captured.
     rafRef.current = requestAnimationFrame(() => setDragId(t._id));
   };
-  const endDrag = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); dragRef.current = null; setDragId(null); setOverStage(null); };
+  const endDrag = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); dragRef.current = null; dragStageRef.current = null; setDragId(null); setOverStage(null); setOverCardId(null); };
+  // Drop into a stage column at the current insert position (before overCardId,
+  // or at the end). Same stage → reorder; different stage → move + position.
+  const dropInto = (stageId) => {
+    const id = dragRef.current; if (id == null) { endDrag(); return; }
+    const beforeId = overCardId && overCardId !== '__end__' && overCardId !== id ? overCardId : null;
+    const sameStage = dragStageRef.current === stageId;
+    if (sameStage && !beforeId && overCardId !== '__end__') { endDrag(); return; } // no-op (dropped on itself / no target)
+    onReorder(id, { stage: stageId, beforeId });
+    endDrag();
+  };
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
-        <div className="text-[12px] text-slate-400">{allTasks.length} tasks · drag a card or use ⇄ to change status</div>
+        <div className="text-[12px] text-slate-400">{allTasks.length} tasks · drag to reorder or move between columns</div>
       </div>
       <div className="flex gap-4 overflow-x-auto pb-4">
         {TASK_STAGES.map((s) => {
@@ -2903,7 +2909,7 @@ function TaskKanban({ allTasks, onMove, onOpen, prep }) {
             <div key={s.id}
               onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overStage !== s.id) setOverStage(s.id); } }}
               onDragEnter={(e) => { if (dragRef.current != null) { e.preventDefault(); setOverStage(s.id); } }}
-              onDrop={(e) => { e.preventDefault(); const id = dragRef.current; const d = allTasks.find((x) => x._id === id); move(d, s.id); }}
+              onDrop={(e) => { e.preventDefault(); dropInto(s.id); }}
               className={`shrink-0 w-72 rounded-3xl p-3 transition-colors duration-150 ${isOver ? 'ring-2 ring-offset-1' : ''}`}
               style={{ background: isOver ? `${s.color}22` : softBg(s.color), boxShadow: isOver ? `0 0 0 2px ${s.color}` : 'none' }}>
               <div className="flex items-center justify-between px-2 pt-1 pb-3">
@@ -2914,35 +2920,42 @@ function TaskKanban({ allTasks, onMove, onOpen, prep }) {
                 </div>
               </div>
               <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-                {/* Drop-line placeholder shown when hovering a column with the card not already in it. */}
-                {isOver && dragId && !col.some((c) => c._id === dragId) && (
-                  <div className="h-1.5 rounded-full mx-1 mb-1 animate-pulse" style={{ background: s.color }} />
-                )}
                 {col.length === 0 && !isOver && <div className="text-[11px] text-slate-400 px-2 py-6 text-center">Drop tasks here</div>}
-                {col.length === 0 && isOver && <div className="text-[11px] font-semibold px-2 py-5 text-center" style={{ color: s.color }}>Release to move here</div>}
+                {col.length === 0 && isOver && dragId && <div className="text-[11px] font-semibold px-2 py-5 text-center" style={{ color: s.color }}>Release to move here</div>}
                 {col.map((t) => (
-                  <div key={t._id} draggable
-                    onDragStart={(e) => startDrag(e, t)}
-                    onDragEnd={endDrag}
-                    style={dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.5deg)' } : undefined}
-                    className={`group bg-white rounded-2xl border p-3.5 cursor-grab active:cursor-grabbing relative ${dragId === t._id ? 'border-slate-300' : 'border-slate-100 hover:shadow-lg hover:-translate-y-0.5 transition-all'}`}>
-                    <button onClick={(e) => { e.stopPropagation(); setMoveFor(t); }} onMouseDown={(e) => e.stopPropagation()} title="Move to status" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
-                    </button>
-                    <div onClick={() => onOpen(t)}>
-                      <div className="font-bold text-sm text-[#050A1F] leading-snug pr-7 mb-2">{t.title}</div>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: prioDot[t.priority] || '#94A3B8' }} />
-                          <span className="text-[11px] text-slate-400 capitalize truncate">{t.priority || 'medium'}</span>
-                          {t.dueDate && <span className="text-[11px] text-slate-300 shrink-0">· {new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
-                        </div>
+                  <React.Fragment key={t._id}>
+                    {/* Drop-line ABOVE this card when it's the insert target. */}
+                    {isOver && dragId && overCardId === t._id && dragId !== t._id && (
+                      <div className="h-1.5 rounded-full mx-1 animate-pulse" style={{ background: s.color }} />
+                    )}
+                    <div draggable
+                      onDragStart={(e) => startDrag(e, t)}
+                      onDragEnd={endDrag}
+                      onDragOver={(e) => { if (dragRef.current != null && dragRef.current !== t._id) { e.preventDefault(); e.stopPropagation(); setOverStage(s.id); const r = e.currentTarget.getBoundingClientRect(); const below = e.clientY > r.top + r.height / 2; setOverCardId(below ? null : t._id); if (below) { /* insert after → find next card */ const i = col.findIndex((c) => c._id === t._id); const next = col[i + 1]; setOverCardId(next ? next._id : '__end__'); } } }}
+                      style={dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.5deg)' } : undefined}
+                      className={`group bg-white rounded-2xl border p-3.5 cursor-grab active:cursor-grabbing relative ${dragId === t._id ? 'border-slate-300' : 'border-slate-100 hover:shadow-lg hover:-translate-y-0.5 transition-all'}`}>
+                      <button onClick={(e) => { e.stopPropagation(); setMoveFor(t); }} onMouseDown={(e) => e.stopPropagation()} title="Move to status" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
+                      </button>
+                      <div onClick={() => onOpen(t)}>
+                        <div className="font-bold text-sm text-[#050A1F] leading-snug pr-7 mb-2">{t.title}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: prioDot[t.priority] || '#94A3B8' }} />
+                            <span className="text-[11px] text-slate-400 capitalize truncate">{t.priority || 'medium'}</span>
+                            {t.dueDate && <span className="text-[11px] text-slate-300 shrink-0">· {new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
+                          </div>
                         <TAvatar person={t.assignee} size={22} />
                       </div>
                       {t.subtaskCount > 0 && <div className="mt-2 text-[10px] text-slate-400">✓ {t.subtaskDone}/{t.subtaskCount} subtasks</div>}
                     </div>
-                  </div>
+                    </div>
+                  </React.Fragment>
                 ))}
+                {/* Drop-line at the END of the column. */}
+                {isOver && dragId && overCardId === '__end__' && (
+                  <div className="h-1.5 rounded-full mx-1 animate-pulse" style={{ background: s.color }} />
+                )}
               </div>
             </div>
           );
@@ -2984,7 +2997,9 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [newTitle, setNewTitle] = useState('');
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  const [overRowId, setOverRowId] = useState(null); // row we'd drop BEFORE ('__end__' = end of section)
   const dragRef = useRef(null);        // synchronous id of the row being dragged
+  const dragBucketRef = useRef(null);  // source bucket of the dragged row
   const dragRafRef = useRef(null);
   const [collapsed, setCollapsed] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({}); // inline subtask expand
@@ -3012,6 +3027,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     try { await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: newTitle.trim(), assigneeId: viewerId, bucket }) }); setNewTitle(''); setAddingIn(null); refresh(); } catch (e) { setErr(e.message); }
   };
   const patchTask = async (id, patch) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
+  const reorderTask = async (id, opts) => { try { await hrApi(`/tasks/tasks/${id}/reorder`, { method: 'POST', body: JSON.stringify(opts || {}) }); refresh(); } catch (e) { setErr(e.message); } };
   const delTask = async (id) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'DELETE' }); refresh(); } catch (e) { setErr(e.message); } };
   const moveToBucket = async (id, bucket) => { dragRef.current = null; setDragId(null); setDragOver(null); await patchTask(id, { bucket }); };
 
@@ -3055,8 +3071,17 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
       <>
         <div
           className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
-          style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.2deg) scale(1.01)', borderRadius: '10px', position: 'relative', zIndex: 20, transition: 'none' } : {}) }}
-          onDragOver={(e) => { if (dragRef.current != null && dragRef.current !== t._id && !tracking && !isSub) { e.preventDefault(); } }}
+          style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.2deg) scale(1.01)', borderRadius: '10px', position: 'relative', zIndex: 20, transition: 'none' } : {}), ...(overRowId === t._id && dragId && dragId !== t._id && !isSub ? { borderTop: '3px solid #FF6A00' } : {}) }}
+          onDragOver={(e) => {
+            if (dragRef.current != null && dragRef.current !== t._id && !tracking && !isSub) {
+              e.preventDefault(); e.stopPropagation();
+              setDragOver(t.bucket || 'recently_assigned');
+              const r = e.currentTarget.getBoundingClientRect();
+              const below = e.clientY > r.top + r.height / 2;
+              if (!below) setOverRowId(t._id);
+              else { const sib = (bucketByKey[t.bucket || 'recently_assigned'] || { tasks: [] }).tasks; const i = sib.findIndex((x) => x._id === t._id); const next = sib[i + 1]; setOverRowId(next ? next._id : '__end__'); }
+            }
+          }}
         >
           {/* expander / drag handle */}
           <div className="flex items-center justify-center h-9 border-r border-slate-100">
@@ -3064,8 +3089,8 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               : (!tracking && !isSub)
                 ? <span
                     draggable
-                    onDragStart={(e) => { e.stopPropagation(); dragRef.current = t._id; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRafRef.current = requestAnimationFrame(() => setDragId(t._id)); }}
-                    onDragEnd={() => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRef.current = null; setDragId(null); setDragOver(null); }}
+                    onDragStart={(e) => { e.stopPropagation(); dragRef.current = t._id; dragBucketRef.current = t.bucket || 'recently_assigned'; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRafRef.current = requestAnimationFrame(() => setDragId(t._id)); }}
+                    onDragEnd={() => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRef.current = null; dragBucketRef.current = null; setDragId(null); setDragOver(null); setOverRowId(null); }}
                     className="text-slate-300 hover:text-orange-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
                     title="Drag to move between sections"
                   >⠿</span>
@@ -3194,7 +3219,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               <div key={key}
                 onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== key) setDragOver(key); } }}
                 onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver((d) => d === key ? null : d); }}
-                onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) moveToBucket(id, key); }}
+                onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) { const beforeId = overRowId && overRowId !== '__end__' && overRowId !== id ? overRowId : null; const sameBucket = dragBucketRef.current === key; if (sameBucket && !beforeId && overRowId !== '__end__') { /* dropped on itself */ } else { reorderTask(id, { bucket: key, beforeId }); } } dragRef.current = null; dragBucketRef.current = null; setDragId(null); setDragOver(null); setOverRowId(null); }}
                 className={`rounded-xl border transition-all duration-150 ${isOver ? 'ring-4 ring-offset-1' : ''}`}
                 style={{ borderLeft: `4px solid ${c.bar}`, borderColor: isOver ? c.bar : undefined, boxShadow: isOver && draggingElsewhere ? `0 0 0 3px ${c.bar}, 0 8px 24px ${c.bar}44` : 'none', background: isOver && draggingElsewhere ? `${c.bar}14` : undefined, overflow: 'hidden' }}
               >
@@ -3253,6 +3278,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
         <TaskKanban
           allTasks={[...(board.buckets || []).flatMap((b) => b.tasks), ...(board.completed || [])]}
           onMove={(id, stage) => patchTask(id, { stage })}
+          onReorder={(id, opts) => reorderTask(id, opts)}
           onOpen={(t) => setOpenTask(t)}
           prep={prep}
         />
