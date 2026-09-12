@@ -1896,13 +1896,23 @@ function WorkspaceView({ user, isAdmin }) {
           <Tab id="reports" icon="📊" label={hasReports ? 'Team Reports' : 'Daily Report'} badge={0} />
         </div>
       </div>
-      <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3">
-        {pane === 'chat'
-          ? <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
-          : pane === 'reports'
-          ? <div className="h-full overflow-auto no-scrollbar"><TeamReportView user={user} isAdmin={isAdmin} hasReports={hasReports} /></div>
-          : <div className="h-full overflow-auto no-scrollbar"><HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} /></div>}
-      </div>
+      {/* Chat keeps a locked full-height layout (its message list scrolls
+          internally). Tasks & Reports scroll with the whole area, so the mouse
+          wheel works anywhere over the pane — not only when the pointer is
+          inside an inner content box. */}
+      {pane === 'chat' ? (
+        <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3 w-full">
+          <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+          <div className="max-w-6xl w-full mx-auto px-4 pb-3">
+            {pane === 'reports'
+              ? <TeamReportView user={user} isAdmin={isAdmin} hasReports={hasReports} />
+              : <HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
