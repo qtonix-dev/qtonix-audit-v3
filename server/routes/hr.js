@@ -222,6 +222,9 @@ router.post('/auth/login', async (req, res) => {
       const ok = await bcrypt.compare(password, hr.passwordHash);
       if (!ok) return res.status(401).json({ error: 'Incorrect email or password.' });
       await AuditLog.create({ userId: hr.id, userName: hr.name, action: 'hr.login', target: 'HR portal', ip: req.ip }).catch(() => {});
+      // Resume any task timers that were auto-paused at logout/shift-end while
+      // the task was still being actively worked on.
+      try { await require('./hrTasks').resumeTimersForUser(hr.id); } catch {}
       return res.json({ token: signHr(hr), user: { ...hr.toJSON(), portal: 'hr', isAdmin: false } });
     }
 
@@ -248,6 +251,9 @@ router.post('/auth/login', async (req, res) => {
 /** POST /api/hr/auth/logout — records the logout event (best-effort). */
 router.post('/auth/logout', requireHrAccess, async (req, res) => {
   try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'hr.logout', target: 'HR portal', ip: req.ip }); } catch {}
+  // Pause any running task timers for this user so idle/after-hours time isn't
+  // counted — banks the open work segment; it resumes when they next work on it.
+  try { if (req.hrUser && req.hrUser.id) await require('./hrTasks').pauseTimersForUsers([req.hrUser.id]); } catch {}
   res.json({ ok: true });
 });
 

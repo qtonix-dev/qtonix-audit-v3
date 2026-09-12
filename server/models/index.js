@@ -2509,6 +2509,7 @@ const Task = sequelize.define('Task', {
   startedAt: { type: DataTypes.DATE, allowNull: true },   // first time it moved to in_progress (for time-to-complete)
   workMs: { type: DataTypes.INTEGER, defaultValue: 0 },   // accumulated active work time (in_progress → completed spans), ms
   workSegStart: { type: DataTypes.DATE, allowNull: true }, // start of the currently-open in_progress span (null when not active)
+  timerPausedWhileActive: { type: DataTypes.BOOLEAN, defaultValue: false }, // auto-paused at logout/shift-end while still in an active stage
   // Senior end-of-day review. seniorFlag='need_update' is set ONLY by a senior
   // from the Team Report; it never appears on the employee's own board/view.
   seniorFlag: { type: DataTypes.STRING(14), allowNull: true }, // null | 'need_update'

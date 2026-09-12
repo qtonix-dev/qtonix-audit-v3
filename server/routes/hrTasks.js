@@ -32,9 +32,16 @@ const teamReviewAi = require('../services/teamReviewAi');
 const ADMIN_ONLY = false;
 const guard = ADMIN_ONLY ? [requireHrAccess, requireHrAdmin] : [requireHrAccess];
 
-const BUCKETS = ['recently_assigned', 'today', 'tomorrow', 'next_week', 'later'];
-const BUCKET_LABELS = { recently_assigned: 'Recently Assigned', today: 'Do Today', tomorrow: 'Do Tomorrow', next_week: 'Do Next Week', later: 'Do Later' };
-const STAGE_LABEL = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed' };
+const BUCKETS = ['recently_assigned', 'today', 'tomorrow', 'later'];
+const BUCKET_LABELS = { recently_assigned: 'Recently Assigned', today: 'Do Today', tomorrow: 'Do Tomorrow', later: 'Do Later' };
+// The task workflow statuses (kanban columns), in order.
+const STAGES = ['not_started', 'in_progress', 'pending_review', 'changes_requested', 'pending_approval', 'completed', 'on_hold'];
+const STAGE_LABEL = {
+  not_started: 'Not Started', in_progress: 'In Progress', pending_review: 'Pending Review',
+  changes_requested: 'Changes Requested', pending_approval: 'Pending Approval', completed: 'Completed', on_hold: 'On Hold',
+};
+// Statuses during which the work timer should be RUNNING (actively worked on).
+const TIMER_ACTIVE_STAGES = ['in_progress', 'changes_requested'];
 
 async function actingContext(req) {
   const isAdmin = !!req.isHrAdmin || (req.hrActor && req.hrActor.kind === 'admin');
@@ -490,7 +497,7 @@ router.get('/team-report/:date/export', guard, async (req, res, next) => {
         }
         for (const t of e.tasks) {
           const pace = (perTask[t.id] || perTask[String(t.id)] || {}).pace || '';
-          rows.push({ Date: date, Department: g.department, Employee: e.employee.name, Designation: e.employee.designation || '', Attendance: a.present ? 'Present' : 'Absent', Login: a.loginTime || '', Logout: a.logoutTime || '', Hours: a.hoursLabel || '', Task: t.title, Status: t.seniorFlag === 'need_update' ? 'Need update' : (STAGE_LABEL[t.stage] || t.stage), 'Time Taken': t.timeLabel || '', 'AI Pace': pace, Note: e.note || '' });
+          rows.push({ Date: date, Department: g.department, Employee: e.employee.name, Designation: e.employee.designation || '', Attendance: a.present ? 'Present' : 'Absent', Login: a.loginTime || '', Logout: a.logoutTime || '', Hours: a.hoursLabel || '', Task: t.title, Status: STAGE_LABEL[t.stage] || t.stage, 'Time Taken': t.timeLabel || '', 'AI Pace': pace, Note: e.note || '' });
         }
       }
     }
@@ -548,27 +555,37 @@ router.post('/:id/senior-review', guard, async (req, res, next) => {
     const note = String(req.body.note || '').trim();
 
     if (verdict === 'not_done') {
-      row.seniorFlag = 'need_update';
+      // "Not Done" now moves the task to the real "Changes Requested" status
+      // (visible to the employee) rather than a hidden flag. Timer runs there.
+      const now = new Date();
+      const wasActive = TIMER_ACTIVE_STAGES.includes(row.stage);
+      // changes_requested is an active-timer stage: open a segment if none.
+      if (!wasActive) { if (!row.startedAt) row.startedAt = now; row.workSegStart = now; }
+      row.stage = 'changes_requested';
+      row.completedAt = null;
       row.seniorFlagNote = note || null;
       row.seniorFlagById = ctx.actorId || null;
       row.seniorFlagByName = ctx.actorName;
-      row.seniorFlagAt = new Date();
+      row.seniorFlagAt = now;
       await row.save();
-      if (note) { try { await TaskComment.create({ taskId: row.id, authorId: ctx.actorId || null, authorName: ctx.actorName, body: `🔎 Review — needs update: ${note}` }); } catch {} }
+      if (note) { try { await TaskComment.create({ taskId: row.id, authorId: ctx.actorId || null, authorName: ctx.actorName, body: `🔎 Changes requested: ${note}` }); } catch {} }
       // Notify the assignee(s) so the rework actually happens.
       const targets = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter((x) => x > 0));
       for (const uid of targets) {
-        try { await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'task_need_update', text: `🔎 ${ctx.actorName} asked for an update on "${String(row.title).slice(0, 60)}"`, meta: { taskId: row.id } }); } catch {}
-        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: 'task_need_update', taskId: row.id, body: `${ctx.actorName} asked you to revisit "${String(row.title).slice(0, 80)}"${note ? `: ${note}` : ''}` }); } catch {}
+        try { await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'task_need_update', text: `🔁 ${ctx.actorName} requested changes on "${String(row.title).slice(0, 60)}"`, meta: { taskId: row.id } }); } catch {}
+        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: 'task_need_update', taskId: row.id, body: `${ctx.actorName} requested changes on "${String(row.title).slice(0, 80)}"${note ? `: ${note}` : ''}` }); } catch {}
       }
-      await logActivity(row.id, ctx, 'review', 'flagged: needs update');
+      await logActivity(row.id, ctx, 'review', 'moved to Changes Requested');
     } else if (verdict === 'completed') {
-      row.seniorFlag = null; row.seniorFlagNote = null; await row.save();
+      // Confirm completion — bank any open timer segment and mark done.
+      const now = new Date();
+      if (TIMER_ACTIVE_STAGES.includes(row.stage) && row.workSegStart) { row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart)); row.workSegStart = null; }
+      row.stage = 'completed'; row.completedAt = now; row.seniorFlagNote = null; await row.save();
       await logActivity(row.id, ctx, 'review', 'confirmed completed');
     } else {
       return res.status(400).json({ error: 'verdict must be "completed" or "not_done"' });
     }
-    res.json({ ok: true, seniorFlag: row.seniorFlag });
+    res.json({ ok: true, stage: row.stage });
   } catch (e) { next(e); }
 });
 
@@ -720,7 +737,7 @@ router.post('/tasks', guard, async (req, res, next) => {
       assigneeId,
       assigneeIds: [assigneeId, ...extraIds].filter((x) => x > 0),
       priority: ['urgent', 'high', 'medium', 'low'].includes(b.priority) ? b.priority : 'medium',
-      stage: ['not_started', 'in_progress', 'completed'].includes(b.stage) ? b.stage : 'not_started',
+      stage: STAGES.includes(b.stage) ? b.stage : 'not_started',
       dueDate: b.dueDate || null,
       order: (Number.isFinite(max) ? max : 0) + 1,
       createdById: ctx.actorId || null, createdByName: ctx.actorName, createdByKind: ctx.actorKind,
@@ -768,28 +785,29 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       await logActivity(row.id, ctx, 'section', 'moved to ' + BUCKET_LABELS[b.bucket]);
     }
 
-    if (b.stage && ['not_started', 'in_progress', 'completed'].includes(b.stage) && b.stage !== row.stage) {
+    if (b.stage && STAGES.includes(b.stage) && b.stage !== row.stage) {
       const prevStage = row.stage;
       const now = new Date();
-      // Time tracking: clock starts when work begins (→ in_progress), accumulates
-      // each in_progress → completed span into workMs.
-      if (b.stage === 'in_progress') {
-        if (!row.startedAt) row.startedAt = now;
+      const wasActive = TIMER_ACTIVE_STAGES.includes(prevStage);
+      const willActive = TIMER_ACTIVE_STAGES.includes(b.stage);
+      // Timer: accumulate the open segment whenever leaving an active state,
+      // and open a fresh segment whenever entering one. This makes the timer
+      // run during In Progress / Changes Requested, and pause during Pending
+      // Review / Pending Approval / On Hold (and stop at Completed).
+      if (willActive && !row.startedAt) row.startedAt = now;
+      if (wasActive && !willActive) {
+        // Leaving active work → bank the elapsed segment.
+        if (row.workSegStart) { row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart)); }
+        row.workSegStart = null;
+      } else if (!wasActive && willActive) {
+        // Entering active work → start a new segment.
         row.workSegStart = now;
       }
-      if (b.stage === 'completed') {
-        if (row.workSegStart) { row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart)); row.workSegStart = null; }
-        else if (row.startedAt) { /* completed without an open segment; leave workMs as-is */ }
-      }
-      if (b.stage === 'not_started') { row.workSegStart = null; }
       row.stage = b.stage;
-      row.completedAt = b.stage === 'completed' ? now : null;
-      // Any stage change by the employee clears a senior "need_update" flag
-      // (they've acted on it) — the senior can re-flag if still not right.
-      if (prevStage !== b.stage && row.seniorFlag === 'need_update') { row.seniorFlag = null; }
-      await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + b.stage.replace('_', ' '));
+      row.completedAt = b.stage === 'completed' ? now : (b.stage === prevStage ? row.completedAt : null);
+      await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + STAGE_LABEL[b.stage]);
       // Notify the assignee in their #task chat (unless they made the change).
-      try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${b.stage.replace('_', ' ')}` }); } catch {}
+      try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${STAGE_LABEL[b.stage]}` }); } catch {}
     }
 
     // ---- Assignee changes (all routed through one consistent group reconcile) ----
@@ -1044,3 +1062,44 @@ router.delete('/attachments/:id', guard, async (req, res, next) => {
 module.exports = router;
 module.exports.BUCKETS = BUCKETS;
 module.exports.BUCKET_LABELS = BUCKET_LABELS;
+module.exports.STAGES = STAGES;
+module.exports.STAGE_LABEL = STAGE_LABEL;
+module.exports.TIMER_ACTIVE_STAGES = TIMER_ACTIVE_STAGES;
+// Pause the work timer on any actively-timed tasks for a set of users (called
+// when an employee logs out or their shift ends, so idle/after-hours time is
+// not counted). Banks the open segment into workMs and clears workSegStart;
+// the timer re-opens automatically when they next move the task within an
+// active stage, or we can reopen on next login. Idempotent.
+module.exports.pauseTimersForUsers = async function pauseTimersForUsers(userIds) {
+  if (!userIds || !userIds.length) return 0;
+  const { Task, Op } = require('../models');
+  const rows = await Task.findAll({ where: { stage: { [Op.in]: TIMER_ACTIVE_STAGES }, workSegStart: { [Op.ne]: null } } });
+  const now = new Date();
+  let n = 0;
+  for (const row of rows) {
+    const owners = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter(Boolean));
+    if (![...owners].some((id) => userIds.includes(id))) continue;
+    row.workMs = (row.workMs || 0) + Math.max(0, now - new Date(row.workSegStart));
+    row.workSegStart = null;
+    // Remember it was paused mid-work so we can resume on next login.
+    row.timerPausedWhileActive = true;
+    await row.save();
+    n += 1;
+  }
+  return n;
+};
+// Resume timers for a user who logged back in on tasks still in an active stage
+// that we auto-paused. Reopens a fresh segment.
+module.exports.resumeTimersForUser = async function resumeTimersForUser(userId) {
+  if (!userId) return 0;
+  const { Task, Op } = require('../models');
+  const rows = await Task.findAll({ where: { stage: { [Op.in]: TIMER_ACTIVE_STAGES }, timerPausedWhileActive: true, workSegStart: null } });
+  const now = new Date();
+  let n = 0;
+  for (const row of rows) {
+    const owners = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter(Boolean));
+    if (!owners.has(userId)) continue;
+    row.workSegStart = now; row.timerPausedWhileActive = false; await row.save(); n += 1;
+  }
+  return n;
+};

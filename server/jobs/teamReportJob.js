@@ -213,11 +213,12 @@ async function runWeekly(models) {
 async function tick(models) {
   if (running) return; running = true;
   try {
-    // Dailies are self-gating per employee (shift end / logout), so we can run
-    // them on every tick — they only send once each team's day is fully done.
     await runDailies(models);
     // Strict logout reminders — 10 min past shift end with no logout recorded.
     await runLogoutReminders(models);
+    // Pause work timers for anyone whose day has ended (shift end or logout), so
+    // after-hours idle time isn't counted toward task work time.
+    await pauseEndedTimers(models);
     // Weekly digest only fires on the configured weekday, in the EOD hour.
     const now = istNow();
     if (now.getDay() === WEEKLY_DAY && now.getHours() === EOD_HOUR) await runWeekly(models);
@@ -225,10 +226,21 @@ async function tick(models) {
   running = false;
 }
 
+// Pause running task timers for employees whose working day has ended.
+async function pauseEndedTimers(models) {
+  const { HrUser } = models;
+  const { Op } = require('sequelize');
+  const date = istNow().toISOString().slice(0, 10);
+  const users = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+  const ended = [];
+  for (const emp of users) { if (await teamReport.employeeDayEnded(emp, date)) ended.push(emp.id); }
+  if (ended.length) { try { await require('../routes/hrTasks').pauseTimersForUsers(ended); } catch (e) { console.error('[team-report] pause timers failed:', e.message); } }
+}
+
 function start(models) {
   if (timer) return;
   timer = setInterval(() => tick(models), INTERVAL_MS);
-  console.log('[team-report] scheduler started (shift-based EOD + logout reminders)');
+  console.log('[team-report] scheduler started (shift-based EOD + logout reminders + timer pausing)');
 }
 
-module.exports = { start, tick, runDailies, runWeekly, runLogoutReminders };
+module.exports = { start, tick, runDailies, runWeekly, runLogoutReminders, pauseEndedTimers };

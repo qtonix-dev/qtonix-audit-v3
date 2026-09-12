@@ -223,10 +223,28 @@ function AnnouncementModal({ onClose, onSaved }) {
 // to admin. Auto data is READ-ONLY — she reviews numbers, not types them.
 // ===== Task boards (Asana-style) — admin-gated for now ====================
 const PRIO = { urgent: { label: 'Urgent', cls: 'bg-red-100 text-red-700' }, high: { label: 'High', cls: 'bg-orange-100 text-orange-700' }, medium: { label: 'Medium', cls: 'bg-blue-100 text-blue-700' }, low: { label: 'Low', cls: 'bg-slate-100 text-slate-600' } };
-const STAGE = { not_started: { label: 'Not started', cls: 'bg-slate-100 text-slate-600' }, in_progress: { label: 'In progress', cls: 'bg-amber-100 text-amber-700' }, completed: { label: 'Completed', cls: 'bg-green-100 text-green-700' } };
+const STAGE = {
+  not_started: { label: 'Not Started', cls: 'bg-slate-100 text-slate-600' },
+  in_progress: { label: 'In Progress', cls: 'bg-amber-100 text-amber-700' },
+  pending_review: { label: 'Pending Review', cls: 'bg-blue-100 text-blue-700' },
+  changes_requested: { label: 'Changes Requested', cls: 'bg-red-100 text-red-700' },
+  pending_approval: { label: 'Pending Approval', cls: 'bg-violet-100 text-violet-700' },
+  completed: { label: 'Completed', cls: 'bg-green-100 text-green-700' },
+  on_hold: { label: 'On Hold', cls: 'bg-slate-200 text-slate-500' },
+};
+// Ordered status columns for the kanban board, with the pipeline-style colors.
+const TASK_STAGES = [
+  { id: 'not_started', label: 'Not Started', color: '#94A3B8', hint: "Hasn't started" },
+  { id: 'in_progress', label: 'In Progress', color: '#F59E0B', hint: 'Being worked on' },
+  { id: 'pending_review', label: 'Pending Review', color: '#3B82F6', hint: 'Submitted for internal review' },
+  { id: 'changes_requested', label: 'Changes Requested', color: '#EF4444', hint: 'Revisions required' },
+  { id: 'pending_approval', label: 'Pending Approval', color: '#8B5CF6', hint: 'Awaiting client/mgmt approval' },
+  { id: 'completed', label: 'Completed', color: '#22C55E', hint: 'Fully completed' },
+  { id: 'on_hold', label: 'On Hold', color: '#64748B', hint: 'Temporarily paused' },
+];
 // Solid-fill cell colors (monday.com style) for the Priority + Status columns.
 const PRIO_FILL = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
-const STAGE_FILL = { not_started: '#94A3B8', in_progress: '#F59E0B', completed: '#22C55E' };
+const STAGE_FILL = { not_started: '#94A3B8', in_progress: '#F59E0B', pending_review: '#3B82F6', changes_requested: '#EF4444', pending_approval: '#8B5CF6', completed: '#22C55E', on_hold: '#64748B' };
 // Strip TipTap/HTML to a short plain-text preview for the task list cell.
 function plainPreview(html) {
   if (!html) return '';
@@ -382,7 +400,6 @@ const BUCKETS = [
   { key: 'recently_assigned', label: 'Recently Assigned' },
   { key: 'today', label: 'Do Today' },
   { key: 'tomorrow', label: 'Do Tomorrow' },
-  { key: 'next_week', label: 'Do Next Week' },
   { key: 'later', label: 'Do Later' },
 ];
 
@@ -1595,9 +1612,13 @@ const PACE_STYLE = {
   na: { bg: '#f1f5f9', color: '#94a3b8', label: '—' },
 };
 const STAGE_PILL = {
+  not_started: { bg: '#F1F5F9', color: '#64748b', label: 'Not Started' },
+  in_progress: { bg: '#FFF7ED', color: '#ea580c', label: 'In Progress' },
+  pending_review: { bg: '#EFF6FF', color: '#2563eb', label: 'Pending Review' },
+  changes_requested: { bg: '#FEF2F2', color: '#dc2626', label: 'Changes Requested' },
+  pending_approval: { bg: '#F5F3FF', color: '#7c3aed', label: 'Pending Approval' },
   completed: { bg: '#F0FDF4', color: '#16a34a', label: 'Completed' },
-  in_progress: { bg: '#FFF7ED', color: '#ea580c', label: 'In progress' },
-  not_started: { bg: '#F1F5F9', color: '#64748b', label: 'Not started' },
+  on_hold: { bg: '#F1F5F9', color: '#94a3b8', label: 'On Hold' },
 };
 
 function RPill({ s, children }) { return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold" style={{ background: s.bg, color: s.color }}>{children || s.label}</span>; }
@@ -1637,10 +1658,13 @@ function SeniorReport({ user, isAdmin }) {
         <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600" />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white">
           <option value="">All task statuses</option>
+          <option value="not_started">Not Started</option>
+          <option value="in_progress">In Progress</option>
+          <option value="pending_review">Pending Review</option>
+          <option value="changes_requested">Changes Requested</option>
+          <option value="pending_approval">Pending Approval</option>
           <option value="completed">Completed</option>
-          <option value="in_progress">In progress</option>
-          <option value="not_started">Not started</option>
-          <option value="need_update">Need update</option>
+          <option value="on_hold">On Hold</option>
         </select>
         {adminView && <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[12.5px] text-slate-600 bg-white">
           <option value="">All departments</option>
@@ -1678,7 +1702,7 @@ function DayCard({ d, open, onToggle, empFilter, statusFilter, deptFilter, admin
   const v = VERDICT_STYLE[d.verdict] || null;
   // Apply employee-name + task-status filters. A status filter also hides
   // employees who have no task in that status.
-  const matchStatus = (t) => !statusFilter || (statusFilter === 'need_update' ? t.seniorFlag === 'need_update' : t.stage === statusFilter);
+  const matchStatus = (t) => !statusFilter || t.stage === statusFilter;
   const applyEmp = (e) => {
     if (empFilter && !e.employee.name.toLowerCase().includes(empFilter.toLowerCase())) return null;
     if (!statusFilter) return e;
@@ -1781,12 +1805,13 @@ function TaskReviewRow({ t, onFlag }) {
   const [askNote, setAskNote] = useState(false);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const flagged = t.seniorFlag === 'need_update';
+  const changesRequested = t.stage === 'changes_requested';
+  const isCompleted = t.stage === 'completed';
   const stage = STAGE_PILL[t.stage] || STAGE_PILL.not_started;
   const pace = PACE_STYLE[t.aiPace] || PACE_STYLE.na;
   const review = async (verdict, n) => {
     setBusy(true);
-    try { const r = await hrApi(`/tasks/${t.id}/senior-review`, { method: 'POST', body: JSON.stringify({ verdict, note: n || '' }) }); onFlag({ seniorFlag: r.seniorFlag }); toast(verdict === 'not_done' ? 'Flagged for update' : 'Marked completed ✓'); }
+    try { const r = await hrApi(`/tasks/${t.id}/senior-review`, { method: 'POST', body: JSON.stringify({ verdict, note: n || '' }) }); onFlag({ stage: r.stage }); toast(verdict === 'not_done' ? 'Moved to Changes Requested' : 'Marked completed ✓'); }
     catch (e) { toast(e.message); }
     setBusy(false); setAskNote(false); setNote('');
   };
@@ -1794,13 +1819,13 @@ function TaskReviewRow({ t, onFlag }) {
     <>
       <tr style={{ borderTop: '1px solid #f1f5f9' }}>
         <td className="py-2.5 pr-2 font-bold text-[#050A1F]">{t.title}{t.overdue && <span className="ml-1.5 text-[10px] font-extrabold text-red-500">overdue</span>}</td>
-        <td className="py-2.5 px-2">{flagged ? <RPill s={{ bg: '#fef2f2', color: '#dc2626' }}>Need update ⚠</RPill> : <RPill s={stage} />}</td>
+        <td className="py-2.5 px-2"><RPill s={stage} /></td>
         <td className="py-2.5 px-2 font-semibold text-slate-600">{t.timeLabel || '—'}</td>
         <td className="py-2.5 px-2"><RPill s={pace} /></td>
         <td className="py-2.5 pl-2">
           <div className="flex items-center gap-1.5 justify-end">
-            <button disabled={busy} onClick={() => review('completed')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={!flagged && t.seniorReviewed !== 'not_done' ? { background: '#16a34a', color: '#fff', borderColor: '#16a34a' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>✓ Completed</button>
-            <button disabled={busy} onClick={() => setAskNote(!askNote)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={flagged ? { background: '#dc2626', color: '#fff', borderColor: '#dc2626' } : { background: '#fff', color: '#dc2626', borderColor: '#fecaca' }}>✕ Not Done</button>
+            <button disabled={busy} onClick={() => review('completed')} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={isCompleted ? { background: '#16a34a', color: '#fff', borderColor: '#16a34a' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>✓ Completed</button>
+            <button disabled={busy} onClick={() => setAskNote(!askNote)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition" style={changesRequested ? { background: '#dc2626', color: '#fff', borderColor: '#dc2626' } : { background: '#fff', color: '#dc2626', borderColor: '#fecaca' }}>✕ Not Done</button>
           </div>
         </td>
       </tr>
@@ -2842,12 +2867,100 @@ function ChatForwardModal({ message, directory, conversations, onClose, onDone }
   );
 }
 
+// ===== TASK KANBAN — status-based board (uniform with Recruitment Pipeline) =====
+// Horizontal columns = the 7 workflow statuses. Cards drag between columns with
+// a real "lifted row" feel; the target column highlights and shows a drop line.
+function TaskKanban({ allTasks, onMove, onOpen, prep }) {
+  const [dragId, setDragId] = useState(null);
+  const [overStage, setOverStage] = useState(null);
+  const [moveFor, setMoveFor] = useState(null); // card → status picker popup
+  const softBg = (hex) => `${hex}14`;
+  const move = (t, stage) => { if (t.stage !== stage) onMove(t._id, stage); setDragId(null); setOverStage(null); setMoveFor(null); };
+  const prioDot = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
+  return (
+    <div>
+      <div className="flex items-center justify-end mb-3">
+        <div className="text-[12px] text-slate-400">{allTasks.length} tasks · drag a card or use ⇄ to change status</div>
+      </div>
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {TASK_STAGES.map((s) => {
+          const col = prep(allTasks.filter((t) => t.stage === s.id));
+          const isOver = overStage === s.id;
+          return (
+            <div key={s.id}
+              onDragOver={(e) => { if (dragId) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverStage(s.id); } }}
+              onDragLeave={(e) => { if (e.currentTarget === e.target) setOverStage((o) => o === s.id ? null : o); }}
+              onDrop={(e) => { e.preventDefault(); const d = allTasks.find((x) => x._id === dragId); if (d) move(d, s.id); }}
+              className={`shrink-0 w-72 rounded-3xl p-3 transition-all ${isOver ? 'ring-2 ring-offset-1' : ''}`}
+              style={{ background: isOver ? `${s.color}22` : softBg(s.color), boxShadow: isOver ? `0 0 0 2px ${s.color}` : 'none' }}>
+              <div className="flex items-center justify-between px-2 pt-1 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
+                  <span className="text-sm font-extrabold text-[#050A1F]">{s.label}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-white/70" style={{ color: s.color }}>{col.length}</span>
+                </div>
+              </div>
+              <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+                {/* Drop-line placeholder shown at the top of the hovered column. */}
+                {isOver && dragId && !col.some((c) => c._id === dragId) && (
+                  <div className="h-1.5 rounded-full mx-1 mb-1" style={{ background: s.color }} />
+                )}
+                {col.length === 0 && !isOver && <div className="text-[11px] text-slate-400 px-2 py-6 text-center">Drop tasks here</div>}
+                {col.map((t) => (
+                  <div key={t._id} draggable
+                    onDragStart={(e) => { setDragId(t._id); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} }}
+                    onDragEnd={() => { setDragId(null); setOverStage(null); }}
+                    className={`group bg-white rounded-2xl border border-slate-100 p-3.5 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all relative ${dragId === t._id ? 'opacity-50 shadow-xl scale-[0.98]' : ''}`}>
+                    <button onClick={(e) => { e.stopPropagation(); setMoveFor(t); }} title="Move to status" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
+                    </button>
+                    <div onClick={() => onOpen(t)}>
+                      <div className="font-bold text-sm text-[#050A1F] leading-snug pr-7 mb-2">{t.title}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: prioDot[t.priority] || '#94A3B8' }} />
+                          <span className="text-[11px] text-slate-400 capitalize truncate">{t.priority || 'medium'}</span>
+                          {t.dueDate && <span className="text-[11px] text-slate-300 shrink-0">· {new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
+                        </div>
+                        <TAvatar person={t.assignee} size={22} />
+                      </div>
+                      {t.subtaskCount > 0 && <div className="mt-2 text-[10px] text-slate-400">✓ {t.subtaskDone}/{t.subtaskCount} subtasks</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Click-to-move fallback popup. */}
+      {moveFor && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[140] p-4" onClick={() => setMoveFor(null)}>
+          <div className="bg-white rounded-2xl p-4 w-full max-w-xs shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-extrabold text-[#050A1F] mb-1">Move task</div>
+            <div className="text-[12px] text-slate-400 mb-3 truncate">{moveFor.title}</div>
+            <div className="space-y-1.5">
+              {TASK_STAGES.map((s) => (
+                <button key={s.id} onClick={() => move(moveFor, s.id)} disabled={moveFor.stage === s.id}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[13px] font-semibold transition ${moveFor.stage === s.id ? 'bg-slate-100 text-slate-400 cursor-default' : 'hover:bg-slate-50 text-[#050A1F]'}`}>
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />{s.label}
+                  {moveFor.stage === s.id && <span className="ml-auto text-[10px] text-slate-400">current</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [board, setBoard] = useState(null);
   const [people, setPeople] = useState([]);         // for the top switcher (admin/HR)
   const [myBoardId, setMyBoardId] = useState(null); // the viewer's own board id
   const [viewerId, setViewerId] = useState(null);
-  const [view, setView] = useState('list'); // list | board
+  const [view, setView] = useState('board'); // board (status kanban) | list
   const [err, setErr] = useState('');
   const [openTask, setOpenTask] = useState(null);
   // Deep-link from chat: open a specific task when asked.
@@ -2908,7 +3021,6 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     recently_assigned: { bar: '#F97316', head: '#FFF7ED', text: '#C2410C' },
     today: { bar: '#EF4444', head: '#FEF2F2', text: '#B91C1C' },
     tomorrow: { bar: '#F59E0B', head: '#FFFBEB', text: '#B45309' },
-    next_week: { bar: '#3B82F6', head: '#EFF6FF', text: '#1D4ED8' },
     later: { bar: '#64748B', head: '#F8FAFC', text: '#475569' },
   };
   const COL = 'grid items-center gap-0';
@@ -3116,24 +3228,12 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
-          {['not_started', 'in_progress', 'completed'].map((st) => {
-            const all = [...(board.buckets || []).flatMap((b) => b.tasks), ...(board.completed || [])];
-            return (
-              <div key={st} onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver('stage:' + st); } }} onDrop={(e) => { e.preventDefault(); if (dragId) { patchTask(dragId, { stage: st }); setDragId(null); setDragOver(null); } }} className={`rounded-xl p-2 transition ${dragOver === 'stage:' + st ? 'bg-orange-50 ring-2 ring-orange-200' : 'bg-slate-50'}`}>
-                <div className="px-2 py-1 mb-1"><Pill map={STAGE} value={st} /></div>
-                <div className="space-y-2">
-                  {prep(all.filter((t) => t.stage === st)).map((t) => (
-                    <div key={t._id} draggable onDragStart={() => setDragId(t._id)} onDragEnd={() => { setDragId(null); setDragOver(null); }} onClick={() => setOpenTask(t)} className="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-sm">
-                      <div className="text-sm font-semibold text-[#050A1F] mb-2">{t.title}</div>
-                      <div className="flex items-center justify-between"><Pill map={PRIO} value={t.priority} /><TAvatar person={t.assignee} size={22} /></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <TaskKanban
+          allTasks={[...(board.buckets || []).flatMap((b) => b.tasks), ...(board.completed || [])]}
+          onMove={(id, stage) => patchTask(id, { stage })}
+          onOpen={(t) => setOpenTask(t)}
+          prep={prep}
+        />
       )}
 
       {openTask && <TaskDetailDrawer taskId={openTask._id} onClose={() => setOpenTask(null)} onChange={refresh} />}
@@ -3351,7 +3451,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             <TField label="Due date"><input type="date" defaultValue={t.dueDate ? String(t.dueDate).slice(0, 10) : ''} onChange={(e) => patch({ dueDate: e.target.value || null })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs" /></TField>
             <TField label="Priority"><select value={t.priority} onChange={(e) => patch({ priority: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(PRIO).map((k) => <option key={k} value={k}>{PRIO[k].label}</option>)}</select></TField>
             <TField label="Stage"><select value={t.stage} onChange={(e) => patch({ stage: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs">{Object.keys(STAGE).map((k) => <option key={k} value={k}>{STAGE[k].label}</option>)}</select></TField>
-            {!t.parentTaskId && <TField label="Section"><select value={t.bucket || 'recently_assigned'} onChange={(e) => patch({ bucket: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs"><option value="recently_assigned">Recently Assigned</option><option value="today">Do Today</option><option value="tomorrow">Do Tomorrow</option><option value="next_week">Do Next Week</option><option value="later">Do Later</option></select></TField>}
+            {!t.parentTaskId && <TField label="Section"><select value={t.bucket || 'recently_assigned'} onChange={(e) => patch({ bucket: e.target.value })} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs"><option value="recently_assigned">Recently Assigned</option><option value="today">Do Today</option><option value="tomorrow">Do Tomorrow</option><option value="later">Do Later</option></select></TField>}
           </div>
 
           <div className="mb-5">

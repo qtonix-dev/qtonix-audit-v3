@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v471';
+const APP_VERSION = 'v472';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -820,6 +820,16 @@ connectWithRetry()
       if (collapsed) console.log(`[migrate] consolidated ${collapsed} task group(s), removed ${removed} duplicate copy row(s)`);
     } catch (e) {
       console.error('[migrate] task copy consolidation skipped:', e.message);
+    }
+
+    // One-time: the "Do Next Week" bucket was removed. Move any tasks still in it
+    // to "Do Later" so they don't vanish.
+    try {
+      const { Task } = require('./models');
+      const moved = await Task.update({ bucket: 'later' }, { where: { bucket: 'next_week' } });
+      if (moved && moved[0]) console.log(`[migrate] moved ${moved[0]} task(s) from Do Next Week → Do Later`);
+    } catch (e) {
+      console.error('[migrate] next_week bucket migration skipped:', e.message);
     }
 
     // One-time backfill: normalise candidate joining dates to yyyy-mm-dd. Dates
