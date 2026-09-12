@@ -2874,9 +2874,22 @@ function TaskKanban({ allTasks, onMove, onOpen, prep }) {
   const [dragId, setDragId] = useState(null);
   const [overStage, setOverStage] = useState(null);
   const [moveFor, setMoveFor] = useState(null); // card → status picker popup
+  const dragRef = useRef(null);   // synchronous id of the card being dragged
+  const rafRef = useRef(null);
   const softBg = (hex) => `${hex}14`;
-  const move = (t, stage) => { if (t.stage !== stage) onMove(t._id, stage); setDragId(null); setOverStage(null); setMoveFor(null); };
+  const move = (t, stage) => { if (t && t.stage !== stage) onMove(t._id, stage); dragRef.current = null; setDragId(null); setOverStage(null); setMoveFor(null); };
   const prioDot = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
+  const startDrag = (e, t) => {
+    // Record the id synchronously so drop works even before React re-renders.
+    dragRef.current = t._id;
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {}
+    // IMPORTANT: defer the visual "lifted" state to the NEXT frame. Changing the
+    // dragged element's opacity/transform synchronously inside dragstart makes
+    // the browser abort the drag (the first attempt would only dim the card and
+    // not move it). By waiting a frame, the drag image is already captured.
+    rafRef.current = requestAnimationFrame(() => setDragId(t._id));
+  };
+  const endDrag = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); dragRef.current = null; setDragId(null); setOverStage(null); };
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
@@ -2888,10 +2901,10 @@ function TaskKanban({ allTasks, onMove, onOpen, prep }) {
           const isOver = overStage === s.id;
           return (
             <div key={s.id}
-              onDragOver={(e) => { if (dragId) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverStage(s.id); } }}
-              onDragLeave={(e) => { if (e.currentTarget === e.target) setOverStage((o) => o === s.id ? null : o); }}
-              onDrop={(e) => { e.preventDefault(); const d = allTasks.find((x) => x._id === dragId); if (d) move(d, s.id); }}
-              className={`shrink-0 w-72 rounded-3xl p-3 transition-all ${isOver ? 'ring-2 ring-offset-1' : ''}`}
+              onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overStage !== s.id) setOverStage(s.id); } }}
+              onDragEnter={(e) => { if (dragRef.current != null) { e.preventDefault(); setOverStage(s.id); } }}
+              onDrop={(e) => { e.preventDefault(); const id = dragRef.current; const d = allTasks.find((x) => x._id === id); move(d, s.id); }}
+              className={`shrink-0 w-72 rounded-3xl p-3 transition-colors duration-150 ${isOver ? 'ring-2 ring-offset-1' : ''}`}
               style={{ background: isOver ? `${s.color}22` : softBg(s.color), boxShadow: isOver ? `0 0 0 2px ${s.color}` : 'none' }}>
               <div className="flex items-center justify-between px-2 pt-1 pb-3">
                 <div className="flex items-center gap-2">
@@ -2901,17 +2914,19 @@ function TaskKanban({ allTasks, onMove, onOpen, prep }) {
                 </div>
               </div>
               <div className="space-y-3 min-h-[160px] max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-                {/* Drop-line placeholder shown at the top of the hovered column. */}
+                {/* Drop-line placeholder shown when hovering a column with the card not already in it. */}
                 {isOver && dragId && !col.some((c) => c._id === dragId) && (
-                  <div className="h-1.5 rounded-full mx-1 mb-1" style={{ background: s.color }} />
+                  <div className="h-1.5 rounded-full mx-1 mb-1 animate-pulse" style={{ background: s.color }} />
                 )}
                 {col.length === 0 && !isOver && <div className="text-[11px] text-slate-400 px-2 py-6 text-center">Drop tasks here</div>}
+                {col.length === 0 && isOver && <div className="text-[11px] font-semibold px-2 py-5 text-center" style={{ color: s.color }}>Release to move here</div>}
                 {col.map((t) => (
                   <div key={t._id} draggable
-                    onDragStart={(e) => { setDragId(t._id); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} }}
-                    onDragEnd={() => { setDragId(null); setOverStage(null); }}
-                    className={`group bg-white rounded-2xl border border-slate-100 p-3.5 cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 transition-all relative ${dragId === t._id ? 'opacity-50 shadow-xl scale-[0.98]' : ''}`}>
-                    <button onClick={(e) => { e.stopPropagation(); setMoveFor(t); }} title="Move to status" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
+                    onDragStart={(e) => startDrag(e, t)}
+                    onDragEnd={endDrag}
+                    style={dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.5deg)' } : undefined}
+                    className={`group bg-white rounded-2xl border p-3.5 cursor-grab active:cursor-grabbing relative ${dragId === t._id ? 'border-slate-300' : 'border-slate-100 hover:shadow-lg hover:-translate-y-0.5 transition-all'}`}>
+                    <button onClick={(e) => { e.stopPropagation(); setMoveFor(t); }} onMouseDown={(e) => e.stopPropagation()} title="Move to status" className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3L4 7l4 4" /><path d="M4 7h16" /><path d="M16 21l4-4-4-4" /><path d="M20 17H4" /></svg>
                     </button>
                     <div onClick={() => onOpen(t)}>
@@ -3047,7 +3062,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               : (!tracking && !isSub)
                 ? <span
                     draggable
-                    onDragStart={(e) => { e.stopPropagation(); setDragId(t._id); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} }}
+                    onDragStart={(e) => { e.stopPropagation(); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} requestAnimationFrame(() => setDragId(t._id)); }}
                     onDragEnd={() => { setDragId(null); setDragOver(null); }}
                     className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
                     title="Drag to move between sections"
