@@ -65,7 +65,7 @@ function pubUser(u) { return u ? { id: u.id, name: u.name, avatar: u.avatar || '
 
 // Router-wide: require HR access, then resolve the caller's HrUser id (works for
 // HR staff and CRM admins). Runs before every chat handler.
-router.use(requireHrAccess, async (req, res, next) => { try { await resolveMe(req); next(); } catch (e) { next(e); } });
+router.use(requireHrAccess, async (req, res, next) => { try { await resolveMe(req); try { if (req._chatMeId) await require('../services/chatCompany').ensureHubMembership(req._chatMeId); } catch {} next(); } catch (e) { next(e); } });
 
 // ---- Directory: everyone you can message (all active users minus yourself) --
 router.get('/directory', requireHrAccess, async (req, res, next) => {

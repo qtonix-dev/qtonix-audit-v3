@@ -238,9 +238,16 @@ const TASK_CARD_STYLE = {
   task_status_pending_approval:  { bg: '#F5F3FF', border: '#DDD6FE', icon: '\u23F3', accent: '#7C3AED', label: 'Pending Approval' },
   task_status_on_hold:           { bg: '#F1F5F9', border: '#E2E8F0', icon: '\u23F8\uFE0F', accent: '#64748B', label: 'On Hold' },
   task_status:           { bg: '#FFF7ED', border: '#FED7AA', icon: '\uD83D\uDD04', accent: '#EA580C', label: 'Status update' },
+  celebration_birthday:  { bg: '#FDF2F8', border: '#FBCFE8', icon: '\uD83C\uDF82', accent: '#DB2777', label: 'Birthday' },
+  celebration_anniversary:{ bg: '#FEFCE8', border: '#FEF08A', icon: '\uD83C\uDF8A', accent: '#CA8A04', label: 'Work Anniversary' },
+  celebration_joinee:    { bg: '#ECFEFF', border: '#A5F3FC', icon: '\uD83D\uDC4B', accent: '#0891B2', label: 'New Joinee' },
+  company_recognition:   { bg: '#F0FDF4', border: '#BBF7D0', icon: '\uD83C\uDFC6', accent: '#16A34A', label: 'Recognition' },
+  company_helping:       { bg: '#FEF2F2', border: '#FECACA', icon: '\uD83E\uDD1D', accent: '#E11D48', label: 'Helping Hand' },
+  company_announcement:  { bg: '#EFF6FF', border: '#BFDBFE', icon: '\uD83D\uDCE2', accent: '#2563EB', label: 'Announcement' },
+  company_survey:        { bg: '#F5F3FF', border: '#DDD6FE', icon: '\uD83D\uDCCB', accent: '#7C3AED', label: 'Survey' },
 };
 function taskCardStyle(kindTag) { return TASK_CARD_STYLE[kindTag] || TASK_CARD_STYLE.task_status; }
-function isTaskCard(kindTag) { return !!kindTag && kindTag.startsWith('task_') && kindTag !== 'task_note'; }
+function isTaskCard(kindTag) { return !!kindTag && (kindTag.startsWith('task_') || kindTag.startsWith('celebration_') || kindTag.startsWith('company_')) && kindTag !== 'task_note'; }
 
 const STAGE = {
   not_started: { label: 'Not Started', cls: 'bg-slate-100 text-slate-600' },

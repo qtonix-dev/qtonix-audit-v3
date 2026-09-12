@@ -985,6 +985,8 @@ router.post('/helping/nominate', requireHrAccess, async (req, res, next) => {
     if (!tr.ok) { await rec.destroy(); return res.status(400).json({ error: tr.error === 'Not enough points to give.' ? 'You don’t have enough points to give a Helping Hand (need ' + amount + ').' : (tr.error || 'Could not transfer.') }); }
     rec.ledgerId = tr.ledger.id; await rec.save();
     try { await HrNotification.create({ userId: benef.id, actorKind: 'hr', type: 'info', text: `❤️ ${req.hrUser.name} gave you a Helping Hand (+${amount} pts)!` }); } catch {}
+    // Shout-out in #the-hub.
+    try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_helping', body: `🤝 ${req.hrUser.name} gave ${benef.name} a Helping Hand${reason ? ` — "${reason.slice(0, 120)}"` : ''}. 💛`, meta: { userId: benef.id } }); } catch {}
     // Milestone: if recipient now has 3/5/10/20 received, queue an HR bonus.
     try { await checkHelpingMilestone(benef); } catch {}
     res.json({ ok: true, recommendation: rec.toJSON(), transferred: amount });
@@ -1171,6 +1173,8 @@ router.post('/rewards/award', requireHrAccess, requireHrManager, async (req, res
     const aw = await R.award(models, emp.id, { points: resolved.points, category: resolved.rule.category, ruleKey, title, reason: String(b.reason || '').slice(0, 500), byName: req.hrActor.name, byRole: actorRole, byId: req.hrActor.id, source: resolved.rule.category });
     if (!aw.ok) return res.status(400).json({ error: aw.notLive ? 'Rewards are paused.' : 'Could not award.' });
     try { await HrNotification.create({ userId: emp.id, actorKind: 'hr', type: 'info', text: `🎯 You received "${title}" (+${resolved.points} pts)!` }); } catch {}
+    // Celebrate the recognition in #the-hub so the whole team can cheer.
+    try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_recognition', body: `🏆 ${emp.name} was recognised: "${title}"${req.hrActor.name ? ` by ${req.hrActor.name}` : ''}! 👏`, meta: { userId: emp.id } }); } catch {}
     res.json({ ok: true, points: resolved.points });
   } catch (e) { next(e); }
 });
@@ -8248,6 +8252,8 @@ router.post('/announcements', requireHrAccess, requireAnnouncer, async (req, res
     const audience = String(b.audience || 'all').slice(0, 80);
     const row = await HrAnnouncement.create({ title: String(b.title).slice(0, 200), body: String(b.body || ''), pinned: !!b.pinned, audience, authorId: req.hrActor.id, authorName: req.hrActor.name });
     hrLog(req, 'announcement.create', `${row.title} (${audience})`);
+    // Company-wide announcements also land as a card in #the-hub.
+    if (audience === 'all') { try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_announcement', body: `📢 New announcement: ${row.title}`, meta: { announcementId: row.id } }); } catch {} }
     // Notify the targeted staff of the new announcement.
     try {
       const where = { active: true };

@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v478';
+const APP_VERSION = 'v479';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -983,6 +983,9 @@ connectWithRetry()
       // Team day-end report scheduler (EOD digest + weekly productivity digest).
       try { require('./jobs/teamReportJob').start(require('./models')); }
       catch (e) { console.error('[team-report] not started:', e.message); }
+      // Company celebrations → posts birthdays/anniversaries/joinees to #the-hub.
+      try { require('./jobs/hubCelebrations').start(require('./models')); }
+      catch (e) { console.error('[hub-celebrations] not started:', e.message); }
       // Weekly log cleanup (Sunday ~9AM IST, prunes audit+call logs older than 3 months).
       try { require('./jobs/logCleanup').start(require('./models')); }
       catch (e) { console.error('[log-cleanup] not started:', e.message); }

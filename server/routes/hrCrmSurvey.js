@@ -98,8 +98,11 @@ router.put('/:id', requireHrAccess, requireAllBranchOrAdmin, async (req, res, ne
     if (b.description !== undefined) row.description = String(b.description).slice(0, 2000);
     if (b.frequency !== undefined && ['one_time', 'weekly', 'monthly'].includes(b.frequency)) row.frequency = b.frequency;
     if (Array.isArray(b.questions)) { row.questions = sanitizeQuestions(b.questions); row.changed('questions', true); }
+    const wasActive = row.status === 'active';
     if (b.status !== undefined && ['draft', 'active', 'closed'].includes(b.status)) row.status = b.status;
     await row.save();
+    // When a survey goes live, announce it in #the-hub so everyone can respond.
+    if (!wasActive && row.status === 'active') { try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_survey', body: `📋 New survey: "${row.name}" — share your feedback!`, meta: { surveyId: row.id } }); } catch {} }
     res.json(row.toJSON());
   } catch (e) { next(e); }
 });

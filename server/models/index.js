@@ -2357,7 +2357,8 @@ const ChatMessage = sequelize.define('ChatMessage', {
   fileSize: { type: DataTypes.INTEGER, defaultValue: 0 },          // bytes
   isImage: { type: DataTypes.BOOLEAN, defaultValue: false },
   // Phase-4 chat<->task + reply/forward.
-  kindTag: { type: DataTypes.STRING(16), defaultValue: '' },       // '' | task_assigned | task_status
+  kindTag: { type: DataTypes.STRING(40), defaultValue: '' },       // '' | task_assigned | task_status_* | celebration_* etc
+  dedupeKey: { type: DataTypes.STRING(80), allowNull: true },       // guards scheduled system posts against duplicates
   taskId: { type: DataTypes.INTEGER, allowNull: true },            // linked task (for the View-task button + note-back)
   replyToId: { type: DataTypes.INTEGER, allowNull: true },         // quoted message id
   replyToName: { type: DataTypes.STRING(120), defaultValue: '' },
