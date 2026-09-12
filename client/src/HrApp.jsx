@@ -223,6 +223,25 @@ function AnnouncementModal({ onClose, onSaved }) {
 // to admin. Auto data is READ-ONLY — she reviews numbers, not types them.
 // ===== Task boards (Asana-style) — admin-gated for now ====================
 const PRIO = { urgent: { label: 'Urgent', cls: 'bg-red-100 text-red-700' }, high: { label: 'High', cls: 'bg-orange-100 text-orange-700' }, medium: { label: 'Medium', cls: 'bg-blue-100 text-blue-700' }, low: { label: 'Low', cls: 'bg-slate-100 text-slate-600' } };
+// Per-event styling for #task notification cards in Buzz — a distinct color +
+// icon so each notification type is recognizable at a glance.
+const TASK_CARD_STYLE = {
+  task_assigned:         { bg: '#EFF6FF', border: '#BFDBFE', icon: '\uD83D\uDCE5', accent: '#2563EB', label: 'Assigned to you' },
+  task_assigned_by_me:   { bg: '#EEF2FF', border: '#C7D2FE', icon: '\uD83D\uDCE4', accent: '#4F46E5', label: 'You assigned' },
+  task_coassigned:       { bg: '#F0FDFA', border: '#99F6E4', icon: '\uD83E\uDD1D', accent: '#0D9488', label: 'Co-assigned to you' },
+  task_need_update:      { bg: '#FEF2F2', border: '#FECACA', icon: '\uD83D\uDD01', accent: '#DC2626', label: 'Changes requested' },
+  task_completed:        { bg: '#F0FDF4', border: '#BBF7D0', icon: '\uD83C\uDF89', accent: '#16A34A', label: 'Completed' },
+  task_status_not_started:       { bg: '#F8FAFC', border: '#E2E8F0', icon: '\u26AA', accent: '#64748B', label: 'Not Started' },
+  task_status_in_progress:       { bg: '#FFF7ED', border: '#FED7AA', icon: '\u25B6\uFE0F', accent: '#EA580C', label: 'In Progress' },
+  task_status_pending_review:    { bg: '#EFF6FF', border: '#BFDBFE', icon: '\uD83D\uDD0D', accent: '#2563EB', label: 'Pending Review' },
+  task_status_changes_requested: { bg: '#FEF2F2', border: '#FECACA', icon: '\uD83D\uDD01', accent: '#DC2626', label: 'Changes Requested' },
+  task_status_pending_approval:  { bg: '#F5F3FF', border: '#DDD6FE', icon: '\u23F3', accent: '#7C3AED', label: 'Pending Approval' },
+  task_status_on_hold:           { bg: '#F1F5F9', border: '#E2E8F0', icon: '\u23F8\uFE0F', accent: '#64748B', label: 'On Hold' },
+  task_status:           { bg: '#FFF7ED', border: '#FED7AA', icon: '\uD83D\uDD04', accent: '#EA580C', label: 'Status update' },
+};
+function taskCardStyle(kindTag) { return TASK_CARD_STYLE[kindTag] || TASK_CARD_STYLE.task_status; }
+function isTaskCard(kindTag) { return !!kindTag && kindTag.startsWith('task_') && kindTag !== 'task_note'; }
+
 const STAGE = {
   not_started: { label: 'Not Started', cls: 'bg-slate-100 text-slate-600' },
   in_progress: { label: 'In Progress', cls: 'bg-amber-100 text-amber-700' },
@@ -2394,15 +2413,20 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             {messages.map((m, i) => {
               const mine = m.mine != null ? m.mine : (m.senderId === me.id);
               const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
-              // Task-notification card (assignment / status change).
-              if (m.kindTag === 'task_assigned' || m.kindTag === 'task_status') {
+              // Task-notification card — color-coded + icon by event type.
+              if (isTaskCard(m.kindTag)) {
+                const cs = taskCardStyle(m.kindTag);
                 return (
-                  <div key={m.id} id={`chatmsg-${m.id}`} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
-                    <span className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[15px] shrink-0" style={{ background: '#FF6A00' }}>{m.kindTag === 'task_assigned' ? '📋' : '🔄'}</span>
-                    <div className="flex-1 min-w-0"><div className="text-[13px] font-bold" style={{ color: '#9a3412' }}>{m.body}</div><div className="text-[11px]" style={{ color: '#c2732c' }}>{fmtTime(m.createdAt)}</div></div>
-                    {m.taskId && onOpenTask && <button onClick={() => onOpenTask(m.taskId)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: '#FF6A00' }}>View task</button>}
-                    {m.taskId && m.kindTag === 'task_assigned' && <button onClick={() => markTaskDone(m.taskId)} title="Mark done" className="text-[12px] font-bold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>✓ Done</button>}
-                    <button onClick={() => setReplyTo(m)} title="Reply (saves as task note)" className="text-[12px] font-bold text-orange-700 shrink-0">↩</button>
+                  <div key={m.id} id={`chatmsg-${m.id}`} className="my-3 rounded-xl px-3.5 py-3 flex items-center gap-3" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
+                    <span className="w-9 h-9 rounded-lg flex items-center justify-center text-[17px] shrink-0" style={{ background: '#fff', border: `1px solid ${cs.border}` }}>{cs.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-extrabold uppercase tracking-wide mb-0.5" style={{ color: cs.accent }}>{cs.label}</div>
+                      <div className="text-[13px] font-bold text-[#050A1F] leading-snug">{m.body}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{fmtTime(m.createdAt)}</div>
+                    </div>
+                    {m.taskId && onOpenTask && <button onClick={() => onOpenTask(m.taskId)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 text-white shrink-0" style={{ background: cs.accent }}>View task</button>}
+                    {m.taskId && (m.kindTag === 'task_assigned' || m.kindTag === 'task_coassigned') && <button onClick={() => markTaskDone(m.taskId)} title="Mark done" className="text-[12px] font-bold rounded-lg px-3 py-1.5 shrink-0" style={{ background: '#DCFCE7', color: '#15803D' }}>✓ Done</button>}
+                    <button onClick={() => setReplyTo(m)} title="Reply (saves as task note)" className="text-[13px] font-bold shrink-0" style={{ color: cs.accent }}>↩</button>
                   </div>
                 );
               }

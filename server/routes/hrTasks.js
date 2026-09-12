@@ -115,17 +115,29 @@ async function logActivity(taskId, ctx, kind, detail) {
   try { await TaskActivity.create({ taskId, actorId: ctx.actorId || null, actorName: ctx.actorName, kind, detail }); } catch { /* non-fatal */ }
 }
 
-async function notifyAssignee(assigneeId, ctx, task) {
+async function notifyAssignee(assigneeId, ctx, task, kindTag = 'task_assigned') {
   if (!assigneeId || assigneeId === ctx.actorId) return;
+  const isCo = kindTag === 'task_coassigned';
+  const verb = isCo ? 'added you as a co-assignee on' : 'assigned you a task:';
+  const text = ctx.actorName + ' ' + verb + ' \u201C' + String(task.title).slice(0, 120) + '\u201D';
   try {
     await HrNotification.create({
-      userId: assigneeId, actorKind: 'hr', type: 'task_assigned',
-      text: ctx.actorName + ' assigned you a task: \u201C' + String(task.title).slice(0, 120) + '\u201D',
-      meta: { taskId: task.id },
+      userId: assigneeId, actorKind: 'hr', type: kindTag,
+      text, meta: { taskId: task.id },
     });
   } catch { /* non-fatal */ }
-  // Drop a card into the assignee's private #task chat (with a link to the task).
-  try { if (assigneeId > 0) await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag: 'task_assigned', taskId: task.id, body: `${ctx.actorName} assigned you a task: "${String(task.title).slice(0, 120)}"` }); } catch { /* non-fatal */ }
+  try { if (assigneeId > 0) await require('../services/chatTask').postTaskAlert(assigneeId, { kindTag, taskId: task.id, body: text }); } catch { /* non-fatal */ }
+}
+
+// Notify the ACTOR (assigner) in their own #task feed as a confirmation.
+async function notifyAssigner(ctx, task, assigneeNames) {
+  try {
+    const meId = ctx.boardId;
+    if (!meId || meId <= 0) return;
+    const who = Array.isArray(assigneeNames) ? assigneeNames.filter(Boolean).join(', ') : String(assigneeNames || '');
+    if (!who) return;
+    await require('../services/chatTask').postTaskAlert(meId, { kindTag: 'task_assigned_by_me', taskId: task.id, body: 'You assigned \u201C' + String(task.title).slice(0, 100) + '\u201D to ' + who });
+  } catch { /* non-fatal */ }
 }
 
 async function roster() {
@@ -184,10 +196,21 @@ async function reconcileAssignees(row, desiredIds, ctx) {
   row.assigneeGroupId = null;
   await row.save();
 
-  // Log + notify only the newly added people.
+  // Log + notify only the newly added people. First-time adds to a brand-new
+  // task use 'task_assigned'; adds to a task that already had assignees are
+  // 'task_coassigned'. (current.size > 0 means the task already had someone.)
+  const wasEmpty = current.size === 0;
+  const addedNames = [];
   for (const id of toAdd) {
-    if (id > 0 && id !== ctx.boardId) { try { await notifyAssignee(id, ctx, row); } catch {} await logActivity(row.id, ctx, 'assigned', `added ${(byId[id] && byId[id].name) || 'an assignee'}`); }
+    if (id > 0 && id !== ctx.boardId) {
+      const tag = wasEmpty ? 'task_assigned' : 'task_coassigned';
+      try { await notifyAssignee(id, ctx, row, tag); } catch {}
+      await logActivity(row.id, ctx, 'assigned', `added ${(byId[id] && byId[id].name) || 'an assignee'}`);
+      if (byId[id]) addedNames.push(byId[id].name);
+    }
   }
+  // Confirmation card in the assigner's own #task feed.
+  if (addedNames.length) { try { await notifyAssigner(ctx, row, addedNames); } catch {} }
   // Log removed people.
   for (const id of current) { if (!wantSet.has(id)) await logActivity(row.id, ctx, 'assigned', `removed ${(byId[id] && byId[id].name) || 'an assignee'}`); }
   return { ok: true };
@@ -774,9 +797,10 @@ router.post('/tasks', guard, async (req, res, next) => {
       origAssignedById: isAssignedByOther ? (ctx.boardId || null) : null, origAssignedByName: isAssignedByOther ? ctx.actorName : '',
     });
     await logActivity(row.id, ctx, 'created', parentTaskId ? 'created subtask' : 'created task');
-    if (isAssignedByOther && assigneeId > 0) await notifyAssignee(assigneeId, ctx, row);
+    const assignedNames = [];
+    if (isAssignedByOther && assigneeId > 0) { await notifyAssignee(assigneeId, ctx, row); const p = people.find((u) => u.id === assigneeId); if (p) assignedNames.push(p.name); }
     // Extra assignees: SHARED model — store all on the one row (no copies) and
-    // notify each. The single row appears on every assignee's board.
+    // notify each as CO-ASSIGNEES. The single row appears on every assignee's board.
     if (extraIds.length && !parentTaskId) {
       const validExtra = [];
       for (const aid of extraIds) {
@@ -786,12 +810,15 @@ router.post('/tasks', guard, async (req, res, next) => {
       }
       if (validExtra.length) {
         row.assigneeIds = [assigneeId, ...validExtra]; row.changed('assigneeIds', true); await row.save();
-        for (const aid of validExtra) { await notifyAssignee(aid, ctx, row); await logActivity(row.id, ctx, 'assigned', 'added an assignee'); }
+        for (const aid of validExtra) { await notifyAssignee(aid, ctx, row, 'task_coassigned'); await logActivity(row.id, ctx, 'assigned', 'added an assignee'); const p = people.find((u) => u.id === aid); if (p) assignedNames.push(p.name); }
       }
     } else if (assigneeId > 0) {
       // Single assignee — still record the assigneeIds list for consistency.
       row.assigneeIds = [assigneeId]; row.changed('assigneeIds', true); await row.save();
     }
+    // Confirmation card in the assigner's own #task feed (only if they assigned
+    // it to someone other than themselves).
+    if (assignedNames.length) { try { await notifyAssigner(ctx, row, assignedNames); } catch {} }
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
 });
@@ -835,8 +862,13 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       row.stage = b.stage;
       row.completedAt = b.stage === 'completed' ? now : (b.stage === prevStage ? row.completedAt : null);
       await logActivity(row.id, ctx, b.stage === 'completed' ? 'completed' : 'stage', 'moved to ' + STAGE_LABEL[b.stage]);
-      // Notify the assignee in their #task chat (unless they made the change).
-      try { if (row.assigneeId > 0 && row.assigneeId !== ctx.actorId) await require('../services/chatTask').postTaskAlert(row.assigneeId, { kindTag: 'task_status', taskId: row.id, body: `"${String(row.title).slice(0, 100)}" moved to ${STAGE_LABEL[b.stage]}` }); } catch {}
+      // Notify ALL assignees (except the actor) with a STAGE-SPECIFIC tag so the
+      // #task card is colored per status. Completed gets its own tag.
+      const stageTag = b.stage === 'completed' ? 'task_completed' : ('task_status_' + b.stage);
+      const stNotify = new Set([row.assigneeId, ...(Array.isArray(row.assigneeIds) ? row.assigneeIds : [])].filter((x) => x > 0 && x !== ctx.actorId));
+      for (const uid of stNotify) {
+        try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: stageTag, taskId: row.id, body: '\u201C' + String(row.title).slice(0, 100) + '\u201D moved to ' + STAGE_LABEL[b.stage] }); } catch {}
+      }
     }
 
     // ---- Assignee changes (all routed through one consistent group reconcile) ----
