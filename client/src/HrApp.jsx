@@ -2984,6 +2984,8 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [newTitle, setNewTitle] = useState('');
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  const dragRef = useRef(null);        // synchronous id of the row being dragged
+  const dragRafRef = useRef(null);
   const [collapsed, setCollapsed] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({}); // inline subtask expand
   const [showCompleted, setShowCompleted] = useState(false);
@@ -3011,7 +3013,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   };
   const patchTask = async (id, patch) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); refresh(); } catch (e) { setErr(e.message); } };
   const delTask = async (id) => { try { await hrApi(`/tasks/tasks/${id}`, { method: 'DELETE' }); refresh(); } catch (e) { setErr(e.message); } };
-  const moveToBucket = async (id, bucket) => { setDragId(null); setDragOver(null); await patchTask(id, { bucket }); };
+  const moveToBucket = async (id, bucket) => { dragRef.current = null; setDragId(null); setDragOver(null); await patchTask(id, { bucket }); };
 
   if (err) return <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{err}</div>;
 
@@ -3052,9 +3054,9 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     return (
       <>
         <div
-          className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${dragId === t._id ? 'opacity-40' : ''} ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
-          style={{ gridTemplateColumns: GRID_COLS }}
-          onDragOver={(e) => { if (dragId && dragId !== t._id && !tracking && !isSub) { e.preventDefault(); } }}
+          className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${isSub ? 'bg-slate-50/40' : 'bg-white'} ${dragId === t._id ? 'transition-none' : ''}`}
+          style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.5, boxShadow: '0 10px 26px rgba(2,6,23,.18)', transform: 'scale(0.997)', position: 'relative', zIndex: 5 } : {}) }}
+          onDragOver={(e) => { if (dragRef.current != null && dragRef.current !== t._id && !tracking && !isSub) { e.preventDefault(); } }}
         >
           {/* expander / drag handle */}
           <div className="flex items-center justify-center h-9 border-r border-slate-100">
@@ -3062,9 +3064,9 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               : (!tracking && !isSub)
                 ? <span
                     draggable
-                    onDragStart={(e) => { e.stopPropagation(); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} requestAnimationFrame(() => setDragId(t._id)); }}
-                    onDragEnd={() => { setDragId(null); setDragOver(null); }}
-                    className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
+                    onDragStart={(e) => { e.stopPropagation(); dragRef.current = t._id; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRafRef.current = requestAnimationFrame(() => setDragId(t._id)); }}
+                    onDragEnd={() => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRef.current = null; setDragId(null); setDragOver(null); }}
+                    className="text-slate-300 hover:text-orange-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
                     title="Drag to move between sections"
                   >⠿</span>
                 : null}
@@ -3186,22 +3188,27 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
             const rows = prep(bk.tasks);
             const isOpen = !collapsed[key];
             const c = SECTION_COLORS[key];
+            const isOver = dragOver === key;
+            const draggingElsewhere = dragId && !bk.tasks.some((x) => x._id === dragId);
             return (
               <div key={key}
-                onDragOver={(e) => { if (dragId) { e.preventDefault(); setDragOver(key); } }}
-                onDragLeave={() => setDragOver((d) => d === key ? null : d)}
-                onDrop={(e) => { e.preventDefault(); if (dragId) moveToBucket(dragId, key); }}
-                className={`rounded-xl border overflow-hidden transition ${dragOver === key ? 'border-orange-400 ring-2 ring-orange-200' : 'border-slate-200'}`}
-                style={{ borderLeft: `4px solid ${c.bar}` }}
+                onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== key) setDragOver(key); } }}
+                onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver((d) => d === key ? null : d); }}
+                onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) moveToBucket(id, key); }}
+                className={`rounded-xl border overflow-hidden transition-all duration-150 ${isOver ? 'ring-2 ring-offset-1' : ''}`}
+                style={{ borderLeft: `4px solid ${c.bar}`, borderColor: isOver ? c.bar : undefined, boxShadow: isOver ? `0 0 0 2px ${c.bar}` : 'none', background: isOver ? `${c.bar}0d` : undefined }}
               >
                 <button onClick={() => setCollapsed((cc) => ({ ...cc, [key]: !cc[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left" style={{ background: c.head }}>
                   <span className={`text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`} style={{ color: c.text }}>▶</span>
                   <span className="text-sm font-extrabold" style={{ color: c.text }}>{label}</span>
                   <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ background: c.bar, color: '#fff' }}>{bk.tasks.length}</span>
                   {key === 'recently_assigned' && bk.tasks.length > 0 && <span className="text-[10px] font-bold ml-1" style={{ color: c.text }}>NEW</span>}
+                  {isOver && draggingElsewhere && <span className="ml-auto text-[11px] font-bold" style={{ color: c.bar }}>Drop to move here</span>}
                 </button>
                 {isOpen && (
                   <div>
+                    {/* Drop-line indicator when dragging a row from another section. */}
+                    {isOver && draggingElsewhere && <div className="h-1 mx-3 my-1 rounded-full animate-pulse" style={{ background: c.bar }} />}
                     {rows.length > 0 && <HeaderRow />}
                     {rows.map((t) => <GridRow key={t._id} t={t} />)}
                     {addingIn === key
