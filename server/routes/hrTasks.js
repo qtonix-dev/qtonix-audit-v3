@@ -76,6 +76,7 @@ async function actingContext(req) {
     isHr,
     actorUser,
     actorId: req.hrActor && req.hrActor.id,
+    adminUserId: (req.adminUser && req.adminUser.id) || (isAdmin && req.hrActor && req.hrActor.id) || null,
     boardId,
     actorName: (actorUser && actorUser.name) || (req.hrActor && req.hrActor.name) || 'Admin',
     actorKind: (req.hrActor && req.hrActor.kind) || 'admin',
@@ -219,11 +220,35 @@ async function buildBoard(viewerId, ctx) {
     viewer = { id: viewerId, name: admin ? admin.name : 'Admin', designation: 'Admin', department: '', branch: '', avatar: null, isAdmin: true };
   }
 
+  // Build the set of ALL ids that represent this viewer, so a task assigned to
+  // any of their identities shows up. This fixes the case where someone is added
+  // as a co-assignee under one identity (e.g. an HrUser record) but their board
+  // resolves to another (admin dual-identity, same-name/email duplicate HrUser,
+  // or a legacy CRM-user id). Matches by id, and by same email / same name.
+  const myIds = new Set([viewerId].filter((x) => x != null));
+  try {
+    const { Op } = require('sequelize');
+    let selfHr = viewerId > 0 ? await HrUser.findByPk(viewerId) : null;
+    const nm = (selfHr && selfHr.name) || (viewer && viewer.name);
+    const em = (selfHr && selfHr.email) || (ctx.actorUser && ctx.actorUser.email) || null;
+    const dups = await HrUser.findAll({ where: { active: true } });
+    for (const u of dups) {
+      const sameName = nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase();
+      const sameEmail = em && u.email && String(u.email).trim().toLowerCase() === String(em).trim().toLowerCase();
+      if (sameName || sameEmail) myIds.add(u.id);
+    }
+    // Include the linked admin/CRM user id (positive) so legacy rows match too.
+    if (ctx.actorId) myIds.add(ctx.actorId);
+    if (ctx.adminUserId) myIds.add(ctx.adminUserId);
+  } catch {}
+  const isMe = (id) => id != null && myIds.has(id);
+  const anyMine = (arr) => Array.isArray(arr) && arr.some((id) => myIds.has(id));
+
   // A viewer sees a top-level task if they are: the (primary) assignee, a
   // co-assignee (in assigneeIds), or the assigner. assigneeIds is JSON so we
   // fetch the candidate set and filter membership in JS (portable across DBs).
   const dbTasks = await Task.findAll({
-    where: { parentTaskId: null, [Op.or]: [{ assigneeId: viewerId }, { assignedById: viewerId }, { origAssignedById: viewerId }] },
+    where: { parentTaskId: null, [Op.or]: [{ assigneeId: { [Op.in]: [...myIds] } }, { assignedById: { [Op.in]: [...myIds] } }, { origAssignedById: { [Op.in]: [...myIds] } }] },
     order: [['order', 'ASC'], ['id', 'ASC']],
   });
   // Fetch top-level tasks that HAVE a multi-assignee list, to catch shared tasks
@@ -232,8 +257,7 @@ async function buildBoard(viewerId, ctx) {
   const sharedCand = await Task.findAll({ where: { parentTaskId: null, assigneeIds: { [Op.ne]: null } }, order: [['order', 'ASC'], ['id', 'ASC']] });
   for (const t of sharedCand) {
     if (seenIds.has(t.id)) continue;
-    const ids = Array.isArray(t.assigneeIds) ? t.assigneeIds : [];
-    if (ids.includes(viewerId)) { dbTasks.push(t); seenIds.add(t.id); }
+    if (anyMine(t.assigneeIds)) { dbTasks.push(t); seenIds.add(t.id); }
   }
   const tasks = dbTasks;
   // Also surface SUBTASKS the viewer is (co-)assigned to whose PARENT they don't
@@ -242,8 +266,7 @@ async function buildBoard(viewerId, ctx) {
   const allSubs = await Task.findAll({ where: { parentTaskId: { [Op.ne]: null } } });
   const myOrphanSubs = allSubs.filter((s) => {
     if (parentIdSet.has(s.parentTaskId)) return false; // parent already shown → subtask nests under it
-    const ids = new Set([s.assigneeId, ...((Array.isArray(s.assigneeIds) ? s.assigneeIds : []))].filter(Boolean));
-    return ids.has(viewerId);
+    return isMe(s.assigneeId) || anyMine(s.assigneeIds);
   });
   // Pull parent titles for labelling.
   const parentIds = [...new Set(myOrphanSubs.map((s) => s.parentTaskId))];
@@ -300,8 +323,8 @@ async function buildBoard(viewerId, ctx) {
     o.assignees = assigneesFor(t);
     const sc = subBy[t.id]; o.subtaskCount = sc ? sc.total : 0; o.subtaskDone = sc ? sc.done : 0;
     o.subtasks = subsByParent[t.id] || [];
-    const iAmAssigner = t.assignedById === viewerId || t.origAssignedById === viewerId;
-    const iAmAssignee = t.assigneeId === viewerId || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(viewerId));
+    const iAmAssigner = isMe(t.assignedById) || isMe(t.origAssignedById);
+    const iAmAssignee = isMe(t.assigneeId) || anyMine(t.assigneeIds);
     // If I'm an ASSIGNEE (or co-assignee), the shared task is on MY board — even
     // if I also assigned it (I share responsibility). Only if I purely assigned
     // it to others (not myself) does it live in "Assigned by me" (tracking).
@@ -332,11 +355,21 @@ router.get('/my-summary', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
     const viewerId = ctx.boardId;
+    // Match all of the viewer's identities (same as the board) so co-assigned
+    // tasks added under a different identity still count.
+    const myIds = new Set([viewerId, ctx.actorId, ctx.adminUserId].filter((x) => x != null));
+    try {
+      const selfHr = viewerId > 0 ? await HrUser.findByPk(viewerId) : null;
+      const nm = (selfHr && selfHr.name) || ctx.actorName;
+      const em = (selfHr && selfHr.email) || (ctx.actorUser && ctx.actorUser.email) || null;
+      const dups = await HrUser.findAll({ where: { active: true } });
+      for (const u of dups) { if ((nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase()) || (em && u.email && String(u.email).trim().toLowerCase() === String(em).trim().toLowerCase())) myIds.add(u.id); }
+    } catch {}
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10);
     // All my (co-)assigned top-level tasks.
     const dbTasks = await Task.findAll({ where: { parentTaskId: null } });
-    const mine = dbTasks.filter((t) => t.assigneeId === viewerId || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(viewerId)));
+    const mine = dbTasks.filter((t) => myIds.has(t.assigneeId) || (Array.isArray(t.assigneeIds) && t.assigneeIds.some((id) => myIds.has(id))));
     let dueToday = 0, highPriority = 0, pending = 0, overdue = 0, completedToday = 0, totalToday = 0;
     for (const t of mine) {
       if (t.stage === 'completed') {
