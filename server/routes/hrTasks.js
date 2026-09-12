@@ -71,6 +71,25 @@ async function actingContext(req) {
   const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
   const HR_ROLE_TYPES = new Set(['hr', 'recruiter']);
   const isHr = isAdmin || !!(actorUser && (HR_ROLE_TYPES.has(actorUser.type) || actorUser.isHrManager));
+  // Collect EVERY id that represents this person, so a task assigned to any of
+  // their identities is theirs. Critically this includes the chatOnly HrUser
+  // auto-created for admins in Buzz — an employee's assignee picker can list
+  // that record, so an admin gets added under it while their board resolves to
+  // a different (real HrUser or negative admin) id. Matching by name/email links
+  // them back together.
+  const linkedIds = new Set([boardId, rawId].filter((x) => x != null));
+  try {
+    const { Op } = require('sequelize');
+    const nm = (actorUser && actorUser.name) || (req.adminUser && req.adminUser.name) || (req.hrActor && req.hrActor.name) || null;
+    const emails = [actorUser && actorUser.email, req.adminUser && req.adminUser.email, req.hrActor && req.hrActor.email].filter(Boolean).map((e) => String(e).trim().toLowerCase());
+    const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'email'] });
+    for (const u of all) {
+      const sameName = nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase();
+      const sameEmail = u.email && emails.includes(String(u.email).trim().toLowerCase());
+      if (sameName || sameEmail) linkedIds.add(u.id);
+    }
+    if (req.adminUser && req.adminUser.id) linkedIds.add(req.adminUser.id);
+  } catch {}
   return {
     isAdmin,
     isHr,
@@ -78,6 +97,7 @@ async function actingContext(req) {
     actorId: req.hrActor && req.hrActor.id,
     adminUserId: (req.adminUser && req.adminUser.id) || (isAdmin && req.hrActor && req.hrActor.id) || null,
     boardId,
+    linkedIds: [...linkedIds],
     actorName: (actorUser && actorUser.name) || (req.hrActor && req.hrActor.name) || 'Admin',
     actorKind: (req.hrActor && req.hrActor.kind) || 'admin',
   };
@@ -220,27 +240,11 @@ async function buildBoard(viewerId, ctx) {
     viewer = { id: viewerId, name: admin ? admin.name : 'Admin', designation: 'Admin', department: '', branch: '', avatar: null, isAdmin: true };
   }
 
-  // Build the set of ALL ids that represent this viewer, so a task assigned to
-  // any of their identities shows up. This fixes the case where someone is added
-  // as a co-assignee under one identity (e.g. an HrUser record) but their board
-  // resolves to another (admin dual-identity, same-name/email duplicate HrUser,
-  // or a legacy CRM-user id). Matches by id, and by same email / same name.
-  const myIds = new Set([viewerId].filter((x) => x != null));
-  try {
-    const { Op } = require('sequelize');
-    let selfHr = viewerId > 0 ? await HrUser.findByPk(viewerId) : null;
-    const nm = (selfHr && selfHr.name) || (viewer && viewer.name);
-    const em = (selfHr && selfHr.email) || (ctx.actorUser && ctx.actorUser.email) || null;
-    const dups = await HrUser.findAll({ where: { active: true } });
-    for (const u of dups) {
-      const sameName = nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase();
-      const sameEmail = em && u.email && String(u.email).trim().toLowerCase() === String(em).trim().toLowerCase();
-      if (sameName || sameEmail) myIds.add(u.id);
-    }
-    // Include the linked admin/CRM user id (positive) so legacy rows match too.
-    if (ctx.actorId) myIds.add(ctx.actorId);
-    if (ctx.adminUserId) myIds.add(ctx.adminUserId);
-  } catch {}
+  // The set of ALL ids that represent this viewer (their board id + any linked
+  // HrUser records by name/email, incl. the admin's chatOnly Buzz identity + the
+  // admin User id). Computed once in actingContext so a task assigned to any of
+  // the viewer's identities appears on their board.
+  const myIds = new Set([...(ctx.linkedIds || [viewerId]), viewerId].filter((x) => x != null));
   const isMe = (id) => id != null && myIds.has(id);
   const anyMine = (arr) => Array.isArray(arr) && arr.some((id) => myIds.has(id));
 
@@ -355,16 +359,8 @@ router.get('/my-summary', guard, async (req, res, next) => {
   try {
     const ctx = await actingContext(req);
     const viewerId = ctx.boardId;
-    // Match all of the viewer's identities (same as the board) so co-assigned
-    // tasks added under a different identity still count.
-    const myIds = new Set([viewerId, ctx.actorId, ctx.adminUserId].filter((x) => x != null));
-    try {
-      const selfHr = viewerId > 0 ? await HrUser.findByPk(viewerId) : null;
-      const nm = (selfHr && selfHr.name) || ctx.actorName;
-      const em = (selfHr && selfHr.email) || (ctx.actorUser && ctx.actorUser.email) || null;
-      const dups = await HrUser.findAll({ where: { active: true } });
-      for (const u of dups) { if ((nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase()) || (em && u.email && String(u.email).trim().toLowerCase() === String(em).trim().toLowerCase())) myIds.add(u.id); }
-    } catch {}
+    // Match all of the viewer's identities (same as the board).
+    const myIds = new Set([...(ctx.linkedIds || [viewerId]), viewerId].filter((x) => x != null));
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10);
     // All my (co-)assigned top-level tasks.

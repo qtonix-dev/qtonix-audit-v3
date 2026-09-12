@@ -3054,8 +3054,8 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     return (
       <>
         <div
-          className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${isSub ? 'bg-slate-50/40' : 'bg-white'} ${dragId === t._id ? 'transition-none' : ''}`}
-          style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.5, boxShadow: '0 10px 26px rgba(2,6,23,.18)', transform: 'scale(0.997)', position: 'relative', zIndex: 5 } : {}) }}
+          className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
+          style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.2deg) scale(1.01)', borderRadius: '10px', position: 'relative', zIndex: 20, transition: 'none' } : {}) }}
           onDragOver={(e) => { if (dragRef.current != null && dragRef.current !== t._id && !tracking && !isSub) { e.preventDefault(); } }}
         >
           {/* expander / drag handle */}
@@ -3195,20 +3195,20 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
                 onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== key) setDragOver(key); } }}
                 onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver((d) => d === key ? null : d); }}
                 onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) moveToBucket(id, key); }}
-                className={`rounded-xl border overflow-hidden transition-all duration-150 ${isOver ? 'ring-2 ring-offset-1' : ''}`}
-                style={{ borderLeft: `4px solid ${c.bar}`, borderColor: isOver ? c.bar : undefined, boxShadow: isOver ? `0 0 0 2px ${c.bar}` : 'none', background: isOver ? `${c.bar}0d` : undefined }}
+                className={`rounded-xl border transition-all duration-150 ${isOver ? 'ring-4 ring-offset-1' : ''}`}
+                style={{ borderLeft: `4px solid ${c.bar}`, borderColor: isOver ? c.bar : undefined, boxShadow: isOver && draggingElsewhere ? `0 0 0 3px ${c.bar}, 0 8px 24px ${c.bar}44` : 'none', background: isOver && draggingElsewhere ? `${c.bar}14` : undefined, overflow: 'hidden' }}
               >
-                <button onClick={() => setCollapsed((cc) => ({ ...cc, [key]: !cc[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left" style={{ background: c.head }}>
+                <button onClick={() => setCollapsed((cc) => ({ ...cc, [key]: !cc[key] }))} className="w-full flex items-center gap-2 px-4 py-2.5 text-left transition-colors" style={{ background: isOver && draggingElsewhere ? `${c.bar}22` : c.head }}>
                   <span className={`text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`} style={{ color: c.text }}>▶</span>
                   <span className="text-sm font-extrabold" style={{ color: c.text }}>{label}</span>
                   <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ background: c.bar, color: '#fff' }}>{bk.tasks.length}</span>
                   {key === 'recently_assigned' && bk.tasks.length > 0 && <span className="text-[10px] font-bold ml-1" style={{ color: c.text }}>NEW</span>}
-                  {isOver && draggingElsewhere && <span className="ml-auto text-[11px] font-bold" style={{ color: c.bar }}>Drop to move here</span>}
+                  {isOver && draggingElsewhere && <span className="ml-auto text-[11px] font-extrabold px-2 py-0.5 rounded-full" style={{ color: '#fff', background: c.bar }}>⤵ Release to move here</span>}
                 </button>
                 {isOpen && (
                   <div>
                     {/* Drop-line indicator when dragging a row from another section. */}
-                    {isOver && draggingElsewhere && <div className="h-1 mx-3 my-1 rounded-full animate-pulse" style={{ background: c.bar }} />}
+                    {isOver && draggingElsewhere && <div className="h-1.5 mx-3 my-1.5 rounded-full animate-pulse" style={{ background: c.bar }} />}
                     {rows.length > 0 && <HeaderRow />}
                     {rows.map((t) => <GridRow key={t._id} t={t} />)}
                     {addingIn === key
