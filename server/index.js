@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v481';
+const APP_VERSION = 'v482';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -162,6 +162,7 @@ app.use('/api/hr', hr);
 app.use('/api/hr', require('./routes/hrMail'));
 app.use('/api/hr/attendance', require('./routes/hrAttendance'));
 app.use('/api/hr/tasks', require('./routes/hrTasks'));
+app.use('/api/hr/projects', require('./routes/projects'));
 app.use('/api/hr/tasks', require('./routes/tasks'));
 app.use('/api/hr/chat', require('./routes/chat'));
 app.use('/api/tv-display', require('./routes/tvDisplay'));
@@ -986,6 +987,9 @@ connectWithRetry()
       // Company celebrations → posts birthdays/anniversaries/joinees to #the-hub.
       try { require('./jobs/hubCelebrations').start(require('./models')); }
       catch (e) { console.error('[hub-celebrations] not started:', e.message); }
+      // Project monthly recurring cycles.
+      try { require('./jobs/projectCycles').start(require('./models')); }
+      catch (e) { console.error('[project-cycles] not started:', e.message); }
       // Weekly log cleanup (Sunday ~9AM IST, prunes audit+call logs older than 3 months).
       try { require('./jobs/logCleanup').start(require('./models')); }
       catch (e) { console.error('[log-cleanup] not started:', e.message); }

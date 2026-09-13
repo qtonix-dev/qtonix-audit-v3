@@ -10,6 +10,7 @@ import { AppSwitcher } from './AppSwitcher.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
+import ProjectsView from './Projects.jsx';
 import LeaveConsole from './HrLeaveConsole.jsx';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -1951,6 +1952,7 @@ function WorkspaceView({ user, isAdmin }) {
         <div className="flex items-center gap-1 bg-white border-b border-slate-100" style={{ marginBottom: 12 }}>
           <Tab id="tasks" icon="✅" label="Task" badge={0} />
           <Tab id="chat" icon="💬" label="Buzz" badge={chatUnread} />
+          {isAdmin && <Tab id="projects" icon="📁" label="Projects" badge={0} />}
           <Tab id="reports" icon="📊" label={hasReports ? 'Team Reports' : 'Daily Report'} badge={0} />
         </div>
       </div>
@@ -1967,6 +1969,8 @@ function WorkspaceView({ user, isAdmin }) {
           <div className="max-w-6xl w-full mx-auto px-4 pb-3">
             {pane === 'reports'
               ? <TeamReportView user={user} isAdmin={isAdmin} hasReports={hasReports} />
+              : pane === 'projects' && isAdmin
+              ? <ProjectsView user={user} />
               : <HrTasksView user={user} isAdmin={isAdmin} embedded openTaskId={openTaskId} onTaskOpened={() => setOpenTaskId(null)} />}
           </div>
         </div>

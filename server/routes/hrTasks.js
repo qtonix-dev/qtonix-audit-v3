@@ -869,6 +869,8 @@ router.patch('/tasks/:id', guard, async (req, res, next) => {
       for (const uid of stNotify) {
         try { await require('../services/chatTask').postTaskAlert(uid, { kindTag: stageTag, taskId: row.id, body: '\u201C' + String(row.title).slice(0, 100) + '\u201D moved to ' + STAGE_LABEL[b.stage] }); } catch {}
       }
+      // If this task belongs to a project step, advance the project flow.
+      if (b.stage === 'completed') { try { await require('../services/projectFlow').onTaskCompleted(row.id); } catch {} }
     }
 
     // ---- Assignee changes (all routed through one consistent group reconcile) ----

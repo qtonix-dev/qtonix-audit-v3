@@ -346,6 +346,7 @@ const Lead = sequelize.define(
     transferredAt: { type: DataTypes.DATE },
     transferredById: { type: DataTypes.INTEGER, allowNull: true },
     transferredByName: { type: DataTypes.STRING(120), defaultValue: '' },
+    projectId: { type: DataTypes.INTEGER, allowNull: true }, // set when a won deal becomes a project
     transferredToId: { type: DataTypes.INTEGER, allowNull: true },
     enteredByName: { type: DataTypes.STRING(120), defaultValue: '' },
     /**
@@ -2079,6 +2080,164 @@ const HrTeamReview = sequelize.define('HrTeamReview', {
 ] });
 
 // ===========================================================================
+// PROJECT MANAGEMENT — a won deal becomes a project; projects run flows (stages
+// & steps) that spawn HRMS tasks, capture deliverables, credentials, and monthly
+// recurring cycles. See server/routes/projects.js and server/services/projectFlow.js.
+// ===========================================================================
+
+// A project = one customer engagement, born from a Closed-Won deal.
+const Project = sequelize.define('Project', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  leadId: { type: DataTypes.INTEGER, allowNull: true },     // source lead (CRM)
+  // Customer snapshot (copied from lead at creation).
+  customerName: { type: DataTypes.STRING(160), defaultValue: '' },   // company name (visible)
+  contactName: { type: DataTypes.STRING(160), defaultValue: '' },    // person (masked unless authorized)
+  website: { type: DataTypes.STRING(255), defaultValue: '' },
+  email: { type: DataTypes.STRING(180), defaultValue: '' },          // masked
+  phone: { type: DataTypes.STRING(60), defaultValue: '' },           // masked
+  country: { type: DataTypes.STRING(80), defaultValue: '' },
+  city: { type: DataTypes.STRING(120), defaultValue: '' },
+  timezone: { type: DataTypes.STRING(80), defaultValue: '' },
+  // Project setup.
+  projectType: { type: DataTypes.STRING(40), defaultValue: 'seo' }, // website | seo | seo_social | seo_social_ads | custom
+  subType: { type: DataTypes.STRING(40), defaultValue: '' },        // website: new | redesign | ecommerce | landing | webapp
+  cmsPlatform: { type: DataTypes.STRING(40), defaultValue: '' },    // wordpress | shopify | webflow | custom | wix | drupal
+  servicesTaken: { type: DataTypes.JSON, defaultValue: [] },        // ['seo','social',...]
+  requirements: { type: DataTypes.TEXT, defaultValue: '' },         // requirements shared by customer
+  campaignParams: { type: DataTypes.JSON, defaultValue: {} },       // { keywords, backlinksPerMonth, articlesPerMonth, platforms, postsPerMonth, callsPerMonth, reportEveryDays, targetMarket, competitors }
+  startDate: { type: DataTypes.STRING(10), allowNull: true },       // YYYY-MM-DD
+  expectedEndDate: { type: DataTypes.STRING(10), allowNull: true }, // null for recurring
+  projectManagerId: { type: DataTypes.INTEGER, allowNull: true },
+  projectManagerName: { type: DataTypes.STRING(120), defaultValue: '' },
+  status: { type: DataTypes.STRING(20), defaultValue: 'setup' },    // setup | active | paused | cancelled | completed
+  currentStage: { type: DataTypes.INTEGER, defaultValue: 1 },       // active stage index in the flow
+  templateId: { type: DataTypes.INTEGER, allowNull: true },
+  seRankingCreated: { type: DataTypes.BOOLEAN, defaultValue: false },
+  recurring: { type: DataTypes.BOOLEAN, defaultValue: false },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'projects', indexes: [
+  { name: 'idx_projects_lead', fields: ['leadId'] },
+  { name: 'idx_projects_pm', fields: ['projectManagerId'] },
+  { name: 'idx_projects_status', fields: ['status'] },
+] });
+
+// Members of a project, with per-member permission flags.
+const ProjectMember = sequelize.define('ProjectMember', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: false },
+  userId: { type: DataTypes.INTEGER, allowNull: false },
+  name: { type: DataTypes.STRING(120), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  role: { type: DataTypes.STRING(30), defaultValue: 'member' },     // pm | lead | member | viewer
+  // Permission flags (admin-set).
+  editFlow: { type: DataTypes.BOOLEAN, defaultValue: false },
+  approveClientSteps: { type: DataTypes.BOOLEAN, defaultValue: false },
+  approveDeliverables: { type: DataTypes.BOOLEAN, defaultValue: false },
+  uploadDeliverables: { type: DataTypes.BOOLEAN, defaultValue: true },
+  viewContact: { type: DataTypes.BOOLEAN, defaultValue: false },    // can see masked customer contact
+  viewCredentials: { type: DataTypes.JSON, defaultValue: [] },      // list of departments whose creds they can see (or ['*'])
+  manageMembers: { type: DataTypes.BOOLEAN, defaultValue: false },
+}, { tableName: 'project_members', indexes: [
+  { name: 'idx_projmem_proj', fields: ['projectId'] },
+  { name: 'idx_projmem_user', fields: ['userId'] },
+] });
+
+// Admin-authored flow template (per project type). Steps live in the JSON.
+const ProjectTemplate = sequelize.define('ProjectTemplate', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(120), defaultValue: '' },
+  projectType: { type: DataTypes.STRING(40), defaultValue: 'seo' },
+  recurring: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // stages: [{ name, steps: [{ name, department, deadlineDays, needsClientApproval, isRecurringMonthly, isOptional }] }]
+  stages: { type: DataTypes.JSON, defaultValue: [] },
+  isDefault: { type: DataTypes.BOOLEAN, defaultValue: false },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'project_templates' });
+
+// A project's own step (an editable instance from the template). Each links to
+// the HRMS Task it spawned.
+const ProjectStep = sequelize.define('ProjectStep', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: false },
+  stageIndex: { type: DataTypes.INTEGER, defaultValue: 1 },
+  stageName: { type: DataTypes.STRING(120), defaultValue: '' },
+  name: { type: DataTypes.STRING(200), defaultValue: '' },
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  orderIndex: { type: DataTypes.INTEGER, defaultValue: 0 },
+  deadlineDays: { type: DataTypes.INTEGER, defaultValue: 3 },
+  dueDate: { type: DataTypes.STRING(10), allowNull: true },
+  needsClientApproval: { type: DataTypes.BOOLEAN, defaultValue: false },
+  isRecurringMonthly: { type: DataTypes.BOOLEAN, defaultValue: false },
+  isOptional: { type: DataTypes.BOOLEAN, defaultValue: false },
+  skipped: { type: DataTypes.BOOLEAN, defaultValue: false },
+  status: { type: DataTypes.STRING(20), defaultValue: 'locked' },   // locked | active | in_task | awaiting_approval | approved | changes_requested | done
+  approvalNote: { type: DataTypes.TEXT, allowNull: true },
+  taskId: { type: DataTypes.INTEGER, allowNull: true },
+  cycleId: { type: DataTypes.INTEGER, allowNull: true },            // set for recurring cycle steps
+  completedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'project_steps', indexes: [
+  { name: 'idx_projstep_proj', fields: ['projectId'] },
+] });
+
+// One month cycle for a recurring project.
+const ProjectCycle = sequelize.define('ProjectCycle', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: false },
+  cycleNumber: { type: DataTypes.INTEGER, defaultValue: 1 },
+  cycleStart: { type: DataTypes.STRING(10), allowNull: false },
+  cycleEnd: { type: DataTypes.STRING(10), allowNull: true },
+  invoicePaid: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // target counters from campaignParams, snapshotted for the cycle.
+  targets: { type: DataTypes.JSON, defaultValue: {} },
+}, { tableName: 'project_cycles', indexes: [
+  { name: 'idx_projcycle_proj', fields: ['projectId'] },
+] });
+
+// A deliverable submitted by a team (backlink, social post, report, content, file).
+const ProjectDeliverable = sequelize.define('ProjectDeliverable', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: false },
+  cycleId: { type: DataTypes.INTEGER, allowNull: true },
+  type: { type: DataTypes.STRING(24), defaultValue: 'file' },       // backlink | social_post | report | content | file
+  department: { type: DataTypes.STRING(80), defaultValue: '' },
+  title: { type: DataTypes.STRING(240), defaultValue: '' },
+  url: { type: DataTypes.STRING(600), defaultValue: '' },
+  platform: { type: DataTypes.STRING(40), defaultValue: '' },       // for social_post
+  meta: { type: DataTypes.JSON, defaultValue: {} },                 // e.g. backlink type
+  approvalStatus: { type: DataTypes.STRING(16), defaultValue: 'pending' }, // pending | approved | rejected
+  submittedById: { type: DataTypes.INTEGER, allowNull: true },
+  submittedByName: { type: DataTypes.STRING(120), defaultValue: '' },
+  approvedById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'project_deliverables', indexes: [
+  { name: 'idx_projdel_proj', fields: ['projectId'] },
+  { name: 'idx_projdel_cycle', fields: ['cycleId'] },
+] });
+
+// Sensitive credential vault, scoped by department (encrypted at rest).
+const ProjectCredential = sequelize.define('ProjectCredential', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  projectId: { type: DataTypes.INTEGER, allowNull: false },
+  label: { type: DataTypes.STRING(120), defaultValue: '' },         // cPanel, WP admin, GSC, Ads, Instagram…
+  department: { type: DataTypes.STRING(80), defaultValue: '' },     // which team can see it
+  username: { type: DataTypes.STRING(240), defaultValue: '' },
+  secretEnc: { type: DataTypes.TEXT, allowNull: true },             // encrypted password/token
+  url: { type: DataTypes.STRING(400), defaultValue: '' },
+  note: { type: DataTypes.TEXT, defaultValue: '' },
+  viewLog: { type: DataTypes.JSON, defaultValue: [] },              // [{ userId, name, at }]
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'project_credentials', indexes: [
+  { name: 'idx_projcred_proj', fields: ['projectId'] },
+] });
+// Encrypt the secret before save (same scheme as API keys).
+function encryptProjectSecret(instance) {
+  if (instance.secretEnc && !String(instance.secretEnc).includes(':')) instance.secretEnc = encrypt(instance.secretEnc);
+}
+ProjectCredential.beforeCreate(encryptProjectSecret);
+ProjectCredential.beforeUpdate(encryptProjectSecret);
+ProjectCredential.prototype.getSecret = function () { return decrypt(this.secretEnc); };
+
+
+// ===========================================================================
 // A configurable points economy layered on the existing recognition system.
 // Core principle: NOTHING hardcodes points — a Rules table drives values, and
 // an immutable Ledger records every point movement. The Wallet is a cached
@@ -2561,6 +2720,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
+  Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
   TvPoll, TvCheer,
