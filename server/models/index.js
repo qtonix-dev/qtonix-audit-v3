@@ -2236,6 +2236,15 @@ ProjectCredential.beforeCreate(encryptProjectSecret);
 ProjectCredential.beforeUpdate(encryptProjectSecret);
 ProjectCredential.prototype.getSecret = function () { return decrypt(this.secretEnc); };
 
+// Admin-defined SEO/service plans (presets that fill campaign numbers).
+const ProjectPlan = sequelize.define('ProjectPlan', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  service: { type: DataTypes.STRING(30), defaultValue: 'seo' }, // which service this plan is for
+  name: { type: DataTypes.STRING(120), defaultValue: '' },       // Basic / Standard / Premium…
+  params: { type: DataTypes.JSON, defaultValue: {} },            // { keywords, backlinksPerMonth, articlesPerMonth, blogsPerMonth, ... }
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'project_plans' });
+
 
 // ===========================================================================
 // A configurable points economy layered on the existing recognition system.
@@ -2720,7 +2729,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
-  Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential,
+  Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
   TvPoll, TvCheer,

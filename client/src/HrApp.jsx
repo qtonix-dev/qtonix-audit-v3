@@ -10,7 +10,7 @@ import { AppSwitcher } from './AppSwitcher.jsx';
 import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
-import ProjectsView from './Projects.jsx';
+import ProjectsView, { ProjectFlowAdmin } from './Projects.jsx';
 import LeaveConsole from './HrLeaveConsole.jsx';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -10022,7 +10022,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['access', 'Access Control'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['access', 'Access Control'], ['projectflow', 'Project Flow'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
 
   return (
     <div className="max-w-5xl">
@@ -10038,6 +10038,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
       {/* USERS TAB */}
       {tab === 'access' && <AccessControlAdmin />}
+      {tab === 'projectflow' && <ProjectFlowAdmin />}
       {tab === 'tv' && <TvDisplayAdmin />}
       {tab === 'users' && (
         <div>

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Op, Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, Lead, HrUser, Task, TaskActivity } = require('../models');
+const { Op, Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, Lead, HrUser, Task, TaskActivity } = require('../models');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hrAuth');
 const flow = require('../services/projectFlow');
 
@@ -48,7 +48,21 @@ router.get('/won-leads', guard, requireHrAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ---- Templates (admin flow builder) ------------------------------------------
+// ---- Service Plans (admin presets) -------------------------------------------
+router.get('/plans', guard, async (req, res, next) => {
+  try { res.json({ plans: await ProjectPlan.findAll({ where: { active: true }, order: [['service', 'ASC'], ['name', 'ASC']] }) }); } catch (e) { next(e); }
+});
+router.post('/plans', guard, requireHrAdmin, async (req, res, next) => {
+  try { const b = req.body || {}; const p = await ProjectPlan.create({ service: b.service || 'seo', name: String(b.name || 'Plan').slice(0, 120), params: b.params || {} }); res.status(201).json(p.toJSON()); } catch (e) { next(e); }
+});
+router.put('/plans/:id', guard, requireHrAdmin, async (req, res, next) => {
+  try { const p = await ProjectPlan.findByPk(req.params.id); if (!p) return res.status(404).json({ error: 'Plan not found.' }); const b = req.body || {}; if (b.name !== undefined) p.name = String(b.name).slice(0, 120); if (b.service !== undefined) p.service = b.service; if (b.params !== undefined) { p.params = b.params; p.changed('params', true); } await p.save(); res.json(p.toJSON()); } catch (e) { next(e); }
+});
+router.delete('/plans/:id', guard, requireHrAdmin, async (req, res, next) => {
+  try { const p = await ProjectPlan.findByPk(req.params.id); if (p) await p.destroy(); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+
 router.get('/templates', guard, async (req, res, next) => {
   try { res.json({ templates: await ProjectTemplate.findAll({ order: [['projectType', 'ASC'], ['name', 'ASC']] }) }); } catch (e) { next(e); }
 });
