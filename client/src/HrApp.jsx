@@ -1973,6 +1973,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [taskChannel, setTaskChannel] = useState(null);
+  const [hubChannel, setHubChannel] = useState(null);
   const [replyTo, setReplyTo] = useState(null);      // message being replied to
   const [forwarding, setForwarding] = useState(null); // message being forwarded
   const [aiSuggests, setAiSuggests] = useState([]);
@@ -2031,7 +2032,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const lastMsgId = useRef(0);
   const me = user;
 
-  const loadConversations = () => hrApi('/chat/conversations').then((r) => { setConversations(r.conversations || []); setTaskChannel(r.taskChannel || null); }).catch(() => {});
+  const loadConversations = () => hrApi('/chat/conversations').then((r) => { setConversations(r.conversations || []); setTaskChannel(r.taskChannel || null); setHubChannel(r.hubChannel || null); }).catch(() => {});
   const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); setCanManage(!!r.canManage); }).catch(() => {});
   useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); loadTeams(); }, []);
 
@@ -2319,6 +2320,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
             <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base shrink-0" style={{ background: 'linear-gradient(135deg,#0A1F44,#1e3a8a)' }}>📋</span>
             <div className="min-w-0 flex-1"><div className="text-[14px] font-bold">#task <span className="text-[10px] text-slate-400 font-normal">notes & alerts</span></div><div className="text-[12px] text-slate-400 truncate">{taskChannel.lastMessageText || 'Your private space'}</div></div>
             {taskChannel.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{taskChannel.unread}</span>}
+          </button>
+        )}
+        {/* #the-hub — company-wide channel (celebrations, announcements, wishes). */}
+        {hubChannel && (
+          <button onClick={() => openChannel('hub', { id: hubChannel.id, title: 'the-hub' }, { name: 'The Hub · everyone', color: '#FF6A00', icon: '🎉' })} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left rounded-xl mx-1.5 mb-1.5 ${active && active.id === hubChannel.id ? '' : 'hover:bg-slate-100'}`} style={active && active.id === hubChannel.id ? { background: '#fff3ec' } : { background: '#fffaf5' }}>
+            <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>🎉</span>
+            <div className="min-w-0 flex-1"><div className="text-[14px] font-bold">#the-hub <span className="text-[10px] text-slate-400 font-normal">everyone</span></div><div className="text-[12px] text-slate-400 truncate">{hubChannel.lastMessageText || 'Company celebrations & news'}</div></div>
+            {hubChannel.unread > 0 && <span className="text-[10px] font-extrabold text-white rounded-full px-1.5" style={{ background: '#FF4500' }}>{hubChannel.unread}</span>}
           </button>
         )}
         {/* Teams + groups (Slack-style). Only teams I'm a member of show. */}

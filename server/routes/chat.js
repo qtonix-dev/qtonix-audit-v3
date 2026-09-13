@@ -97,6 +97,8 @@ router.get('/conversations', requireHrAccess, async (req, res, next) => {
     if (!me) return res.json({ conversations: [], taskChannel: null });
     // Ensure the user's personal #task channel exists.
     const taskConvId = await require('../services/chatTask').taskChannelFor(me);
+    // Ensure the company-wide #the-hub channel exists and the user is a member.
+    try { await require('../services/chatCompany').ensureHubMembership(me); } catch {}
     const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
     const convIds = mems.map((m) => m.conversationId);
     const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: convIds.length ? convIds : [0] } }, order: [['lastMessageAt', 'DESC']] });
@@ -107,18 +109,19 @@ router.get('/conversations', requireHrAccess, async (req, res, next) => {
     const users = await HrUser.findAll({ where: { id: { [Op.in]: otherIds.length ? otherIds : [0] } } });
     const userById = {}; users.forEach((u) => { userById[u.id] = u; });
     const myMemByConv = {}; mems.forEach((m) => { myMemByConv[m.conversationId] = m; });
-    const out = []; let taskChannel = null;
+    const out = []; let taskChannel = null; let hubChannel = null;
     for (const c of convs) {
       const lastRead = myMemByConv[c.id] && myMemByConv[c.id].lastReadAt;
       const unread = await ChatMessage.count({ where: { conversationId: c.id, deleted: false, senderId: { [Op.ne]: me }, ...(lastRead ? { createdAt: { [Op.gt]: lastRead } } : {}) } });
-      const entry = { id: c.id, kind: c.kind, other: pubUser(userById[otherByConv[c.id]]), lastMessageText: c.lastMessageText, lastMessageAt: c.lastMessageAt, lastMessageBy: c.lastMessageBy, unread };
+      const entry = { id: c.id, kind: c.kind, other: pubUser(userById[otherByConv[c.id]]), lastMessageText: c.lastMessageText, lastMessageAt: c.lastMessageAt, lastMessageBy: c.lastMessageBy, unread, title: c.title, dmKey: c.dmKey };
       if (c.kind === 'task') { taskChannel = entry; continue; }
-      // ONLY DMs belong in the Direct Messages list. Channels are rendered from
-      // the /teams endpoint — including them here made a channel's last message
-      // show up (mislabelled) under a random member's DM row.
+      // The company-wide #the-hub channel (no teamId) is surfaced on its own.
+      if (c.kind === 'channel' && c.dmKey === require('../services/chatCompany').HUB_KEY) { hubChannel = entry; continue; }
+      // ONLY DMs belong in the Direct Messages list. Team channels are rendered
+      // from the /teams endpoint.
       if (c.kind === 'dm') out.push(entry);
     }
-    res.json({ conversations: out, taskChannel });
+    res.json({ conversations: out, taskChannel, hubChannel });
   } catch (e) { next(e); }
 });
 
