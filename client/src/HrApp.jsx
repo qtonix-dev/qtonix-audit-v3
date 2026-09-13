@@ -34,6 +34,13 @@ export const hrApi = async (path, opts = {}) => {
     },
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    // Session expired / token invalid → clear it and go straight to the login
+    // page instead of leaving the inner page stuck on an error.
+    try { localStorage.removeItem(HR_TOKEN_KEY); } catch {}
+    if (!/\/login($|\?)/.test(window.location.pathname)) window.location.href = `${HR_BASE}/login`;
+    const err = new Error(data.error || 'Your session expired.'); err.status = 401; throw err;
+  }
   if (!res.ok) { const err = new Error(data.error || 'Something went wrong.'); err.status = res.status; throw err; }
   return data;
 };
@@ -3107,9 +3114,11 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
     const overdue = isOverdue(t);
     const hasSubs = !isSub && t.subtaskCount > 0;
     const expanded = !!expandedTasks[t._id];
+    const rowRef = useRef(null);
     return (
       <>
         <div
+          ref={rowRef}
           className={`${COL} border-b border-slate-200 hover:bg-slate-50/80 ${isSub ? 'bg-slate-50/40' : 'bg-white'}`}
           style={{ gridTemplateColumns: GRID_COLS, ...(dragId === t._id ? { opacity: 0.45, boxShadow: '0 14px 34px rgba(2,6,23,.22)', transform: 'rotate(1.2deg) scale(1.01)', borderRadius: '10px', position: 'relative', zIndex: 20, transition: 'none' } : {}), ...(overRowId === t._id && dragId && dragId !== t._id && !isSub ? { borderTop: '3px solid #FF6A00' } : {}) }}
           onDragOver={(e) => {
@@ -3129,7 +3138,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
               : (!tracking && !isSub)
                 ? <span
                     draggable
-                    onDragStart={(e) => { e.stopPropagation(); dragRef.current = t._id; dragBucketRef.current = t.bucket || 'recently_assigned'; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); } catch {} if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRafRef.current = requestAnimationFrame(() => setDragId(t._id)); }}
+                    onDragStart={(e) => { e.stopPropagation(); dragRef.current = t._id; dragBucketRef.current = t.bucket || 'recently_assigned'; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t._id)); if (rowRef.current) { const rr = rowRef.current.getBoundingClientRect(); e.dataTransfer.setDragImage(rowRef.current, Math.min(e.clientX - rr.left, rr.width - 10), 18); } } catch {} if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRafRef.current = requestAnimationFrame(() => setDragId(t._id)); }}
                     onDragEnd={() => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); dragRef.current = null; dragBucketRef.current = null; setDragId(null); setDragOver(null); setOverRowId(null); }}
                     className="text-slate-300 hover:text-orange-500 cursor-grab active:cursor-grabbing text-sm select-none px-1"
                     title="Drag to move between sections"
@@ -3257,9 +3266,9 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
             const draggingElsewhere = dragId && !bk.tasks.some((x) => x._id === dragId);
             return (
               <div key={key}
-                onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== key) setDragOver(key); } }}
+                onDragOver={(e) => { if (dragRef.current != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== key) { setDragOver(key); if (dragBucketRef.current !== key) setOverRowId(null); } } }}
                 onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver((d) => d === key ? null : d); }}
-                onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) { const beforeId = overRowId && overRowId !== '__end__' && overRowId !== id ? overRowId : null; const sameBucket = dragBucketRef.current === key; if (sameBucket && !beforeId && overRowId !== '__end__') { /* dropped on itself */ } else { reorderTask(id, { bucket: key, beforeId }); } } dragRef.current = null; dragBucketRef.current = null; setDragId(null); setDragOver(null); setOverRowId(null); }}
+                onDrop={(e) => { e.preventDefault(); const id = dragRef.current; if (id != null) { const sameBucket = dragBucketRef.current === key; let beforeId = overRowId && overRowId !== '__end__' && overRowId !== id ? overRowId : null; if (!sameBucket && !beforeId && overRowId !== '__end__') { const firstRow = (bucketByKey[key] || { tasks: [] }).tasks.find((x) => x._id !== id); beforeId = firstRow ? firstRow._id : null; } if (sameBucket && !beforeId && overRowId !== '__end__') { /* dropped on itself, no-op */ } else { reorderTask(id, { bucket: key, beforeId }); } } dragRef.current = null; dragBucketRef.current = null; setDragId(null); setDragOver(null); setOverRowId(null); }}
                 className={`rounded-xl border transition-all duration-150 ${isOver ? 'ring-4 ring-offset-1' : ''}`}
                 style={{ borderLeft: `4px solid ${c.bar}`, borderColor: isOver ? c.bar : undefined, boxShadow: isOver && draggingElsewhere ? `0 0 0 3px ${c.bar}, 0 8px 24px ${c.bar}44` : 'none', background: isOver && draggingElsewhere ? `${c.bar}14` : undefined, overflow: 'hidden' }}
               >
@@ -3272,9 +3281,13 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
                 </button>
                 {isOpen && (
                   <div>
-                    {/* Drop-line indicator when dragging a row from another section. */}
-                    {isOver && draggingElsewhere && <div className="h-1.5 mx-3 my-1.5 rounded-full animate-pulse" style={{ background: c.bar }} />}
                     {rows.length > 0 && <HeaderRow />}
+                    {/* Drop-line for a cross-section move — shown BELOW the column
+                        header so the task always lands as the first row, never
+                        above the header. */}
+                    {isOver && draggingElsewhere && overRowId !== '__end__' && !rows.some((r) => r._id === overRowId) && (
+                      <div className="h-1.5 mx-3 my-1 rounded-full animate-pulse" style={{ background: c.bar }} />
+                    )}
                     {rows.map((t) => <GridRow key={t._id} t={t} />)}
                     {addingIn === key
                       ? <div className="flex items-center gap-2 px-4 py-2 border-t border-slate-200 bg-white"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addTask(key)} onBlur={() => { if (!newTitle.trim()) setAddingIn(null); }} placeholder="Task name…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" /><button onClick={() => addTask(key)} className="text-xs font-bold text-white rounded-lg px-3 py-1.5" style={{ background: ORANGE }}>Add</button></div>

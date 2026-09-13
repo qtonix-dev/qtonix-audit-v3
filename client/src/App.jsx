@@ -157,6 +157,13 @@ export const api = async (path, opts = {}) => {
     },
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !DEMO_TOKEN) {
+    // Session expired → clear token and redirect to login rather than stranding
+    // the user on the current page with an error.
+    try { localStorage.removeItem('qtx_token'); } catch {}
+    if (!/\/login($|\?)/.test(window.location.pathname)) window.location.href = '/login';
+    const err = new Error(data.error || 'Your session expired.'); err.status = 401; throw err;
+  }
   if (!res.ok) {
     const err = new Error(data.error || 'Something went wrong.');
     err.data = data; // keep structured fields (e.g. duplicate lead info)
