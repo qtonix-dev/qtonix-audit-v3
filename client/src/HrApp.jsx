@@ -1672,7 +1672,16 @@ function SeniorReport({ user, isAdmin }) {
   const [statusFilter, setStatusFilter] = useState(''); // '' | completed | in_progress | not_started
   const [deptFilter, setDeptFilter] = useState('');
   const [exporting, setExporting] = useState('');
-  useEffect(() => { hrApi('/tasks/team-report/dates?days=30').then((r) => { setDates(r.dates || []); setAdminView(!!r.isAdmin); if (r.dates && r.dates[0] && !r.dates[0].empty) setOpenDate(r.dates[0].date); }).catch(() => setDates([])); }, []);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { hrApi('/tasks/team-report/dates').then((r) => { setDates(r.dates || []); setAdminView(!!r.isAdmin); setNextOffset(r.nextOffset || 0); setHasMore(!!r.hasMore); const first = (r.dates || []).find((d) => !d.off && !d.empty); if (first) setOpenDate(first.date); }).catch(() => setDates([])); }, []);
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try { const r = await hrApi(`/tasks/team-report/dates?offset=${nextOffset}&limit=7`); setDates((prev) => [...prev, ...(r.dates || [])]); setNextOffset(r.nextOffset || nextOffset); setHasMore(!!r.hasMore); }
+    catch (e) { toast(e.message); }
+    setLoadingMore(false);
+  };
   if (!dates) return <div className="p-8 text-center text-slate-400 text-sm font-normal">Loading reports…</div>;
   const shown = dates.filter((d) => !d.empty && (!dateFilter || d.date === dateFilter));
   const exportXlsx = async (date) => {
@@ -1710,9 +1719,16 @@ function SeniorReport({ user, isAdmin }) {
         {adminView && <span className="text-[11px] font-semibold px-2 py-1 rounded-full" style={{ background: '#eef2ff', color: '#4f46e5' }}>Admin · all departments</span>}
       </div>
       {shown.length === 0 && <div className="p-8 text-center text-slate-400 text-sm font-normal">No reports for the selected filters.</div>}
-      {shown.map((d) => (
+      {shown.map((d) => d.off ? (
+        <div key={d.date} className="bg-white border border-slate-200 rounded-2xl px-4 py-3 mb-3 flex items-center gap-3">
+          <div className="text-[15px] font-bold text-slate-400">{labelDate(d.date)}</div>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold" style={{ background: '#F1F5F9', color: '#64748b' }}>{d.offKind === 'holiday' ? `🎉 Holiday${d.offName ? ` · ${d.offName}` : ''}` : '🌴 Week Off'}</span>
+          <span className="text-[12px] text-slate-400">No analysis</span>
+        </div>
+      ) : (
         <DayCard key={d.date} d={d} open={openDate === d.date} onToggle={() => setOpenDate(openDate === d.date ? null : d.date)} empFilter={empFilter} statusFilter={statusFilter} deptFilter={deptFilter} adminView={adminView} onExport={adminView ? () => exportXlsx(d.date) : null} exporting={exporting === d.date} onDepts={(deps) => { d._depts = deps; }} />
       ))}
+      {hasMore && !anyFilter && <button onClick={loadMore} disabled={loadingMore} className="w-full mt-1 py-2.5 rounded-xl border border-slate-200 bg-white text-[13px] font-bold text-slate-500 hover:bg-slate-50">{loadingMore ? 'Loading…' : '↓ Load more days'}</button>}
     </div>
   );
 }
@@ -1805,7 +1821,7 @@ function EmployeeRow({ e, date }) {
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50/60">
         <span className="text-slate-400 text-xs w-3">{open ? '▾' : '▸'}</span>
         {/* Green dot = present, red dot = absent (replaces the Present/Absent text). */}
-        <span title={att.present ? 'Present' : 'Absent'} className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: att.present ? '#16a34a' : '#dc2626' }} />
+        <span title={att.off ? (att.offName || 'Off') : (att.present ? 'Present' : 'Absent')} className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: att.off ? '#94a3b8' : (att.present ? '#16a34a' : '#dc2626') }} />
         <div className="flex-1 min-w-0"><span className="font-semibold text-[#050A1F] text-[13.5px]">{e.employee.name}</span> <span className="text-[11px] text-slate-400 font-normal">· {e.employee.designation || '—'}</span>{att.present && att.hoursLabel && <span className="text-[11px] text-slate-400 font-normal"> · {att.hoursLabel}</span>}</div>
         <span className="text-[12px] font-semibold text-green-600">{e.counts.done} done</span>
         {e.counts.inProgress > 0 && <span className="text-[12px] font-normal text-orange-500">{e.counts.inProgress} in prog</span>}
@@ -1884,6 +1900,15 @@ function SelfReport({ user }) {
   const [rep, setRep] = useState(null);
   useEffect(() => { hrApi('/tasks/my-report').then(setRep).catch(() => setRep({ tasks: [] })); }, []);
   if (!rep) return <div className="p-8 text-center text-slate-400 text-sm">Loading your report…</div>;
+  if (rep.off) return (
+    <div className="pb-6 max-w-3xl">
+      <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center">
+        <div className="text-4xl mb-2">{rep.offKind === 'holiday' ? '🎉' : '🌴'}</div>
+        <div className="text-[17px] font-extrabold text-[#050A1F]">{rep.offKind === 'holiday' ? (rep.offName || 'Holiday') : 'Week Off'}</div>
+        <div className="text-[13px] text-slate-400 mt-1">Enjoy your day off — no report today.</div>
+      </div>
+    </div>
+  );
   const done = (rep.counts && rep.counts.done) || 0;
   const total = (rep.counts && rep.counts.total) || 0;
   const pct = total ? Math.round((done / total) * 100) : 0;

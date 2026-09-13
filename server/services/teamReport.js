@@ -157,6 +157,8 @@ async function loadDayCache(empIds, date) {
 
 async function buildEmployeeDay(emp, date, opts = {}) {
   const cache = opts.cache || null;
+  // Per-employee off day (branch week-off / holiday) — shown as "Off", no analysis.
+  const off = opts.wd ? opts.wd.offInfo(emp.branch || '', date) : { off: false, kind: null, name: '' };
   const att = cache ? (cache.attByEmp[emp.id] || null) : await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
   const present = att ? !['absent', 'leave'].includes(att.status) : false;
   const mins = att ? hoursBetween(att.loginTime, att.logoutTime) : null;
@@ -203,7 +205,8 @@ async function buildEmployeeDay(emp, date, opts = {}) {
   return {
     employee: { id: emp.id, name: emp.name, designation: emp.designation || '', department: emp.department || '', avatar: emp.avatar || '' },
     attendance: {
-      present, status: att ? att.status : 'absent',
+      present, status: off.off ? 'off' : (att ? att.status : 'absent'),
+      off: off.off, offKind: off.kind || null, offName: off.name || '',
       loginTime: att ? att.loginTime : null, logoutTime: att ? att.logoutTime : null,
       hoursLabel: mins ? fmtDur(mins * 60000) : null, late: att ? !!att.late : false,
     },
@@ -219,9 +222,10 @@ async function buildTeamDay(seniorId, date, opts = {}) {
   const reports = opts.roster || await teamOf(seniorId);
   const roster = opts.employeeId ? reports.filter((e) => e.id === opts.employeeId) : reports;
   const cache = opts.cache || await loadDayCache(roster.map((e) => e.id), date);
+  const wd = opts.wd || await require('./workingDays').loadContext();
   const employees = [];
   for (const emp of roster) {
-    employees.push(await buildEmployeeDay(emp, date, { ...opts, cache }));
+    employees.push(await buildEmployeeDay(emp, date, { ...opts, cache, wd }));
   }
   const present = employees.filter((e) => e.attendance.present).length;
   const absent = employees.length - present;
@@ -235,11 +239,12 @@ async function buildAdminDay(date, opts = {}) {
   const all = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, order: [['department', 'ASC'], ['name', 'ASC']] });
   const roster = all.filter((emp) => (!opts.department || (emp.department || 'Unassigned') === opts.department) && (!opts.employeeId || emp.id === opts.employeeId));
   const cache = opts.cache || await loadDayCache(roster.map((e) => e.id), date);
+  const wd = opts.wd || await require('./workingDays').loadContext();
   const groups = {};
   for (const emp of roster) {
     const dept = emp.department || 'Unassigned';
     groups[dept] = groups[dept] || [];
-    groups[dept].push(await buildEmployeeDay(emp, date, { ...opts, cache }));
+    groups[dept].push(await buildEmployeeDay(emp, date, { ...opts, cache, wd }));
   }
   const departments = Object.keys(groups).sort().map((dept) => {
     const employees = groups[dept];

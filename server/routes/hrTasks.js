@@ -425,35 +425,43 @@ async function reportActor(req) {
 router.get('/team-report/dates', guard, async (req, res, next) => {
   try {
     const actor = await reportActor(req);
-    const days = Math.min(60, Number(req.query.days) || 21);
     const today = teamReport.istDateStr();
-    const out = [];
-    // Resolve the roster ONCE (admins: whole org; others: their team).
+    // Paging: offset (days back to start) + limit (how many days this page).
+    // Default page = "recent week": on Mon/Tue show the last 7 days, otherwise
+    // the current week (Mon..today).
+    const now = new Date(today + 'T00:00:00Z'); const dow = now.getUTCDay(); // 0 Sun..6 Sat
+    let defaultLimit;
+    if (dow === 1 || dow === 2) defaultLimit = 7;                // Mon/Tue → last 7 days
+    else defaultLimit = (dow === 0 ? 7 : dow);                   // else current week (Mon..today); Sun → 7
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const limit = Math.min(31, Number(req.query.limit) || defaultLimit);
+
     let roster;
-    if (actor.isAdmin) {
-      const { HrUser } = require('../models');
-      roster = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
-    } else {
-      roster = await teamReport.teamOf(actor.id);
-    }
+    if (actor.isAdmin) { const { HrUser } = require('../models'); roster = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } }); }
+    else roster = await teamReport.teamOf(actor.id);
     const empIds = roster.map((e) => e.id);
-    // Preload cached verdicts for the whole window in one query.
+    const branches = roster.map((e) => e.branch || '');
+    const wd = await require('../services/workingDays').loadContext();
+
     const seniorKey = actor.isAdmin ? 0 : actor.id;
     const cachedRows = await HrTeamReview.findAll({ where: { seniorId: seniorKey } });
     const verdictByDate = Object.fromEntries(cachedRows.map((r) => [r.date, r.dayVerdict]));
-    for (let i = 0; i < days; i++) {
-      const d = new Date(new Date(today + 'T00:00:00Z').getTime() - i * 86400000).toISOString().slice(0, 10);
-      // Lightweight counts only (no per-task assembly, no AI).
+
+    const out = [];
+    for (let i = offset; i < offset + limit; i++) {
+      const d = new Date(now.getTime() - i * 86400000).toISOString().slice(0, 10);
+      // Whole-team OFF day (Sunday / holiday / branch Saturday) → show "Off", no analysis.
+      const off = wd.allOff(branches, d);
+      if (off.off) { out.push({ date: d, off: true, offKind: off.kind, offName: off.name }); continue; }
       const cache = await teamReport.loadDayCache(empIds, d);
       const counts = await teamReport.dayCounts(roster, d, cache);
-      if (counts.present + counts.absent === 0 || !roster.length) { if (i === 0) out.push({ date: d, present: 0, absent: 0, empty: !roster.length }); continue; }
-      // "empty" day (nobody marked + no tasks) — only surface today so the list isn't blank.
-      const anyActivity = counts.present > 0 || counts.totalPlanned > 0 || Object.values(cache.attByEmp).length > 0;
-      if (!anyActivity && i !== 0) continue;
+      const anyActivity = counts.present > 0 || counts.absent > 0 || counts.totalPlanned > 0 || Object.values(cache.attByEmp).length > 0;
+      if (!anyActivity && d !== today) continue; // skip blank working days in the past
+      if (!roster.length) { if (i === offset) out.push({ date: d, present: 0, absent: 0, empty: true }); continue; }
       out.push({ date: d, present: counts.present, absent: counts.absent, totalDone: counts.totalDone, totalPlanned: counts.totalPlanned, verdict: verdictByDate[d] || null, departments: actor.isAdmin ? new Set(roster.map((e) => e.department || 'Unassigned')).size : undefined });
     }
     const hasTeam = actor.isAdmin ? true : (roster && roster.length > 0);
-    res.json({ dates: out, hasTeam, isAdmin: actor.isAdmin });
+    res.json({ dates: out, hasTeam, isAdmin: actor.isAdmin, nextOffset: offset + limit, hasMore: offset + limit < 60 });
   } catch (e) { next(e); }
 });
 
@@ -502,13 +510,19 @@ router.get('/team-report/:date', guard, async (req, res, next) => {
       }
     }
     const day = await teamReport.buildTeamDay(actor.id, date, employeeId ? { employeeId } : {});
+    const isPast = date < todayStr;
     let review = null;
     if (day.employees.length) {
-      const fp = teamReport.dayFingerprint(await teamReport.buildTeamDay(actor.id, date, {}));
       let cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date } });
-      if (!cached || cached.fingerprint !== fp || req.query.refresh) {
+      // Run AI only when needed: for a PAST day, reuse any existing review and
+      // never re-run (the day is settled; the end-of-day job already generated
+      // it). For TODAY, run only if there's no cached review yet, or an explicit
+      // refresh — so we don't call the AI on every open.
+      const needAi = req.query.refresh || (!cached && !isPast) || (!cached && isPast);
+      if (needAi) {
         const full = await teamReport.buildTeamDay(actor.id, date, {});
         const r = await teamReviewAi.reviewTeamDay(full);
+        const fp = teamReport.dayFingerprint(full);
         await HrTeamReview.upsert({ seniorId: actor.id, date, dayVerdict: r.dayVerdict, daySummary: r.daySummary, perEmployee: r.perEmployee, perTask: r.perTask, fingerprint: fp });
         cached = await HrTeamReview.findOne({ where: { seniorId: actor.id, date } });
       }
@@ -572,6 +586,10 @@ router.get('/my-report/:date?', guard, async (req, res, next) => {
     const date = req.params.date ? String(req.params.date).slice(0, 10) : teamReport.istDateStr();
     const emp = await HrUser.findByPk(ctx.boardId);
     if (!emp) return res.json({ date, self: true, tasks: [] });
+    // Off day (week-off / holiday) → show "Off", skip analysis.
+    const wd = await require('../services/workingDays').loadContext();
+    const off = wd.offInfo(emp.branch || '', date);
+    if (off.off) return res.json({ date, self: true, off: true, offKind: off.kind, offName: off.name, tasks: [] });
     const slice = await teamReport.buildEmployeeDay(emp, date, {});
     // Strip senior-only signals from the self view.
     slice.tasks = slice.tasks.map((t) => { const { seniorFlag, seniorFlagNote, ...rest } = t; return rest; });
