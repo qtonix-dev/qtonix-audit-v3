@@ -696,7 +696,7 @@ function PlanModal({ onClose, onSaved }) {
     seo: { keywords: '', backlinksPerMonth: '', articlesPerMonth: '', blogsPerMonth: '', rankReportDays: '10', analyticsReportDays: '30' },
     local_seo: { postsPerMonth: '' },
     ai_seo: { reportDays: '15' },
-    smo: { platformCount: '3', platforms: [], reportDays: '15' },
+    smo: { platformCount: '3', platforms: [], postsPerMonth: '', reportDays: '15' },
   });
   const [busy, setBusy] = useState(false);
   const has = (s) => f.services.includes(s);
@@ -779,17 +779,32 @@ function PlanModal({ onClose, onSaved }) {
             </div>
           )}
 
-          {has('smo') && (
-            <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#FBCFE8' }}>
-              <div className="flex items-center gap-2 mb-3"><span className="text-base">📱</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SMO</span></div>
-              <Row label="Number of Platforms"><Seg svc="smo" k="platformCount" opts={[1, 3, 5]} accent="#DB2777" /></Row>
-              <div className="py-1.5">
-                <div className="text-[12.5px] font-semibold text-slate-500 mb-2">Select Platforms</div>
-                <div className="flex gap-2 flex-wrap">{SMO_PLATFORMS.map(([pl, ic]) => { const on = f.smo.platforms.includes(pl); return <button key={pl} type="button" onClick={() => setSvc('smo', 'platforms', on ? f.smo.platforms.filter((x) => x !== pl) : [...f.smo.platforms, pl])} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-semibold border-2 transition" style={{ borderColor: on ? '#DB2777' : '#e2e8f0', background: on ? '#FDF2F8' : '#fff', color: on ? '#DB2777' : '#64748b' }}><span>{ic}</span>{pl}{on && ' ✓'}</button>; })}</div>
+          {has('smo') && (() => {
+            const limit = Number(f.smo.platformCount) || 0;
+            const chosen = f.smo.platforms.length;
+            const setCount = (n) => setF((s) => ({ ...s, smo: { ...s.smo, platformCount: String(n), platforms: s.smo.platforms.slice(0, Number(n)) } }));
+            const togglePlat = (pl) => {
+              const on = f.smo.platforms.includes(pl);
+              if (on) return setSvc('smo', 'platforms', f.smo.platforms.filter((x) => x !== pl));
+              if (chosen >= limit) { toast(`This plan allows ${limit} platform${limit > 1 ? 's' : ''}. Deselect one first, or increase the count.`); return; }
+              setSvc('smo', 'platforms', [...f.smo.platforms, pl]);
+            };
+            return (
+              <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#FBCFE8' }}>
+                <div className="flex items-center gap-2 mb-3"><span className="text-base">📱</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SMO</span></div>
+                <Row label="Number of Platforms"><div className="inline-flex bg-slate-100 rounded-xl p-0.5">{[1, 3, 5].map((o) => { const on = String(f.smo.platformCount) === String(o); return <button key={o} type="button" onClick={() => setCount(o)} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: '#DB2777' } : {}}>{o}</button>; })}</div></Row>
+                <div className="py-1.5">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[12.5px] font-semibold text-slate-500">Select Platforms</span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: chosen === limit ? '#F0FDF4' : '#FDF2F8', color: chosen === limit ? '#16a34a' : '#DB2777' }}>{chosen} / {limit} selected</span>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">{SMO_PLATFORMS.map(([pl, ic]) => { const on = f.smo.platforms.includes(pl); const disabled = !on && chosen >= limit; return <button key={pl} type="button" onClick={() => togglePlat(pl)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-semibold border-2 transition" style={{ borderColor: on ? '#DB2777' : '#e2e8f0', background: on ? '#FDF2F8' : '#fff', color: on ? '#DB2777' : (disabled ? '#cbd5e1' : '#64748b'), opacity: disabled ? 0.55 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}><span>{ic}</span>{pl}{on && ' ✓'}</button>; })}</div>
+                </div>
+                <div className="w-44 py-1.5"><div className="text-[12.5px] font-semibold text-slate-500 mb-1">Posts / month</div><input value={f.smo.postsPerMonth} onChange={(e) => setSvc('smo', 'postsPerMonth', e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300" /></div>
+                <div className="border-t border-slate-100 pt-2"><Row label="Reporting"><Seg svc="smo" k="reportDays" opts={[15, 30]} unit=" days" accent="#DB2777" /></Row></div>
               </div>
-              <div className="border-t border-slate-100 pt-2"><Row label="Reporting"><Seg svc="smo" k="reportDays" opts={[15, 30]} unit=" days" accent="#DB2777" /></Row></div>
-            </div>
-          )}
+            );
+          })()}
 
           {f.services.length > 0 && (
             <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 mt-1">
