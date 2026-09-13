@@ -169,8 +169,8 @@ function CreateProjectModal({ onClose, onCreated }) {
   const toggleService = (s) => setF((st) => ({ ...st, services: st.services.includes(s) ? st.services.filter((x) => x !== s) : [...st.services, s] }));
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const setSvc = (svc, k, v) => setF((s) => ({ ...s, [svc]: { ...s[svc], [k]: v } }));
-  const applyPlan = (planId) => { const pl = plans.find((p) => String(p.id) === String(planId)); if (pl) setF((s) => ({ ...s, seo: { ...s.seo, plan: pl.name, ...pl.params } })); else setSvc('seo', 'plan', ''); };
-  const seoPlans = plans.filter((p) => p.service === 'seo');
+  const applyPlan = (planId) => { const pl = plans.find((p) => String(p.id) === String(planId)); if (pl) { const sp = (pl.params && pl.params.seo) || pl.params || {}; setF((s) => ({ ...s, seo: { ...s.seo, plan: pl.name, keywords: sp.keywords ?? s.seo.keywords, backlinksPerMonth: sp.backlinksPerMonth ?? s.seo.backlinksPerMonth, articlesPerMonth: sp.articlesPerMonth ?? s.seo.articlesPerMonth, blogsPerMonth: sp.blogsPerMonth ?? s.seo.blogsPerMonth } })); } else setSvc('seo', 'plan', ''); };
+  const seoPlans = plans.filter((p) => (p.params && p.params.services ? p.params.services.includes('seo') : p.service === 'seo'));
 
   const create = async () => {
     if (!f.projectManagerId) { toast('Please select a Project Manager'); return; }
@@ -662,13 +662,20 @@ function PlansAdmin() {
     <div>
       <div className="flex items-center justify-between mb-3"><div className="text-[13px] text-slate-400">Preset plans fill campaign numbers when creating a project (or enter custom).</div><button onClick={() => setShowAdd(true)} className="text-white font-bold px-3.5 py-2 rounded-lg text-[13px]" style={{ background: ORANGE }}>+ New Plan</button></div>
       <div className="grid md:grid-cols-2 gap-3">
-        {plans.map((p) => (
-          <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-1"><div className="font-extrabold text-[#050A1F]">{p.name}</div><button onClick={() => del(p)} className="text-red-400 text-[12px]">Delete</button></div>
-            <div className="text-[11px] text-slate-400 uppercase font-bold mb-2">{p.service}</div>
-            <div className="flex flex-wrap gap-2">{Object.entries(p.params || {}).map(([k, v]) => <span key={k} className="text-[11px] bg-slate-100 rounded px-2 py-0.5 text-slate-600 capitalize">{k.replace(/([A-Z])/g, ' $1')}: <b>{v}</b></span>)}</div>
-          </div>
-        ))}
+        {plans.map((p) => {
+          const svcList = (p.params && p.params.services) || [p.service];
+          const SVC_LBL = { seo: 'SEO', local_seo: 'Local SEO', ai_seo: 'AI SEO', smo: 'SMO', social_media: 'Social' };
+          return (
+            <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-1"><div className="font-extrabold text-[#050A1F]">{p.name}</div><button onClick={() => del(p)} className="text-red-400 text-[12px]">Delete</button></div>
+              <div className="flex gap-1.5 flex-wrap mb-2">{svcList.map((s) => <span key={s} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">{SVC_LBL[s] || s}</span>)}{p.params && p.params.callsPerMonth ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{p.params.callsPerMonth} calls/mo</span> : null}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {svcList.map((s) => { const sp = (p.params && p.params[s]) || {}; return Object.entries(sp).filter(([k, v]) => v !== '' && v != null && !Array.isArray(v)).map(([k, v]) => <span key={s + k} className="text-[11px] bg-slate-100 rounded px-2 py-0.5 text-slate-600">{k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())}: <b>{String(v)}</b></span>); })}
+                {svcList.map((s) => { const sp = (p.params && p.params[s]) || {}; return (sp.platforms && sp.platforms.length) ? <span key={s + 'pf'} className="text-[11px] bg-pink-50 rounded px-2 py-0.5 text-pink-600">{sp.platforms.join(', ')}</span> : null; })}
+              </div>
+            </div>
+          );
+        })}
         {plans.length === 0 && <div className="text-slate-400 text-sm py-6">No plans yet.</div>}
       </div>
       {showAdd && <PlanModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
@@ -677,20 +684,124 @@ function PlansAdmin() {
 }
 
 function PlanModal({ onClose, onSaved }) {
-  const [f, setF] = useState({ service: 'seo', name: '', params: { keywords: '', backlinksPerMonth: '', articlesPerMonth: '', blogsPerMonth: '' } });
-  const setP = (k, v) => setF((s) => ({ ...s, params: { ...s.params, [k]: v } }));
-  const save = async () => { if (!f.name.trim()) { toast('Name required'); return; } try { await hrApi('/projects/plans', { method: 'POST', body: JSON.stringify(f) }); toast('Saved'); onSaved(); } catch (e) { toast(e.message); } };
+  const PLAN_SERVICES = [
+    { id: 'seo', label: 'SEO', icon: '🔍', desc: 'Keywords, backlinks & content', color: '#2563EB', bg: '#EFF6FF', bd: '#BFDBFE' },
+    { id: 'local_seo', label: 'Local SEO', icon: '📍', desc: 'Google Business posts', color: '#0D9488', bg: '#F0FDFA', bd: '#99F6E4' },
+    { id: 'ai_seo', label: 'AI SEO', icon: '🤖', desc: 'AI-driven optimization', color: '#7C3AED', bg: '#F5F3FF', bd: '#DDD6FE' },
+    { id: 'smo', label: 'SMO', icon: '📱', desc: 'Social media management', color: '#DB2777', bg: '#FDF2F8', bd: '#FBCFE8' },
+  ];
+  const SMO_PLATFORMS = [['Facebook', '📘'], ['Instagram', '📷'], ['LinkedIn', '💼'], ['YouTube', '▶️'], ['TikTok', '🎵'], ['Reddit', '👽'], ['Pinterest', '📌']];
+  const [f, setF] = useState({
+    name: '', services: [], callsPerMonth: '',
+    seo: { keywords: '', backlinksPerMonth: '', articlesPerMonth: '', blogsPerMonth: '', rankReportDays: '10', analyticsReportDays: '30' },
+    local_seo: { postsPerMonth: '' },
+    ai_seo: { reportDays: '15' },
+    smo: { platformCount: '3', platforms: [], reportDays: '15' },
+  });
+  const [busy, setBusy] = useState(false);
+  const has = (s) => f.services.includes(s);
+  const toggle = (s) => setF((st) => ({ ...st, services: st.services.includes(s) ? st.services.filter((x) => x !== s) : [...st.services, s] }));
+  const setSvc = (svc, k, v) => setF((s) => ({ ...s, [svc]: { ...s[svc], [k]: v } }));
+  const save = async () => {
+    if (!f.name.trim()) { toast('Please give the plan a name'); return; }
+    if (!f.services.length) { toast('Select at least one service'); return; }
+    setBusy(true);
+    const params = { services: f.services, callsPerMonth: f.callsPerMonth };
+    for (const s of f.services) params[s] = f[s];
+    try { await hrApi('/projects/plans', { method: 'POST', body: JSON.stringify({ service: f.services[0], name: f.name, params }) }); toast('Plan saved 🎉'); onSaved(); } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  // Big number field with label + optional unit hint.
+  const NumField = ({ svc, k, label }) => (
+    <div>
+      <div className="text-[12px] font-semibold text-slate-600 mb-1">{label}</div>
+      <input value={f[svc][k]} onChange={(e) => setSvc(svc, k, e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300" />
+    </div>
+  );
+  // Segmented pill selector.
+  const Seg = ({ svc, k, opts, unit, accent }) => (
+    <div className="inline-flex bg-slate-100 rounded-xl p-0.5">
+      {opts.map((o) => { const on = String(f[svc][k]) === String(o); return <button key={o} type="button" onClick={() => setSvc(svc, k, String(o))} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: accent } : {}}>{o}{unit || ''}</button>; })}
+    </div>
+  );
+  const Row = ({ label, children }) => <div className="flex items-center justify-between py-1.5"><span className="text-[12.5px] font-semibold text-slate-500">{label}</span>{children}</div>;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[210] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="text-[15px] font-extrabold text-[#050A1F] mb-3">New Service Plan</div>
-        <FLbl>Service</FLbl><select value={f.service} onChange={(e) => setF({ ...f, service: e.target.value })} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] mb-2"><option value="seo">SEO</option><option value="local_seo">Local SEO</option><option value="social_media">Social Media</option></select>
-        <FLbl>Plan Name</FLbl><FInp value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Basic / Standard / Premium" className="mb-2" />
-        <FLbl>Default Numbers</FLbl>
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {[['keywords', 'Keywords'], ['backlinksPerMonth', 'Backlinks/mo'], ['articlesPerMonth', 'Articles/mo'], ['blogsPerMonth', 'Blogs/mo']].map(([k, lbl]) => <div key={k}><div className="text-[10px] text-slate-400 mb-0.5">{lbl}</div><FInp value={f.params[k]} onChange={(e) => setP(k, e.target.value)} /></div>)}
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-5" style={{ background: 'linear-gradient(135deg,#0A0E28,#1e293b)' }}>
+          <div className="text-white text-[17px] font-extrabold">Create a Service Plan</div>
+          <div className="text-slate-400 text-[12px] mt-0.5">Presets that auto-fill campaign numbers when creating a project</div>
         </div>
-        <div className="flex justify-end gap-2"><button onClick={onClose} className="px-3 py-1.5 rounded-lg text-[12px] font-bold text-slate-500 bg-slate-100">Cancel</button><button onClick={save} className="px-4 py-1.5 rounded-lg text-[12px] font-extrabold text-white" style={{ background: ORANGE }}>Save</button></div>
+        <div className="p-6 max-h-[600px] overflow-auto">
+          <div className="mb-5">
+            <div className="text-[12px] font-bold text-slate-500 mb-1.5">PLAN NAME</div>
+            <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Basic, Standard, Premium" className="w-full border border-slate-200 rounded-xl px-4 py-3 text-[15px] font-semibold focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300" />
+          </div>
+
+          <div className="text-[12px] font-bold text-slate-500 mb-2">SELECT SERVICES</div>
+          <div className="grid grid-cols-2 gap-2.5 mb-5">
+            {PLAN_SERVICES.map((s) => { const on = has(s.id); return (
+              <button key={s.id} type="button" onClick={() => toggle(s.id)} className="flex items-center gap-3 rounded-xl border-2 p-3 text-left transition" style={{ borderColor: on ? s.color : '#e2e8f0', background: on ? s.bg : '#fff' }}>
+                <span className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0" style={{ background: on ? '#fff' : '#f8fafc' }}>{s.icon}</span>
+                <div className="flex-1 min-w-0"><div className="text-[13.5px] font-extrabold text-[#050A1F]">{s.label}</div><div className="text-[11px] text-slate-400 truncate">{s.desc}</div></div>
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0" style={{ background: on ? s.color : '#e2e8f0', color: '#fff' }}>{on ? '✓' : ''}</span>
+              </button>
+            ); })}
+          </div>
+
+          {f.services.length === 0 && <div className="text-center text-[13px] text-slate-400 py-6 border border-dashed border-slate-200 rounded-xl mb-5">Select one or more services above to configure their plan details.</div>}
+
+          {has('seo') && (
+            <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#BFDBFE' }}>
+              <div className="flex items-center gap-2 mb-3"><span className="text-base">🔍</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SEO</span></div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                <NumField svc="seo" k="keywords" label="Keywords" /><NumField svc="seo" k="backlinksPerMonth" label="Backlinks/mo" /><NumField svc="seo" k="articlesPerMonth" label="Articles/mo" /><NumField svc="seo" k="blogsPerMonth" label="Blogs/mo" />
+              </div>
+              <div className="border-t border-slate-100 pt-2">
+                <Row label="Rank Report"><Seg svc="seo" k="rankReportDays" opts={[10, 15]} unit=" days" accent="#2563EB" /></Row>
+                <Row label="Analytics Report"><Seg svc="seo" k="analyticsReportDays" opts={[30]} unit=" days" accent="#2563EB" /></Row>
+              </div>
+            </div>
+          )}
+
+          {has('local_seo') && (
+            <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#99F6E4' }}>
+              <div className="flex items-center gap-2 mb-3"><span className="text-base">📍</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">Local SEO</span></div>
+              <div className="w-40"><NumField svc="local_seo" k="postsPerMonth" label="Posts / month" /></div>
+            </div>
+          )}
+
+          {has('ai_seo') && (
+            <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#DDD6FE' }}>
+              <div className="flex items-center gap-2 mb-3"><span className="text-base">🤖</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">AI SEO</span></div>
+              <Row label="Reporting"><Seg svc="ai_seo" k="reportDays" opts={[15, 30]} unit=" days" accent="#7C3AED" /></Row>
+            </div>
+          )}
+
+          {has('smo') && (
+            <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#FBCFE8' }}>
+              <div className="flex items-center gap-2 mb-3"><span className="text-base">📱</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SMO</span></div>
+              <Row label="Number of Platforms"><Seg svc="smo" k="platformCount" opts={[1, 3, 5]} accent="#DB2777" /></Row>
+              <div className="py-1.5">
+                <div className="text-[12.5px] font-semibold text-slate-500 mb-2">Select Platforms</div>
+                <div className="flex gap-2 flex-wrap">{SMO_PLATFORMS.map(([pl, ic]) => { const on = f.smo.platforms.includes(pl); return <button key={pl} type="button" onClick={() => setSvc('smo', 'platforms', on ? f.smo.platforms.filter((x) => x !== pl) : [...f.smo.platforms, pl])} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-semibold border-2 transition" style={{ borderColor: on ? '#DB2777' : '#e2e8f0', background: on ? '#FDF2F8' : '#fff', color: on ? '#DB2777' : '#64748b' }}><span>{ic}</span>{pl}{on && ' ✓'}</button>; })}</div>
+              </div>
+              <div className="border-t border-slate-100 pt-2"><Row label="Reporting"><Seg svc="smo" k="reportDays" opts={[15, 30]} unit=" days" accent="#DB2777" /></Row></div>
+            </div>
+          )}
+
+          {f.services.length > 0 && (
+            <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 mt-1">
+              <span className="text-[12.5px] font-semibold text-slate-500">📞 Calls / month</span>
+              <input value={f.callsPerMonth} onChange={(e) => setF({ ...f, callsPerMonth: e.target.value.replace(/[^0-9]/g, '') })} placeholder="0" className="w-20 border border-slate-200 rounded-xl px-3 py-2 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-orange-200" />
+            </div>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+          <div className="text-[12px] text-slate-400">{f.services.length ? `${f.services.length} service${f.services.length > 1 ? 's' : ''} selected` : ''}</div>
+          <div className="flex gap-2"><button onClick={onClose} className="px-4 py-2.5 rounded-xl text-[13px] font-bold text-slate-500 bg-slate-100">Cancel</button><button onClick={save} disabled={busy} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: ORANGE, opacity: busy ? 0.6 : 1 }}>Save Plan</button></div>
+        </div>
       </div>
     </div>
   );
