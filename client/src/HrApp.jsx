@@ -10047,7 +10047,8 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['access', 'Access Control'], ['projectflow', 'Project Flow'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['projectflow', 'Project Flow'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const [orgSub, setOrgSub] = useState('basic'); // basic | shifts | access
 
   return (
     <div className="max-w-5xl">
@@ -10062,7 +10063,6 @@ function HrAdmin({ user, onOpenCandidate }) {
       </div>
 
       {/* USERS TAB */}
-      {tab === 'access' && <AccessControlAdmin />}
       {tab === 'projectflow' && <ProjectFlowAdmin />}
       {tab === 'tv' && <TvDisplayAdmin />}
       {tab === 'users' && (
@@ -10167,53 +10167,64 @@ function HrAdmin({ user, onOpenCandidate }) {
       {/* ORG CHART TAB */}
       {/* ORGANIZATION TAB (org chart + branches & departments) */}
       {tab === 'org' && (
-        <div className="space-y-6">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-bold text-[#050A1F]">Organization chart</div>
-              <button onClick={() => setOrgChartOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>
-                <Icon.Globe size={14} /> View chart
-              </button>
-            </div>
-            <HrOrgChart users={users} reporting={reporting} />
+        <div>
+          {/* Sub-tabs under Organization */}
+          <div className="flex gap-2 mb-5">
+            {[['basic', 'Basic Setting'], ['shifts', 'Shifts'], ['access', 'Access Control']].map(([id, l]) => (
+              <button key={id} onClick={() => setOrgSub(id)} className={`px-4 py-2 rounded-lg text-[13px] font-bold transition ${orgSub === id ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={orgSub === id ? { background: ORANGE } : {}}>{l}</button>
+            ))}
           </div>
-          <div>
-            <div className="text-sm font-bold text-[#050A1F] mb-3">Branches &amp; departments</div>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
-                <div className="space-y-2.5 mb-3">
-                  {branches.map((b) => (
-                    <div key={b._id} className="border border-slate-100 rounded-lg p-2.5 group">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="font-semibold text-slate-600">{b.name}</span>
-                        <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Rename" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
-                      </div>
-                      <BranchAddress branch={b} onSaved={load} />
-                    </div>
-                  ))}
+
+          {orgSub === 'basic' && (
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-bold text-[#050A1F]">Organization chart</div>
+                  <button onClick={() => setOrgChartOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: ORANGE }}>
+                    <Icon.Globe size={14} /> View chart
+                  </button>
                 </div>
-                <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} /><button onClick={addBranch} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+                <HrOrgChart users={users} reporting={reporting} />
               </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <div className="text-sm font-bold text-[#050A1F] mb-3">Departments</div>
-                <div className="space-y-1.5 mb-3">
-                  {departments.map((d) => (
-                    <div key={d._id} className="flex items-center justify-between text-sm group">
-                      <span className="font-semibold text-slate-600">{d.name}</span>
-                      <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editDept(d)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delDept(d)}><Icon.Trash size={14} /></IconBtn></span>
+              <div>
+                <div className="text-sm font-bold text-[#050A1F] mb-3">Branches &amp; departments</div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-white rounded-xl border border-slate-200 p-5">
+                    <div className="text-sm font-bold text-[#050A1F] mb-3">Branches</div>
+                    <div className="space-y-2.5 mb-3">
+                      {branches.map((b) => (
+                        <div key={b._id} className="border border-slate-100 rounded-lg p-2.5 group">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="font-semibold text-slate-600">{b.name}</span>
+                            <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Rename" onClick={() => editBranch(b)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delBranch(b)}><Icon.Trash size={14} /></IconBtn></span>
+                          </div>
+                          <BranchAddress branch={b} onSaved={load} />
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                    <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addBranch()} /><button onClick={addBranch} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+                  </div>
+                  <div className="bg-white rounded-xl border border-slate-200 p-5">
+                    <div className="text-sm font-bold text-[#050A1F] mb-3">Departments</div>
+                    <div className="space-y-1.5 mb-3">
+                      {departments.map((d) => (
+                        <div key={d._id} className="flex items-center justify-between text-sm group">
+                          <span className="font-semibold text-slate-600">{d.name}</span>
+                          <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => editDept(d)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => delDept(d)}><Icon.Trash size={14} /></IconBtn></span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New department" value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} /><button onClick={addDept} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
+                  </div>
                 </div>
-                <div className="flex gap-2"><input className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="New department" value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} /><button onClick={addDept} className="rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>Add</button></div>
               </div>
             </div>
-          </div>
+          )}
+
+          {orgSub === 'shifts' && <ShiftsManager shifts={shifts} reload={load} setErr={setErr} />}
+          {orgSub === 'access' && <AccessControlAdmin />}
         </div>
       )}
-
-      {/* SHIFTS TAB */}
-      {tab === 'shifts' && <ShiftsManager shifts={shifts} reload={load} setErr={setErr} />}
 
       {/* HOLIDAYS TAB */}
       {tab === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
