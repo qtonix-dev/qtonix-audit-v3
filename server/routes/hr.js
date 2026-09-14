@@ -591,6 +591,14 @@ router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, nex
  */
 // ===== RBAC: access control (admin manages; everyone reads their own) =====
 const PERMS = require('../services/permissions');
+// Allow if the user can manage people (admin/HR manager) OR has the given
+// module+action granted via Access Control.
+function requireModule(moduleId, action) {
+  return (req, res, next) => {
+    if (req.isHrAdmin || req.isHrManager || PERMS.can(req, moduleId, action)) return next();
+    return res.status(403).json({ error: 'You don\u2019t have ' + action + ' access to this section.' });
+  };
+}
 
 // My effective permissions (frontend uses this to show/hide nav + buttons).
 router.get('/my-permissions', requireHrAccess, async (req, res, next) => {
@@ -1969,14 +1977,14 @@ router.get('/employees/:id/attendance', requireHrAccess, async (req, res, next) 
 // Upsert a single day's attendance (Admin / HR Manager).
 router.put('/employees/:id/attendance/:date', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
     const id = Number(req.params.id);
     const date = String(req.params.date);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
     const b = req.body || {};
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     // Late = login later than the shift start (if a shift is set).
     let late = !!b.late;
     if (b.loginTime && emp.shiftId) {
@@ -1998,11 +2006,11 @@ router.put('/employees/:id/attendance/:date', requireHrAccess, async (req, res, 
 // Bulk mark (e.g. mark whole month or a set of dates at once).
 router.post('/employees/:id/attendance/bulk', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
     const id = Number(req.params.id);
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const entries = Array.isArray(req.body && req.body.entries) ? req.body.entries : [];
     let n = 0;
     for (const e of entries) {
@@ -2056,7 +2064,7 @@ router.get('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
 // counts. Scope follows the branch model (all-branch/admin → everyone).
 router.get('/leave/overview', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view the leave console.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_leave', 'read')) return res.status(403).json({ error: 'You don\u2019t have access to the Leave console.' });
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const policy = getHrPolicy(s);
     const all = await HrUser.findAll({ where: { active: true }, order: [['name', 'ASC']] });
@@ -2202,7 +2210,7 @@ router.post('/leave/:groupOrId/seen', requireHrAccess, async (req, res, next) =>
 // Approve / decline a leave request (by groupId or single id) from the console.
 router.post('/leave/:groupOrId/decide', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can decide leave.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Leave.' });
     const decision = req.body && req.body.decision; // 'approve' | 'decline'
     if (!['approve', 'decline'].includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
     const remark = String((req.body && req.body.remark) || (req.body && req.body.note) || '').slice(0, 500);
@@ -2245,10 +2253,10 @@ router.post('/leave/:groupOrId/decide', requireHrAccess, async (req, res, next) 
 // Set an employee's paid-leave allocation (Admin / HR Manager) — usually at joining.
 router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can set leave allocation.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Leave.' });
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     const alloc = { ...DEFAULT_LEAVE_ALLOCATION, ...((emp.profile && emp.profile.leaveAllocation) || {}) };
     ['casual', 'medical', 'privilege', 'wfh'].forEach((k) => { if (b[k] !== undefined) { const n = Number(b[k]); alloc[k] = Number.isFinite(n) && n >= 0 ? n : 0; } });
@@ -2263,10 +2271,10 @@ router.put('/employees/:id/leave-allocation', requireHrAccess, async (req, res, 
 // allocation then applies to them (unless a per-employee override exists).
 router.put('/employees/:id/leave-category', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can change the leave category.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Leave.' });
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const catId = String((req.body && req.body.categoryId) || 'default');
     emp.profile = { ...(emp.profile || {}), leaveCategory: catId };
     // Clear any per-employee override so the category allocation takes effect.
@@ -2382,7 +2390,7 @@ async function scopedBranches(req) {
 // GET /attendance/calendar?month=YYYY-MM&branch=  → per-day off flags + completion counts
 router.get('/attendance/calendar', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view attendance.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'You don\u2019t have access to Attendance.' });
     const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7);
     const branches = await scopedBranches(req);
     // Which branch(es) this calendar covers: a specific in-scope branch, or all scoped.
@@ -2487,7 +2495,7 @@ router.get('/attendance/approvers/:employeeId', requireHrAccess, async (req, res
 // GET /attendance/day/:date?branch= → active employees grouped branch→dept with marks
 router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can view attendance.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'You don\u2019t have access to Attendance.' });
     const date = String(req.params.date);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
     const branches = await scopedBranches(req);
@@ -4159,7 +4167,7 @@ router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) =>
 // status: present | absent_leave | half_day | lop
 router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
   try {
-    if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can mark attendance.' });
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
     const date = String(req.params.date);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date.' });
     const entries = Array.isArray(req.body && req.body.entries) ? req.body.entries : [];
@@ -4390,7 +4398,7 @@ router.post('/employees/:id/leave', requireHrAccess, async (req, res, next) => {
     const id = Number(req.params.id);
     const emp = await HrUser.findByPk(id);
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const b = req.body || {};
     // LOP (loss of pay) is a valid recorded type; it is always unpaid.
     const type = ['casual', 'medical', 'privilege', 'wfh', 'lop'].includes(b.type) ? b.type : null;
@@ -4491,7 +4499,7 @@ router.delete('/employees/:id/leave/:leaveId', requireHrAccess, async (req, res,
     if (!canManagePeople(req)) return res.status(403).json({ error: 'Only an admin or HR manager can remove leave.' });
     const emp = await HrUser.findByPk(Number(req.params.id));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
-    if (!canManageBranch(req, emp.branch)) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
+    if (!canManageBranch(req, emp.branch) && !PERMS.can(req, 'corehr_leave', 'edit')) return res.status(403).json({ error: 'You can only manage employees in your branch.' });
     const row = await HrLeave.findOne({ where: { id: Number(req.params.leaveId), employeeId: Number(req.params.id) } });
     if (!row) return res.status(404).json({ error: 'Leave record not found.' });
     await row.destroy();
@@ -6668,7 +6676,7 @@ router.get('/onboarding/debug', requireHrAccess, async (req, res, next) => {
 });
 
 // Mark an onboarding as COMPLETE → moves it to the Completed tab.
-router.post('/onboarding/:id/complete', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/onboarding/:id/complete', requireHrAccess, requireModule('corehr_onboarding','edit'), async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });
@@ -6680,7 +6688,7 @@ router.post('/onboarding/:id/complete', requireHrAccess, requireHrManager, async
 });
 
 // Reopen a completed onboarding → back to the active list.
-router.post('/onboarding/:id/reopen', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/onboarding/:id/reopen', requireHrAccess, requireModule('corehr_onboarding','edit'), async (req, res, next) => {
   try {
     const row = await HrCandidate.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Candidate not found.' });

@@ -654,6 +654,7 @@ function TemplateEditor({ tmpl, onBack }) {
 function PlansAdmin() {
   const [plans, setPlans] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
   const load = () => hrApi('/projects/plans').then((r) => setPlans(r.plans || [])).catch(() => setPlans([]));
   useEffect(() => { load(); }, []);
   const del = async (p) => { if (window.confirm('Delete plan?')) { await hrApi(`/projects/plans/${p.id}`, { method: 'DELETE' }); load(); } };
@@ -667,7 +668,16 @@ function PlansAdmin() {
           const SVC_LBL = { seo: 'SEO', local_seo: 'Local SEO', ai_seo: 'AI SEO', smo: 'SMO', social_media: 'Social' };
           return (
             <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-1"><div className="font-extrabold text-[#050A1F]">{p.name}</div><button onClick={() => del(p)} className="text-red-400 text-[12px]">Delete</button></div>
+              <div className="flex items-center justify-between mb-1"><div className="font-extrabold text-[#050A1F]">{p.name}</div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setEditing(p)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-orange-600">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  </button>
+                  <button onClick={() => del(p)} title="Delete" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  </button>
+                </div>
+              </div>
               <div className="flex gap-1.5 flex-wrap mb-2">{svcList.map((s) => <span key={s} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">{SVC_LBL[s] || s}</span>)}{p.params && p.params.callsPerMonth ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{p.params.callsPerMonth} calls/mo</span> : null}</div>
               <div className="flex flex-wrap gap-1.5">
                 {svcList.map((s) => { const sp = (p.params && p.params[s]) || {}; return Object.entries(sp).filter(([k, v]) => v !== '' && v != null && !Array.isArray(v)).map(([k, v]) => <span key={s + k} className="text-[11px] bg-slate-100 rounded px-2 py-0.5 text-slate-600">{k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())}: <b>{String(v)}</b></span>); })}
@@ -679,11 +689,32 @@ function PlansAdmin() {
         {plans.length === 0 && <div className="text-slate-400 text-sm py-6">No plans yet.</div>}
       </div>
       {showAdd && <PlanModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+      {editing && <PlanModal plan={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );
 }
 
-function PlanModal({ onClose, onSaved }) {
+// Module-level plan field helpers (defined OUTSIDE components so inputs keep
+// focus across re-renders — a component defined inside another remounts on every
+// keystroke and steals focus).
+function PNumField({ label, value, onChange, ring = 'orange' }) {
+  return (
+    <div>
+      <div className="text-[12px] font-semibold text-slate-600 mb-1">{label}</div>
+      <input value={value} onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={`w-full border border-slate-200 rounded-xl px-3 py-2.5 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-${ring}-200 focus:border-${ring}-300`} />
+    </div>
+  );
+}
+function PSeg({ value, opts, unit, accent, onChange }) {
+  return (
+    <div className="inline-flex bg-slate-100 rounded-xl p-0.5">
+      {opts.map((o) => { const on = String(value) === String(o); return <button key={o} type="button" onClick={() => onChange(String(o))} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: accent } : {}}>{o}{unit || ''}</button>; })}
+    </div>
+  );
+}
+function PRow({ label, children }) { return <div className="flex items-center justify-between py-1.5"><span className="text-[12.5px] font-semibold text-slate-500">{label}</span>{children}</div>; }
+
+function PlanModal({ plan, onClose, onSaved }) {
   const PLAN_SERVICES = [
     { id: 'seo', label: 'SEO', icon: '🔍', desc: 'Keywords, backlinks & content', color: '#2563EB', bg: '#EFF6FF', bd: '#BFDBFE' },
     { id: 'local_seo', label: 'Local SEO', icon: '📍', desc: 'Google Business posts', color: '#0D9488', bg: '#F0FDFA', bd: '#99F6E4' },
@@ -691,12 +722,13 @@ function PlanModal({ onClose, onSaved }) {
     { id: 'smo', label: 'SMO', icon: '📱', desc: 'Social media management', color: '#DB2777', bg: '#FDF2F8', bd: '#FBCFE8' },
   ];
   const SMO_PLATFORMS = [['Facebook', '📘'], ['Instagram', '📷'], ['LinkedIn', '💼'], ['YouTube', '▶️'], ['TikTok', '🎵'], ['Reddit', '👽'], ['Pinterest', '📌']];
+  const pp = (plan && plan.params) || {};
   const [f, setF] = useState({
-    name: '', services: [], callsPerMonth: '',
-    seo: { keywords: '', backlinksPerMonth: '', articlesPerMonth: '', blogsPerMonth: '', rankReportDays: '10', analyticsReportDays: '30' },
-    local_seo: { postsPerMonth: '' },
-    ai_seo: { reportDays: '15' },
-    smo: { platformCount: '3', platforms: [], postsPerMonth: '', reportDays: '15' },
+    name: (plan && plan.name) || '', services: pp.services || [], callsPerMonth: pp.callsPerMonth || '',
+    seo: { keywords: '', backlinksPerMonth: '', articlesPerMonth: '', blogsPerMonth: '', rankReportDays: '10', analyticsReportDays: '30', ...(pp.seo || {}) },
+    local_seo: { postsPerMonth: '', ...(pp.local_seo || {}) },
+    ai_seo: { reportDays: '15', ...(pp.ai_seo || {}) },
+    smo: { platformCount: '3', platforms: [], postsPerMonth: '', reportDays: '15', ...(pp.smo || {}) },
   });
   const [busy, setBusy] = useState(false);
   const has = (s) => f.services.includes(s);
@@ -708,29 +740,21 @@ function PlanModal({ onClose, onSaved }) {
     setBusy(true);
     const params = { services: f.services, callsPerMonth: f.callsPerMonth };
     for (const s of f.services) params[s] = f[s];
-    try { await hrApi('/projects/plans', { method: 'POST', body: JSON.stringify({ service: f.services[0], name: f.name, params }) }); toast('Plan saved 🎉'); onSaved(); } catch (e) { toast(e.message); }
+    try {
+      if (plan && plan.id) await hrApi(`/projects/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ service: f.services[0], name: f.name, params }) });
+      else await hrApi('/projects/plans', { method: 'POST', body: JSON.stringify({ service: f.services[0], name: f.name, params }) });
+      toast(plan && plan.id ? 'Plan updated ✓' : 'Plan saved 🎉'); onSaved();
+    } catch (e) { toast(e.message); }
     setBusy(false);
   };
-  // Big number field with label + optional unit hint.
-  const NumField = ({ svc, k, label }) => (
-    <div>
-      <div className="text-[12px] font-semibold text-slate-600 mb-1">{label}</div>
-      <input value={f[svc][k]} onChange={(e) => setSvc(svc, k, e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300" />
-    </div>
-  );
-  // Segmented pill selector.
-  const Seg = ({ svc, k, opts, unit, accent }) => (
-    <div className="inline-flex bg-slate-100 rounded-xl p-0.5">
-      {opts.map((o) => { const on = String(f[svc][k]) === String(o); return <button key={o} type="button" onClick={() => setSvc(svc, k, String(o))} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: accent } : {}}>{o}{unit || ''}</button>; })}
-    </div>
-  );
-  const Row = ({ label, children }) => <div className="flex items-center justify-between py-1.5"><span className="text-[12.5px] font-semibold text-slate-500">{label}</span>{children}</div>;
+  const numField = (svc, k, label) => <PNumField label={label} value={f[svc][k]} onChange={(v) => setSvc(svc, k, v)} />;
+  const seg = (svc, k, opts, unit, accent) => <PSeg value={f[svc][k]} opts={opts} unit={unit} accent={accent} onChange={(v) => setSvc(svc, k, v)} />;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[210] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-5" style={{ background: 'linear-gradient(135deg,#0A0E28,#1e293b)' }}>
-          <div className="text-white text-[17px] font-extrabold">Create a Service Plan</div>
+          <div className="text-white text-[17px] font-extrabold">{plan && plan.id ? 'Edit Service Plan' : 'Create a Service Plan'}</div>
           <div className="text-slate-400 text-[12px] mt-0.5">Presets that auto-fill campaign numbers when creating a project</div>
         </div>
         <div className="p-6 max-h-[600px] overflow-auto">
@@ -756,11 +780,11 @@ function PlanModal({ onClose, onSaved }) {
             <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#BFDBFE' }}>
               <div className="flex items-center gap-2 mb-3"><span className="text-base">🔍</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SEO</span></div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                <NumField svc="seo" k="keywords" label="Keywords" /><NumField svc="seo" k="backlinksPerMonth" label="Backlinks/mo" /><NumField svc="seo" k="articlesPerMonth" label="Articles/mo" /><NumField svc="seo" k="blogsPerMonth" label="Blogs/mo" />
+                {numField('seo','keywords','Keywords')}{numField('seo','backlinksPerMonth','Backlinks/mo')}{numField('seo','articlesPerMonth','Articles/mo')}{numField('seo','blogsPerMonth','Blogs/mo')}
               </div>
               <div className="border-t border-slate-100 pt-2">
-                <Row label="Rank Report"><Seg svc="seo" k="rankReportDays" opts={[10, 15]} unit=" days" accent="#2563EB" /></Row>
-                <Row label="Analytics Report"><Seg svc="seo" k="analyticsReportDays" opts={[30]} unit=" days" accent="#2563EB" /></Row>
+                <PRow label="Rank Report">{seg('seo','rankReportDays',[10, 15],' days','#2563EB')}</PRow>
+                <PRow label="Analytics Report">{seg('seo','analyticsReportDays',[30],' days','#2563EB')}</PRow>
               </div>
             </div>
           )}
@@ -768,14 +792,14 @@ function PlanModal({ onClose, onSaved }) {
           {has('local_seo') && (
             <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#99F6E4' }}>
               <div className="flex items-center gap-2 mb-3"><span className="text-base">📍</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">Local SEO</span></div>
-              <div className="w-40"><NumField svc="local_seo" k="postsPerMonth" label="Posts / month" /></div>
+              <div className="w-40">{numField('local_seo','postsPerMonth','Posts / month')}</div>
             </div>
           )}
 
           {has('ai_seo') && (
             <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#DDD6FE' }}>
               <div className="flex items-center gap-2 mb-3"><span className="text-base">🤖</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">AI SEO</span></div>
-              <Row label="Reporting"><Seg svc="ai_seo" k="reportDays" opts={[15, 30]} unit=" days" accent="#7C3AED" /></Row>
+              <PRow label="Reporting">{seg('ai_seo','reportDays',[15, 30],' days','#7C3AED')}</PRow>
             </div>
           )}
 
@@ -792,7 +816,7 @@ function PlanModal({ onClose, onSaved }) {
             return (
               <div className="rounded-xl border p-4 mb-3" style={{ borderColor: '#FBCFE8' }}>
                 <div className="flex items-center gap-2 mb-3"><span className="text-base">📱</span><span className="text-[13.5px] font-extrabold text-[#050A1F]">SMO</span></div>
-                <Row label="Number of Platforms"><div className="inline-flex bg-slate-100 rounded-xl p-0.5">{[1, 3, 5].map((o) => { const on = String(f.smo.platformCount) === String(o); return <button key={o} type="button" onClick={() => setCount(o)} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: '#DB2777' } : {}}>{o}</button>; })}</div></Row>
+                <PRow label="Number of Platforms"><div className="inline-flex bg-slate-100 rounded-xl p-0.5">{[1, 3, 5].map((o) => { const on = String(f.smo.platformCount) === String(o); return <button key={o} type="button" onClick={() => setCount(o)} className={`px-3.5 py-1.5 rounded-[10px] text-[12.5px] font-bold transition ${on ? 'bg-white shadow-sm' : 'text-slate-400'}`} style={on ? { color: '#DB2777' } : {}}>{o}</button>; })}</div></PRow>
                 <div className="py-1.5">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[12.5px] font-semibold text-slate-500">Select Platforms</span>
@@ -801,7 +825,7 @@ function PlanModal({ onClose, onSaved }) {
                   <div className="flex gap-2 flex-wrap">{SMO_PLATFORMS.map(([pl, ic]) => { const on = f.smo.platforms.includes(pl); const disabled = !on && chosen >= limit; return <button key={pl} type="button" onClick={() => togglePlat(pl)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-semibold border-2 transition" style={{ borderColor: on ? '#DB2777' : '#e2e8f0', background: on ? '#FDF2F8' : '#fff', color: on ? '#DB2777' : (disabled ? '#cbd5e1' : '#64748b'), opacity: disabled ? 0.55 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}><span>{ic}</span>{pl}{on && ' ✓'}</button>; })}</div>
                 </div>
                 <div className="w-44 py-1.5"><div className="text-[12.5px] font-semibold text-slate-500 mb-1">Posts / month</div><input value={f.smo.postsPerMonth} onChange={(e) => setSvc('smo', 'postsPerMonth', e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-[15px] font-bold text-[#050A1F] text-center focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300" /></div>
-                <div className="border-t border-slate-100 pt-2"><Row label="Reporting"><Seg svc="smo" k="reportDays" opts={[15, 30]} unit=" days" accent="#DB2777" /></Row></div>
+                <div className="border-t border-slate-100 pt-2"><PRow label="Reporting">{seg('smo','reportDays',[15, 30],' days','#DB2777')}</PRow></div>
               </div>
             );
           })()}

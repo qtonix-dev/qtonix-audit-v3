@@ -10047,8 +10047,8 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['holidays', 'Holiday'], ['emails', 'Email'], ['tv', 'TV Display'], ['projectflow', 'Project Flow'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
-  const [orgSub, setOrgSub] = useState('basic'); // basic | shifts | access
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['projectflow', 'Project Flow'], ['emails', 'Email'], ['tv', 'TV Display'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const [orgSub, setOrgSub] = useState('basic'); // basic | shifts | holidays | access
 
   return (
     <div className="max-w-5xl">
@@ -10170,7 +10170,7 @@ function HrAdmin({ user, onOpenCandidate }) {
         <div>
           {/* Sub-tabs under Organization */}
           <div className="flex gap-2 mb-5">
-            {[['basic', 'Basic Setting'], ['shifts', 'Shifts'], ['access', 'Access Control']].map(([id, l]) => (
+            {[['basic', 'Basic Setting'], ['shifts', 'Shifts'], ['holidays', 'Holiday'], ['access', 'Access Control']].map(([id, l]) => (
               <button key={id} onClick={() => setOrgSub(id)} className={`px-4 py-2 rounded-lg text-[13px] font-bold transition ${orgSub === id ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={orgSub === id ? { background: ORANGE } : {}}>{l}</button>
             ))}
           </div>
@@ -10222,12 +10222,12 @@ function HrAdmin({ user, onOpenCandidate }) {
           )}
 
           {orgSub === 'shifts' && <ShiftsManager shifts={shifts} reload={load} setErr={setErr} />}
+          {orgSub === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
           {orgSub === 'access' && <AccessControlAdmin />}
         </div>
       )}
 
       {/* HOLIDAYS TAB */}
-      {tab === 'holidays' && <div className="space-y-8"><HolidaysManager holidays={holidays} branches={branches} reload={load} setErr={setErr} /><LeavePolicyManager branches={branches} isAdmin={!!user.isAdmin} setErr={setErr} /></div>}
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'emails' && <HrEmailsTab onOpenCandidate={onOpenCandidate} />}
