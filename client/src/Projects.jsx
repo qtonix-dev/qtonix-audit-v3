@@ -581,7 +581,7 @@ function FlowTemplatesAdmin() {
   useEffect(() => { load(); }, []);
   if (editing) return <TemplateEditor tmpl={editing} onBack={() => { setEditing(null); load(); }} />;
   if (!templates) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
-  const blank = { name: 'New Template', projectType: 'seo', recurring: true, stages: [] };
+  const blank = { name: '', services: [], projectType: 'seo', recurring: true, stages: [] };
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -591,8 +591,9 @@ function FlowTemplatesAdmin() {
       <div className="grid md:grid-cols-2 gap-3">
         {templates.map((t) => (
           <div key={t.id} onClick={() => setEditing(t)} className="bg-white border border-slate-200 rounded-xl p-4 cursor-pointer hover:shadow-md">
-            <div className="flex items-center justify-between"><div className="font-extrabold text-[#050A1F]">{t.name}</div>{t.recurring && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-600">Recurring</span>}</div>
-            <div className="text-[12px] text-slate-400 mt-1 capitalize">{t.projectType.replace(/_/g, ' + ')} · {(t.stages || []).length} stages · {(t.stages || []).reduce((n, s) => n + (s.steps || []).length, 0)} steps</div>
+            <div className="flex items-center justify-between mb-1"><div className="font-extrabold text-[#050A1F]">{t.name || 'Untitled template'}</div>{t.recurring && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-600">Recurring</span>}</div>
+            <div className="flex gap-1 flex-wrap mb-1.5">{((t.services && t.services.length) ? t.services : [t.projectType]).map((s) => { const sv = TEMPLATE_SERVICES.find((x) => x.id === s); return <span key={s} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{sv ? `${sv.icon} ${sv.label}` : s}</span>; })}</div>
+            <div className="text-[12px] text-slate-400">{(t.stages || []).length} stages · {(t.stages || []).reduce((n, s) => n + (s.steps || []).length, 0)} steps</div>
           </div>
         ))}
         {templates.length === 0 && <div className="text-slate-400 text-sm py-6">No templates yet.</div>}
@@ -601,51 +602,100 @@ function FlowTemplatesAdmin() {
   );
 }
 
+const TEMPLATE_SERVICES = [
+  { id: 'website_design', label: 'Website Design', icon: '🎨' },
+  { id: 'web_development', label: 'Web Development', icon: '💻' },
+  { id: 'seo', label: 'SEO', icon: '🔍' },
+  { id: 'local_seo', label: 'Local SEO', icon: '📍' },
+  { id: 'ai_seo', label: 'AI SEO', icon: '🤖' },
+  { id: 'smo', label: 'SMO', icon: '📱' },
+  { id: 'paid_ads', label: 'Paid Ads', icon: '🎯' },
+  { id: 'video', label: 'Video', icon: '🎬' },
+  { id: 'other', label: 'Other', icon: '✨' },
+];
+const DEPT_COLOR = { PM: '#4F46E5', Design: '#7C3AED', Development: '#EA580C', SEO: '#2563EB', Content: '#16A34A', 'Social Media': '#DB2777', 'Performance Marketing': '#0891B2', Support: '#64748B' };
+
 function TemplateEditor({ tmpl, onBack }) {
-  const [t, setT] = useState(JSON.parse(JSON.stringify(tmpl)));
+  const init = JSON.parse(JSON.stringify(tmpl));
+  if (!init.services) init.services = init.projectType ? [init.projectType] : [];
+  const [t, setT] = useState(init);
   const [busy, setBusy] = useState(false);
   const upd = (k, v) => setT((s) => ({ ...s, [k]: v }));
+  const toggleSvc = (id) => setT((s) => ({ ...s, services: (s.services || []).includes(id) ? s.services.filter((x) => x !== id) : [...(s.services || []), id] }));
   const addStage = () => setT((s) => ({ ...s, stages: [...(s.stages || []), { name: `Stage ${(s.stages || []).length + 1}`, steps: [] }] }));
   const updStage = (i, k, v) => setT((s) => { const st = [...s.stages]; st[i] = { ...st[i], [k]: v }; return { ...s, stages: st }; });
   const delStage = (i) => setT((s) => ({ ...s, stages: s.stages.filter((_, x) => x !== i) }));
-  const addStep = (si) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: [...(st[si].steps || []), { name: 'New step', department: 'PM', deadlineDays: 3, needsClientApproval: false, isRecurringMonthly: false, isOptional: false }] }; return { ...s, stages: st }; });
+  const addStep = (si) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: [...(st[si].steps || []), { name: '', department: 'PM', deadlineDays: 3, needsClientApproval: false, isRecurringMonthly: false, isOptional: false }] }; return { ...s, stages: st }; });
   const updStep = (si, pi, k, v) => setT((s) => { const st = [...s.stages]; const steps = [...st[si].steps]; steps[pi] = { ...steps[pi], [k]: v }; st[si] = { ...st[si], steps }; return { ...s, stages: st }; });
   const delStep = (si, pi) => setT((s) => { const st = [...s.stages]; st[si] = { ...st[si], steps: st[si].steps.filter((_, x) => x !== pi) }; return { ...s, stages: st }; });
-  const save = async () => { setBusy(true); try { if (t.id) await hrApi(`/projects/templates/${t.id}`, { method: 'PUT', body: JSON.stringify(t) }); else await hrApi('/projects/templates', { method: 'POST', body: JSON.stringify(t) }); toast('Saved'); onBack(); } catch (e) { toast(e.message); } setBusy(false); };
+  const save = async () => {
+    if (!t.name.trim()) { toast('Give the template a name'); return; }
+    if (!(t.services || []).length) { toast('Select at least one service'); return; }
+    setBusy(true);
+    const body = { ...t, projectType: t.services[0] };
+    try { if (t.id) await hrApi(`/projects/templates/${t.id}`, { method: 'PUT', body: JSON.stringify(body) }); else await hrApi('/projects/templates', { method: 'POST', body: JSON.stringify(body) }); toast(t.id ? 'Template updated ✓' : 'Template created 🎉'); onBack(); } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
   const del = async () => { if (t.id && window.confirm('Delete this template?')) { await hrApi(`/projects/templates/${t.id}`, { method: 'DELETE' }); onBack(); } };
+  const stepCount = (t.stages || []).reduce((n, s) => n + (s.steps || []).length, 0);
+
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-4"><button onClick={onBack} className="text-slate-400 text-[13px] font-semibold">← Templates</button></div>
-      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-3 flex items-center gap-3 flex-wrap">
-        <input value={t.name} onChange={(e) => upd('name', e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[14px] font-bold flex-1 min-w-[180px]" />
-        <select value={t.projectType} onChange={(e) => upd('projectType', e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]"><option value="website">Website</option><option value="seo">SEO</option><option value="seo_social">SEO + Social</option><option value="seo_social_ads">SEO+Social+Ads</option><option value="custom">Custom</option></select>
-        <label className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-600"><input type="checkbox" checked={t.recurring} onChange={(e) => upd('recurring', e.target.checked)} /> Recurring monthly</label>
+    <div className="max-w-3xl">
+      <div className="flex items-center gap-2 mb-4"><button onClick={onBack} className="text-slate-400 text-[13px] font-semibold hover:text-slate-600">← Back to templates</button></div>
+
+      {/* Header card */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+        <div className="text-[12px] font-bold text-slate-500 mb-1.5">TEMPLATE NAME</div>
+        <input value={t.name} onChange={(e) => upd('name', e.target.value)} placeholder="e.g. SEO + Social — Standard" className="w-full border border-slate-200 rounded-xl px-4 py-3 text-[15px] font-semibold mb-4 focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300" />
+        <div className="text-[12px] font-bold text-slate-500 mb-2">APPLIES TO SERVICES <span className="normal-case text-slate-300 font-normal">· select all that apply</span></div>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {TEMPLATE_SERVICES.map((s) => { const on = (t.services || []).includes(s.id); return <button key={s.id} type="button" onClick={() => toggleSvc(s.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12.5px] font-bold border-2 transition" style={{ borderColor: on ? '#FF6A00' : '#e2e8f0', background: on ? '#FFF7ED' : '#fff', color: on ? '#EA580C' : '#64748b' }}><span>{s.icon}</span>{s.label}{on && ' ✓'}</button>; })}
+        </div>
+        <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-600 cursor-pointer"><input type="checkbox" checked={t.recurring} onChange={(e) => upd('recurring', e.target.checked)} className="w-4 h-4 accent-orange-500" /> Recurring monthly service <span className="text-[11px] text-slate-400 font-normal">(spins up new tasks each month)</span></label>
       </div>
+
+      {/* Stages */}
+      <div className="flex items-center justify-between mb-2 px-1"><div className="text-[13px] font-extrabold text-[#050A1F]">Stages & Steps</div><div className="text-[12px] text-slate-400">{(t.stages || []).length} stages · {stepCount} steps</div></div>
       {(t.stages || []).map((stage, si) => (
-        <div key={si} className="bg-white border border-slate-200 rounded-xl p-4 mb-3">
-          <div className="flex items-center gap-2 mb-3"><input value={stage.name} onChange={(e) => updStage(si, 'name', e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[13px] font-bold flex-1" /><button onClick={() => delStage(si)} className="text-red-400 text-[12px]">Delete stage</button></div>
-          {(stage.steps || []).map((step, pi) => (
-            <div key={pi} className="border border-slate-100 rounded-lg p-2.5 mb-2 bg-slate-50/50">
-              <div className="flex items-center gap-2 mb-2">
-                <input value={step.name} onChange={(e) => updStep(si, pi, 'name', e.target.value)} className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-[13px] flex-1" placeholder="Step name" />
-                <select value={step.department} onChange={(e) => updStep(si, pi, 'department', e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12.5px]">{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select>
-                <div className="flex items-center gap-1 text-[12px]"><span className="text-slate-400">+</span><input type="number" value={step.deadlineDays} onChange={(e) => updStep(si, pi, 'deadlineDays', Number(e.target.value))} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12.5px] w-14" /><span className="text-slate-400">days</span></div>
-                <button onClick={() => delStep(si, pi)} className="text-red-400 text-[12px] px-1">✕</button>
+        <div key={si} className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
+          <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
+            <span className="w-6 h-6 rounded-full bg-slate-800 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{si + 1}</span>
+            <input value={stage.name} onChange={(e) => updStage(si, 'name', e.target.value)} placeholder="Stage name" className="bg-transparent text-[14px] font-extrabold text-[#050A1F] flex-1 focus:outline-none" />
+            <button onClick={() => delStage(si)} title="Delete stage" className="text-slate-300 hover:text-red-500 text-[16px]">🗑</button>
+          </div>
+          <div className="p-3 space-y-2">
+            {(stage.steps || []).map((step, pi) => (
+              <div key={pi} className="border border-slate-100 rounded-xl p-3 bg-slate-50/40">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className="text-slate-300 text-[13px] shrink-0">{pi + 1}.</span>
+                  <input value={step.name} onChange={(e) => updStep(si, pi, 'name', e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] flex-1 bg-white" placeholder="What needs to be done?" />
+                  <button onClick={() => delStep(si, pi)} title="Remove step" className="text-slate-300 hover:text-red-500 text-[15px] shrink-0">✕</button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pl-6">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-semibold">Team</span>
+                    <select value={step.department} onChange={(e) => updStep(si, pi, 'department', e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] font-semibold bg-white" style={{ color: DEPT_COLOR[step.department] || '#334155' }}>{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                    <span className="text-[11px] text-slate-400 font-semibold">Due +</span>
+                    <input type="number" value={step.deadlineDays} onChange={(e) => updStep(si, pi, 'deadlineDays', Number(e.target.value))} className="w-10 text-[12.5px] font-bold text-center focus:outline-none" />
+                    <span className="text-[11px] text-slate-400">days</span>
+                  </div>
+                  <button type="button" onClick={() => updStep(si, pi, 'needsClientApproval', !step.needsClientApproval)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.needsClientApproval ? '#7C3AED' : '#e2e8f0', background: step.needsClientApproval ? '#F5F3FF' : '#fff', color: step.needsClientApproval ? '#7C3AED' : '#94a3b8' }}>{step.needsClientApproval ? '✓ ' : ''}Client approval</button>
+                  <button type="button" onClick={() => updStep(si, pi, 'isRecurringMonthly', !step.isRecurringMonthly)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.isRecurringMonthly ? '#EA580C' : '#e2e8f0', background: step.isRecurringMonthly ? '#FFF7ED' : '#fff', color: step.isRecurringMonthly ? '#EA580C' : '#94a3b8' }}>{step.isRecurringMonthly ? '✓ ' : ''}Monthly</button>
+                  <button type="button" onClick={() => updStep(si, pi, 'isOptional', !step.isOptional)} className="px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border-2 transition" style={{ borderColor: step.isOptional ? '#B45309' : '#e2e8f0', background: step.isOptional ? '#FEF3C7' : '#fff', color: step.isOptional ? '#B45309' : '#94a3b8' }}>{step.isOptional ? '✓ ' : ''}Optional</button>
+                </div>
               </div>
-              <div className="flex gap-3 text-[12px] text-slate-600">
-                <label className="flex items-center gap-1"><input type="checkbox" checked={step.needsClientApproval} onChange={(e) => updStep(si, pi, 'needsClientApproval', e.target.checked)} /> Client approval</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={step.isRecurringMonthly} onChange={(e) => updStep(si, pi, 'isRecurringMonthly', e.target.checked)} /> Recurring monthly</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={step.isOptional} onChange={(e) => updStep(si, pi, 'isOptional', e.target.checked)} /> Optional</label>
-              </div>
-            </div>
-          ))}
-          <button onClick={() => addStep(si)} className="text-[12.5px] font-bold text-blue-600">+ Add step</button>
+            ))}
+            <button onClick={() => addStep(si)} className="w-full text-[12.5px] font-bold text-slate-400 hover:text-orange-600 border border-dashed border-slate-200 rounded-xl py-2 transition">+ Add step</button>
+          </div>
         </div>
       ))}
-      <button onClick={addStage} className="text-[13px] font-bold text-slate-500 border border-dashed border-slate-300 rounded-xl px-4 py-2.5 w-full mb-4">+ Add stage</button>
-      <div className="flex justify-between">
-        <button onClick={del} className="text-[13px] font-bold text-red-500">{t.id ? 'Delete template' : ''}</button>
-        <div className="flex gap-2"><button onClick={onBack} className="px-4 py-2 rounded-lg text-[13px] font-bold text-slate-500 bg-slate-100">Cancel</button><button onClick={save} disabled={busy} className="px-5 py-2 rounded-lg text-[13px] font-extrabold text-white" style={{ background: ORANGE }}>Save Template</button></div>
+      <button onClick={addStage} className="text-[13px] font-bold text-slate-500 hover:text-orange-600 border-2 border-dashed border-slate-300 rounded-2xl px-4 py-3 w-full mb-4 transition">+ Add stage</button>
+
+      <div className="flex justify-between items-center sticky bottom-0 bg-slate-50/80 backdrop-blur py-2 -mx-1 px-1 rounded-lg">
+        <button onClick={del} className="text-[13px] font-bold text-red-500">{t.id ? '🗑 Delete template' : ''}</button>
+        <div className="flex gap-2"><button onClick={onBack} className="px-4 py-2.5 rounded-xl text-[13px] font-bold text-slate-500 bg-slate-100">Cancel</button><button onClick={save} disabled={busy} className="px-6 py-2.5 rounded-xl text-[13px] font-extrabold text-white" style={{ background: ORANGE, opacity: busy ? 0.6 : 1 }}>{t.id ? 'Save Changes' : 'Create Template'}</button></div>
       </div>
     </div>
   );

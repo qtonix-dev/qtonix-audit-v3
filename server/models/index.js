@@ -617,6 +617,10 @@ const Settings = sequelize.define(
      * instantly kills any link that has been shared too widely.
      */
     demoAppEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+    // HRMS demo (separate SQLite DB): admin toggles on to share role-based URLs.
+    hrDemoEnabled: { type: DataTypes.BOOLEAN, defaultValue: false },
+    hrDemoToken: { type: DataTypes.STRING(64), allowNull: true },
+    hrDemoStartedAt: { type: DataTypes.DATE, allowNull: true },
     demoAppToken: { type: DataTypes.STRING(64) },
     // When the current demo link was switched on, purely so the admin screen
     // can show "running since ..." and nudge them to turn it off again.
@@ -2147,6 +2151,7 @@ const ProjectTemplate = sequelize.define('ProjectTemplate', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(120), defaultValue: '' },
   projectType: { type: DataTypes.STRING(40), defaultValue: 'seo' },
+  services: { type: DataTypes.JSON, defaultValue: [] }, // multi-select service tags
   recurring: { type: DataTypes.BOOLEAN, defaultValue: false },
   // stages: [{ name, steps: [{ name, department, deadlineDays, needsClientApproval, isRecurringMonthly, isOptional }] }]
   stages: { type: DataTypes.JSON, defaultValue: [] },

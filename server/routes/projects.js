@@ -70,7 +70,7 @@ router.post('/templates', guard, requireHrAdmin, async (req, res, next) => {
   try {
     const b = req.body || {};
     const act = await actor(req);
-    const t = await ProjectTemplate.create({ name: String(b.name || 'Template').slice(0, 120), projectType: b.projectType || 'seo', recurring: !!b.recurring, stages: Array.isArray(b.stages) ? b.stages : [], isDefault: !!b.isDefault, createdById: act.id });
+    const t = await ProjectTemplate.create({ name: String(b.name || 'Template').slice(0, 120), projectType: b.projectType || (Array.isArray(b.services) && b.services[0]) || 'seo', services: Array.isArray(b.services) ? b.services : [], recurring: !!b.recurring, stages: Array.isArray(b.stages) ? b.stages : [], isDefault: !!b.isDefault, createdById: act.id });
     res.status(201).json(t.toJSON());
   } catch (e) { next(e); }
 });
@@ -80,6 +80,7 @@ router.put('/templates/:id', guard, requireHrAdmin, async (req, res, next) => {
     const b = req.body || {};
     if (b.name !== undefined) t.name = String(b.name).slice(0, 120);
     if (b.projectType !== undefined) t.projectType = b.projectType;
+    if (Array.isArray(b.services)) { t.services = b.services; t.changed('services', true); }
     if (b.recurring !== undefined) t.recurring = !!b.recurring;
     if (Array.isArray(b.stages)) { t.stages = b.stages; t.changed('stages', true); }
     await t.save(); res.json(t.toJSON());
