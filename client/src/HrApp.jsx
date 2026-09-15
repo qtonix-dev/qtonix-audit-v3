@@ -3405,8 +3405,8 @@ function RichText({ value, onSave, placeholder, taskTitle }) {
   const modeTag = { improve: 'IMPROVED', rewrite: 'REWRITTEN', professional: 'PROFESSIONAL', shorter: 'SHORTER', friendly: 'FRIENDLY' };
   return (
     <div>
-      <div className="rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-orange-300">
-        <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1 flex-wrap relative">
+      <div className="rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-orange-300 overflow-hidden">
+        <div className="sticky top-0 z-20 bg-white flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1 flex-wrap relative">
           <Btn title="Bold" on={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')}>B</Btn>
           <Btn title="Italic" on={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')}><span className="italic">I</span></Btn>
           <Btn title="Strikethrough" on={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')}><span className="line-through">S</span></Btn>
@@ -3441,7 +3441,7 @@ function RichText({ value, onSave, placeholder, taskTitle }) {
             )}
           </div>
         </div>
-        <div onBlur={() => { const html = editor.getHTML(); if (onSave && html !== lastSaved.current) { lastSaved.current = html; onSave(html); } }}>
+        <div className="max-h-[45vh] overflow-y-auto" onBlur={() => { const html = editor.getHTML(); if (onSave && html !== lastSaved.current) { lastSaved.current = html; onSave(html); } }}>
           <EditorContent editor={editor} />
           {editor.isEmpty && placeholder && <div className="px-3 -mt-[60px] text-sm text-slate-400 pointer-events-none">{placeholder}</div>}
         </div>
@@ -3534,7 +3534,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   if (!data) return null;
   const t = data.task;
   return (
-    <div className="fixed inset-0 z-[120] flex justify-end" onClick={onClose}>
+    <div className={`fixed inset-0 ${isSubtask ? 'z-[140]' : 'z-[120]'} flex justify-end`} onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
       <div className="relative bg-white w-full h-full shadow-2xl overflow-auto" style={{ maxWidth: '806px' }} onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-100 px-5 py-3 flex items-center justify-between z-10">
@@ -3568,7 +3568,21 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                 </div>
               </TField>
             ) : (
-              <TField label="Assignee"><AssigneePicker value={t.assignee} onChange={(p) => patch({ assigneeId: p ? p.id : null })} allowClear /></TField>
+              <TField label="Assignees">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {((t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])).map((a) => (
+                    <div key={a.id} className="group/av relative flex items-center gap-1.5 bg-slate-50 rounded-full pl-0.5 pr-2 py-0.5 border border-slate-200">
+                      <TAvatar person={a} size={24} />
+                      <span className="text-[12px] font-semibold text-slate-700 max-w-[90px] truncate">{titleCase(a.name)}</span>
+                      <button onClick={() => { const cur = (t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : []); if (cur.length <= 1) { toast('A subtask needs at least one assignee. Add someone else first, then remove this person.'); return; } patch({ toggleAssignee: a.id }); }} title="Remove" className="text-slate-300 hover:text-red-500 text-[13px] font-bold leading-none">×</button>
+                    </div>
+                  ))}
+                  <AssigneePicker multi compact placeholder="+ Add"
+                    values={(t.assignees && t.assignees.length) ? t.assignees : (t.assignee ? [t.assignee] : [])}
+                    onToggle={(p) => patch({ toggleAssignee: p.id })}
+                  />
+                </div>
+              </TField>
             )}
             {(t.reassignChain || []).length > 0 && (
               <div className="rounded-lg bg-orange-50 border border-orange-100 p-2.5">
