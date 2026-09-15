@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { HrUser, User } = require('../models');
+const { HrUser, User, runWithDemoScope } = require('../models');
 
 const SECRET = () => process.env.JWT_SECRET || 'change-me-in-production';
 
@@ -35,18 +35,13 @@ async function requireHrAccess(req, res, next) {
 
   // HR staff token.
   if (payload.portal === 'hr') {
-    const hr = await HrUser.findByPk(payload.id);
+    const hr = await HrUser.findByPk(payload.id, { bypassDemoScope: true });
     if (!hr || !hr.active) return res.status(401).json({ error: 'This account is no longer active.' });
     req.hrUser = hr;
     req.isDemoSession = !!hr.isDemo;   // demo employees only ever see demo data
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins
-    // Branch scope for HR-manager privileges. "HR Manager" is someone explicitly
-    // granted the privilege (isHrManager flag or an hrManagerScope set by an
-    // admin), OR — legacy fallback — a manager WITHIN the HR department. A plain
-    // job-type of 'manager' in a non-HR department (e.g. a Sales manager) must
-    // NOT confer HR-manager privileges.
     const deptIsHr = /^(hr|human resource|human resources)$/i.test(String(hr.department || '').trim());
     const hrRole = deptIsHr || ['hr', 'recruiter'].includes(hr.type);
     let scope = (hr.hrManagerScope || '').trim();
@@ -56,7 +51,9 @@ async function requireHrAccess(req, res, next) {
     req.hrManagerAll = scope.toLowerCase() === 'all';
     req.hrBranch = hr.branch || '';
     req.isHrRole = hrRole;                           // HR-department / hr / recruiter
-    return next();
+    // Run the rest of the request inside the demo/live scope so EVERY HrUser
+    // query is auto-filtered to the correct realm.
+    return runWithDemoScope(!!hr.isDemo, () => next());
   }
 
   // Otherwise it must be a CRM admin.
@@ -72,7 +69,7 @@ async function requireHrAccess(req, res, next) {
   req.hrManagerScope = '';
   req.hrManagerAll = false;
   req.hrBranch = '';
-  next();
+  return runWithDemoScope(false, () => next());
 }
 
 // Guards HR admin-only routes (managing HR users and branches).

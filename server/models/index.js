@@ -49,6 +49,18 @@ function decrypt(payload) {
 // ---------------------------------------------------------------------------
 const dialect = process.env.DB_DIALECT || 'mysql';
 
+// Per-request demo context. When a request is served for a demo session, we set
+// demoScope=true here (via runWithDemoScope) so that EVERY HrUser query in that
+// request is automatically filtered to demo rows — and live requests are always
+// filtered to non-demo rows. This guarantees demo and live data never mix,
+// without having to touch ~100 individual query call sites.
+const { AsyncLocalStorage } = require('async_hooks');
+const demoStore = new AsyncLocalStorage();
+function runWithDemoScope(isDemo, fn) { return demoStore.run({ isDemo: !!isDemo }, fn); }
+function currentDemoScope() { const s = demoStore.getStore(); return s ? !!s.isDemo : false; }
+function hasDemoContext() { return demoStore.getStore() !== undefined; }
+
+
 const sequelize =
   dialect === 'sqlite'
     ? new Sequelize({
@@ -1424,6 +1436,23 @@ const HrUser = sequelize.define('HrUser', {
   tableName: 'hr_users',
   indexes: [{ name: 'idx_hr_users_email', unique: true, fields: ['email'] }],
 });
+// GLOBAL demo isolation: every HrUser query is auto-filtered to the current
+// request's realm (live rows for live sessions, demo rows for demo sessions).
+// A query can opt out by passing `where.isDemo` explicitly or option
+// `bypassDemoScope: true` (used by the demo seeder/wiper and auth lookups).
+HrUser.addHook('beforeFind', (options) => {
+  if (options && options.bypassDemoScope) return;
+  options.where = options.where || {};
+  // If the caller already constrained isDemo, respect it.
+  const w = options.where;
+  const hasIsDemo = Object.prototype.hasOwnProperty.call(w, 'isDemo')
+    || (w[Op.and] && JSON.stringify(w[Op.and]).includes('isDemo'))
+    || (w[Op.or] && JSON.stringify(w[Op.or]).includes('isDemo'));
+  if (hasIsDemo) return;
+  // Only apply when we have a request context; background jobs (no context)
+  // default to LIVE rows so schedulers never touch demo data.
+  w.isDemo = hasDemoContext() ? currentDemoScope() : false;
+});
 HrUser.prototype.toJSON = function () {
   const o = Object.assign({}, this.get());
   o._id = o.id;
@@ -2733,6 +2762,7 @@ TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.g
 
 module.exports = {
   sequelize, Sequelize, Op,
+  runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan,

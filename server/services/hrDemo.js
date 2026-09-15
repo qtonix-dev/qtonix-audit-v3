@@ -33,7 +33,7 @@ const SEED = [
 ];
 
 async function wipeDemo() {
-  const demoUsers = await HrUser.findAll({ where: { isDemo: true }, attributes: ['id'] });
+  const demoUsers = await HrUser.findAll({ where: { isDemo: true }, attributes: ['id'], bypassDemoScope: true });
   const ids = demoUsers.map((u) => u.id);
   if (ids.length) {
     await Task.destroy({ where: { [Op.or]: [{ boardOwnerId: { [Op.in]: ids } }, { assigneeId: { [Op.in]: ids } }] } }).catch(() => {});
@@ -63,13 +63,13 @@ async function seedDemo() {
     if (s.type === 'manager') managerByDept[s.department] = u;
   }
   // Wire reporting lines: staff → their dept manager (or SEO lead as fallback).
-  const staff = await HrUser.findAll({ where: { isDemo: true, type: 'junior' } });
+  const staff = await HrUser.findAll({ where: { isDemo: true, type: 'junior' }, bypassDemoScope: true });
   for (const st of staff) {
     const mgr = managerByDept[st.department] || created.manager_seo;
     if (mgr) { st.reportsToId = mgr.id; await st.save(); }
   }
   // Attendance for the last 10 working days + a few tasks per person.
-  const all = await HrUser.findAll({ where: { isDemo: true } });
+  const all = await HrUser.findAll({ where: { isDemo: true }, bypassDemoScope: true });
   for (const u of all) {
     for (let d = 0; d < 10; d++) {
       const date = daysAgo(d);
@@ -93,8 +93,8 @@ async function seedDemo() {
 async function demoUserForRole(role) {
   const key = role === 'admin' ? 'admin' : role === 'manager' ? 'manager_seo' : 'employee';
   const email = `${key}@${DEMO_EMAIL_DOMAIN}`;
-  let u = await HrUser.findOne({ where: { email, isDemo: true } });
-  if (!u) { await seedDemo(); u = await HrUser.findOne({ where: { email, isDemo: true } }); }
+  let u = await HrUser.findOne({ where: { email, isDemo: true }, bypassDemoScope: true });
+  if (!u) { await seedDemo(); u = await HrUser.findOne({ where: { email, isDemo: true }, bypassDemoScope: true }); }
   return u;
 }
 
