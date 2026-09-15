@@ -32,6 +32,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Routes>
           <Route path="/admin" element={<Admin />} />
           <Route path="/hr/*" element={<HrApp />} />
+          <Route path="/hr-demo/*" element={<HrApp />} />
           <Route path="/*" element={<App />} />
         </Routes>
       )}

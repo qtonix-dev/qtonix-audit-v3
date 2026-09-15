@@ -437,7 +437,7 @@ router.get('/team-report/dates', guard, async (req, res, next) => {
     const limit = Math.min(31, Number(req.query.limit) || defaultLimit);
 
     let roster;
-    if (actor.isAdmin) { const { HrUser } = require('../models'); roster = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } }); }
+    if (actor.isAdmin) { const { HrUser } = require('../models'); roster = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true }, isDemo: !!req.isDemoSession } }); }
     else roster = await teamReport.teamOf(actor.id);
     const empIds = roster.map((e) => e.id);
     const branches = roster.map((e) => e.branch || '');

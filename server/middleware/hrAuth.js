@@ -38,6 +38,7 @@ async function requireHrAccess(req, res, next) {
     const hr = await HrUser.findByPk(payload.id);
     if (!hr || !hr.active) return res.status(401).json({ error: 'This account is no longer active.' });
     req.hrUser = hr;
+    req.isDemoSession = !!hr.isDemo;   // demo employees only ever see demo data
     req.hrActor = { kind: 'hr', id: hr.id, name: hr.name, type: hr.type };
     req.hrType = hr.type;
     req.isHrAdmin = false; // HR staff are never HR-portal admins

@@ -251,10 +251,60 @@ router.post('/auth/login', async (req, res) => {
 /** POST /api/hr/auth/logout — records the logout event (best-effort). */
 router.post('/auth/logout', requireHrAccess, async (req, res) => {
   try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'hr.logout', target: 'HR portal', ip: req.ip }); } catch {}
-  // Pause any running task timers for this user so idle/after-hours time isn't
-  // counted — banks the open work segment; it resumes when they next work on it.
   try { if (req.hrUser && req.hrUser.id) await require('./hrTasks').pauseTimersForUsers([req.hrUser.id]); } catch {}
   res.json({ ok: true });
+});
+
+// ===== HRMS DEMO =====
+// Public: exchange a demo token + role for a real HR session (no login). Only
+// works while the admin has the demo enabled and the token matches.
+router.post('/demo/session', async (req, res, next) => {
+  try {
+    const { token, role } = req.body || {};
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!s || !s.hrDemoEnabled || !s.hrDemoToken || token !== s.hrDemoToken) return res.status(404).json({ error: 'Demo is not available.' });
+    const r = ['admin', 'manager', 'employee'].includes(role) ? role : 'employee';
+    const hrDemo = require('../services/hrDemo');
+    const u = await hrDemo.demoUserForRole(r);
+    if (!u) return res.status(500).json({ error: 'Demo not ready.' });
+    // For the "admin" role we still sign an HR token, but this seeded user has
+    // hrManagerScope 'all' so they see everything like an HR manager. (True CRM
+    // admin powers aren't granted in demo.)
+    res.json({ token: signHr(u), user: { ...u.toJSON(), portal: 'hr', isAdmin: false, demo: true, demoRole: r } });
+  } catch (e) { next(e); }
+});
+
+// Admin: read demo status (enabled + token + the 3 URLs).
+router.get('/demo/config', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ enabled: !!(s && s.hrDemoEnabled), token: (s && s.hrDemoToken) || null, startedAt: (s && s.hrDemoStartedAt) || null });
+  } catch (e) { next(e); }
+});
+
+// Admin: enable/disable, regenerate token, or reset (reseed) the demo data.
+router.put('/demo/config', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    let s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!s) s = await Settings.create({ singleton: 'settings' });
+    const hrDemo = require('../services/hrDemo');
+    if (b.action === 'regenerate') {
+      s.hrDemoToken = require('crypto').randomBytes(20).toString('hex');
+      await s.save();
+    } else if (b.action === 'reset') {
+      await hrDemo.seedDemo();
+    } else if (b.enabled !== undefined) {
+      const turningOn = !!b.enabled && !s.hrDemoEnabled;
+      s.hrDemoEnabled = !!b.enabled;
+      if (s.hrDemoEnabled && !s.hrDemoToken) s.hrDemoToken = require('crypto').randomBytes(20).toString('hex');
+      if (turningOn) { s.hrDemoStartedAt = new Date(); await s.save(); await hrDemo.seedDemo(); }
+      else if (!s.hrDemoEnabled) { s.hrDemoStartedAt = null; await s.save(); await hrDemo.wipeDemo(); }
+      else await s.save();
+    }
+    try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'hrDemo.' + (b.action || (b.enabled ? 'enable' : 'disable')), target: 'HRMS demo', ip: req.ip }); } catch {}
+    res.json({ enabled: !!s.hrDemoEnabled, token: s.hrDemoToken, startedAt: s.hrDemoStartedAt });
+  } catch (e) { next(e); }
 });
 
 /** GET /api/hr/me — the signed-in HR actor (staff or admin), for the greeting. */
@@ -676,7 +726,7 @@ router.put('/access-control/:id', requireHrAccess, async (req, res, next) => {
 
 router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
-    const rows = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true } }, order: [['name', 'ASC']] });
+    const rows = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true }, isDemo: !!req.isDemoSession }, order: [['name', 'ASC']] });
     let list = rows.map((u) => ({
       _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,

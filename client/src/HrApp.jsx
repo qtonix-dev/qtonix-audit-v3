@@ -9382,6 +9382,51 @@ function BranchAddress({ branch, onSaved }) {
   );
 }
 
+function HrmsDemoPanel() {
+  const [cfg, setCfg] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => hrApi('/demo/config').then(setCfg).catch(() => setCfg({ enabled: false }));
+  useEffect(() => { load(); }, []);
+  const act = async (body, label) => { setBusy(label); try { const r = await hrApi('/demo/config', { method: 'PUT', body: JSON.stringify(body) }); setCfg(r); toast('Done'); } catch (e) { toast(e.message); } setBusy(''); };
+  if (!cfg) return null;
+  const origin = window.location.origin;
+  const base = cfg.token ? `${origin}/hr-demo/${cfg.token}` : '';
+  const roles = [['admin', 'HR / Admin', '👑'], ['manager', 'Manager / Dept Head', '👔'], ['employee', 'Employee', '🧑‍💼']];
+  const copy = (url) => { navigator.clipboard.writeText(url).then(() => toast('Link copied')).catch(() => {}); };
+  return (
+    <div className="max-w-2xl">
+      <div className="text-sm font-bold text-[#050A1F] mb-3">HRMS Demo</div>
+      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <div className="font-bold text-[#050A1F]">Shareable demo environment</div>
+            <div className="text-xs text-slate-500 mt-1 max-w-md">Turn on to get no-login demo links for each role. The demo uses completely separate sample data — anything you add, edit, or delete there has no effect on live HRMS.</div>
+          </div>
+          <button onClick={() => act({ enabled: !cfg.enabled }, 'toggle')} disabled={busy === 'toggle'} className="relative w-12 h-7 rounded-full transition shrink-0" style={{ background: cfg.enabled ? '#16a34a' : '#cbd5e1' }}>
+            <span className="absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white transition-transform" style={{ transform: cfg.enabled ? 'translateX(20px)' : 'none' }} />
+          </button>
+        </div>
+        {cfg.enabled && cfg.token && (
+          <div className="mt-4 space-y-2">
+            {roles.map(([r, label, ic]) => (
+              <div key={r} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2">
+                <span className="text-lg">{ic}</span>
+                <div className="flex-1 min-w-0"><div className="text-[12.5px] font-bold text-[#050A1F]">{label}</div><div className="text-[11px] text-slate-400 truncate font-mono">{base}/{r}</div></div>
+                <a href={`${base}/${r}`} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-blue-600 px-2">Open</a>
+                <button onClick={() => copy(`${base}/${r}`)} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: '#FF6A00' }}>Copy</button>
+              </div>
+            ))}
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => act({ action: 'reset' }, 'reset')} disabled={busy === 'reset'} className="text-[12px] font-bold text-slate-600 bg-slate-100 rounded-lg px-3 py-1.5">{busy === 'reset' ? 'Resetting…' : '↻ Reset demo data'}</button>
+              <button onClick={() => { if (window.confirm('Generate new links? Old links stop working.')) act({ action: 'regenerate' }, 'regen'); }} disabled={busy === 'regen'} className="text-[12px] font-bold text-slate-600 bg-slate-100 rounded-lg px-3 py-1.5">⟳ New links</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HrSettingsTab({ isAdmin, setErr }) {
   const [s, setS] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -9395,6 +9440,7 @@ function HrSettingsTab({ isAdmin, setErr }) {
   if (!s) return <div className="text-slate-400 text-sm">Loading…</div>;
   return (
     <div className="space-y-8">
+      {isAdmin && <HrmsDemoPanel />}
       {/* Auto-scoring */}
       <div className="max-w-2xl">
         <div className="text-sm font-bold text-[#050A1F] mb-3">Recruitment</div>
@@ -10919,8 +10965,22 @@ export default function HrApp() {
   }, [location.pathname]);
   const goRecruit = (intent) => { setRecruitIntent(intent || null); setView('recruitment'); setProfileTarget(null); setNavKey((k) => k + 1); };
 
-  // Restore session.
+  // Restore session — or, if opened at /hr-demo/<token>/<role>, start a no-login
+  // demo session (fully isolated demo data).
   useEffect(() => {
+    const dm = location.pathname.match(/\/hr-demo\/([A-Za-z0-9]+)(?:\/(admin|manager|employee))?/);
+    if (dm) {
+      const token = dm[1]; const role = dm[2] || 'employee';
+      fetch(`${API_BASE}/api/hr/demo/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, role }) })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.token) { localStorage.setItem(HR_TOKEN_KEY, data.token); setUser(data.user); navigate(`${HR_BASE}/dashboard`, { replace: true }); }
+          else { window.location.href = `${HR_BASE}/login`; }
+        })
+        .catch(() => { window.location.href = `${HR_BASE}/login`; })
+        .finally(() => setChecking(false));
+      return;
+    }
     const token = localStorage.getItem(HR_TOKEN_KEY);
     if (!token) { setChecking(false); return; }
     hrApi('/me').then((u) => setUser(u)).catch(() => localStorage.removeItem(HR_TOKEN_KEY)).finally(() => setChecking(false));

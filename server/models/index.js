@@ -1355,6 +1355,7 @@ async function initDb({ sync = true } = {}) {
 const HrUser = sequelize.define('HrUser', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(120), allowNull: false },
+  isDemo: { type: DataTypes.BOOLEAN, defaultValue: false }, // demo-only seeded employee
   employeeId: { type: DataTypes.STRING(40), allowNull: true },
   email: { type: DataTypes.STRING(160), allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING(200), allowNull: false },
