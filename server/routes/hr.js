@@ -6618,6 +6618,13 @@ router.post('/candidates/:id/offer', requireHrAccess, requireScheduler, async (r
         offer.status = 'loi_sent';
         pushTimeline(row, { type: 'offer', text: `Letter of Intent ${b.emailSent ? 'sent' : 'drafted'} by ${req.hrActor.name}.`, by: req.hrActor.name });
         break;
+      case 'mark_loi_sent':
+        // The LOI was already sent to the candidate manually (outside the system).
+        // Recording it here satisfies the "LOI sent before onboarding" rule.
+        offer.loi = { ...(offer.loi || {}), sentAt: (offer.loi && offer.loi.sentAt) || now, by: req.hrActor.name, status: 'already_sent', manual: true };
+        offer.status = 'loi_sent';
+        pushTimeline(row, { type: 'offer', text: `${req.hrActor.name} marked the Letter of Intent as already sent (sent manually).`, by: req.hrActor.name });
+        break;
       case 'send_offer_letter':
         offer.offerLetter = { sentAt: now, by: req.hrActor.name, fileUrl: b.fileUrl || '', fileName: b.fileName || '', status: b.emailSent ? 'sent' : 'draft' };
         offer.finalCtc = b.finalCtc || offer.finalCtc;
@@ -6771,7 +6778,7 @@ router.get('/onboarding', requireHrAccess, async (req, res, next) => {
       // the offer alone isn't enough. (Candidates hired via a legacy stage without
       // an offer object still appear so old data isn't hidden.)
       if (view === 'active') {
-        const loiSent = !!(offer.loi && (offer.loi.status === 'sent' || offer.loi.sentAt));
+        const loiSent = !!(offer.loi && (offer.loi.status === 'sent' || offer.loi.status === 'already_sent' || offer.loi.sentAt));
         const hasOffer = !!(c.offer && c.offer.status);
         if (hasOffer && !loiSent && !offer.joinedConfirmed) continue;
       }

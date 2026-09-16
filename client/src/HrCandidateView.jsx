@@ -1796,9 +1796,14 @@ function OfferTab({ c, isAdmin, reload }) {
         </Card>
       )}
 
-      <Card title="2 · Letter of Intent" action={offer.status === 'accepted' ? <button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button> : null}>
+      <Card title="2 · Letter of Intent" action={offer.status === 'accepted' ? (
+        <div className="flex items-center gap-3">
+          {!offer.loi && <button onClick={async () => { if (window.confirm('Mark the LOI as already sent to this candidate (sent manually)? This lets onboarding start.')) { await op({ op: 'mark_loi_sent' }); } }} className="text-xs font-bold text-slate-500 hover:text-slate-700">Already sent</button>}
+          <button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button>
+        </div>
+      ) : null}>
         {offer.status !== 'accepted' ? <div className="text-sm text-slate-400">Mark the accepted salary offer first to unlock the LOI.</div>
-          : offer.loi ? <div className="text-sm text-slate-600">Sent {fmt(offer.loi.sentAt)} by {offer.loi.by}. <span className="text-xs text-slate-400">({offer.loi.status})</span></div> : <div className="text-sm text-slate-400">Not sent yet.</div>}
+          : offer.loi ? <div className="text-sm text-slate-600">{offer.loi.status === 'already_sent' ? <>Marked as already sent (manually) {fmt(offer.loi.sentAt)} by {offer.loi.by}.</> : <>Sent {fmt(offer.loi.sentAt)} by {offer.loi.by}. <span className="text-xs text-slate-400">({offer.loi.status})</span></>}</div> : <div className="text-sm text-slate-400">Not sent yet.</div>}
       </Card>
 
       <Card title="3 · Offer Letter" action={offer.status === 'accepted' && offer.loi ? <button onClick={() => setModal('letter')} className="text-xs font-bold text-orange-600">{offer.offerLetter ? 'Resend' : 'Send offer letter'}</button> : null}>

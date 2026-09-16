@@ -11075,7 +11075,7 @@ export default function HrApp() {
   const nav = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'tasks', label: 'Workspace' },
-    ...((isAdmin || isHrStaff || isHrManager || user.hasReports) ? [{ id: 'recognition', label: 'Recognition' }] : []),
+    ...((isAdmin || isHrStaff || isHrManager || user.hasReports || grant('recognition', 'read')) ? [{ id: 'recognition', label: 'Recognition' }] : []),
     ...(!(isAdmin || isHrStaff || isHrManager) ? [{ id: 'rewards', label: 'My Rewards' }] : []),
     { id: 'interview', label: 'Interview' },
     ...((isScheduler || grant('email', 'read')) ? [{ id: 'email', label: 'Email' }] : []),
