@@ -64,4 +64,32 @@ async function retoneNote(apiKey, { text, mode }) {
   return String(out || '').trim();
 }
 
-module.exports = { rewriteDescription, suggestNotes, retoneNote };
+module.exports = { rewriteDescription, suggestNotes, retoneNote, rephraseChatToTask };
+
+// Turn a raw chat message into a clean, professional task title + description.
+// Strips personal / off-topic / sensitive content and keeps only the actionable
+// work item. Returns { title, description }.
+async function rephraseChatToTask(apiKey, { message, sender }) {
+  const clean = stripHtml(message).slice(0, 3000);
+  const system = 'You convert a casual chat message into a clear work task for a task-management tool. '
+    + 'Extract ONLY the actionable work item. Remove greetings, personal remarks, emotions, jokes, gossip, '
+    + 'private/sensitive details, and anything not needed to do the work. '
+    + 'Write a concise professional task TITLE (max ~12 words, imperative, no trailing period) and a short '
+    + 'DESCRIPTION (1-3 sentences of what needs doing and any useful context that is actually present). '
+    + 'Never invent facts, names, dates or numbers not implied by the message. If the message has no real '
+    + 'task, make a reasonable title from its main request. '
+    + 'Return ONLY valid JSON: {"title":"...","description":"..."} with no markdown or preamble.';
+  const out = await callClaude(apiKey, {
+    system, maxTokens: 400,
+    messages: [{ role: 'user', content: `Chat message${sender ? ` from ${sender}` : ''}:\n"""${clean || '(empty)'}"""\n\nReturn the JSON.` }],
+  });
+  let title = '', description = '';
+  try {
+    const m = String(out || '').match(/\{[\s\S]*\}/);
+    const j = JSON.parse(m ? m[0] : out);
+    title = String(j.title || '').trim().slice(0, 200);
+    description = String(j.description || '').trim().slice(0, 2000);
+  } catch { title = clean.slice(0, 120); description = ''; }
+  if (!title) title = clean.slice(0, 120) || 'Follow-up task';
+  return { title, description };
+}

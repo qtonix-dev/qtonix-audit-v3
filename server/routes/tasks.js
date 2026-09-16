@@ -408,4 +408,19 @@ router.post('/ai/retone-note', requireHrAccess, async (req, res, next) => {
   } catch (e) { res.status(502).json({ error: 'AI request failed. Please try again.' }); }
 });
 
+// Turn a chat message into a clean task title + description (personal content
+// stripped). Used by "Turn into task" in Buzz. Falls back to the raw message if
+// AI isn't configured.
+router.post('/ai/chat-to-task', requireHrAccess, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const raw = String(b.message || '').trim();
+    if (!raw) return res.status(400).json({ error: 'No message to convert.' });
+    const key = await anthropicKey();
+    if (!key) { return res.json({ title: raw.replace(/<[^>]+>/g, '').slice(0, 120), description: '', aiUsed: false }); }
+    const r = await require('../services/taskAi').rephraseChatToTask(key, { message: raw, sender: b.sender || '' });
+    res.json({ ...r, aiUsed: true });
+  } catch (e) { const raw = String((req.body || {}).message || '').replace(/<[^>]+>/g, '').slice(0, 120); res.json({ title: raw, description: '', aiUsed: false }); }
+});
+
 module.exports = router;

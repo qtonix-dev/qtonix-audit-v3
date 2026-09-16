@@ -741,4 +741,51 @@ router.post('/ai/retone', requireHrAccess, async (req, res, next) => {
   } catch (e) { res.status(502).json({ error: 'AI request failed.' }); }
 });
 
+// GET /api/hr/chat/notify-feed?afterMsg=<id>&afterNotif=<id>
+// Global notification feed for the app-level toast poller. Returns messages
+// (across ALL the user's conversations) and task notifications newer than the
+// given ids — so the client can toast genuinely-new items on any page.
+router.get('/notify-feed', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    if (!me) return res.json({ messages: [], notifs: [], lastMsgId: 0, lastNotifId: 0 });
+    const afterMsg = Number(req.query.afterMsg) || 0;
+    const afterNotif = Number(req.query.afterNotif) || 0;
+    const { ChatMembership, ChatMessage, ChatConversation, HrUser, HrNotification } = require('../models');
+    const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false }, attributes: ['conversationId'] });
+    const convIds = mems.map((m) => m.conversationId);
+    let messages = [], lastMsgId = afterMsg;
+    if (convIds.length) {
+      const rows = await ChatMessage.findAll({
+        where: { conversationId: { [Op.in]: convIds }, deleted: false, senderId: { [Op.ne]: me }, ...(afterMsg ? { id: { [Op.gt]: afterMsg } } : {}) },
+        order: [['id', 'DESC']], limit: 15,
+      });
+      // Resolve conversation titles + kinds for labeling.
+      const cids = [...new Set(rows.map((r) => r.conversationId))];
+      const convs = cids.length ? await ChatConversation.findAll({ where: { id: { [Op.in]: cids } } }) : [];
+      const convById = Object.fromEntries(convs.map((c) => [c.id, c]));
+      // For DMs, find the other member's name for a nice label.
+      messages = rows.map((r) => {
+        const c = convById[r.conversationId] || {};
+        return { id: r.id, conversationId: r.conversationId, senderId: r.senderId, senderName: r.senderName, body: r.body, kindTag: r.kindTag, convKind: c.kind, convTitle: c.title || '', createdAt: r.createdAt };
+      });
+      lastMsgId = Math.max(afterMsg, ...rows.map((r) => r.id), 0);
+    }
+    // Task assignment notifications.
+    let notifs = [], lastNotifId = afterNotif;
+    try {
+      const nrows = await HrNotification.findAll({
+        where: { userId: me, type: { [Op.in]: ['task_assigned', 'task_coassigned', 'task_need_update', 'task_mention'] }, ...(afterNotif ? { id: { [Op.gt]: afterNotif } } : {}) },
+        order: [['id', 'DESC']], limit: 10,
+      });
+      notifs = nrows.map((n) => ({ id: n.id, type: n.type, text: n.text, meta: n.meta || {}, createdAt: n.createdAt }));
+      lastNotifId = Math.max(afterNotif, ...nrows.map((n) => n.id), 0);
+    } catch {}
+    // On the FIRST call the client passes ?prime=1 to get the current high-water
+    // marks without replaying history. After that it always passes the cursor.
+    if (req.query.prime) return res.json({ messages: [], notifs: [], lastMsgId, lastNotifId, primed: true });
+    res.json({ messages, notifs, lastMsgId, lastNotifId });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;

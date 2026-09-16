@@ -11,6 +11,7 @@ import AllEmailPage from './AllEmailPage.jsx';
 import HrCandidateView from './HrCandidateView.jsx';
 import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
 import ProjectsView, { ProjectFlowAdmin } from './Projects.jsx';
+import NotifToaster from './NotifToaster.jsx';
 import LeaveConsole from './HrLeaveConsole.jsx';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -1949,11 +1950,15 @@ function SelfReport({ user }) {
 // Lets other screens deep-link into a specific Workspace pane (e.g. dashboard
 // "Review" → reports). Read once on mount, then cleared.
 let __wsInitialPane = null;
+let __wsInitialConv = null;   // conversation id to open in Buzz
+let __wsInitialTaskId = null; // task id to open on the board
 function WorkspaceView({ user, isAdmin }) {
   const [pane, setPane] = useState(__wsInitialPane || 'tasks'); // tasks | chat | reports
-  useEffect(() => { __wsInitialPane = null; }, []);
+  const [initialConv] = useState(__wsInitialConv);
+  useEffect(() => { __wsInitialPane = null; __wsInitialConv = null; }, []);
   const [chatUnread, setChatUnread] = useState(0);
-  const [openTaskId, setOpenTaskId] = useState(null);
+  const [openTaskId, setOpenTaskId] = useState(__wsInitialTaskId || null);
+  useEffect(() => { __wsInitialTaskId = null; }, []);
   const [hasReports, setHasReports] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -1987,7 +1992,7 @@ function WorkspaceView({ user, isAdmin }) {
           inside an inner content box. */}
       {pane === 'chat' ? (
         <div className="flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 pb-3 w-full">
-          <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
+          <div className="h-full rounded-xl overflow-hidden border border-slate-200"><ChatView user={user} isAdmin={isAdmin} initialConv={initialConv} onUnread={setChatUnread} onOpenTask={(taskId) => { setOpenTaskId(taskId); setPane('tasks'); }} /></div>
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
@@ -2005,7 +2010,7 @@ function WorkspaceView({ user, isAdmin }) {
 }
 
 // ===== CHAT (Phase 1: direct messages + files) =====
-function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
+function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [taskChannel, setTaskChannel] = useState(null);
@@ -2033,6 +2038,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const [reactPickerFor, setReactPickerFor] = useState(null);
   const [moreMenuFor, setMoreMenuFor] = useState(null); // message id whose ⋯ menu is open
   const [quickTask, setQuickTask] = useState(null); // { title } — /task quick creator
+  const [shortcutCard, setShortcutCard] = useState(null); // private info card for slash shortcuts
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
   const [editingMsg, setEditingMsg] = useState(null);   // { id, body } being edited
@@ -2068,7 +2074,26 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const lastMsgId = useRef(0);
   const me = user;
 
-  const loadConversations = () => hrApi('/chat/conversations').then((r) => { setConversations(r.conversations || []); setTaskChannel(r.taskChannel || null); setHubChannel(r.hubChannel || null); }).catch(() => {});
+  const loadConversations = () => hrApi('/chat/conversations').then((r) => { setConversations(r.conversations || []); setTaskChannel(r.taskChannel || null); setHubChannel(r.hubChannel || null); return r; }).catch(() => ({}));
+  // If launched with a target conversation (from a notification click), open it.
+  const openedInitial = useRef(false);
+  useEffect(() => {
+    if (openedInitial.current || !initialConv) return;
+    openedInitial.current = true;
+    (async () => {
+      const r = await loadConversations();
+      const all = r || {};
+      const cid = Number(initialConv);
+      // DM in the list?
+      const dm = (all.conversations || []).find((c) => c.id === cid);
+      if (dm) { openConv(dm); return; }
+      if (all.taskChannel && all.taskChannel.id === cid) { openConv({ id: cid, channel: 'task', team: { isTask: true, name: 'Tasks' } }); return; }
+      if (all.hubChannel && all.hubChannel.id === cid) { openChannel('hub', { id: cid, title: 'the-hub' }, { name: 'The Hub' }); return; }
+      // Otherwise open it as a generic channel by id.
+      openConv({ id: cid });
+    })();
+    /* eslint-disable-next-line */
+  }, [initialConv]);
   const loadTeams = () => hrApi('/chat/teams').then((r) => { setTeams(r.teams || []); setCanCreateTeam(!!r.canCreateTeam); setCanManage(!!r.canManage); }).catch(() => {});
   useEffect(() => { hrApi('/chat/directory').then((r) => setDirectory(r.users || [])).catch(() => {}); loadConversations(); loadTeams(); }, []);
 
@@ -2185,13 +2210,24 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
   const send = async () => {
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
-    // Slash command: "/task" opens the quick task creator. Strip any stray HTML
-    // and leading whitespace/marker characters the editor may include.
+    // Slash commands. All shortcuts only work inside the personal #task channel.
     const plain = body.replace(/<[^>]*>/g, '').replace(/\*\*/g, '').replace(/&nbsp;/g, ' ').trim();
+    const inTask = !!(active && active.team && active.team.isTask);
     if (/^\/task(\s|$)/i.test(plain)) {
       const preTitle = plain.replace(/^\/task\s*/i, '').trim();
       setQuickTask({ title: preTitle });
       clearEditor();
+      return;
+    }
+    if (inTask && /^\/(mytime|attendance)(\s|$)/i.test(plain)) { clearEditor(); setShortcutCard({ kind: 'mytime' }); return; }
+    if (inTask && /^\/mytasks(\s|$)/i.test(plain)) { clearEditor(); setShortcutCard({ kind: 'mytasks', loading: true }); hrApi('/tasks/shortcut/mytasks').then((d) => setShortcutCard({ kind: 'mytasks', data: d })).catch((e) => setShortcutCard({ kind: 'error', msg: e.message })); return; }
+    if (inTask && /^\/todayreport(\s|$)/i.test(plain)) { clearEditor(); setShortcutCard({ kind: 'todayreport', loading: true }); hrApi('/tasks/shortcut/todayreport').then((d) => setShortcutCard({ kind: 'todayreport', data: d })).catch((e) => setShortcutCard({ kind: 'error', msg: e.message })); return; }
+    if (inTask && /^\/pending(\s|$)/i.test(plain)) { clearEditor(); setShortcutCard({ kind: 'pending', loading: true }); hrApi('/tasks/shortcut/pending').then((d) => setShortcutCard({ kind: 'pending', data: d })).catch((e) => setShortcutCard({ kind: 'error', msg: e.message })); return; }
+    if (inTask && /^\/remind(\s|$)/i.test(plain)) {
+      const what = plain.replace(/^\/remind\s*/i, '').trim();
+      clearEditor();
+      if (!what) { setShortcutCard({ kind: 'remind-help' }); return; }
+      hrApi('/tasks/shortcut/remind', { method: 'POST', body: JSON.stringify({ title: what }) }).then((r) => { toast('Reminder added ⏰'); setShortcutCard({ kind: 'remind-done', data: r }); }).catch((e) => toast(e.message));
       return;
     }
     const rid = replyTo ? replyTo.id : undefined;
@@ -2662,6 +2698,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask }) {
       {forwarding && <ChatForwardModal message={forwarding} directory={directory} conversations={conversations} onClose={() => setForwarding(null)} onDone={() => setForwarding(null)} />}
       {taskFromMsg && <ChatToTaskModal message={taskFromMsg} directory={directory} onClose={() => setTaskFromMsg(null)} onDone={() => setTaskFromMsg(null)} />}
       {quickTask && <QuickTaskModal initialTitle={quickTask.title} directory={directory} onClose={() => setQuickTask(null)} onDone={() => setQuickTask(null)} />}
+      {shortcutCard && <ShortcutCard card={shortcutCard} onClose={() => setShortcutCard(null)} onOpenTask={(id) => { setShortcutCard(null); if (onOpenTask) onOpenTask(id); }} />}
       {readsFor && (
         <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-[150] p-4" onClick={() => setReadsFor(null)}>
           <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -2822,6 +2859,102 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
 }
 
 // Forward a message to a person (DM) or a channel.
+// Private info card for Buzz #task slash shortcuts (only the user sees it).
+function ShortcutCard({ card, onClose, onOpenTask }) {
+  const [tab, setTab] = useState('single');
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const [single, setSingle] = useState(today);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [timeData, setTimeData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const runTime = () => {
+    setLoading(true); setTimeData(null);
+    const qs = tab === 'single' ? `date=${single}` : `from=${from}&to=${to}`;
+    hrApi(`/tasks/shortcut/mytime?${qs}`).then(setTimeData).catch((e) => toast(e.message)).finally(() => setLoading(false));
+  };
+  useEffect(() => { if (card.kind === 'mytime') runTime(); /* eslint-disable-next-line */ }, []);
+  const PRIO = { urgent: '#EF4444', high: '#F97316', medium: '#3B82F6', low: '#94A3B8' };
+  const TaskLine = ({ t }) => (
+    <button onClick={() => onOpenTask(t.id)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-left border-t border-slate-50 first:border-0">
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PRIO[t.priority] || '#94A3B8' }} />
+      <span className={`text-[13px] flex-1 truncate ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</span>
+      {t.dueDate && <span className="text-[10px] text-slate-400 shrink-0">{new Date(String(t.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
+    </button>
+  );
+  const wrap = (title, icon, body) => (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[160] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2"><span className="text-lg">{icon}</span><div className="text-[15px] font-extrabold text-[#050A1F]">{title}</div></div>
+          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+        </div>
+        <div className="max-h-[70vh] overflow-auto">{body}</div>
+        <div className="px-5 py-2 bg-slate-50 text-[11px] text-slate-400 text-center">Only you can see this</div>
+      </div>
+    </div>
+  );
+
+  if (card.kind === 'mytime') {
+    return wrap('My Time', '🕐', (
+      <div className="p-4">
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-0.5 mb-3 w-max">
+          {[['single', 'Single day'], ['range', 'Date range']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold ${tab === k ? 'bg-white shadow-sm text-[#050A1F]' : 'text-slate-400'}`}>{l}</button>)}
+        </div>
+        {tab === 'single'
+          ? <div className="flex items-end gap-2 mb-3"><div className="flex-1"><div className="text-[11px] font-bold text-slate-500 mb-1">Date</div><input type="date" value={single} onChange={(e) => setSingle(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div><button onClick={runTime} className="text-white font-bold px-4 py-2 rounded-lg text-[13px]" style={{ background: ORANGE }}>Show</button></div>
+          : <div className="flex items-end gap-2 mb-3"><div className="flex-1"><div className="text-[11px] font-bold text-slate-500 mb-1">From</div><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-2 text-[13px]" /></div><div className="flex-1"><div className="text-[11px] font-bold text-slate-500 mb-1">To</div><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-2 text-[13px]" /></div><button onClick={runTime} className="text-white font-bold px-4 py-2 rounded-lg text-[13px]" style={{ background: ORANGE }}>Show</button></div>}
+        {loading && <div className="text-center text-slate-400 text-sm py-6">Loading…</div>}
+        {timeData && (timeData.rows.length === 0
+          ? <div className="text-center text-slate-400 text-sm py-6">No attendance recorded for this period.</div>
+          : <div className="space-y-2">{timeData.rows.map((r) => (
+              <div key={r.date} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-center justify-between mb-1.5"><div className="text-[13px] font-extrabold text-[#050A1F]">{new Date(r.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</div>{r.deficit != null && (r.onTime ? <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-green-50 text-green-600">👏 Good work</span> : <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-red-50 text-red-600">Short {r.deficit}</span>)}</div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-slate-50 py-1.5"><div className="text-[10px] text-slate-400 font-semibold">IN</div><div className="text-[13px] font-bold text-[#050A1F]">{r.in}</div></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><div className="text-[10px] text-slate-400 font-semibold">OUT</div><div className="text-[13px] font-bold text-[#050A1F]">{r.out}</div></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><div className="text-[10px] text-slate-400 font-semibold">WORKED</div><div className="text-[13px] font-bold text-[#050A1F]">{r.worked}</div></div>
+                </div>
+                {r.expected !== '—' && <div className="text-[11px] text-slate-400 mt-1.5 text-center">Expected: {r.expected}</div>}
+              </div>
+            ))}</div>)}
+      </div>
+    ));
+  }
+  if (card.kind === 'mytasks') {
+    const d = card.data;
+    return wrap('My Tasks', '📋', card.loading || !d ? <div className="text-center text-slate-400 text-sm py-8">Loading…</div> : (
+      <div className="p-2">
+        <div className="px-3 py-2 text-[11px] font-extrabold text-slate-400 uppercase">Today's focus · {d.counts.today}</div>
+        {d.today.length ? d.today.map((t) => <TaskLine key={t.id} t={t} />) : <div className="px-3 py-2 text-[13px] text-slate-400">Nothing due today 🎉</div>}
+        <div className="px-3 py-2 mt-2 text-[11px] font-extrabold text-slate-400 uppercase">All open · {d.counts.open}</div>
+        {d.open.map((t) => <TaskLine key={t.id} t={t} />)}
+      </div>
+    ));
+  }
+  if (card.kind === 'todayreport') {
+    const d = card.data;
+    return wrap("Today's Report", '📊', card.loading || !d ? <div className="text-center text-slate-400 text-sm py-8">Loading…</div> : (
+      <div className="p-2">
+        <div className="px-3 py-2 text-[11px] font-extrabold text-green-600 uppercase">✓ Completed today · {d.counts.completed}</div>
+        {d.completed.length ? d.completed.map((t) => <TaskLine key={t.id} t={t} />) : <div className="px-3 py-2 text-[13px] text-slate-400">Nothing completed yet today.</div>}
+        <div className="px-3 py-2 mt-2 text-[11px] font-extrabold text-orange-600 uppercase">◷ Pending · {d.counts.pending}</div>
+        {d.pending.length ? d.pending.map((t) => <TaskLine key={t.id} t={t} />) : <div className="px-3 py-2 text-[13px] text-slate-400">No pending tasks 🎉</div>}
+      </div>
+    ));
+  }
+  if (card.kind === 'pending') {
+    const d = card.data;
+    return wrap('Pending Tasks', '◷', card.loading || !d ? <div className="text-center text-slate-400 text-sm py-8">Loading…</div> : (
+      <div className="p-2">{d.count ? d.pending.map((t) => <TaskLine key={t.id} t={t} />) : <div className="px-3 py-8 text-center text-[13px] text-slate-400">No pending tasks — all clear! 🎉</div>}</div>
+    ));
+  }
+  if (card.kind === 'remind-help') return wrap('Reminder', '⏰', <div className="p-5 text-[13px] text-slate-600">Type what to remember after the command, e.g. <span className="font-mono bg-slate-100 rounded px-1.5 py-0.5">/remind call the client at 4pm</span></div>);
+  if (card.kind === 'remind-done') return wrap('Reminder added', '⏰', <div className="p-5 text-[13px] text-slate-600">Added to your <b>Do Today</b>: <b>{card.data && card.data.title}</b></div>);
+  if (card.kind === 'error') return wrap('Oops', '⚠️', <div className="p-5 text-[13px] text-red-500">{card.msg}</div>);
+  return null;
+}
+
 // Quick task creator — opened by typing "/task" in chat.
 function QuickTaskModal({ initialTitle, directory, onClose, onDone }) {
   const [title, setTitle] = useState(initialTitle || '');
@@ -2874,17 +3007,27 @@ function QuickTaskModal({ initialTitle, directory, onClose, onDone }) {
 
 // Turn a chat message into a task (assign to someone; they get it on their board).
 function ChatToTaskModal({ message, directory, onClose, onDone }) {
-  const [title, setTitle] = useState(String(message.body || '').replace(/\*\*/g, '').replace(/_/g, '').slice(0, 200));
-  const [assigneeId, setAssigneeId] = useState('');
-  const [q, setQ] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [aiBusy, setAiBusy] = useState(true);
+  const [aiUsed, setAiUsed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const people = directory.filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase()));
+  const rephrase = async () => {
+    setAiBusy(true);
+    try {
+      const r = await hrApi('/tasks/ai/chat-to-task', { method: 'POST', body: JSON.stringify({ message: String(message.body || ''), sender: message.senderName || '' }) });
+      setTitle(r.title || ''); setDescription(r.description || ''); setAiUsed(!!r.aiUsed);
+    } catch (e) { setTitle(String(message.body || '').replace(/<[^>]+>/g, '').slice(0, 120)); setDescription(''); }
+    setAiBusy(false);
+  };
+  useEffect(() => { rephrase(); /* eslint-disable-next-line */ }, []);
   const create = async () => {
     if (!title.trim()) { toast('Add a task title.'); return; }
     setBusy(true);
     try {
-      await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: title.trim(), description: `From chat: "${String(message.body || '').slice(0, 500)}"${message.senderName ? ` — ${message.senderName}` : ''}`, assigneeId: assigneeId || undefined }) });
-      toast('Task created ✓'); onDone();
+      // Auto-assigned to the creator (no assigneeId → defaults to self on the backend).
+      await hrApi('/tasks/tasks', { method: 'POST', body: JSON.stringify({ title: title.trim(), description: description.trim() || undefined }) });
+      toast('Task created ✓ — added to your board'); onDone();
     } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
@@ -2892,22 +3035,16 @@ function ChatToTaskModal({ message, directory, onClose, onDone }) {
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div className="text-[16px] font-extrabold">✅ Turn into a task</div><button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button></div>
         <div className="p-5 space-y-3">
-          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Task title</div><textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={2} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
-          <div>
-            <div className="text-[12px] font-bold text-slate-500 mb-1">Assign to <span className="font-normal text-slate-400">(optional — defaults to you)</span></div>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search…" className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] mb-1.5" />
-            <div className="max-h-40 overflow-auto border border-slate-100 rounded-lg">
-              {people.slice(0, 30).map((u) => (
-                <button key={u.id} onClick={() => setAssigneeId(assigneeId === u.id ? '' : u.id)} className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left ${assigneeId === u.id ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
-                  <Avatar name={u.name} src={u.avatar} size={24} /><span className="text-[13px] font-semibold">{u.name}</span>{assigneeId === u.id && <span className="ml-auto text-orange-600 font-bold">✓</span>}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-2 text-[11px] font-bold rounded-lg px-2.5 py-1.5" style={{ background: aiUsed ? '#F5F3FF' : '#F8FAFC', color: aiUsed ? '#7C3AED' : '#94A3B8' }}>
+            {aiBusy ? <>✨ Cleaning up the message…</> : aiUsed ? <>✨ Rephrased by AI · personal details removed <button onClick={rephrase} className="ml-auto font-bold text-violet-500">↻ Regenerate</button></> : <>Using the raw message (AI not configured)</>}
           </div>
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Task title</div><textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={2} disabled={aiBusy} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50" placeholder={aiBusy ? '…' : 'Task title'} /></div>
+          <div><div className="text-[12px] font-bold text-slate-500 mb-1">Description</div><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} disabled={aiBusy} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50" placeholder={aiBusy ? '…' : 'Optional description'} /></div>
+          <div className="text-[11px] text-slate-400">This task will be added to <b>your</b> board.</div>
         </div>
         <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
-          <button onClick={create} disabled={busy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Creating…' : 'Create task'}</button>
+          <button onClick={create} disabled={busy || aiBusy} className="rounded-lg px-5 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>{busy ? 'Creating…' : 'Create task'}</button>
         </div>
       </div>
     </div>
@@ -11093,6 +11230,11 @@ export default function HrApp() {
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <NotifToaster
+        fetchFeed={(afterMsg, afterNotif, prime) => hrApi(`/chat/notify-feed?afterMsg=${afterMsg}&afterNotif=${afterNotif}${prime ? '&prime=1' : ''}`)}
+        onOpenMessage={(cid) => { __wsInitialPane = 'chat'; __wsInitialConv = cid; setView('tasks'); setNavKey((k) => k + 1); }}
+        onOpenTask={(tid) => { __wsInitialPane = 'tasks'; __wsInitialTaskId = tid; setView('tasks'); setNavKey((k) => k + 1); }}
+      />
       {idleWarn && <HrIdleWarning onContinue={() => idleResetRef.current && idleResetRef.current()} onSignOut={logout} />}
       {logoutSummary && <LogoutSummary summary={logoutSummary} onStay={() => setLogoutSummary(null)} onLogout={logout} name={(user && user.name || '').split(' ')[0]} />}
       <header className="bg-[#050A1F] text-white">

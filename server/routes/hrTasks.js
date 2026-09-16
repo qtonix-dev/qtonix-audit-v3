@@ -1217,6 +1217,99 @@ router.delete('/attachments/:id', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== BUZZ #task SHORTCUTS =====
+// Private info cards for the /mytime, /mytasks, /todayreport, /pending, /remind
+// slash commands. All scoped to the acting user only.
+
+// /mytime — attendance in/out + deficit for a single date or a date range.
+router.get('/shortcut/mytime', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const uid = ctx.boardId;
+    if (!uid || uid <= 0) return res.json({ rows: [], note: 'No attendance profile.' });
+    const { HrAttendance, HrUser, HrShift } = require('../models');
+    const emp = await HrUser.findByPk(uid);
+    const shift = emp && emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+    // Expected minutes from shift (end - start - breaks), crossing midnight aware.
+    const toMin = (t) => { if (!t) return null; const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+    let expectedMin = null;
+    if (shift && shift.startTime && shift.endTime) {
+      let s = toMin(shift.startTime), e = toMin(shift.endTime); if (e <= s) e += 1440;
+      let brk = 0; for (const b of (Array.isArray(shift.breaks) ? shift.breaks : [])) { const bs = toMin(b.start), be = toMin(b.end); if (bs != null && be != null) brk += Math.max(0, (be <= bs ? be + 1440 : be) - bs); }
+      if (!brk && shift.breakStart && shift.breakEnd) { const bs = toMin(shift.breakStart), be = toMin(shift.breakEnd); if (bs != null && be != null) brk = Math.max(0, be - bs); }
+      expectedMin = Math.max(0, (e - s) - brk);
+    }
+    const from = req.query.from || req.query.date || teamReport.istDateStr();
+    const to = req.query.to || from;
+    const atts = await HrAttendance.findAll({ where: { employeeId: uid, date: { [Op.between]: [from, to] } }, order: [['date', 'ASC']] });
+    const fmtMin = (m) => m == null ? '—' : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+    const rows = atts.map((a) => {
+      const inM = toMin(a.loginTime), outM0 = toMin(a.logoutTime);
+      let workedMin = null;
+      if (inM != null && outM0 != null) { let out = outM0; if (out <= inM) out += 1440; workedMin = out - inM; }
+      const deficit = (expectedMin != null && workedMin != null) ? expectedMin - workedMin : null;
+      return { date: a.date, in: a.loginTime || '—', out: a.logoutTime || '—', worked: fmtMin(workedMin), workedMin, expected: fmtMin(expectedMin), deficit: deficit == null ? null : (deficit <= 0 ? 'On time' : fmtMin(deficit)), onTime: deficit != null && deficit <= 5, present: a.status === 'present' };
+    });
+    res.json({ rows, expected: fmtMin(expectedMin), from, to });
+  } catch (e) { next(e); }
+});
+
+// /mytasks — the user's open tasks (today's focus + all open).
+router.get('/shortcut/mytasks', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const board = await buildBoard(ctx.boardId, ctx);
+    const open = (board.buckets || []).flatMap((b) => b.tasks).filter((t) => t.stage !== 'completed');
+    const today = open.filter((t) => t.bucket === 'today');
+    const slim = (t) => ({ id: t._id, title: t.title, stage: t.stage, priority: t.priority, dueDate: t.dueDate, bucket: t.bucket });
+    res.json({ today: today.map(slim), open: open.map(slim), counts: { today: today.length, open: open.length } });
+  } catch (e) { next(e); }
+});
+
+// /todayreport — today's completed + still-pending tasks with detail.
+router.get('/shortcut/todayreport', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const board = await buildBoard(ctx.boardId, ctx);
+    const all = [...(board.buckets || []).flatMap((b) => b.tasks), ...(board.completed || [])];
+    const today = teamReport.istDateStr();
+    const isToday = (d) => d && new Date(new Date(d).getTime() + 330 * 60000).toISOString().slice(0, 10) === today;
+    const completed = all.filter((t) => t.stage === 'completed' && isToday(t.completedAt));
+    const pending = all.filter((t) => t.stage !== 'completed');
+    const slim = (t) => ({ id: t._id, title: t.title, stage: t.stage, priority: t.priority, dueDate: t.dueDate });
+    res.json({ date: today, completed: completed.map(slim), pending: pending.map(slim), counts: { completed: completed.length, pending: pending.length } });
+  } catch (e) { next(e); }
+});
+
+// /pending — all pending (not completed) tasks.
+router.get('/shortcut/pending', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const board = await buildBoard(ctx.boardId, ctx);
+    const pending = (board.buckets || []).flatMap((b) => b.tasks).filter((t) => t.stage !== 'completed')
+      .map((t) => ({ id: t._id, title: t.title, stage: t.stage, priority: t.priority, dueDate: t.dueDate, bucket: t.bucket }));
+    res.json({ pending, count: pending.length });
+  } catch (e) { next(e); }
+});
+
+// /remind — create a quick personal reminder task for the acting user.
+router.post('/shortcut/remind', guard, async (req, res, next) => {
+  try {
+    const ctx = await actingContext(req);
+    const b = req.body || {};
+    const title = String(b.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'What should I remind you about?' });
+    const uid = ctx.boardId;
+    const row = await Task.create({
+      boardOwnerId: uid, assigneeId: uid, assigneeIds: uid ? [uid] : [],
+      assignedById: uid, assignedByName: ctx.actorName,
+      title: '⏰ ' + title.slice(0, 180), stage: 'not_started', priority: b.priority || 'medium',
+      bucket: 'today', dueDate: b.dueDate || null,
+    });
+    res.status(201).json({ ok: true, id: row.id, title: row.title, dueDate: row.dueDate });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.BUCKETS = BUCKETS;
 module.exports.BUCKET_LABELS = BUCKET_LABELS;
