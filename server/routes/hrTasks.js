@@ -1072,7 +1072,16 @@ router.get('/tasks/:id/detail', guard, async (req, res, next) => {
       const _seen = new Set(); assignees = assignees.filter((a) => { const k = String(a.name || '').trim().toLowerCase(); if (_seen.has(k)) return false; _seen.add(k); return true; });
     } catch {}
     const taskOut = dec(row); taskOut.assignees = assignees;
-    res.json({ task: taskOut, subtasks: subtasks.map(dec), comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete, myActorId: ctx.actorId || null, isAdmin: !!ctx.isAdmin });
+    // Resolve the full assignee group for each subtask too, so the UI can show
+    // the avatar stack (not just the primary assignee).
+    const subAssignees = (s) => {
+      const ids = new Set([s.assigneeId].filter(Boolean));
+      if (Array.isArray(s.assigneeIds)) s.assigneeIds.forEach((id) => { if (id) ids.add(id); });
+      const seen = new Set();
+      return [...ids].map((id) => { const u = pById[id]; return u ? { id: u.id, name: u.name, avatar: u.avatar || null } : (adminById[id] ? { id, name: adminById[id].name, avatar: null, isAdmin: true } : null); }).filter(Boolean).filter((a) => { const k = String(a.name || '').trim().toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    };
+    const subsOut = subtasks.map((s) => { const o = dec(s); o.assignees = subAssignees(s); return o; });
+    res.json({ task: taskOut, subtasks: subsOut, comments: comments.map((c) => c.toJSON()), attachments: attachments.map((a) => a.toJSON()), activity: activity.map((a) => a.toJSON()), canDelete, myActorId: ctx.actorId || null, isAdmin: !!ctx.isAdmin });
   } catch (e) { next(e); }
 });
 

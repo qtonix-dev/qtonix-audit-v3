@@ -3630,7 +3630,12 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                     <button onClick={(e) => { e.stopPropagation(); toggleSub(s); }} className={`w-4 h-4 rounded-full border-2 shrink-0 ${s.stage === 'completed' ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'}`} />
                     <span className={`text-sm flex-1 truncate ${s.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{s.title}</span>
                     {s.dueDate && <span className="text-[10px] text-slate-400">{new Date(String(s.dueDate).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
-                    <TAvatar person={s.assignee} size={20} />
+                    <div className="flex items-center shrink-0">
+                      {((s.assignees && s.assignees.length) ? s.assignees : (s.assignee ? [s.assignee] : [])).slice(0, 3).map((a, i) => (
+                        <span key={a.id || i} style={{ marginLeft: i ? -6 : 0, zIndex: 3 - i }} className="ring-2 ring-white rounded-full inline-flex"><TAvatar person={a} size={20} /></span>
+                      ))}
+                      {((s.assignees && s.assignees.length) || 0) > 3 && <span className="ml-[-6px] w-5 h-5 rounded-full bg-slate-200 text-slate-500 text-[9px] font-extrabold flex items-center justify-center ring-2 ring-white">+{s.assignees.length - 3}</span>}
+                    </div>
                     <span className="text-slate-300 text-xs">›</span>
                   </div>
                 ))}
