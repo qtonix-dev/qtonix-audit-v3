@@ -8726,6 +8726,46 @@ router.get('/attendance/biometric/:id/export', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// AI-written "worth reviewing" digest: login/leave/break patterns + anomalies.
+// The NUMBERS are code-computed; Claude only interprets & prioritizes them.
+router.post('/attendance/biometric/:id/ai-review', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    const emps = await loadEmpsForCompare(from, to);
+    const cmp = bioSvc.buildComparison({ emps, punches: imp.data || {}, from, to });
+    const rows = cmp.rows.filter((r) => r.days.length > 0);
+    const insights = bioSvc.breakInsights(rows);
+    // Leaves for context.
+    const leaveByEmp = {};
+    try {
+      const ids = rows.map((r) => r.employeeId);
+      const lvs = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids } } });
+      for (const lv of lvs) { (leaveByEmp[lv.employeeId] = leaveByEmp[lv.employeeId] || []).push({ type: lv.type, from: lv.fromDate || lv.startDate, to: lv.toDate || lv.endDate, status: lv.status }); }
+    } catch {}
+    const payload = bioSvc.aiReviewPayload(rows, leaveByEmp);
+
+    const key = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; } })();
+    if (!key) return res.json({ aiUsed: false, insights, digest: null, note: 'AI key not configured — showing computed break patterns only.' });
+
+    const system = 'You are an HR analytics assistant reviewing attendance data for a workday of gross shift hours. '
+      + 'The NUMBERS given are already computed and correct — do not recompute. Your job is to spot patterns worth a human HR review and prioritize them. '
+      + 'Look for: chronic lateness (and whether tied to specific weekdays), large hour deficits, frequent missing punch-outs, unusually high break time, synchronized breaks (many people breaking at the same time — possible social/coordinated breaks), long mid-day absences, and leave clustering (e.g. around weekends or month-end). '
+      + 'Be fair and factual, never accusatory; frame as "worth checking". Note when a signal is likely a DEVICE/DATA artifact (e.g. device also used for door access, missed punches) rather than real behavior. '
+      + 'Return ONLY JSON: {"summary":"2-3 sentence overview","flags":[{"name":"...","severity":"high|medium|low","reason":"one sentence"}],"breakNote":"one sentence on break patterns incl. synchronized breaks"}. Max 12 flags, highest priority first.';
+    const user = `Date range ${from} to ${to}. Team break patterns: ${JSON.stringify(insights).slice(0, 1500)}\n\nPer-employee data:\n${JSON.stringify(payload).slice(0, 9000)}`;
+    let digest = null;
+    try {
+      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 1500, messages: [{ role: 'user', content: user }] });
+      const m = String(out || '').match(/\{[\s\S]*\}/);
+      digest = m ? JSON.parse(m[0]) : null;
+    } catch (e) { digest = null; }
+    res.json({ aiUsed: !!digest, insights, digest, from, to });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;
 module.exports.notify = notify;

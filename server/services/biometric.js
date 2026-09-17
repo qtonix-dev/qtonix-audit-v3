@@ -103,7 +103,7 @@ function shiftGrossMinutes(shift) {
  * punches: { [deviceId]: { [date]: [times] } }
  * Returns { rows, unmatchedDeviceIds, dates }
  */
-function buildComparison({ emps, punches, from, to, gapMin = 15, workdayCheck }) {
+function buildComparison({ emps, punches, from, to, gapMin = 15, breakMin = 5, workdayCheck }) {
   const inRange = (d) => (!from || d >= from) && (!to || d <= to);
   // All dates in range that appear in either source.
   const dateSet = new Set();
@@ -120,11 +120,31 @@ function buildComparison({ emps, punches, from, to, gapMin = 15, workdayCheck })
     for (const d of Object.keys(e.hrmsByDate || {})) if (inRange(d)) days.add(d);
     const dayRows = [];
     let totalWorked = 0, totalTarget = 0, presentDays = 0, missingOut = 0, gaps = 0, reviewFlags = 0;
+    let totalBreakMin = 0, totalBreaks = 0; const breakStartHist = {};
     for (const d of [...days].sort()) {
       const isWfh = e.wfhDates && e.wfhDates.has(d);
-      const times = bio[d] || [];
+      const rawTimes = bio[d] || [];
+      // Collapse rapid bursts: punches within `breakMin` of the previous kept
+      // punch are duplicate scans, not distinct events. This turns the device's
+      // rapid-fire logs into clean event boundaries.
+      const times = [];
+      for (const t of rawTimes) { if (!times.length || (toMin(t) - toMin(times[times.length - 1])) >= breakMin) times.push(t); }
       const bioIn = times.length ? times[0] : null;
       const bioOut = times.length > 1 ? times[times.length - 1] : null;
+      // Classify mid-day gaps between kept punches: a plausible break is
+      // 15–120 min; longer mid-day gaps are "long absences" (left & returned,
+      // or a missed punch) flagged for review rather than counted as a break.
+      const dayBreaks = []; const longGaps = [];
+      if (times.length >= 4) {
+        for (let i = 1; i < times.length - 1; i++) {
+          const gStart = times[i], gEnd = times[i + 1];
+          const dur = toMin(gEnd) - toMin(gStart);
+          if (dur < breakMin) continue;
+          if (dur <= 120) dayBreaks.push({ start: gStart.slice(0, 5), end: gEnd.slice(0, 5), min: dur });
+          else longGaps.push({ start: gStart.slice(0, 5), end: gEnd.slice(0, 5), min: dur });
+        }
+      }
+      const dayBreakMin = dayBreaks.reduce((n, b) => n + b.min, 0);
       const hrms = (e.hrmsByDate && e.hrmsByDate[d]) || null;
       const hrmsIn = hrms && hrms.login ? hrms.login : null;
       const hrmsOut = hrms && hrms.logout ? hrms.logout : null;
@@ -158,11 +178,15 @@ function buildComparison({ emps, punches, from, to, gapMin = 15, workdayCheck })
         totalTarget += shiftMin;
         totalWorked += (worked || 0);
       }
+      totalBreakMin += dayBreakMin; totalBreaks += dayBreaks.length;
+      if (longGaps.length) { flags.push('long_gap'); reviewFlags++; }
+      for (const b of dayBreaks) { const hr = b.start.slice(0, 2) + ':00'; breakStartHist[hr] = (breakStartHist[hr] || 0) + 1; }
       dayRows.push({
         date: d, wfh: !!isWfh, status: hrms ? hrms.status : (times.length ? 'present' : null),
         bioIn: hhmm(bioIn), bioOut: hhmm(bioOut), hrmsIn: hhmm(hrmsIn), hrmsOut: hhmm(hrmsOut),
         punches: times.length, worked, workedLabel: worked == null ? '—' : (worked / 60).toFixed(2) + 'h',
         source, highlight, target: shiftMin, deficit: (worked == null ? null : worked - shiftMin), flags,
+        breaks: dayBreaks, breakMin: dayBreakMin, breakLabel: dayBreakMin ? fmtHM(dayBreakMin) : '—', longGaps,
       });
     }
     const deficit = totalWorked - totalTarget;
@@ -174,9 +198,47 @@ function buildComparison({ emps, punches, from, to, gapMin = 15, workdayCheck })
       deficitLabel: (deficit < 0 ? '-' : '+') + fmtHM(deficit), inDeficit: deficit < -1,
       avgHours: presentDays ? (totalWorked / presentDays / 60).toFixed(2) : '0',
       missingOut, gaps, needsReview: reviewFlags, days: dayRows,
+      totalBreakMin, totalBreaks, avgBreakMin: presentDays ? Math.round(totalBreakMin / presentDays) : 0,
+      totalBreakLabel: fmtHM(totalBreakMin), avgBreakLabel: fmtHM(presentDays ? Math.round(totalBreakMin / presentDays) : 0),
+      commonBreakTime: Object.entries(breakStartHist).sort((a, b) => b[1] - a[1])[0] ? Object.entries(breakStartHist).sort((a, b) => b[1] - a[1])[0][0] : null,
+      breakStartHist,
     };
   });
   return { rows, unmatchedDeviceIds, dates: [...dateSet].sort() };
 }
 
-module.exports = { parseDat, parseWorkbook, buildComparison, shiftGrossMinutes, fmtHM };
+// Team-wide break patterns from computed rows.
+function breakInsights(rows) {
+  const withBreaks = rows.filter((r) => r.totalBreaks > 0);
+  // Max-break takers (by total minutes).
+  const topByTime = [...withBreaks].sort((a, b) => b.totalBreakMin - a.totalBreakMin).slice(0, 8)
+    .map((r) => ({ name: r.name, deviceId: r.deviceId, totalBreakLabel: r.totalBreakLabel, totalBreaks: r.totalBreaks, avgBreakLabel: r.avgBreakLabel, commonBreakTime: r.commonBreakTime }));
+  // Synchronized breaks: which start-hour is shared by the most people.
+  const hourPeople = {}; // "16:00" → Set(names)
+  for (const r of withBreaks) for (const hr of Object.keys(r.breakStartHist || {})) { (hourPeople[hr] = hourPeople[hr] || new Set()).add(r.name); }
+  const synchronized = Object.entries(hourPeople).map(([hr, set]) => ({ time: hr, people: [...set] })).filter((x) => x.people.length >= 3).sort((a, b) => b.people.length - a.people.length).slice(0, 5);
+  return { topByTime, synchronized, teamAvgBreakMin: withBreaks.length ? Math.round(withBreaks.reduce((n, r) => n + r.totalBreakMin, 0) / withBreaks.length) : 0 };
+}
+
+// Build a compact, factual dataset for the AI review (no raw PII beyond names).
+function aiReviewPayload(rows, leaveByEmp) {
+  return rows.map((r) => {
+    // Weekday lateness pattern from days with a bio IN.
+    const lateByDow = {};
+    for (const d of r.days) {
+      if (!d.bioIn) continue;
+      const dow = new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short' });
+      lateByDow[dow] = lateByDow[dow] || [];
+      lateByDow[dow].push(d.bioIn);
+    }
+    return {
+      name: r.name, department: r.department, shift: r.shiftLabel, days: r.presentDays,
+      deficit: r.deficitLabel, avgHours: r.avgHours, missingOut: r.missingOut, gaps: r.gaps,
+      totalBreak: r.totalBreakLabel, avgBreak: r.avgBreakLabel, commonBreakTime: r.commonBreakTime,
+      inTimesByDay: lateByDow,
+      leaves: (leaveByEmp && leaveByEmp[r.employeeId]) || [],
+    };
+  });
+}
+
+module.exports = { parseDat, parseWorkbook, buildComparison, shiftGrossMinutes, fmtHM, breakInsights, aiReviewPayload };

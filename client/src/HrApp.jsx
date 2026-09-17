@@ -4104,6 +4104,14 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const [report, setReport] = useState(null);
   const [openEmp, setOpenEmp] = useState(null);
+  const [aiReview, setAiReview] = useState(null); // { digest, insights }
+  const [aiBusy, setAiBusy] = useState(false);
+  const runAiReview = async () => {
+    setAiBusy(true);
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/ai-review`, { method: 'POST', body: JSON.stringify({ from, to }) }); setAiReview(r); }
+    catch (e) { toast(e.message); }
+    setAiBusy(false);
+  };
   const fileRef = useRef(null);
 
   const onFile = async (e) => {
@@ -4179,6 +4187,30 @@ function BiometricModal({ onClose, onOpenEmployee }) {
           {/* STEP 3 — report */}
           {step === 3 && report && !openEmp && (
             <div>
+              {aiReview && (
+                <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
+                  <div className="text-[12px] font-extrabold text-violet-700 mb-1.5">🔎 AI Review {aiReview.aiUsed ? '' : '(computed patterns only — AI key not set)'}</div>
+                  {aiReview.digest && aiReview.digest.summary && <div className="text-[12.5px] text-slate-600 mb-2.5">{aiReview.digest.summary}</div>}
+                  {aiReview.digest && Array.isArray(aiReview.digest.flags) && (
+                    <div className="space-y-1.5 mb-2">
+                      {aiReview.digest.flags.map((f, i) => (
+                        <div key={i} className="flex items-start gap-2 text-[12px]">
+                          <span className="shrink-0 mt-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full" style={{ background: f.severity === 'high' ? '#fee2e2' : f.severity === 'medium' ? '#ffedd5' : '#f1f5f9', color: f.severity === 'high' ? '#b91c1c' : f.severity === 'medium' ? '#c2410c' : '#64748b' }}>{(f.severity || 'low').toUpperCase()}</span>
+                          <span><b className="text-[#050A1F]">{f.name}</b> — <span className="text-slate-500">{f.reason}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {aiReview.insights && (
+                    <div className="text-[11.5px] text-slate-500 border-t border-violet-100 pt-2 mt-1">
+                      {aiReview.digest && aiReview.digest.breakNote && <div className="mb-1.5 text-slate-600">☕ {aiReview.digest.breakNote}</div>}
+                      {aiReview.insights.synchronized && aiReview.insights.synchronized.length > 0 && <div>⏱ Synchronized breaks: {aiReview.insights.synchronized.slice(0, 3).map((s) => `${s.time} (${s.people.length} people)`).join(' · ')}</div>}
+                      {aiReview.insights.topByTime && aiReview.insights.topByTime.length > 0 && <div className="mt-1">🔝 Most break time: {aiReview.insights.topByTime.slice(0, 3).map((t) => `${titleCase(t.name)} (${t.totalBreakLabel})`).join(' · ')}</div>}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-violet-400 mt-2">AI-generated guidance for review — numbers are exact, interpretation is advisory.</div>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
                 {[['Analyzed', report.summary.analyzed, '#334155'], ['On target', report.summary.onTarget, '#16a34a'], ['In deficit', report.summary.inDeficit, '#dc2626'], ['Needs review', report.summary.needsReview, '#a16207'], ['Missing outs', report.summary.missingOuts, '#c2410c']].map(([l, v, c]) => (
                   <div key={l} className="rounded-xl border border-slate-200 p-2.5 text-center"><div className="text-[18px] font-extrabold" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400 font-bold uppercase">{l}</div></div>
@@ -4186,7 +4218,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
               </div>
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <table className="w-full text-[12.5px]">
-                  <thead><tr className="bg-slate-50 text-[10px] uppercase text-slate-400 font-bold"><th className="text-left px-3 py-2">Employee</th><th className="text-left px-3 py-2">Days</th><th className="text-left px-3 py-2">Worked / Target</th><th className="text-left px-3 py-2">Deficit</th><th className="text-left px-3 py-2">Flags</th><th /></tr></thead>
+                  <thead><tr className="bg-slate-50 text-[10px] uppercase text-slate-400 font-bold"><th className="text-left px-3 py-2">Employee</th><th className="text-left px-3 py-2">Days</th><th className="text-left px-3 py-2">Worked / Target</th><th className="text-left px-3 py-2">Deficit</th><th className="text-left px-3 py-2">Avg break</th><th className="text-left px-3 py-2">Flags</th><th /></tr></thead>
                   <tbody>
                     {report.rows.map((r) => (
                       <tr key={r.employeeId} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => setOpenEmp(r)}>
@@ -4194,6 +4226,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                         <td className="px-3 py-2.5 text-slate-600">{r.presentDays}</td>
                         <td className="px-3 py-2.5 text-slate-600">{r.totalWorkedLabel} / {r.totalTargetLabel}</td>
                         <td className="px-3 py-2.5 font-extrabold" style={{ color: r.inDeficit ? '#dc2626' : '#16a34a' }}>{r.deficitLabel}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{r.avgBreakLabel}{r.commonBreakTime && <span className="text-[10px] text-slate-400 ml-1">@{r.commonBreakTime}</span>}</td>
                         <td className="px-3 py-2.5">
                           <div className="flex gap-1 flex-wrap">
                             {r.gaps > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">{r.gaps} gaps</span>}
@@ -4223,7 +4256,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
               <div className="text-[11px] text-slate-400 mb-2">Worked = higher of biometric / HRMS. <span className="text-amber-600 font-bold">⚠</span> = mismatch to check.</div>
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <table className="w-full text-[12px]">
-                  <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-2">Date</th><th className="text-left px-2.5 py-2">Bio IN→OUT</th><th className="text-left px-2.5 py-2">HRMS IN→OUT</th><th className="text-left px-2.5 py-2">Worked</th><th className="text-left px-2.5 py-2">vs shift</th><th className="text-left px-2.5 py-2">Flag</th></tr></thead>
+                  <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-2">Date</th><th className="text-left px-2.5 py-2">Bio IN→OUT</th><th className="text-left px-2.5 py-2">HRMS IN→OUT</th><th className="text-left px-2.5 py-2">Worked</th><th className="text-left px-2.5 py-2">Breaks</th><th className="text-left px-2.5 py-2">vs shift</th><th className="text-left px-2.5 py-2">Flag</th></tr></thead>
                   <tbody>
                     {openEmp.days.map((d) => (
                       <tr key={d.date} className="border-t border-slate-50">
@@ -4231,6 +4264,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                         <td className="px-2.5 py-2">{d.bioIn || '—'} → {d.bioOut || <span className="text-orange-600 font-bold">—</span>}</td>
                         <td className="px-2.5 py-2 text-slate-500">{d.wfh ? <span className="text-violet-600 font-bold">WFH</span> : <>{d.hrmsIn || '—'} → {d.hrmsOut || '—'}</>}</td>
                         <td className="px-2.5 py-2 font-bold">{d.workedLabel}{d.highlight && <span className="ml-1 text-amber-600" title="mismatch">⚠</span>}<span className="text-[9px] text-slate-300 ml-1">{d.source}</span></td>
+                        <td className="px-2.5 py-2 text-slate-500" title={(d.breaks || []).map((b) => `${b.start}–${b.end}`).join(', ')}>{d.breakLabel}{(d.breaks || []).length > 0 && <span className="text-[9px] text-slate-300 ml-1">×{d.breaks.length}</span>}{(d.longGaps || []).length > 0 && <span className="text-[9px] text-red-500 ml-1" title="long mid-day gap">⚠gap</span>}</td>
                         <td className="px-2.5 py-2 font-bold" style={{ color: d.deficit == null ? '#94a3b8' : d.deficit < 0 ? '#dc2626' : '#16a34a' }}>{d.deficit == null ? '—' : defLabel(d.deficit)}</td>
                         <td className="px-2.5 py-2">
                           <div className="flex gap-1 flex-wrap">
@@ -4254,6 +4288,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
         {/* Footer actions for the report */}
         {step === 3 && !openEmp && (
           <div className="px-5 py-3 border-t border-slate-100 flex gap-2 flex-wrap shrink-0">
+            <button onClick={runAiReview} disabled={aiBusy} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#8B5CF6,#EC4899)' }}>{aiBusy ? '✨ Analyzing…' : '🔎 AI Review'}</button>
             <button onClick={exportExcel} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇ Export report (Excel)</button>
             <button onClick={() => apply(null)} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">✔ Apply to HRMS</button>
             <button onClick={sendFlags} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">📩 Send flags to Review</button>
