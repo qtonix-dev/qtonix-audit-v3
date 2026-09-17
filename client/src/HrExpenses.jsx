@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { hrApi } from './HrApp.jsx';
 import { titleCase, uploadToImageKit } from './HrParts.jsx';
 
@@ -59,7 +59,7 @@ export default function HrExpenses({ user, isAdmin, openExpenseId, onIntentConsu
   // HR staff / HR Manager / Admin can edit; only Admin can delete.
   const canEdit = isAdmin || user.isHrManager || user.hrManagerAll || ['hr', 'recruiter'].includes(user.type);
   const deleteExpense = async (e) => {
-    if (!window.confirm(`Delete this expense (${e.title || e.category}) permanently?`)) return;
+    if (!(await confirmDialog({ title: `Delete this expense (${e.title || e.category}) permanently?` }))) return;
     try { await hrApi(`/expenses/${e._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
   };
   const [vendorHistory, setVendorHistory] = useState(null);
@@ -328,7 +328,7 @@ function PendingTab({ expenses, isAdmin, onApprove, onReject, onPay, onDetail })
 
 function VendorsTab({ vendors, onAdd, onEdit, onHistory, reload, setErr }) {
   const del = async (v) => {
-    if (!window.confirm(`Delete vendor "${v.name}"? If they have past payments, they'll be deactivated instead.`)) return;
+    if (!(await confirmDialog({ title: `Delete vendor "${v.name}"? If they have past payments, they'll be deactivated instead.` }))) return;
     try { await hrApi(`/vendors/${v._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); }
   };
   return (

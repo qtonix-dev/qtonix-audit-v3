@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { API_BASE } from './config.js';
 import { APP_BUILD } from './version.js';
 import { AppSwitcher } from './AppSwitcher.jsx';
@@ -888,7 +888,7 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
                   )}
                   {isAdmin && (
                     <button onClick={async () => {
-                      if (!confirm(`Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.`)) return;
+                      if (!(await confirmDialog({ title: `Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.` }))) return;
                       try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); }
                     }} title="Delete report"
                       className="rounded-lg border border-slate-200 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-colors">
@@ -957,7 +957,7 @@ function useGmail() {
     catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   const disconnect = async () => {
-    if (!confirm('Disconnect your Gmail? Lead emails will stop syncing.')) return;
+    if (!(await confirmDialog({ title: 'Disconnect your Gmail? Lead emails will stop syncing.' }))) return;
     try { await api('/gmail/disconnect', { method: 'POST' }); load(); } catch (e) { setErr(e.message); }
   };
   return { status, busy, err, connect, disconnect, reload: load };
@@ -1258,7 +1258,7 @@ function EmailSettingsModal({ user, onClose }) {
     catch (e) { setMsg(e.message); }
   };
   const disconnectPrimary = async () => { await gmail.disconnect(); loadMailboxes(); };
-  const removeExtra = async (id) => { if (!confirm('Disconnect this mailbox?')) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); loadMailboxes(); } catch { /* */ } };
+  const removeExtra = async (id) => { if (!(await confirmDialog({ title: 'Disconnect this mailbox?' }))) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); loadMailboxes(); } catch { /* */ } };
 
   const blankSig = () => ({ name: '', bodyHtml: '', scope: 'all', mailboxRef: '', isDefault: false });
   const saveSig = async () => {
@@ -1268,7 +1268,7 @@ function EmailSettingsModal({ user, onClose }) {
       setEditing(null); loadSigs();
     } catch (e) { setMsg(e.message); }
   };
-  const delSig = async (id) => { if (!confirm('Delete this signature?')) return; try { await api(`/gmail/signatures/${id}`, { method: 'DELETE' }); loadSigs(); } catch { /* */ } };
+  const delSig = async (id) => { if (!(await confirmDialog({ title: 'Delete this signature?' }))) return; try { await api(`/gmail/signatures/${id}`, { method: 'DELETE' }); loadSigs(); } catch { /* */ } };
 
   const mailboxOptions = [{ value: 'all', label: 'All mailboxes' }, ...mailboxes.map((m) => ({ value: m.kind === 'primary' ? `user:${user.id}` : String(m._id), label: `${m.label || m.email} (${m.email})` }))];
 
@@ -1419,7 +1419,7 @@ function TemplatesModal({ user, onClose }) {
       setEditing(null); load();
     } catch (e) { setMsg(e.message); }
   };
-  const del = async (id) => { if (!confirm('Delete this template?')) return; try { await api(`/gmail/templates/${id}`, { method: 'DELETE' }); load(); } catch (e) { setMsg(e.message); } };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Delete this template?' }))) return; try { await api(`/gmail/templates/${id}`, { method: 'DELETE' }); load(); } catch (e) { setMsg(e.message); } };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-[60] p-4 overflow-y-auto" onClick={onClose}>
@@ -2091,7 +2091,7 @@ export default function App() {
                   <button onClick={() => setShareReport(activeReport)} className="rounded-lg border border-blue-300 px-4 py-2 text-sm font-bold text-blue-600 hover:bg-blue-50">🌐 Public link</button>
                 )}
                 <button onClick={async () => {
-                  if (!confirm('Re-run this analysis with fresh data? This uses API credits and replaces the current results.')) return;
+                  if (!(await confirmDialog({ title: 'Re-run this analysis with fresh data? This uses API credits and replaces the current results.' }))) return;
                   try {
                     await api(`/reports/${activeReport._id}/retry`, { method: 'POST' });
                     setViewNonce(Date.now());
@@ -2100,7 +2100,7 @@ export default function App() {
                 }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 hover:border-slate-400">↻ Re-run report</button>
                 {isAdmin && (
                   <button onClick={async () => {
-                    if (!confirm(`Permanently delete this report for ${activeReport.businessName}?\n\nThis removes it from the database along with its PDF. This cannot be undone.`)) return;
+                    if (!(await confirmDialog({ title: `Permanently delete this report for ${activeReport.businessName}?\n\nThis removes it from the database along with its PDF. This cannot be undone.` }))) return;
                     try {
                       await api(`/reports/${activeReport._id}`, { method: 'DELETE' });
                       setActiveReport(null); setView('list');

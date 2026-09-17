@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { API_BASE } from './config.js';
 
 // Same icon set used across the Site Analysis platform, redrawn here so the HR
@@ -385,7 +385,7 @@ export function ProfilePage({ me, targetId }) {
   const perfCards = () => (p.performanceCards || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const addPerfCard = (card) => setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] }));
   const delPerfCard = (id) => setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== id) }));
-  const delPerf = async (cardId) => { if (!window.confirm('Remove this note?')) return; try { await hrApi(`/employees/${id}/performance/${cardId}`, { method: 'DELETE' }); setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== cardId) })); } catch (e) { toast(e.message); } };
+  const delPerf = async (cardId) => { if (!(await confirmDialog({ title: 'Remove this note?' }))) return; try { await hrApi(`/employees/${id}/performance/${cardId}`, { method: 'DELETE' }); setP((s) => ({ ...s, performanceCards: (s.performanceCards || []).filter((x) => x.id !== cardId) })); } catch (e) { toast(e.message); } };
 
   const save = async (overrideProfile) => {
     setSaving(true); setMsg(''); setErr('');
@@ -1036,7 +1036,7 @@ function LeaveTab({ employeeId, canManage }) {
   const load = () => hrApi(`/employees/${employeeId}/leave`).then(setData).catch(() => setData({ leaves: [] }));
   useEffect(() => { load(); }, [employeeId]);
   if (!data) return <div className="text-slate-400 text-sm">Loading…</div>;
-  const del = async (id) => { if (!window.confirm('Remove this leave record?')) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Remove this leave record?' }))) return; try { await hrApi(`/employees/${employeeId}/leave/${id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
   const setCategory = async (categoryId) => { try { await hrApi(`/employees/${employeeId}/leave-category`, { method: 'PUT', body: JSON.stringify({ categoryId, clearOverride: true }) }); load(); } catch (e) { toast(e.message); } };
   return (
     <div className="space-y-6">
@@ -1321,7 +1321,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
     catch { setEditing(u); }
   };
   const removeDirector = async (u) => {
-    if (!window.confirm(`Remove ${u.name} from the HR employee list? This does not affect their CRM login.`)) return;
+    if (!(await confirmDialog({ title: `Remove ${u.name} from the HR employee list? This does not affect their CRM login.` }))) return;
     try { await hrApi(`/directors/${String(u._id).replace('admin:', '')}`, { method: 'DELETE' }); setMsg('Director removed from HR list.'); load(); }
     catch (e) { setMsg(e.message); }
   };
@@ -1351,7 +1351,7 @@ export function EmployeeDirectory({ isAdmin, me, onOpenProfile }) {
   });
 
   const del = async (u) => {
-    if (!window.confirm(`Delete ${u.name}? This removes their employee & login record permanently.`)) return;
+    if (!(await confirmDialog({ title: `Delete ${u.name}? This removes their employee & login record permanently.` }))) return;
     try { await hrApi(`/users/${u._id}`, { method: 'DELETE' }); setMsg(`Deleted ${u.name}.`); load(); } catch (e) { toast(e.message); }
   };
   const toggleActive = async (u) => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { hrApi, fileToBase64, ResumeMatchBadge } from './HrApp.jsx';
 import { titleCase } from './HrParts.jsx';
 import { MailEditor, ChipInput, RichText } from './Leads.jsx';
@@ -91,7 +91,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   };
 
   const delCandidate = async () => {
-    if (!window.confirm('Delete this candidate permanently? This cannot be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete this candidate permanently? This cannot be undone.' }))) return;
     try { await hrApi(`/candidates/${candidateId}`, { method: 'DELETE' }); (onDeleted || back)(); }
     catch (e) { setErr(e.message); }
   };
@@ -121,7 +121,7 @@ export default function HrCandidateView({ candidateId, isAdmin, onBack, onClose,
   const reject = () => setShowReject(true);
   const toggleCold = async () => {
     if (!c.cold) {
-      const reason = window.prompt('Mark this candidate as cold (parked, no action needed). Add an optional note:', '') ;
+      const reason = await promptDialog({ title: 'Mark this candidate as cold', message: 'Parked, no action needed. Add an optional note:', defaultValue: '' });
       if (reason === null) return; // cancelled
       try { await act(() => hrApi(`/candidates/${c.id}/cold`, { method: 'POST', body: JSON.stringify({ cold: true, reason }) })); } catch {}
     } else {
@@ -988,7 +988,7 @@ function TaskSubmissions({ c, reload }) {
   const copyLink = (t) => { const url = `${window.location.origin}/task/${t.token}`; navigator.clipboard?.writeText(url); };
   const openEdit = (t) => { setEditFor(t.id); setEditTitle(t.title || ''); setEditDetails(t.details || ''); setErr(''); };
   const deleteTask = async (t) => {
-    if (!window.confirm(`Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: `Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.` }))) return;
     setBusyId(t.id);
     try { await hrApi(`/candidates/${c.id}/task/${t.id}`, { method: 'DELETE' }); reload(); }
     catch (e) { toast(e.message); } finally { setBusyId(null); }
@@ -1161,7 +1161,7 @@ function AttachmentsTab({ c, reload }) {
       reload();
     } catch (e) { setErr(e.message); } finally { setBusy(false); setDocType(null); if (ref.current) ref.current.value = ''; }
   };
-  const del = async (id) => { if (!window.confirm('Remove this attachment?')) return; try { await hrApi(`/candidates/${c.id}/attachments/${id}`, { method: 'DELETE' }); reload(); } catch {} };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Remove this attachment?' }))) return; try { await hrApi(`/candidates/${c.id}/attachments/${id}`, { method: 'DELETE' }); reload(); } catch {} };
   const badge = (t) => {
     const map = { 'Resume': 'bg-blue-100 text-blue-700', 'Work Portfolio': 'bg-purple-100 text-purple-700', 'Task': 'bg-amber-100 text-amber-700', 'Other': 'bg-slate-100 text-slate-500' };
     return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${map[t] || map.Other}`}>{t || 'Other'}</span>;
@@ -1307,7 +1307,7 @@ function ActivityTab({ c, reload, onAddTask, onAddCall, onCompleteInterview }) {
   const [partIv, setPartIv] = useState(null); // interview shown in participant popup
   const [rescheduleIv, setRescheduleIv] = useState(null); // interview being rescheduled
   const [cancelIv, setCancelIv] = useState(null); // interview being cancelled
-  const del = async (id) => { if (!window.confirm('Delete this activity?')) return; try { await hrApi(`/candidates/${c.id}/activities/${id}`, { method: 'DELETE' }); reload(); } catch {} };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Delete this activity?' }))) return; try { await hrApi(`/candidates/${c.id}/activities/${id}`, { method: 'DELETE' }); reload(); } catch {} };
   const toggleDone = async (a) => { try { await hrApi(`/candidates/${c.id}/activities/${a.id}`, { method: 'PATCH', body: JSON.stringify({ done: !a.done, mode: !a.done ? 'done' : 'scheduled' }) }); reload(); } catch {} };
   const prColor = (p) => p === 'High' ? '#DC2626' : p === 'Low' ? '#64748B' : '#F59E0B';
   return (
@@ -1786,7 +1786,7 @@ function OfferTab({ c, isAdmin, reload }) {
                 {isAdmin && a.status === 'pending' && (
                   <div className="flex gap-2 mt-2">
                     <button onClick={() => decide(a.id, 'approved')} className="rounded-lg bg-green-600 text-white px-3 py-1 text-xs font-bold">Approve</button>
-                    <button onClick={() => { const co = window.prompt('Counter-offer amount:'); if (co) decide(a.id, 'countered', co); }} className="rounded-lg bg-blue-600 text-white px-3 py-1 text-xs font-bold">Counter</button>
+                    <button onClick={async () => { const co = await promptDialog({ title: 'Counter-offer amount:' }); if (co) decide(a.id, 'countered', co); }} className="rounded-lg bg-blue-600 text-white px-3 py-1 text-xs font-bold">Counter</button>
                     <button onClick={() => decide(a.id, 'rejected')} className="rounded-lg bg-red-500 text-white px-3 py-1 text-xs font-bold">Reject</button>
                   </div>
                 )}
@@ -1798,7 +1798,7 @@ function OfferTab({ c, isAdmin, reload }) {
 
       <Card title="2 · Letter of Intent" action={offer.status === 'accepted' ? (
         <div className="flex items-center gap-3">
-          {!offer.loi && <button onClick={async () => { if (window.confirm('Mark the LOI as already sent to this candidate (sent manually)? This lets onboarding start.')) { await op({ op: 'mark_loi_sent' }); } }} className="text-xs font-bold text-slate-500 hover:text-slate-700">Already sent</button>}
+          {!offer.loi && <button onClick={async () => { if (await confirmDialog({ title: 'Mark the LOI as already sent to this candidate (sent manually)? This lets onboarding start.' })) { await op({ op: 'mark_loi_sent' }); } }} className="text-xs font-bold text-slate-500 hover:text-slate-700">Already sent</button>}
           <button onClick={() => setModal('loi')} className="text-xs font-bold text-orange-600">{offer.loi ? 'Resend LOI' : 'Send LOI'}</button>
         </div>
       ) : null}>
@@ -2227,7 +2227,7 @@ function AssignTaskModal({ candidate, onClose, onDone }) {
   };
   const copyLink = (t) => { try { navigator.clipboard.writeText(`${window.location.origin}/task/${t.token}`); } catch {} };
   const deleteTask = async (t) => {
-    if (!window.confirm(`Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: `Delete this task${t.title ? ` (“${t.title}”)` : ''}? This cannot be undone.` }))) return;
     setBusyTaskId(t.id); setErr('');
     try {
       const r = await hrApi(`/candidates/${candidate.id}/task/${t.id}`, { method: 'DELETE' });

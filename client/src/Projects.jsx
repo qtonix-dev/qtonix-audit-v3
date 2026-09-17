@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { hrApi } from './HrApp.jsx';
-import { toast } from './toast';
+import { toast, confirmDialog } from './toast';
 
 const ORANGE = 'linear-gradient(135deg,#FF6A00,#FF4500)';
 const TYPE_STYLE = {
@@ -636,7 +636,7 @@ function TemplateEditor({ tmpl, onBack }) {
     try { if (t.id) await hrApi(`/projects/templates/${t.id}`, { method: 'PUT', body: JSON.stringify(body) }); else await hrApi('/projects/templates', { method: 'POST', body: JSON.stringify(body) }); toast(t.id ? 'Template updated ✓' : 'Template created 🎉'); onBack(); } catch (e) { toast(e.message); }
     setBusy(false);
   };
-  const del = async () => { if (t.id && window.confirm('Delete this template?')) { await hrApi(`/projects/templates/${t.id}`, { method: 'DELETE' }); onBack(); } };
+  const del = async () => { if (t.id && await confirmDialog({ title: 'Delete this template?', danger: true })) { await hrApi(`/projects/templates/${t.id}`, { method: 'DELETE' }); onBack(); } };
   const stepCount = (t.stages || []).reduce((n, s) => n + (s.steps || []).length, 0);
 
   return (
@@ -707,7 +707,7 @@ function PlansAdmin() {
   const [editing, setEditing] = useState(null);
   const load = () => hrApi('/projects/plans').then((r) => setPlans(r.plans || [])).catch(() => setPlans([]));
   useEffect(() => { load(); }, []);
-  const del = async (p) => { if (window.confirm('Delete plan?')) { await hrApi(`/projects/plans/${p.id}`, { method: 'DELETE' }); load(); } };
+  const del = async (p) => { if (await confirmDialog({ title: 'Delete plan?', danger: true })) { await hrApi(`/projects/plans/${p.id}`, { method: 'DELETE' }); load(); } };
   if (!plans) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
   return (
     <div>

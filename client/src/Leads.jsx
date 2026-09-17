@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { api } from './App.jsx';
 import { API_BASE } from './config.js';
 import { COUNTRY_NAMES, COUNTRY_TIMEZONES, formatPhone, dialFor } from './countries.js';
@@ -575,7 +575,7 @@ export function MailEditor({ value, onChange, placeholder, minHeight = 200, maxH
     document.execCommand(cmd, false, arg || null);
     if (ref.current) emit(ref.current.innerHTML);
   };
-  const link = () => { const url = prompt('Link URL'); if (url) exec('createLink', url); };
+  const link = async () => { const url = await promptDialog({ title: 'Link URL' }); if (url) exec('createLink', url); };
   const isEmpty = !value || value === '<br>' || value === '<div><br></div>';
 
   const FONTS = ['Sans Serif', 'Serif', 'Fixed Width', 'Plus Jakarta Sans', 'Arial', 'Georgia'];
@@ -1183,7 +1183,7 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                       <td className="px-4 py-3 text-right">
                         <button title="Delete lead" onClick={async (e) => {
                           e.stopPropagation();
-                          if (!confirm(`Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.`)) return;
+                          if (!(await confirmDialog({ title: `Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.` }))) return;
                           try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
                         }} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>
                       </td>
@@ -2018,7 +2018,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
             </button>
             {user.role === 'admin' && (
               <button title="Delete lead" onClick={async () => {
-                if (!confirm(`Permanently delete ${fullName(lead)}?\n\nThis removes the lead and all of its notes, activities and deals from the database. This cannot be undone.`)) return;
+                if (!(await confirmDialog({ title: `Permanently delete ${fullName(lead)}?\n\nThis removes the lead and all of its notes, activities and deals from the database. This cannot be undone.` }))) return;
                 try { await api(`/leads/${leadId}`, { method: 'DELETE' }); onBack(); } catch (e) { toast(e.message); }
               }} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50">
                 <Icon.Trash /> Delete
@@ -4484,7 +4484,7 @@ function DealsTab({ lead, config, user, onChange }) {
   // Admin-only hard delete of a deal (for cleaning up bad/legacy records).
   const removeDeal = async (deal, e) => {
     e.stopPropagation();
-    if (!confirm(`Delete the deal "${deal.name}"?\n\nThis removes it and its payment schedule permanently. This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: `Delete the deal "${deal.name}"?\n\nThis removes it and its payment schedule permanently. This cannot be undone.` }))) return;
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}`, { method: 'DELETE' });
       onChange(u);
@@ -5086,7 +5086,7 @@ function ReportsTab({ lead, onChange }) {
   const existing = reports[0] || null;
   const refresh = async () => {
     if (!existing) return;
-    if (!confirm('Refresh this report with fresh AI and Google data? SE Ranking data is reused, so no SE Ranking credits are spent.')) return;
+    if (!(await confirmDialog({ title: 'Refresh this report with fresh AI and Google data? SE Ranking data is reused, so no SE Ranking credits are spent.' }))) return;
     setRefreshing(true);
     try {
       await api(`/reports/${existing._id}/refresh`, { method: 'POST' });
@@ -5203,7 +5203,7 @@ function ReleasedLeads({ user, onOpen }) {
   useEffect(() => { load(); api('/leads/config').then((r) => setOwners(r.owners || [])).catch(() => {}); }, []);
 
   const doDelete = async (l) => {
-    if (!confirm(`Delete released lead "${l.firstName || l.email || 'this lead'}" permanently? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: `Delete released lead "${l.firstName || l.email || 'this lead'}" permanently? This cannot be undone.` }))) return;
     setBusy(l._id);
     try { await api(`/leads/${l._id}`, { method: 'DELETE' }); setItems((xs) => xs.filter((x) => x._id !== l._id)); }
     catch (e) { toast(e.message); } finally { setBusy(null); }
@@ -5391,7 +5391,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     } catch (e) { toast(e.message); }
   };
   const resumeRecurring = async (lead, deal) => {
-    if (!confirm(`Resume the recurring contract for "${deal.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Resume the recurring contract for "${deal.name}"?` }))) return;
     try {
       const u = await api(`/leads/${lead._id}/deals/${deal.id}/recurring`, { method: 'POST', body: JSON.stringify({ action: 'resume' }) });
       setItems((list) => list.map((x) => (x._id === u._id ? u : x)));

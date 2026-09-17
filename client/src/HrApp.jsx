@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase, uploadToImageKit } from './HrParts.jsx';
@@ -724,7 +724,7 @@ function RewardStoreView() {
   const bal = (data.wallet || {}).balance || 0;
   const ratio = (data.wallet || {}).rupeeValue && bal ? (bal / data.wallet.rupeeValue) : 2; // pts per ₹
   const encashRupees = encashPts ? Math.round((Number(encashPts) / ratio) * 100) / 100 : 0;
-  const redeem = async (item) => { if (!window.confirm(`Redeem "${item.name}" for ${item.cost} points?`)) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); toast('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { toast(e.message); } setBusy(''); };
+  const redeem = async (item) => { if (!(await confirmDialog({ title: `Redeem "${item.name}" for ${item.cost} points?` }))) return; setBusy(item.id); try { await hrApi(`/store/redeem/${item.id}`, { method: 'POST', body: '{}' }); load(); toast('Redeemed! HR will fulfil your reward shortly.'); } catch (e) { toast(e.message); } setBusy(''); };
   const doEncash = async () => { const p = Number(encashPts); if (!p || p <= 0) return; if (p > bal) { toast('You don’t have that many points.'); return; } setBusy('encash'); try { await hrApi('/store/encash', { method: 'POST', body: JSON.stringify({ points: p }) }); setEncashPts(''); setEncashOpen(false); load(); toast('Encashment requested! HR will approve it for your next salary.'); } catch (e) { toast(e.message); } setBusy(''); };
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], paid: ['Paid w/ salary', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'], cancelled: ['Cancelled', '#64748B', '#F1F5F9'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
@@ -859,12 +859,12 @@ function RewardsAdmin() {
   useEffect(() => { load(); }, []);
   if (!data) return <div className="text-slate-400 text-sm py-8">Loading…</div>;
   const addBadge = async (cat) => { if (!newBadge.name.trim()) { toast('Name required'); return; } setBusy('add'); try { await hrApi('/rewards/rules', { method: 'POST', body: JSON.stringify({ name: newBadge.name, category: cat, points: Number(newBadge.points) || 0, icon: newBadge.icon }) }); setNewBadge({ icon: '🏅', name: '', points: '' }); setAddCat(''); await load(); } catch (e) { toast(e.message); } setBusy(''); };
-  const delRule = async (r) => { if (!window.confirm(`Delete "${r.name}"?`)) return; try { await hrApi(`/rewards/rules/${r.id}`, { method: 'DELETE' }); await load(); } catch (e) { toast(e.message); } };
+  const delRule = async (r) => { if (!(await confirmDialog({ title: `Delete "${r.name}"?` }))) return; try { await hrApi(`/rewards/rules/${r.id}`, { method: 'DELETE' }); await load(); } catch (e) { toast(e.message); } };
   const cfg = data.config || {};
   const live = !!cfg.rewardsLive;
   const saveRule = async (rule, patch) => { setBusy('r' + rule.id); try { await hrApi(`/rewards/rules/${rule.id}`, { method: 'PUT', body: JSON.stringify(patch) }); await load(); setEdits((e) => { const n = { ...e }; delete n[rule.id]; return n; }); } catch (e) { toast(e.message); } setBusy(''); };
-  const toggleLive = async () => { if (!live && !window.confirm('Turn Rewards ON?\n\n• All existing points will be reset to zero (clean slate).\n• Birthdays & work anniversaries from the last 30 days will be credited.\n• Everything else starts awarding points from today forward.\n\nMake sure the point values below are correct first.')) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); await load(); } catch (e) { toast(e.message); } setBusy(''); };
-  const resetPoints = async () => { if (!window.confirm('Reset ALL reward points to zero for everyone? This cannot be undone.')) return; setBusy('reset'); try { await hrApi('/rewards/reset', { method: 'POST', body: '{}' }); await load(); toast('All points have been reset to zero.'); } catch (e) { toast(e.message); } setBusy(''); };
+  const toggleLive = async () => { if (!live && !(await confirmDialog({ title: 'Turn Rewards ON?', message: 'All existing points will be reset to zero (clean slate). Birthdays & work anniversaries from the last 30 days will be credited. Everything else starts awarding points from today forward. Make sure the point values are correct first.', confirmText: 'Turn ON' }))) return; setBusy('live'); try { const r = await hrApi('/rewards/config', { method: 'PUT', body: JSON.stringify({ rewardsLive: !live }) }); setData((d) => ({ ...d, config: r.config })); await load(); } catch (e) { toast(e.message); } setBusy(''); };
+  const resetPoints = async () => { if (!(await confirmDialog({ title: 'Reset ALL reward points to zero for everyone? This cannot be undone.' }))) return; setBusy('reset'); try { await hrApi('/rewards/reset', { method: 'POST', body: '{}' }); await load(); toast('All points have been reset to zero.'); } catch (e) { toast(e.message); } setBusy(''); };
   const cats = {}; (data.rules || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
   const catLabel = { badge: '🏅 Badges', appreciation: '❤️ Appreciation', automatic: '🎁 Automatic', anniversary: '🎊 Anniversary', attendance: '📅 Attendance' };
   return (
@@ -1225,8 +1225,8 @@ function StoreAdmin() {
   const startEdit = (it) => { setEditing(it.id); setF({ name: it.name, vendor: it.vendor || '', category: it.category || 'voucher', icon: it.icon || '🎁', imageUrl: it.imageUrl || '', cost: it.cost, rupeeValue: it.rupeeValue || '', stock: it.stock == null ? '' : it.stock, description: it.description || '' }); };
   const uploadImg = async (file) => { if (!file) return; setUploading(true); try { const url = await uploadToImageKit(file); setF((s) => ({ ...s, imageUrl: url })); } catch (e) { toast('Upload failed: ' + e.message); } setUploading(false); };
   const toggle = async (it) => { try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'PUT', body: JSON.stringify({ active: !it.active }) }); load(); } catch (e) { toast(e.message); } };
-  const del = async (it) => { if (!window.confirm(`Delete "${it.name}"?`)) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
-  const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = window.prompt('Voucher code / fulfilment note (optional):') || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { toast(e.message); } setBusy(''); };
+  const del = async (it) => { if (!(await confirmDialog({ title: `Delete "${it.name}"?` }))) return; try { await hrApi(`/store/admin/catalogue/${it.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const decide = async (r, decision) => { let voucherCode = ''; if (decision === 'deliver') { voucherCode = await promptDialog({ title: 'Voucher code / fulfilment note (optional):' }) || ''; } setBusy(r.id); try { await hrApi(`/store/admin/redemptions/${r.id}/decide`, { method: 'POST', body: JSON.stringify({ decision, voucherCode }) }); load(); } catch (e) { toast(e.message); } setBusy(''); };
   const inp = 'rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px]';
   const statusPill = (s) => ({ requested: ['Pending', '#CA8A04', '#FEF9C3'], delivered: ['Delivered', '#15803D', '#DCFCE7'], rejected: ['Refunded', '#DC2626', '#FEE2E2'] }[s] || ['—', '#64748B', '#F1F5F9']);
   return (
@@ -2049,7 +2049,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     setEditingMsg(null);
   };
   const deleteMsg = async (m) => {
-    if (!window.confirm('Delete this message? This can’t be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete this message? This can’t be undone.' }))) return;
     try {
       await hrApi(`/chat/messages/${m.id}`, { method: 'DELETE' });
       setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -2811,10 +2811,10 @@ function ChatManageModal({ team, directory, isAdmin, onClose, onDone, onDeleted 
   const memberIds = new Set((members || []).map((m) => m.id));
   const addable = directory.filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
   const add = async (u) => { setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members`, { method: 'POST', body: JSON.stringify({ userIds: [u.id] }) }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
-  const remove = async (m) => { if (!window.confirm(`Remove ${m.name} from ${team.teamName}?`)) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
+  const remove = async (m) => { if (!(await confirmDialog({ title: `Remove ${m.name} from ${team.teamName}?` }))) return; setBusy(true); try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}`, { method: 'DELETE' }); await load(); onDone(); } catch (e) { toast(e.message); } setBusy(false); };
   const toggleGroupMgr = async (m) => { const grant = m.role !== 'manager' && m.role !== 'owner'; try { await hrApi(`/chat/teams/${team.teamId}/members/${m.id}/role`, { method: 'PUT', body: JSON.stringify({ canManageGroups: grant }) }); await load(); onDone(); } catch (e) { toast(e.message); } };
   const deleteTeam = async () => {
-    if (!window.confirm(`Delete the team "${team.teamName}" and ALL its groups & messages? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: `Delete the team "${team.teamName}" and ALL its groups & messages? This cannot be undone.` }))) return;
     setBusy(true);
     try { await hrApi(`/chat/teams/${team.teamId}`, { method: 'DELETE' }); (onDeleted || onDone)(); } catch (e) { toast(e.message); setBusy(false); }
   };
@@ -3526,7 +3526,7 @@ function RichText({ value, onSave, placeholder, taskTitle }) {
   const Btn = ({ on, active, children, title }) => (
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); on(); }} className={`w-7 h-7 rounded text-xs font-bold flex items-center justify-center ${active ? 'bg-slate-200 text-[#050A1F]' : 'text-slate-500 hover:bg-slate-100'}`}>{children}</button>
   );
-  const setLink = () => { const prev = editor.getAttributes('link').href; const url = window.prompt('Link URL', prev || 'https://'); if (url === null) return; if (url === '') { editor.chain().focus().unsetLink().run(); return; } editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); };
+  const setLink = async () => { const prev = editor.getAttributes('link').href; const url = await promptDialog({ title: 'Link URL', defaultValue: prev || 'https://' }); if (url === null) return; if (url === '') { editor.chain().focus().unsetLink().run(); return; } editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run(); };
   const runAi = async (mode) => {
     setAiOpen(false); setAiBusy(mode); setAiResult(null);
     try { const r = await hrApi('/tasks/ai/description', { method: 'POST', body: JSON.stringify({ title: taskTitle || '', text: editor.getHTML(), mode }) }); setAiResult({ text: r.text, mode: r.mode }); }
@@ -3647,7 +3647,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
     catch (e) { toast(e.message || 'Could not edit note'); }
   };
   const deleteNote = async (commentId) => {
-    if (!window.confirm('Delete this note? This can\u2019t be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete this note? This can\u2019t be undone.' }))) return;
     try { await hrApi(`/tasks/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }); load(); }
     catch (e) { toast(e.message || 'Could not delete note'); }
   };
@@ -3680,7 +3680,7 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
             <button onClick={() => patch({ stage: t.stage === 'completed' ? 'not_started' : 'completed' })} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${t.stage === 'completed' ? 'bg-green-50 border-green-200 text-green-700' : 'border-slate-200 text-slate-600'}`}>✓ {t.stage === 'completed' ? 'Completed' : 'Mark complete'}</button>
           </div>
           <div className="flex items-center gap-1">
-            {data.canDelete && <button onClick={async () => { if (confirm('Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.')) { try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } catch (e) { toast(e.message); } } }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500" title="Delete task"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>}
+            {data.canDelete && <button onClick={async () => { if (await confirmDialog({ title: 'Delete this task' + ((data.subtasks && data.subtasks.length) ? ' and its subtasks' : '') + '? This cannot be undone.' })) { try { await hrApi(`/tasks/tasks/${taskId}`, { method: 'DELETE' }); onChange && onChange(); onClose(); } catch (e) { toast(e.message); } } }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500" title="Delete task"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg></button>}
             <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-slate-100 text-slate-400" title="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg></button>
           </div>
         </div>
@@ -5837,7 +5837,7 @@ function HrDashboard({ user, isAdmin, onOpenCandidate, onNav }) {
                   <div className="text-sm font-bold text-[#050A1F] flex items-center gap-1.5">{a.pinned && <span title="Pinned">📌</span>}{a.title}{a.audience && a.audience !== 'all' && <span className="text-[9px] font-bold rounded px-1.5 py-0.5 bg-blue-100 text-blue-600">{a.audience}</span>}</div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] text-slate-400">{a.authorName} · {new Date(a.createdAt).toLocaleDateString()}</span>
-                    {annCanPost && <button title="Remove" onClick={async () => { if (!window.confirm('Remove this announcement?')) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { toast(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
+                    {annCanPost && <button title="Remove" onClick={async () => { if (!(await confirmDialog({ title: 'Remove this announcement?' }))) return; try { await hrApi(`/announcements/${a._id}`, { method: 'DELETE' }); loadAnnouncements(); } catch (e) { toast(e.message); } }} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">✕</button>}
                   </div>
                 </div>
                 {a.body && <div className="text-xs text-slate-500 mt-0.5 whitespace-pre-wrap">{a.body}</div>}
@@ -6313,9 +6313,9 @@ function JobList({ jobs, isAdmin, me, onEdit, reload, onViewApplicants, scope: s
     if (isMgr && (!j.branch || !me.branch || j.branch === me.branch)) return true;
     return false;
   };
-  const close = async (j) => { if (!window.confirm('Close this job? Its public form will stop accepting applications.')) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
+  const close = async (j) => { if (!(await confirmDialog({ title: 'Close this job? Its public form will stop accepting applications.' }))) return; await hrApi(`/job-posts/${j._id}/close`, { method: 'POST' }); reload(); };
   const pause = async (j) => { await hrApi(`/job-posts/${j._id}/pause`, { method: 'POST' }); reload(); };
-  const del = async (j) => { if (!window.confirm('Delete this job post?')) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { toast(e.message); } };
+  const del = async (j) => { if (!(await confirmDialog({ title: 'Delete this job post?' }))) return; try { await hrApi(`/job-posts/${j._id}`, { method: 'DELETE' }); reload(); } catch (e) { toast(e.message); } };
   const statusPill = (s) => {
     if (s === 'published') return { label: 'Live', cls: 'bg-green-100 text-green-700' };
     if (s === 'paused') return { label: 'Paused', cls: 'bg-amber-100 text-amber-700' };
@@ -6726,7 +6726,7 @@ function CandidateList({ jobs, isAdmin, me, initialJobFilter, initialSource, sco
   const toggleSel = (id) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const allShownSelected = paged.length > 0 && paged.every((c) => sel.includes(c._id));
   const toggleAll = () => setSel(allShownSelected ? sel.filter((id) => !paged.some((c) => c._id === id)) : Array.from(new Set([...sel, ...paged.map((c) => c._id)])));
-  const delCandidate = async (id) => { if (!window.confirm('Delete this candidate permanently?')) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { toast(e.message); } };
+  const delCandidate = async (id) => { if (!(await confirmDialog({ title: 'Delete this candidate permanently?' }))) return; try { await hrApi(`/candidates/${id}`, { method: 'DELETE' }); setSel((s) => s.filter((x) => x !== id)); load(q); } catch (e) { toast(e.message); } };
 
   const F = 'rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white';
   return (
@@ -7025,7 +7025,7 @@ function OnboardingListPage({ isAdmin, onOpenCandidate }) {
   const [tab, setTab] = useState('active'); // active | completed
   const load = () => hrApi(`/onboarding${tab === 'completed' ? '?view=completed' : ''}`).then((r) => setRows(r.candidates || [])).catch((e) => setErr(e.message));
   useEffect(() => { setRows(null); load(); }, [tab]);
-  const markComplete = async (c) => { if (!window.confirm(`Mark ${c.name}'s onboarding as complete? They'll move to the Completed tab.`)) return; try { await hrApi(`/onboarding/${c._id || c.id}/complete`, { method: 'POST', body: '{}' }); load(); } catch (e) { toast(e.message); } };
+  const markComplete = async (c) => { if (!(await confirmDialog({ title: `Mark ${c.name}'s onboarding as complete? They'll move to the Completed tab.` }))) return; try { await hrApi(`/onboarding/${c._id || c.id}/complete`, { method: 'POST', body: '{}' }); load(); } catch (e) { toast(e.message); } };
   const reopen = async (c) => { try { await hrApi(`/onboarding/${c._id || c.id}/reopen`, { method: 'POST', body: '{}' }); load(); } catch (e) { toast(e.message); } };
   const runDiag = () => { setShowDiag(true); hrApi('/onboarding/debug').then(setDiag).catch((e) => setErr(e.message)); };
 
@@ -8664,7 +8664,7 @@ function EmailTemplatesPage() {
   const [editing, setEditing] = useState(null); // template being edited/created
   const load = () => hrApi('/email-templates').then((r) => setTemplates(r.templates || [])).catch(() => {});
   useEffect(() => { load(); }, []);
-  const del = async (id) => { if (!window.confirm('Delete this template?')) return; await hrApi(`/email-templates/${id}`, { method: 'DELETE' }); load(); };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Delete this template?' }))) return; await hrApi(`/email-templates/${id}`, { method: 'DELETE' }); load(); };
   return (
     <div className="max-w-3xl">
       <div className="flex items-center justify-between mb-1">
@@ -8800,7 +8800,7 @@ function EmailSignaturePage() {
   const [showGallery, setShowGallery] = useState(false);
   const load = () => hrApi('/signatures').then((r) => setSigs(r.signatures || [])).catch(() => {});
   useEffect(() => { load(); hrApi('/signature-templates').then(setGallery).catch(() => setGallery([])); }, []);
-  const del = async (id) => { if (!window.confirm('Delete this signature?')) return; await hrApi(`/signatures/${id}`, { method: 'DELETE' }); load(); };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Delete this signature?' }))) return; await hrApi(`/signatures/${id}`, { method: 'DELETE' }); load(); };
   const makeDefault = async (s) => { await hrApi('/signatures', { method: 'POST', body: JSON.stringify({ id: s.id, name: s.name, body: s.body, isDefault: true }) }); load(); };
   return (
     <div className="max-w-3xl">
@@ -9012,7 +9012,7 @@ function MyProfilePage({ user, onUpdated }) {
   const onCropped = async (cropped) => { setCropFile(null); await persistAvatar(cropped); };
   const removeAvatar = async () => {
     if (!p.avatar) return;
-    if (!window.confirm('Remove your profile photo?')) return;
+    if (!(await confirmDialog({ title: 'Remove your profile photo?' }))) return;
     setAvatarBusy(true);
     try { await hrApi('/profile-me/avatar', { method: 'DELETE' }); set({ avatar: '' }); onUpdated && onUpdated(); }
     catch (e) { toast(e.message); } finally { setAvatarBusy(false); }
@@ -9103,7 +9103,7 @@ function HrUserManagement() {
   const [resetFor, setResetFor] = useState(null);
   const load = () => hrApi('/employees').then(setUsers).catch(() => {});
   useEffect(() => { load(); }, []);
-  const toggleActive = async (u) => { if (!window.confirm(`${u.active ? 'Deactivate' : 'Reactivate'} ${u.name}?`)) return; await hrApi(`/users/${u._id}/active`, { method: 'POST', body: JSON.stringify({ active: !u.active }) }); load(); };
+  const toggleActive = async (u) => { if (!(await confirmDialog({ title: `${u.active ? 'Deactivate' : 'Reactivate'} ${u.name}?` }))) return; await hrApi(`/users/${u._id}/active`, { method: 'POST', body: JSON.stringify({ active: !u.active }) }); load(); };
   return (
     <div>
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-1">Users</h1>
@@ -9191,7 +9191,7 @@ function RecruitmentMailbox({ isAdmin, setErr }) {
     } catch (e) { setErr ? setErr(e.message) : toast(e.message); }
   };
   const disconnect = async (mb) => {
-    if (!window.confirm(`Unlink ${mb.email}? Recruiters will no longer be able to use this inbox.`)) return;
+    if (!(await confirmDialog({ title: `Unlink ${mb.email}? Recruiters will no longer be able to use this inbox.` }))) return;
     try { await hrApi(`/mailboxes/${mb.id}/disconnect`, { method: 'POST' }); load(); } catch (e) { setErr ? setErr(e.message) : toast(e.message); }
   };
   if (!data) return <Empty>Loading…</Empty>;
@@ -9335,7 +9335,7 @@ function PhoneNormalizeCard() {
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
   const run = async () => {
-    if (!window.confirm('Format all existing candidate phone numbers to +91 mobile format? This updates stored records.')) return;
+    if (!(await confirmDialog({ title: 'Format all existing candidate phone numbers to +91 mobile format? This updates stored records.' }))) return;
     setBusy(true); setErr(''); setResult(null);
     try { const r = await hrApi('/candidates/normalize-phones', { method: 'POST' }); setResult(r); }
     catch (e) { setErr(e.message); } finally { setBusy(false); }
@@ -9574,7 +9574,7 @@ function HrmsDemoPanel() {
             ))}
             <div className="flex gap-2 pt-2">
               <button onClick={() => act({ action: 'reset' }, 'reset')} disabled={busy === 'reset'} className="text-[12px] font-bold text-slate-600 bg-slate-100 rounded-lg px-3 py-1.5">{busy === 'reset' ? 'Resetting…' : '↻ Reset demo data'}</button>
-              <button onClick={() => { if (window.confirm('Generate new links? Old links stop working.')) act({ action: 'regenerate' }, 'regen'); }} disabled={busy === 'regen'} className="text-[12px] font-bold text-slate-600 bg-slate-100 rounded-lg px-3 py-1.5">⟳ New links</button>
+              <button onClick={async () => { if (await confirmDialog({ title: 'Generate new links? Old links stop working.' })) act({ action: 'regenerate' }, 'regen'); }} disabled={busy === 'regen'} className="text-[12px] font-bold text-slate-600 bg-slate-100 rounded-lg px-3 py-1.5">⟳ New links</button>
             </div>
           </div>
         )}
@@ -9880,7 +9880,7 @@ function HrCareersSeo() {
   const setJob = (id, patch) => setData((d) => ({ ...d, jobs: d.jobs.map((j) => j.id === id ? { ...j, ...patch } : j) }));
   const saveJob = async (job) => { setBusy('job-' + job.id); try { await hrApi(`/seo/jobs/${job.id}`, { method: 'PUT', body: JSON.stringify({ seoTitle: job.seoTitle, seoDescription: job.seoDescription, seoKeywords: job.seoKeywords || [] }) }); flash('job-' + job.id); } catch (e) { toast(e.message); } finally { setBusy(''); } };
   const genJob = async (job) => { setBusy('jobai-' + job.id); try { const r = await hrApi(`/seo/jobs/${job.id}/generate`, { method: 'POST', body: '{}' }); setJob(job.id, { seoTitle: r.title, seoDescription: r.description, seoKeywords: r.keywords || job.seoKeywords }); if (!r.ai) toast('No OpenAI key set — used a smart template. Add a key in Settings for AI-written copy.'); } catch (e) { toast(e.message); } finally { setBusy(''); } };
-  const genAll = async () => { if (!confirm('Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.')) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); toast(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { toast(e.message); } finally { setBusy(''); } };
+  const genAll = async () => { if (!(await confirmDialog({ title: 'Generate SEO titles & descriptions for all published jobs? This overwrites existing SEO copy.' }))) return; setBusy('all'); try { const r = await hrApi('/seo/jobs/generate-all', { method: 'POST', body: '{}' }); await load(); toast(`Generated SEO for ${r.count} job${r.count === 1 ? '' : 's'}${r.ai ? '' : ' (template — add an OpenAI key for AI copy)'}.`); } catch (e) { toast(e.message); } finally { setBusy(''); } };
 
   const published = data.jobs.filter((j) => j.status === 'published');
   return (
@@ -10108,7 +10108,7 @@ function TvDisplayAdmin() {
           </div>
         ))}
       </div>
-      <button onClick={() => { if (window.confirm('Regenerate the link? The old links will stop working.')) save(true); }} className="text-[12px] font-bold text-red-500">Regenerate link (revokes old links)</button>
+      <button onClick={async () => { if (await confirmDialog({ title: 'Regenerate the link? The old links will stop working.' })) save(true); }} className="text-[12px] font-bold text-red-500">Regenerate link (revokes old links)</button>
 
       {/* Welcome message + rotation */}
       <div className="rounded-xl border border-slate-200 p-4 space-y-3">
@@ -10158,7 +10158,7 @@ function TvPollManager() {
     try { await fetch('/api/tv-display/admin/poll', { method: 'POST', headers: authHdr, body: JSON.stringify({ question: q.trim(), options }) }); setQ(''); setOpts(['', '']); toast('Poll is now live on the TV!'); } catch { toast('Failed'); }
     setBusy(false);
   };
-  const endPoll = async () => { if (!window.confirm('End the current poll?')) return; try { await fetch('/api/tv-display/admin/poll/end', { method: 'POST', headers: authHdr }); toast('Poll ended.'); } catch {} };
+  const endPoll = async () => { if (!(await confirmDialog({ title: 'End the current poll?' }))) return; try { await fetch('/api/tv-display/admin/poll/end', { method: 'POST', headers: authHdr }); toast('Poll ended.'); } catch {} };
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <div className="text-[13px] font-bold text-slate-600 mb-2">📊 Poll of the day</div>
@@ -10241,11 +10241,11 @@ function HrAdmin({ user, onOpenCandidate }) {
   const [newBranch, setNewBranch] = useState('');
   const [newDept, setNewDept] = useState('');
   const addBranch = async () => { if (!newBranch.trim()) return; try { await hrApi('/branches', { method: 'POST', body: JSON.stringify({ name: newBranch.trim() }) }); setNewBranch(''); load(); } catch (e) { setErr(e.message); } };
-  const editBranch = async (b) => { const name = prompt('Rename branch', b.name); if (name && name.trim() && name !== b.name) { try { await hrApi(`/branches/${b._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
-  const delBranch = async (b) => { if (!confirm(`Delete branch "${b.name}"?`)) return; try { await hrApi(`/branches/${b._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
+  const editBranch = async (b) => { const name = await promptDialog({ title: 'Rename branch', defaultValue: b.name }); if (name && name.trim() && name !== b.name) { try { await hrApi(`/branches/${b._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
+  const delBranch = async (b) => { if (!(await confirmDialog({ title: `Delete branch "${b.name}"?` }))) return; try { await hrApi(`/branches/${b._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await hrApi('/departments', { method: 'POST', body: JSON.stringify({ name: newDept.trim() }) }); setNewDept(''); load(); } catch (e) { setErr(e.message); } };
-  const editDept = async (d) => { const name = prompt('Rename department', d.name); if (name && name.trim() && name !== d.name) { try { await hrApi(`/departments/${d._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
-  const delDept = async (d) => { if (!confirm(`Delete department "${d.name}"?`)) return; try { await hrApi(`/departments/${d._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
+  const editDept = async (d) => { const name = await promptDialog({ title: 'Rename department', defaultValue: d.name }); if (name && name.trim() && name !== d.name) { try { await hrApi(`/departments/${d._id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) }); load(); } catch (e) { setErr(e.message); } } };
+  const delDept = async (d) => { if (!(await confirmDialog({ title: `Delete department "${d.name}"?` }))) return; try { await hrApi(`/departments/${d._id}`, { method: 'DELETE' }); load(); } catch (e) { setErr(e.message); } };
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
@@ -10467,7 +10467,7 @@ function ShiftsManager({ shifts, reload, setErr }) {
       setF(blank); setEditing(null); reload();
     } catch (e) { setErr(e.message); }
   };
-  const del = async (s) => { if (!confirm(`Delete shift "${s.name}"?`)) return; try { await hrApi(`/shifts/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
+  const del = async (s) => { if (!(await confirmDialog({ title: `Delete shift "${s.name}"?` }))) return; try { await hrApi(`/shifts/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
   const startEdit = (s) => { setEditing(s._id); setF({ name: s.name, startTime: s.startTime || '', endTime: s.endTime || '', breaks: (Array.isArray(s.breaks) && s.breaks.length) ? s.breaks : (s.breakStart ? [{ start: s.breakStart, end: s.breakEnd }] : []), maxBreakMinutes: s.maxBreakMinutes || 60, graceMinutes: s.graceMinutes ?? 20 }); };
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -10537,7 +10537,7 @@ function HolidaysManager({ holidays, branches, reload, setErr }) {
     if (!f.name.trim() || !f.date) { setErr('Holiday name and date are required.'); return; }
     try { await hrApi('/holidays', { method: 'POST', body: JSON.stringify(f) }); setF({ name: '', date: '', branch: '' }); reload(); } catch (e) { setErr(e.message); }
   };
-  const del = async (h) => { if (!confirm(`Delete "${h.name}"?`)) return; try { await hrApi(`/holidays/${h._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
+  const del = async (h) => { if (!(await confirmDialog({ title: `Delete "${h.name}"?` }))) return; try { await hrApi(`/holidays/${h._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="bg-white rounded-xl border border-slate-200 p-5">

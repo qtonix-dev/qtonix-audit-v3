@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { confirmDialog, promptDialog } from './toast';
 import { API_BASE } from './config.js';
 import CrmSurveyAdmin from './CrmSurvey.jsx';
 import { formatPhone } from './countries.js';
@@ -546,7 +547,7 @@ function DemoModeSettings({ say }) {
             </Note>
             <div className="mt-2">
               <Btn size="sm" variant="ghost" disabled={busy}
-                onClick={() => { if (confirm('Regenerate the URL? All current links will stop working immediately.')) save({ regenerate: true }); }}>
+                onClick={async () => { if (await confirmDialog({ title: 'Regenerate the URL? All current links will stop working immediately.' })) save({ regenerate: true }); }}>
                 ↻ Regenerate URLs
               </Btn>
             </div>
@@ -970,7 +971,7 @@ function MotivatorTvSettings({ say }) {
             </Note>
             <div className="mt-2">
               <Btn size="sm" variant="ghost" disabled={busy}
-                onClick={() => { if (confirm('Regenerate the URL? The current link will stop working immediately.')) save({ regenerate: true }); }}>
+                onClick={async () => { if (await confirmDialog({ title: 'Regenerate the URL? The current link will stop working immediately.' })) save({ regenerate: true }); }}>
                 ↻ Regenerate URL
               </Btn>
             </div>
@@ -2516,7 +2517,7 @@ function AdminMailboxes({ say }) {
     try { const { url } = await api(`/gmail/connect?extra=1&label=${encodeURIComponent(label.trim())}`); window.open(url, 'gmail_oauth', 'width=520,height=640'); setLabel(''); }
     catch (e) { say && say(e.message); }
   };
-  const remove = async (id) => { if (!confirm('Unlink this mailbox?')) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); load(); } catch { /* */ } };
+  const remove = async (id) => { if (!(await confirmDialog({ title: 'Unlink this mailbox?' }))) return; try { await api(`/gmail/mailboxes/${id}`, { method: 'DELETE' }); load(); } catch { /* */ } };
   if (!data || !data.isAdmin) return null;
   const extras = (data.mailboxes || []).filter((m) => m.kind === 'extra');
   return (

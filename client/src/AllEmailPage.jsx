@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { confirmDialog, promptDialog } from './toast';
 import { api as _crmApi } from './App.jsx';
 import { MailEditor } from './Leads.jsx';
 
@@ -129,7 +130,7 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
     } catch (e) { setErr(e.message); }
   };
   const deleteLabel = async (id) => {
-    if (!confirm('Delete this label? It will be removed from all emails in Gmail.')) return;
+    if (!(await confirmDialog({ title: 'Delete this label? It will be removed from all emails in Gmail.' }))) return;
     try { await api(`${base}/all/labels/${id}?${as ? `as=${as}` : ''}`, { method: 'DELETE' }); if (labelId === id) pickFolder('INBOX'); loadLabels(); }
     catch (e) { setErr(e.message); }
   };

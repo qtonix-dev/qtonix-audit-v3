@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { toast } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 import { api } from './App.jsx';
 import { PhoneField, Pagination } from './Leads.jsx';
 
@@ -61,7 +61,7 @@ export default function AiBriefPage({ user }) {
 
   const del = async (id, e) => {
     e.stopPropagation();
-    if (!confirm('Delete this brief?')) return;
+    if (!(await confirmDialog({ title: 'Delete this brief?' }))) return;
     try { await api(`/briefs/${id}`, { method: 'DELETE' }); if (active && active._id === id) setActive(null); loadList(); }
     catch (err) { toast(err.message); }
   };
