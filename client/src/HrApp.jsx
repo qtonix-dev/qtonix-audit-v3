@@ -3297,6 +3297,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const [collapsed, setCollapsed] = useState({});
   const [expandedTasks, setExpandedTasks] = useState({}); // inline subtask expand
   const [showCompleted, setShowCompleted] = useState(false);
+  const [completedDaysShown, setCompletedDaysShown] = useState(3);
   const [filter, setFilter] = useState('all');      // all | mine | overdue | high
   const [sort, setSort] = useState('manual');       // manual | due | priority
 
@@ -3480,8 +3481,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
 
   // Group completed tasks by their completion date (IST), newest first, so the
   // section reads as Today / Yesterday / older days instead of one long list.
-  const [completedDaysShown, setCompletedDaysShown] = useState(3);
-  const completedGroups = React.useMemo(() => {
+  const completedGroups = (() => {
     const list = [...(board.completed || [])];
     // Sort newest-completed first (fall back to updated/created if no timestamp).
     list.sort((a, b) => new Date(b.completedAt || b.updatedAt || 0) - new Date(a.completedAt || a.updatedAt || 0));
@@ -3498,7 +3498,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
       else { try { label = new Date(day + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }); } catch { label = day; } }
       return { day, label, tasks };
     });
-  }, [board.completed]);
+  })();
   const completedTimeLabel = (t) => { try { return new Date(t.completedAt || t.updatedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
 
   return (
