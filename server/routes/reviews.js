@@ -225,6 +225,8 @@ async function scoreManagers(groups, period) {
     // combined target to form the team target.
     const mt = g.manager.targets || {};
     if (mt.sales && mt.sales.enabled) m.managerTarget = Number(mt.sales.monthly || 0);
+    // Admin-set manual team target override (from edit-employee), if any.
+    if (mt.team && mt.team.override && Number(mt.team.monthly || 0) > 0) m.teamOverride = Number(mt.team.monthly);
     for (const a of g.agents) {
       m.agentIds.push(a.id);
       const t = a.targets || {};
@@ -300,7 +302,8 @@ async function scoreManagers(groups, period) {
     const agentsTargetFinal = anyStoredTarget ? agentsTarget : m.agentsTarget;
     const mgrRec = storedByUser[m.managerId];
     const managerTargetFinal = (mgrRec && mgrRec.targetUsd > 0) ? mgrRec.targetUsd : m.managerTarget;
-    m.salesTarget = agentsTargetFinal + managerTargetFinal;
+    // Manual override (edit-employee) wins; else agents + manager's own.
+    m.salesTarget = (m.teamOverride && m.teamOverride > 0) ? m.teamOverride : (agentsTargetFinal + managerTargetFinal);
 
     // TEAM ACHIEVED = per-user: admin-saved achieved wins, else live CRM sales.
     let teamAchieved = 0;
@@ -310,8 +313,11 @@ async function scoreManagers(groups, period) {
     }
     // Manager's own achieved: saved row wins, else the manager's own live sales.
     const mgrLiveOwn = m.liveByUser[m.managerId] || 0;
-    teamAchieved += mgrRec ? (mgrRec.achievedUsd || 0) : mgrLiveOwn;
+    const mgrOwnAchieved = mgrRec ? (mgrRec.achievedUsd || 0) : mgrLiveOwn;
+    teamAchieved += mgrOwnAchieved;
     m.salesUsd = teamAchieved;
+    m.ownTarget = managerTargetFinal;      // manager's OWN individual sales target
+    m.ownAchieved = mgrOwnAchieved;        // manager's OWN sales achieved
     m.achievedFromHistory = !!(mgrRec || m.agentIds.some((aid) => storedByUser[aid]));
   }
 
@@ -326,6 +332,7 @@ async function scoreManagers(groups, period) {
       managerId: m.managerId, name: m.name, avatar: m.avatar,
       teams: m.teams, agentCount: m.agentIds.length,
       salesUsd: Math.round(m.salesUsd), salesTarget: Math.round(m.salesTarget),
+      ownTarget: Math.round(m.ownTarget || 0), ownAchieved: Math.round(m.ownAchieved || 0),
       pct, expectedPct, leadsGenerated: m.leadsGenerated, conversions: m.conversions,
       pipelineUsd: Math.round(m.pipelineUsd), band,
     };
@@ -551,9 +558,17 @@ router.get('/incentives', requireAuth, async (req, res, next) => {
     for (const m of managerRows) {
       let calc; let basis;
       if (m.agentCount > 0) {
-        // Team-based: over% of team over-achievement (no base component).
-        const over = m.salesUsd > m.salesTarget ? (managerOverPct / 100) * (m.salesUsd - m.salesTarget) : 0;
-        calc = { base: 0, over, total: over, eligible: over > 0 };
+        // TEAM incentive: over% of the TEAM's over-achievement (team target vs
+        // team achieved). No base component on the team portion.
+        const teamOver = m.salesUsd > m.salesTarget ? (managerOverPct / 100) * (m.salesUsd - m.salesTarget) : 0;
+        // INDIVIDUAL incentive: if the manager PERSONALLY beat his own target, he
+        // also earns the agent-style incentive on his own numbers. The two stack.
+        const ind = agentIncentive(m.ownAchieved || 0, m.ownTarget || 0);
+        calc = {
+          base: ind.base, over: ind.over + teamOver, total: ind.total + teamOver,
+          teamOver, indBase: ind.base, indOver: ind.over, indTotal: ind.total,
+          eligible: (ind.total + teamOver) > 0,
+        };
         basis = 'manager-team';
       } else {
         // No team → agent structure on their own numbers.
@@ -563,9 +578,13 @@ router.get('/incentives', requireAuth, async (req, res, next) => {
       items.push({
         userId: m.managerId, name: m.name, role: 'manager', avatar: m.avatar || null,
         targetUsd: Math.round(m.salesTarget), achievedUsd: Math.round(m.salesUsd),
+        ownTargetUsd: Math.round(m.ownTarget || 0), ownAchievedUsd: Math.round(m.ownAchieved || 0),
         pct: m.pct, agentCount: m.agentCount, eligible: calc.eligible,
         baseUsd: Math.round(calc.base), overUsd: Math.round(calc.over), totalUsd: Math.round(calc.total),
         baseInr: toInr(calc.base), overInr: toInr(calc.over), totalInr: toInr(calc.total),
+        // Breakdown so the UI can show individual vs team components.
+        teamOverUsd: Math.round(calc.teamOver || 0), teamOverInr: toInr(calc.teamOver || 0),
+        indTotalUsd: Math.round(calc.indTotal || 0), indTotalInr: toInr(calc.indTotal || 0),
         basis,
       });
     }
@@ -828,6 +847,25 @@ router.get('/lead-daily/:agentId', requireAuth, async (req, res, next) => {
       // Days with nothing logged at all — the most actionable signal.
       blankDays: days.filter((d) => d.leads === 0 && d.transfers === 0).length,
     });
+  } catch (e) { next(e); }
+});
+
+// POST /api/reviews/resend-team-target-emails — admin re-sends the corrected
+// team-target-hit congrats for the current period (clears dedupe, re-runs).
+router.post('/resend-team-target-emails', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can resend these emails.' });
+    const models = require('../models');
+    const { Settings, CrmEmailLog } = models;
+    const s = await Settings.findOne();
+    const crm = require('../jobs/crmReminders');
+    const period = String(req.body && req.body.period ? req.body.period : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7));
+    // Clear team-target dedupe rows for this period so corrected emails go out.
+    try { await CrmEmailLog.destroy({ where: { dedupeKey: { [models.Op.like]: `team_target_hit:%:${period}` } } }); } catch {}
+    const senders = await crm.resolveSenders(models, s);
+    const sender = (senders && senders.length) ? senders[0] : null;
+    await crm.runTargetCongrats(models, s, sender);
+    res.json({ ok: true, period });
   } catch (e) { next(e); }
 });
 

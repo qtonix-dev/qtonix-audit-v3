@@ -193,7 +193,10 @@ async function computeAgentStats(models, opts = {}) {
       gmailEmail: a.gmailConnectedEmail || '',
       gmailToken: a.gmailRefreshToken ? a.getGmailRefreshToken() : '',
       targetUsd: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
-      teamTargetUsd: (t.team && t.team.enabled) ? Number(t.team.monthly || 0) : 0,
+      // Own individual sales target (used to build the team target + the override).
+      ownSalesTargetUsd: (t.sales && t.sales.enabled) ? Number(t.sales.monthly || 0) : 0,
+      teamOverride: (t.team && t.team.override) ? Number(t.team.monthly || 0) : null,
+      teamTargetUsd: 0, // computed below = agents' targets + manager's own (or override)
       achievedUsd: 0,
     };
   });
@@ -219,12 +222,18 @@ async function computeAgentStats(models, opts = {}) {
   const stored = await MonthlyTarget.findAll({ where: { period: periodKey, userId: { [Op.in]: agentIds.concat(-1) } } });
   stored.forEach((r) => { const rec = byId[r.userId]; if (!rec) return; if (r.targetUsd > 0) rec.targetUsd = r.targetUsd; rec.achievedUsd = r.achievedUsd || 0; });
 
-  // Team achievement per manager = sum of achieved of agents reporting to them.
+  // Team totals per manager = agents (reporting to them) + the manager's OWN.
   Object.values(byId).forEach((rec) => {
     if (rec.role === 'manager') {
-      rec.teamAchievedUsd = Object.values(byId)
-        .filter((x) => x.managerId === rec.id)
-        .reduce((sum, x) => sum + x.achievedUsd, 0);
+      const team = Object.values(byId).filter((x) => x.managerId === rec.id);
+      // TEAM ACHIEVED = agents' achieved + manager's own achieved.
+      rec.teamAchievedUsd = team.reduce((sum, x) => sum + x.achievedUsd, 0) + rec.achievedUsd;
+      // TEAM TARGET = override if the admin set one, else agents' sales targets +
+      // the manager's own sales target.
+      const agentsTarget = team.reduce((sum, x) => sum + (x.targetUsd || 0), 0);
+      rec.teamTargetUsd = (rec.teamOverride != null && rec.teamOverride > 0)
+        ? rec.teamOverride
+        : (agentsTarget + (rec.ownSalesTargetUsd || 0));
     }
   });
   return { byId, periodKey };
@@ -352,8 +361,12 @@ function computeIncentives(byId, incRules) {
     if (rec.role === 'manager') {
       const hasTeam = Object.values(byId).some((x) => x.managerId === rec.id);
       if (hasTeam) {
+        // TEAM incentive: over% of team over-achievement.
         const teamAch = rec.teamAchievedUsd || 0; const teamTgt = rec.teamTargetUsd || 0;
-        usd = teamAch > teamTgt ? (managerOverPct / 100) * (teamAch - teamTgt) : 0;
+        const teamOver = teamAch > teamTgt ? (managerOverPct / 100) * (teamAch - teamTgt) : 0;
+        // INDIVIDUAL incentive: if the manager beat his OWN target, it stacks.
+        const ind = agentInc(rec.achievedUsd || 0, rec.targetUsd || 0);
+        usd = ind + teamOver;
       } else usd = agentInc(rec.achievedUsd, rec.targetUsd);
     } else usd = agentInc(rec.achievedUsd, rec.targetUsd);
     if (usd > 0) earners.push({ name: rec.name, role: rec.role, inr: Math.round(usd * usdToInr) });
@@ -409,9 +422,13 @@ async function runMonthlySummary(models, s, sender, nowParts) {
   // tags each person with their role, and we filter to role === 'agent' (and
   // managers via their own agent rows), never role === 'admin'. So admin/house/
   // test sales never inflate the team %.
-  const agents = people.filter((p) => p.role === 'agent');
-  const teamAchieved = agents.reduce((sum, a) => sum + a.achievedUsd, 0);
-  const teamTarget = agents.reduce((sum, a) => sum + a.targetUsd, 0);
+  // Company totals = ALL agents + ALL managers' own sales/targets. Admins are
+  // excluded (computeAgentStats only fetches role agent/manager, never admin),
+  // so admin/house/test sales never inflate the company %. This matches the
+  // team-target rule (agents + manager's own) applied company-wide.
+  const salesForce = people.filter((p) => p.role === 'agent' || p.role === 'manager');
+  const teamAchieved = salesForce.reduce((sum, a) => sum + a.achievedUsd, 0);
+  const teamTarget = salesForce.reduce((sum, a) => sum + a.targetUsd, 0);
   const teamPct = teamTarget > 0 ? Math.round((teamAchieved / teamTarget) * 100) : 0;
   // Tone tiers are admin-configurable via crmConfig.summaryThresholds. The team's
   // % of target decides which tone/email goes out. Defaults: 100 / 70 / 50.
@@ -426,6 +443,7 @@ async function runMonthlySummary(models, s, sender, nowParts) {
   else tone = 'low';
 
   // Rankings by % of target (agents only for "highest % of sale").
+  const agents = people.filter((p) => p.role === 'agent');
   const ranked = agents.filter((a) => a.targetUsd > 0)
     .map((a) => ({ ...a, pct: Math.round((a.achievedUsd / a.targetUsd) * 100) }))
     .sort((x, y) => y.pct - x.pct);

@@ -1428,11 +1428,13 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
     });
     let companyTarget = 0;
-    // Managers' team targets (override value, or the auto-sum of their agents).
+    // Managers' team targets: an explicit override wins; otherwise the computed
+    // sum = their agents' sales targets + the manager's OWN sales target.
     owners.forEach((u) => {
       if (u.role === 'manager') {
-        const t = u.targets && u.targets.team;
-        companyTarget += (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[u.id] || 0);
+        const tt = u.targets && u.targets.team;
+        const ownSales = (u.targets && u.targets.sales && u.targets.sales.enabled) ? Number(u.targets.sales.monthly || 0) : 0;
+        companyTarget += (tt && tt.override) ? Number(tt.monthly || 0) : ((agentSalesByMgr[u.id] || 0) + ownSales);
       }
     });
     // Plus agents reporting directly to the admin (no manager, or manager isn't a
@@ -1453,7 +1455,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     } else if (req.user.role === 'manager') {
       const meUser = owners.find((u) => u.id === req.user.id);
       const t = meUser && meUser.targets && meUser.targets.team;
-      scopeTarget = (t && t.override) ? Number(t.monthly || 0) : (agentSalesByMgr[req.user.id] || 0);
+      const ownSales = (meUser && meUser.targets && meUser.targets.sales && meUser.targets.sales.enabled) ? Number(meUser.targets.sales.monthly || 0) : 0;
+      scopeTarget = (t && t.override) ? Number(t.monthly || 0) : ((agentSalesByMgr[req.user.id] || 0) + ownSales);
     } else {
       const t = (targetsById[req.user.id] || {}).sales;
       scopeTarget = (t && t.enabled) ? Number(t.monthly || 0) : 0;
