@@ -2039,6 +2039,16 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   const [moreMenuFor, setMoreMenuFor] = useState(null); // message id whose ⋯ menu is open
   const [quickTask, setQuickTask] = useState(null); // { title } — /task quick creator
   const [shortcutCard, setShortcutCard] = useState(null); // private info card for slash shortcuts
+  const [slashMenu, setSlashMenu] = useState(null); // { q, idx } — the / command menu
+  // Available slash commands. `taskOnly` ones only work in the personal #task channel.
+  const SLASH_COMMANDS = [
+    { cmd: 'task', icon: '✅', label: '/task', desc: 'Create a quick task', taskOnly: false },
+    { cmd: 'mytime', icon: '🕐', label: '/mytime', desc: 'Your login/logout times & deficit', taskOnly: true },
+    { cmd: 'mytasks', icon: '📋', label: '/mytasks', desc: 'Your open tasks', taskOnly: true },
+    { cmd: 'todayreport', icon: '📊', label: '/todayreport', desc: "Today's completed + pending", taskOnly: true },
+    { cmd: 'pending', icon: '◷', label: '/pending', desc: 'All your pending tasks', taskOnly: true },
+    { cmd: 'remind', icon: '⏰', label: '/remind', desc: 'Set a quick reminder', taskOnly: true },
+  ];
   const [whoReacted, setWhoReacted] = useState(null); // { msgId, emoji }
   const [taskFromMsg, setTaskFromMsg] = useState(null); // message to turn into a task
   const [editingMsg, setEditingMsg] = useState(null);   // { id, body } being edited
@@ -2201,6 +2211,26 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     setMention(null);
     setTimeout(() => { if (edRef.current) { edRef.current.focus(); const r = document.createRange(); r.selectNodeContents(edRef.current); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } }, 0);
   };
+  // Slash command menu candidates — only commands valid in the current channel.
+  const inTaskChannel = () => !!(active && active.team && active.team.isTask);
+  const slashCands = () => {
+    if (!slashMenu) return [];
+    const q = String(slashMenu.q || '').toLowerCase();
+    return SLASH_COMMANDS.filter((c) => (!c.taskOnly || inTaskChannel()) && c.cmd.startsWith(q));
+  };
+  // Pick a slash command: /task fills the composer with the marker so the user
+  // can add a title; the info shortcuts run immediately.
+  const pickSlash = (c) => {
+    if (!c) return;
+    setSlashMenu(null);
+    if (c.cmd === 'task') { setEditor('/task '); setTimeout(() => { if (edRef.current) { edRef.current.focus(); const r = document.createRange(); r.selectNodeContents(edRef.current); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } }, 0); return; }
+    if (c.cmd === 'remind') { setEditor('/remind '); setTimeout(() => { if (edRef.current) edRef.current.focus(); }, 0); return; }
+    // Info commands run immediately.
+    clearEditor();
+    if (c.cmd === 'mytime') { setShortcutCard({ kind: 'mytime' }); return; }
+    setShortcutCard({ kind: c.cmd, loading: true });
+    hrApi(`/tasks/shortcut/${c.cmd}`).then((d) => setShortcutCard({ kind: c.cmd, data: d })).catch((e) => setShortcutCard({ kind: 'error', msg: e.message }));
+  };
 
   // Quick "mark done" from a task card in #task chat.
   const markTaskDone = async (taskId) => {
@@ -2269,7 +2299,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     if (edRef.current) edRef.current.innerHTML = html;
     setText(markerText || '');
   };
-  const clearEditor = () => { if (edRef.current) edRef.current.innerHTML = ''; setText(''); };
+  const clearEditor = () => { if (edRef.current) edRef.current.innerHTML = ''; setText(''); setSlashMenu(null); };
   const insertAtCursor = (frag) => {
     const el = edRef.current; if (!el) return;
     el.focus();
@@ -2641,6 +2671,21 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                   <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} title="Attach" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 text-[15px]">{uploading ? '…' : '📎'}</button>
                   <input ref={fileRef} type="file" className="hidden" onChange={(e) => { sendFile(e.target.files?.[0]); e.target.value = ''; }} />
                 </div>
+                {slashMenu && slashCands().length > 0 && (
+                  <div className="mx-2 mb-1 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+                    <div className="px-3 py-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-wide bg-slate-50 border-b border-slate-100">Commands</div>
+                    {slashCands().map((c, i) => (
+                      <button key={c.cmd} type="button"
+                        onMouseDown={(e) => { e.preventDefault(); pickSlash(c); }}
+                        onMouseEnter={() => setSlashMenu((m) => ({ ...m, idx: i }))}
+                        className={`w-full flex items-center gap-3 px-3 py-2 text-left ${(slashMenu.idx || 0) === i ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
+                        <span className="w-7 h-7 rounded-lg flex items-center justify-center text-[15px] bg-slate-100 shrink-0">{c.icon}</span>
+                        <div className="min-w-0"><div className="text-[13px] font-bold text-[#050A1F]">{c.label}</div><div className="text-[11.5px] text-slate-400 truncate">{c.desc}</div></div>
+                        {(slashMenu.idx || 0) === i && <span className="ml-auto text-[10px] font-bold text-orange-500 shrink-0">↵</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-end gap-2 px-3 py-2">
                   <div
                     ref={edRef}
@@ -2660,8 +2705,23 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                         }
                         setMention((prev) => ({ q: mm[1], idx: prev && prev.q === mm[1] ? (prev.idx || 0) : 0 }));
                       } else setMention(null);
+                      // Slash command menu: shows when the message is "/" or "/word"
+                      // (at the very start, no spaces yet).
+                      const sm = v.match(/^\/(\w*)$/);
+                      if (sm) setSlashMenu((prev) => ({ q: sm[1], idx: prev && prev.q === sm[1] ? (prev.idx || 0) : 0 }));
+                      else setSlashMenu(null);
                     }}
                     onKeyDown={(e) => {
+                      // While the slash menu is open, keys drive it.
+                      if (slashMenu) {
+                        const cands = slashCands();
+                        if (cands.length) {
+                          if (e.key === 'ArrowDown') { e.preventDefault(); setSlashMenu((m) => ({ ...m, idx: ((m.idx || 0) + 1) % cands.length })); return; }
+                          if (e.key === 'ArrowUp') { e.preventDefault(); setSlashMenu((m) => ({ ...m, idx: ((m.idx || 0) - 1 + cands.length) % cands.length })); return; }
+                          if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(cands[slashMenu.idx || 0]); return; }
+                          if (e.key === 'Escape') { e.preventDefault(); setSlashMenu(null); return; }
+                        }
+                      }
                       // While the mention list is open, keys drive it.
                       if (mention) {
                         const cands = mentionCands();
