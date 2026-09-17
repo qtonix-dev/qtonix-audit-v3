@@ -1295,9 +1295,23 @@ function StoreAdmin() {
 }
 
 function RecognitionPage({ user, onOpenEmployee }) {
-  const canSeeAll = !!(user && (user.isAdmin || user.hrManagerAll || user.hrManagerScope || user.isHrManager));
+  const _g = (user && user.permissions) || {};
+  const g = (mod, act) => !!(user && (user.isAdmin || (_g[mod] && _g[mod][act])));
+  const isMgr = !!(user && (user.isAdmin || user.hrManagerAll || user.hrManagerScope || user.isHrManager));
+  // Who can GIVE recognition: managers/admins, or someone granted recognition EDIT.
+  const canGive = isMgr || g('recognition', 'edit');
+  // Who can view ALL recognition across the company: managers/admins, or granted recognition READ.
+  const canViewAll = isMgr || g('recognition', 'read');
   const canManageRewards = !!(user && (user.isAdmin || user.hrManagerAll || user.isHrManager));
-  const [tab, setTab] = useState('give');
+  // Build the visible tabs from capabilities. Everyone here can at least see
+  // their own rewards; give/all/admin are capability-gated.
+  const TABS = [
+    ...(canGive ? [['give', 'Give recognition']] : []),
+    ...(canViewAll ? [['all', 'All recognition']] : []),
+    ['rewards', 'My Rewards'],
+    ...(canManageRewards ? [['admin', 'Rewards Admin']] : []),
+  ];
+  const [tab, setTab] = useState(TABS[0] ? TABS[0][0] : 'rewards');
   const [data, setData] = useState(null);
   const [give, setGive] = useState(false);
   const load = () => hrApi('/recognition/team').then(setData).catch(() => setData({ team: [], recent: [] }));
@@ -1307,16 +1321,14 @@ function RecognitionPage({ user, onOpenEmployee }) {
     <div className="max-w-5xl mx-auto px-4 py-6">
       <div className="mb-4">
         <div className="text-xl font-extrabold text-[#050A1F] flex items-center gap-2">🏅 Recognition</div>
-        <div className="text-sm text-slate-500">{canSeeAll ? 'Appreciate your team, or review all recognition across the company.' : 'Recognize the people on your team.'}</div>
+        <div className="text-sm text-slate-500">{canGive ? 'Appreciate your colleagues, or review recognition across the company.' : (canViewAll ? 'Review recognition across the company and see your own rewards.' : 'See your rewards and recognition.')}</div>
       </div>
-      {canSeeAll && (
-        <div className="flex gap-1 border-b border-slate-200 mb-5">
-          {[['give', 'Give recognition'], ['all', 'All recognition'], ['rewards', 'My Rewards'], ...(canManageRewards ? [['admin', 'Rewards Admin']] : [])].map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-[13px] font-extrabold border-b-2 -mb-px transition" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
-          ))}
-        </div>
-      )}
-      {(!canSeeAll || tab === 'give') && (
+      <div className="flex gap-1 border-b border-slate-200 mb-5">
+        {TABS.map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-[13px] font-extrabold border-b-2 -mb-px transition" style={{ borderColor: tab === id ? '#FF6A00' : 'transparent', color: tab === id ? '#050A1F' : '#94A3B8' }}>{label}</button>
+        ))}
+      </div>
+      {canGive && tab === 'give' && (
         <div>
           <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-5 flex items-center justify-between gap-4 flex-wrap">
             <div>
@@ -1348,8 +1360,8 @@ function RecognitionPage({ user, onOpenEmployee }) {
           </div>
         </div>
       )}
-      {canSeeAll && tab === 'all' && <AllRecognition onOpenEmployee={onOpenEmployee} />}
-      {canSeeAll && tab === 'rewards' && <MyRewardsPage user={user} embedded />}
+      {canViewAll && tab === 'all' && <AllRecognition onOpenEmployee={onOpenEmployee} />}
+      {tab === 'rewards' && <MyRewardsPage user={user} embedded />}
       {canManageRewards && tab === 'admin' && <RewardsAdmin />}
       {give && <GiveRecognitionPicker onClose={() => setGive(false)} onSaved={() => { setGive(false); load(); }} />}
     </div>

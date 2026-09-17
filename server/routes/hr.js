@@ -1209,7 +1209,11 @@ router.get('/rewards/leaderboards', requireHrAccess, async (req, res, next) => {
 // Award a department-performance / customer-appreciation / learning / mentoring
 // reward. Points come from a rule (or a ranged rule with an explicit amount
 // inside its band). Subject to the same approval tiers.
-router.post('/rewards/award', requireHrAccess, requireHrManager, async (req, res, next) => {
+router.post('/rewards/award', requireHrAccess, async (req, res, next) => {
+  if (!req.isHrAdmin && !req.isHrManager && !PERMS.can(req, 'recognition', 'edit')) return res.status(403).json({ error: 'You don\u2019t have permission to give recognition.' });
+  return awardHandler(req, res, next);
+});
+async function awardHandler(req, res, next) {
   try {
     const R = require('../services/rewards');
     if (!(await R.rewardsLive(models))) return res.status(400).json({ error: 'Rewards are paused. Turn them on in Rewards Admin first.' });
@@ -1235,7 +1239,7 @@ router.post('/rewards/award', requireHrAccess, requireHrManager, async (req, res
     try { await require('../services/chatCompany').postCompanyCard({ kindTag: 'company_recognition', body: `🏆 ${emp.name} was recognised: "${title}"${req.hrActor.name ? ` by ${req.hrActor.name}` : ''}! 👏`, meta: { userId: emp.id } }); } catch {}
     res.json({ ok: true, points: resolved.points });
   } catch (e) { next(e); }
-});
+}
 
 // ===== REWARD STORE (Module 3) =====
 
@@ -2430,6 +2434,15 @@ function branchWeekendOff(dateStr, branch) {
 async function scopedBranches(req) {
   const all = (await HrBranch.findAll({ order: [['name', 'ASC']] })).map((b) => b.name);
   if (req.isHrAdmin || req.hrManagerAll) return all;
+  // Someone granted attendance/leave access via Access Control (but not a manager)
+  // is scoped to their OWN branch — same as a branch manager.
+  try {
+    const PERMS = require('../services/permissions');
+    if (PERMS.can(req, 'corehr_attendance', 'read') || PERMS.can(req, 'corehr_leave', 'read')) {
+      const own = req.hrBranch;
+      return own ? all.filter((n) => String(n).toLowerCase() === String(own).toLowerCase()) : all;
+    }
+  } catch {}
   if (req.isHrManager) {
     const scope = req.hrManagerScope || req.hrBranch;
     return all.filter((n) => String(n).toLowerCase() === String(scope).toLowerCase());
