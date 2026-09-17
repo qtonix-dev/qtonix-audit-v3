@@ -529,15 +529,28 @@ router.delete('/teams/:teamId', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Admin: delete a single group (channel) within a team.
+// Delete a group (channel) + all its messages/images. The group's CREATOR can
+// delete their own group; an admin can delete any.
 router.delete('/channels/:id', requireHrAccess, async (req, res, next) => {
   try {
-    if (!isChatAdmin(req)) return res.status(403).json({ error: 'Only an admin can delete a group.' });
     const convId = Number(req.params.id);
     const conv = await ChatConversation.findByPk(convId);
     if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
+    // Who created it? The channel's team carries createdById.
+    let isCreator = false;
+    try {
+      const myIds = new Set((req.linkedIds || [req.hrUser && req.hrUser.id]).filter(Boolean));
+      if (conv.teamId) { const team = await ChatTeam.findByPk(conv.teamId); if (team && myIds.has(team.createdById)) isCreator = true; }
+      if (conv.createdById && myIds.has(conv.createdById)) isCreator = true;
+    } catch {}
+    if (!isChatAdmin(req) && !isCreator) return res.status(403).json({ error: 'Only the group creator or an admin can delete this group.' });
     await ChatMessage.destroy({ where: { conversationId: convId } });
     await ChatMembership.destroy({ where: { conversationId: convId } });
+    // If this channel is the team's only channel, remove the team too.
+    if (conv.teamId) {
+      const siblings = await ChatConversation.count({ where: { kind: 'channel', teamId: conv.teamId, id: { [Op.ne]: convId } } });
+      if (siblings === 0) { await ChatTeamMember.destroy({ where: { teamId: conv.teamId } }); await ChatTeam.destroy({ where: { id: conv.teamId } }); }
+    }
     await conv.destroy();
     res.json({ ok: true });
   } catch (e) { next(e); }
@@ -664,7 +677,16 @@ router.get('/conversations/:id/members', requireHrAccess, async (req, res, next)
     if (!mem) return res.status(403).json({ error: 'Not your conversation.' });
     const rows = await ChatMembership.findAll({ where: { conversationId: convId } });
     const users = await HrUser.findAll({ where: { id: { [Op.in]: rows.map((m) => m.userId) } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
-    res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id) })) });
+    // Can the viewer delete this group? (creator of the team, or an admin).
+    const conv = await ChatConversation.findByPk(convId);
+    let canDelete = false; let creatorId = null;
+    if (conv && conv.kind === 'channel') {
+      const myIds = new Set((req.linkedIds || [me]).filter(Boolean));
+      if (conv.teamId) { const team = await ChatTeam.findByPk(conv.teamId); if (team) { creatorId = team.createdById; if (myIds.has(team.createdById)) canDelete = true; } }
+      if (conv.createdById && myIds.has(conv.createdById)) canDelete = true;
+      if (isChatAdmin(req)) canDelete = true;
+    }
+    res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id), isCreator: u.id === creatorId })), canDelete, isChannel: !!(conv && conv.kind === 'channel'), creatorId });
   } catch (e) { next(e); }
 });
 

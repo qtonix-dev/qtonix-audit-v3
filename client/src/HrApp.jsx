@@ -2085,6 +2085,12 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [inChatSearch, setInChatSearch] = useState(false);
+  const [membersModal, setMembersModal] = useState(null);
+  const openMembers = async () => {
+    if (!active || !active.id) return;
+    try { const r = await hrApi(`/chat/conversations/${active.id}/members`); setMembersModal({ ...r, convId: active.id, name: active.channel || 'Group' }); }
+    catch (e) { toast(e.message); }
+  };
   const [inChatQ, setInChatQ] = useState('');
   const [inChatHits, setInChatHits] = useState([]);
   const [members, setMembers] = useState([]);
@@ -2530,8 +2536,14 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                 <div><div className="text-[16px] font-extrabold">{active.other ? active.other.name : 'Unknown'}</div><div className="text-[12px] text-slate-400">{active.other ? [active.other.designation, active.other.department].filter(Boolean).join(' · ') : ''}</div></div>
               </>
             )}
-            <button onClick={() => { setInChatSearch((v) => !v); setInChatQ(''); setInChatHits([]); }} title="Search this chat" className="ml-auto w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">🔍</button>
+            <div className="ml-auto flex items-center gap-1.5">
+              {active.channel && !(active.team && (active.team.isTask || active.team.isHub)) && (
+                <button onClick={() => openMembers()} title="Group members" className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">👥</button>
+              )}
+              <button onClick={() => { setInChatSearch((v) => !v); setInChatQ(''); setInChatHits([]); }} title="Search this chat" className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">🔍</button>
+            </div>
           </div>
+          {membersModal && <GroupMembersModal data={membersModal} onClose={() => setMembersModal(null)} onDeleted={() => { setMembersModal(null); setActive(null); loadConversations(); toast('Group deleted'); }} />}
           {inChatSearch && (
             <div className="border-b border-slate-100 bg-slate-50 px-4 py-2">
               <input autoFocus value={inChatQ} onChange={(e) => runInChatSearch(e.target.value)} placeholder="Search in this conversation…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
@@ -2711,10 +2723,32 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     ref={edRef}
                     contentEditable
                     role="textbox"
+                    onPaste={(e) => {
+                      // Paste an image directly from the clipboard (screenshot, copied
+                      // image) — upload + send it like a file, no download needed.
+                      const items = (e.clipboardData && e.clipboardData.items) || [];
+                      for (const it of items) {
+                        if (it.kind === 'file' && /^image\//.test(it.type)) {
+                          const file = it.getAsFile();
+                          if (file) {
+                            e.preventDefault();
+                            const ext = (it.type.split('/')[1] || 'png').split('+')[0];
+                            const named = new File([file], file.name && file.name !== 'image.png' ? file.name : `pasted-${Date.now()}.${ext}`, { type: it.type });
+                            sendFile(named);
+                            return;
+                          }
+                        }
+                      }
+                    }}
                     data-ph={active.team && active.team.isTask ? 'Add a note or message…' : (active.channel ? `Message #${active.channel}…` : `Message ${active.other ? active.other.name : ''}…`)}
                     onInput={(e) => {
-                      const v = htmlToMarkers(e.currentTarget.innerHTML); setText(v); pingTyping();
-                      const mm = v.match(/@(\w*)$/);
+                      const rawHtml = e.currentTarget.innerHTML;
+                      const v = htmlToMarkers(rawHtml); setText(v); pingTyping();
+                      // Detect a trailing space/nbsp in the RAW html — htmlToMarkers
+                      // trims it, which would wrongly re-open the mention menu after
+                      // a completed "@name " / "@all ".
+                      const endsWithSpace = /(\s|&nbsp;|\u00a0)$/.test(rawHtml.replace(/<[^>]+>/g, ''));
+                      const mm = !endsWithSpace && v.match(/@(\w*)$/);
                       if (mm) {
                         const q = mm[1].toLowerCase();
                         // Auto-complete when the query uniquely identifies ONE person.
@@ -2727,7 +2761,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                       } else setMention(null);
                       // Slash command menu: shows when the message is "/" or "/word"
                       // (at the very start, no spaces yet).
-                      const sm = v.match(/^\/(\w*)$/);
+                      const sm = !endsWithSpace && v.match(/^\/(\w*)$/);
                       if (sm) setSlashMenu((prev) => ({ q: sm[1], idx: prev && prev.q === sm[1] ? (prev.idx || 0) : 0 }));
                       else setSlashMenu(null);
                     }}
@@ -3033,6 +3067,43 @@ function ShortcutCard({ card, onClose, onOpenTask }) {
   if (card.kind === 'remind-done') return wrap('Reminder added', '⏰', <div className="p-5 text-[13px] text-slate-600">Added to your <b>Do Today</b>: <b>{card.data && card.data.title}</b></div>);
   if (card.kind === 'error') return wrap('Oops', '⚠️', <div className="p-5 text-[13px] text-red-500">{card.msg}</div>);
   return null;
+}
+
+// Group members list + delete-group action (shown from the chat header).
+function GroupMembersModal({ data, onClose, onDeleted }) {
+  const [busy, setBusy] = useState(false);
+  const members = data.members || [];
+  const del = async () => {
+    if (!(await confirmDialog({ title: `Delete "${data.name}"?`, message: 'This permanently deletes the group and ALL its messages and images for everyone. This cannot be undone.', confirmText: 'Delete group', danger: true }))) return;
+    setBusy(true);
+    try { await hrApi(`/chat/channels/${data.convId}`, { method: 'DELETE' }); onDeleted(); }
+    catch (e) { toast(e.message); setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-[15px] font-extrabold text-[#050A1F]">Group members</div><div className="text-[12px] text-slate-400">#{data.name} · {members.length}</div></div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="max-h-[50vh] overflow-auto p-2">
+          {members.map((m) => (
+            <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-50">
+              <Avatar name={m.name} src={m.avatar} size={30} />
+              <div className="min-w-0"><div className="text-[13px] font-bold text-[#050A1F] truncate">{titleCase(m.name)}{m.isCreator && <span className="ml-1.5 text-[10px] font-bold text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">Creator</span>}</div>{(m.designation || m.department) && <div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</div>}</div>
+              {m.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500 shrink-0" />}
+            </div>
+          ))}
+        </div>
+        {data.canDelete && (
+          <div className="px-5 py-3 border-t border-slate-100">
+            <button onClick={del} disabled={busy} className="w-full rounded-lg bg-red-50 text-red-600 font-bold text-[13px] py-2.5 hover:bg-red-100 disabled:opacity-50">{busy ? 'Deleting…' : '🗑 Delete this group'}</button>
+            <div className="text-[10.5px] text-slate-400 text-center mt-1.5">Deletes all messages & images for everyone</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Quick task creator — opened by typing "/task" in chat.
