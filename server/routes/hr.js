@@ -4,7 +4,8 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
+const bioSvc = require('../services/biometric');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
 const imagekit = require('../services/imagekit');
@@ -777,6 +778,7 @@ router.put('/directors/:userId', requireHrAccess, requireHrAdmin, async (req, re
     const [row] = await HrDirectorProfile.findOrCreate({ where: { userId }, defaults: { userId } });
     if (b.name !== undefined) row.name = String(b.name).slice(0, 160) || null;
     if (b.employeeId !== undefined) row.employeeId = String(b.employeeId).slice(0, 60) || null;
+    if (b.deviceId !== undefined) row.deviceId = String(b.deviceId || '').trim().slice(0,40) || null;
     if (b.email !== undefined) row.email = String(b.email).slice(0, 160) || null;
     if (b.avatar !== undefined) row.avatar = b.avatar || null;
     await row.save();
@@ -4196,6 +4198,8 @@ router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) =>
   try {
     if (req.hrActor.kind !== 'hr') return res.json({ month: '', days: {} });
     const emp = await HrUser.findByPk(req.hrActor.id);
+    const shift = emp && emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+    const shiftMin = bioSvc.shiftGrossMinutes(shift);
     const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : istDateStr().slice(0, 7);
     const rows = await HrAttendance.findAll({ where: { employeeId: emp.id } });
     const marks = {};
@@ -4218,10 +4222,31 @@ router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) =>
         else if (mk.status === 'absent' || mk.status === 'lop') status = 'absent';
         else if (mk.loginTime) status = mk.late ? 'late' : 'present';
       }
+      const toMin = (t) => { if (!t) return null; const [h, mm] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (mm || 0); };
+      let workedMin = null;
+      if (mk && mk.loginTime && mk.logoutTime) { let a = toMin(mk.loginTime), b = toMin(mk.logoutTime); if (b < a) b += 1440; workedMin = b - a; }
       days[ds] = { status, login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null, holiday: holidays[ds] || null,
+        workedMin, workedLabel: workedMin == null ? null : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
+        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime),
         timeEdited: mk && mk.timeEditedAt ? { byName: mk.timeEditedByName, byAvatar: mk.timeEditedByAvatar, at: mk.timeEditedAt, originalLogin: mk.originalLoginTime, originalLogout: mk.originalLogoutTime } : null };
     }
-    res.json({ month, branch: emp.branch, days });
+    // Month summary: working days, total & avg hours, deficit vs shift.
+    const dayVals = Object.values(days);
+    const workedDays = dayVals.filter((d) => d.workedMin != null);
+    const totalMin = workedDays.reduce((n, d) => n + d.workedMin, 0);
+    const presentCount = dayVals.filter((d) => d.status === 'present' || d.status === 'late').length;
+    const avgMin = workedDays.length ? Math.round(totalMin / workedDays.length) : 0;
+    const targetMin = shiftMin ? presentCount * shiftMin : null;
+    const summary = {
+      workingDays: presentCount,
+      totalHoursLabel: `${Math.floor(totalMin / 60)}h ${String(totalMin % 60).padStart(2, '0')}m`,
+      avgHoursLabel: `${Math.floor(avgMin / 60)}h ${String(avgMin % 60).padStart(2, '0')}m`,
+      shiftLabel: shift ? `${shift.startTime}–${shift.endTime}` : null,
+      deficitLabel: targetMin == null ? null : ((totalMin - targetMin) < 0 ? '-' : '+') + `${Math.floor(Math.abs(totalMin - targetMin) / 60)}h ${String(Math.abs(totalMin - targetMin) % 60).padStart(2, '0')}m`,
+      inDeficit: targetMin != null && totalMin < targetMin,
+      singlePunchDays: dayVals.filter((d) => d.singlePunch).length,
+    };
+    res.json({ month, branch: emp.branch, days, summary });
   } catch (e) { next(e); }
 });
 
@@ -4614,6 +4639,7 @@ router.post('/users', requireHrAccess, requireHrManager, async (req, res, next) 
     const row = await HrUser.create({
       name, email, passwordHash, type,
       employeeId: b.employeeId || null,
+      deviceId: b.deviceId || null,
       phone: b.phone || '+91 ',
       designation: b.designation || '',
       branch,
@@ -4667,6 +4693,7 @@ router.put('/users/:id', requireHrAccess, requireHrManager, async (req, res, nex
     }
     if (b.name !== undefined) row.name = titleCaseName(String(b.name).trim());
     if (b.employeeId !== undefined) row.employeeId = b.employeeId || null;
+    if (b.deviceId !== undefined) row.deviceId = String(b.deviceId || '').trim() || null;
     if (b.phone !== undefined) row.phone = b.phone;
     if (b.designation !== undefined) row.designation = b.designation;
     if (b.type !== undefined && USER_TYPES.includes(b.type)) row.type = b.type;
@@ -8501,6 +8528,201 @@ router.get('/leaderboard', requireHrAccess, async (req, res, next) => {
     rows.sort((a, b) => (b.joined.month - a.joined.month) || (b.interviews.month - a.interviews.month) || (b.added.month - a.added.month) || a.name.localeCompare(b.name));
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
     res.json({ rows, leader: rows[0] || null });
+  } catch (e) { next(e); }
+});
+
+// ===== BIOMETRIC ATTENDANCE =====
+
+// Upload a device file (.dat or .xlsx as base64). Parses + stores the punches
+// for future re-analysis, and returns the available date range + match stats.
+router.post('/attendance/biometric/upload', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have access to Attendance.' });
+    const b = req.body || {};
+    const base64 = String(b.base64 || '');
+    const fileName = String(b.fileName || 'device.dat');
+    if (!base64) return res.status(400).json({ error: 'No file provided.' });
+    const buf = Buffer.from(base64, 'base64');
+    let parsed;
+    if (/\.xlsx?$/i.test(fileName)) {
+      const XLSX = require('xlsx');
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      parsed = bioSvc.parseWorkbook(XLSX, wb);
+    } else {
+      parsed = bioSvc.parseDat(buf.toString('utf8'));
+    }
+    if (!parsed.punchCount) return res.status(400).json({ error: 'No punches found in the file. Is it a valid device export?' });
+    const imp = await BiometricImport.create({
+      fileName, uploadedById: req.hrActor.id, uploadedByName: req.hrActor.name,
+      punchCount: parsed.punchCount, deviceIdCount: parsed.deviceIdCount,
+      minDate: parsed.minDate, maxDate: parsed.maxDate, data: parsed.data,
+    });
+    // How many device IDs match an employee's deviceId?
+    const emps = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true } }, attributes: ['deviceId'] });
+    const known = new Set(emps.map((e) => e.deviceId).filter(Boolean));
+    const deviceIds = Object.keys(parsed.data);
+    const matched = deviceIds.filter((d) => known.has(d)).length;
+    res.json({ importId: imp.id, fileName, punchCount: parsed.punchCount, deviceIdCount: parsed.deviceIdCount, minDate: parsed.minDate, maxDate: parsed.maxDate, matched, unmatched: deviceIds.length - matched, deviceIds });
+  } catch (e) { next(e); }
+});
+
+// Build the comparison/deficit report for a stored import + a date range.
+async function loadEmpsForCompare(from, to) {
+  const users = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true }, active: true } });
+  const shifts = await HrShift.findAll();
+  const shiftById = Object.fromEntries(shifts.map((s) => [s.id, s]));
+  const ids = users.map((u) => u.id);
+  const atts = await HrAttendance.findAll({ where: { employeeId: { [Op.in]: ids }, date: { [Op.between]: [from, to] } } });
+  const leaves = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids }, status: 'approved' } }).catch(() => []);
+  const hrmsByEmp = {}; const wfhByEmp = {};
+  for (const a of atts) { (hrmsByEmp[a.employeeId] = hrmsByEmp[a.employeeId] || {})[a.date] = { login: a.loginTime, logout: a.logoutTime, status: a.status }; }
+  // WFH days from approved wfh leave ranges.
+  for (const lv of leaves) {
+    if (String(lv.type || '').toLowerCase() !== 'wfh') continue;
+    const s = lv.fromDate || lv.startDate, e = lv.toDate || lv.endDate || s;
+    if (!s) continue;
+    for (let d = new Date(s + 'T00:00:00'); d <= new Date((e || s) + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
+      (wfhByEmp[lv.employeeId] = wfhByEmp[lv.employeeId] || new Set()).add(d.toISOString().slice(0, 10));
+    }
+  }
+  return users.map((u) => ({ id: u.id, name: u.name, deviceId: u.deviceId || null, department: u.department || '', shift: u.shiftId ? shiftById[u.shiftId] : null, wfhDates: wfhByEmp[u.id] || new Set(), hrmsByDate: hrmsByEmp[u.id] || {} }));
+}
+
+router.post('/attendance/biometric/:id/analyze', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'You don\u2019t have access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    const emps = await loadEmpsForCompare(from, to);
+    const cmp = bioSvc.buildComparison({ emps, punches: imp.data || {}, from, to });
+    // Only return rows that have any data in range.
+    const rows = cmp.rows.filter((r) => r.presentDays > 0 || r.days.length > 0);
+    const summary = {
+      analyzed: rows.length,
+      onTarget: rows.filter((r) => !r.inDeficit).length,
+      inDeficit: rows.filter((r) => r.inDeficit).length,
+      needsReview: rows.filter((r) => r.needsReview > 0).length,
+      missingOuts: rows.reduce((n, r) => n + r.missingOut, 0),
+      totalDeficitMin: rows.reduce((n, r) => n + Math.min(0, r.deficitMin), 0),
+    };
+    res.json({ from, to, rows, unmatchedDeviceIds: cmp.unmatchedDeviceIds, summary });
+  } catch (e) { next(e); }
+});
+
+// Apply biometric times to HRMS attendance for a range (writes login/logout).
+router.post('/attendance/biometric/:id/apply', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    const onlyEmpId = req.body.employeeId ? Number(req.body.employeeId) : null;
+    const emps = (await loadEmpsForCompare(from, to)).filter((e) => e.deviceId && (!onlyEmpId || e.id === onlyEmpId));
+    let written = 0;
+    for (const e of emps) {
+      const bio = imp.data[e.deviceId] || {};
+      for (const d of Object.keys(bio)) {
+        if (d < from || d > to) continue;
+        if (e.wfhDates && e.wfhDates.has(d)) continue; // don't overwrite WFH
+        const times = bio[d]; if (!times.length) continue;
+        const login = times[0].slice(0, 5); const logout = times.length > 1 ? times[times.length - 1].slice(0, 5) : null;
+        const [row] = await HrAttendance.findOrCreate({ where: { employeeId: e.id, date: d }, defaults: { employeeId: e.id, date: d, status: 'present' } });
+        row.loginTime = login; if (logout) row.logoutTime = logout; row.status = row.status === 'absent' ? 'present' : row.status; row.source = 'biometric';
+        await row.save(); written++;
+      }
+    }
+    const ranges = Array.isArray(imp.appliedRanges) ? imp.appliedRanges : [];
+    ranges.push({ from, to, at: new Date(), by: req.hrActor.name, employeeId: onlyEmpId });
+    imp.appliedRanges = ranges; imp.changed('appliedRanges', true); await imp.save();
+    res.json({ ok: true, written });
+  } catch (e) { next(e); }
+});
+
+// Raise/refresh review flags from an analysis (missing punch-outs, repeats).
+router.post('/attendance/biometric/:id/flag', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    const emps = await loadEmpsForCompare(from, to);
+    const cmp = bioSvc.buildComparison({ emps, punches: imp.data || {}, from, to });
+    let created = 0;
+    for (const r of cmp.rows) {
+      const missDays = r.days.filter((d) => d.flags.includes('missing_out'));
+      if (!missDays.length) continue;
+      // Per-day missing-out flags + a repeat flag if > 3.
+      for (const d of missDays) {
+        const [, isNew] = await AttendanceFlag.findOrCreate({ where: { employeeId: r.employeeId, kind: 'missing_out', date: d.date }, defaults: { employeeId: r.employeeId, employeeName: r.name, kind: 'missing_out', date: d.date, detail: `No punch-out recorded on ${d.date}. HRMS time used.`, importId: imp.id } });
+        if (isNew) created++;
+        // Notify the employee (in-app).
+        try { await HrNotification.create({ userId: r.employeeId, actorKind: 'system', type: 'info', text: `\u23F0 We didn't record your punch-out on ${d.date}. Please check with HR.` }); } catch {}
+      }
+      if (missDays.length > 3) {
+        await AttendanceFlag.findOrCreate({ where: { employeeId: r.employeeId, kind: 'repeat_missing_out', date: `${from}_${to}` }, defaults: { employeeId: r.employeeId, employeeName: r.name, kind: 'repeat_missing_out', date: `${from}_${to}`, count: missDays.length, detail: `${missDays.length} missing punch-outs in ${from} to ${to}. Consider half-days.`, importId: imp.id } });
+      }
+    }
+    res.json({ ok: true, created });
+  } catch (e) { next(e); }
+});
+
+// List open attendance flags (for the Review tab).
+router.get('/attendance/flags', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
+    const rows = await AttendanceFlag.findAll({ where: { status: { [Op.in]: ['open', 'emailed'] } }, order: [['createdAt', 'DESC']], limit: 200 });
+    res.json({ flags: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Resolve / dismiss / email a flag.
+router.post('/attendance/flags/:id/:action', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'No access.' });
+    const f = await AttendanceFlag.findByPk(Number(req.params.id));
+    if (!f) return res.status(404).json({ error: 'Flag not found.' });
+    const action = req.params.action;
+    if (action === 'resolve') f.status = 'resolved';
+    else if (action === 'dismiss') f.status = 'dismissed';
+    else if (action === 'email') {
+      f.status = 'emailed';
+      const emp = await HrUser.findByPk(f.employeeId);
+      try { if (emp && emp.email) await require('../services/gmail').sendMessage({ to: emp.email, subject: 'Attendance — missing punch-out', text: f.detail + '\n\nPlease ensure you punch out on the device. — HR' }); } catch {}
+    }
+    await f.save();
+    res.json({ ok: true, status: f.status });
+  } catch (e) { next(e); }
+});
+
+// Export the comparison report as a multi-sheet Excel (Summary + per-employee).
+router.get('/attendance/biometric/:id/export', async (req, res, next) => {
+  try {
+    // Token via query (opened in a new tab) or header.
+    const jwt = require('jsonwebtoken');
+    let token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    let ok = false; try { const p = jwt.verify(token, process.env.JWT_SECRET); ok = !!p; } catch {}
+    if (!ok) return res.status(401).send('Unauthorized');
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).send('Not found');
+    const from = String(req.query.from || imp.minDate), to = String(req.query.to || imp.maxDate);
+    const emps = await loadEmpsForCompare(from, to);
+    const cmp = bioSvc.buildComparison({ emps, punches: imp.data || {}, from, to });
+    const rows = cmp.rows.filter((r) => r.days.length > 0);
+    const XLSX = require('xlsx');
+    const wb = XLSX.utils.book_new();
+    // Summary sheet.
+    const sum = [['Employee', 'Device ID', 'Department', 'Shift', 'Days', 'Worked (h)', 'Target (h)', 'Deficit', 'Missing outs', 'Gaps', 'Needs review']];
+    for (const r of rows) sum.push([r.name, r.deviceId || '', r.department, r.shiftLabel, r.presentDays, (r.totalWorkedMin / 60).toFixed(2), (r.totalTargetMin / 60).toFixed(2), r.deficitLabel, r.missingOut, r.gaps, r.needsReview]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sum), 'Summary');
+    // Daily comparison sheet.
+    const daily = [['Employee', 'Date', 'Bio IN', 'Bio OUT', 'HRMS IN', 'HRMS OUT', 'Worked (h)', 'Source', 'vs Shift', 'Flags']];
+    for (const r of rows) for (const d of r.days) daily.push([r.name, d.date, d.bioIn || '', d.bioOut || '', d.hrmsIn || '', d.hrmsOut || '', d.worked == null ? '' : (d.worked / 60).toFixed(2), d.source || '', d.deficit == null ? '' : (d.deficit / 60).toFixed(2), d.flags.join(', ')]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(daily), 'Daily Comparison');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="biometric-report-${from}_${to}.xlsx"`);
+    res.send(buf);
   } catch (e) { next(e); }
 });
 

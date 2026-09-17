@@ -101,7 +101,7 @@ export function Avatar({ name, src, size = 48 }) {
 // ---------------------------------------------------------------------------
 export function AddUserModal({ presetType, branches, departments, reportingOptions, shifts = [], imagekitReady, isAdmin, lockBranch, onClose, onCreated }) {
   const blank = {
-    name: '', employeeId: '', email: '', password: '', phone: '+91 ', designation: '',
+    name: '', employeeId: '', deviceId: '', email: '', password: '', phone: '+91 ', designation: '',
     type: presetType || 'employee', branch: lockBranch || branches[0]?.name || 'Bhubaneswar', department: '', joiningDate: '',
     reportsTo: '', branchIncharge: false, avatar: '', shiftId: '', targets: { dailyInterviews: 0, monthlyOnboarding: 0 },
     isHrManager: false, hrManagerScope: '', canPostAnnouncements: false,
@@ -164,6 +164,7 @@ export function AddUserModal({ presetType, branches, departments, reportingOptio
         <div className="grid grid-cols-2 gap-4">
           <Field label="Name *"><input className={inputCls} value={f.name} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label="Employee ID"><input className={inputCls} value={f.employeeId} onChange={(e) => set({ employeeId: e.target.value })} placeholder="EMP001" /></Field>
+          <Field label="Device ID"><input className={inputCls} value={f.deviceId} onChange={(e) => set({ deviceId: e.target.value })} placeholder="Biometric User ID (e.g. 423)" /></Field>
           <Field label="Email *"><input className={inputCls} value={f.email} onChange={(e) => set({ email: e.target.value })} placeholder="name@qtonix.com" /></Field>
           <Field label="Password *" hint="At least 8 characters"><input type="password" className={inputCls} value={f.password} onChange={(e) => set({ password: e.target.value })} /></Field>
           <Field label="Phone"><input className={inputCls} value={f.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>

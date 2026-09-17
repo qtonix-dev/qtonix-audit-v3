@@ -4096,6 +4096,174 @@ const ATT_STATUS = {
 };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+// Biometric upload → analyze → per-employee discrepancy/deficit report.
+function BiometricModal({ onClose, onOpenEmployee }) {
+  const [step, setStep] = useState(1); // 1 upload · 2 range · 3 report
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState(null);   // upload result
+  const [from, setFrom] = useState(''); const [to, setTo] = useState('');
+  const [report, setReport] = useState(null);
+  const [openEmp, setOpenEmp] = useState(null);
+  const fileRef = useRef(null);
+
+  const onFile = async (e) => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try {
+      const base64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+      const r = await hrApi('/attendance/biometric/upload', { method: 'POST', body: JSON.stringify({ fileName: file.name, base64 }) });
+      setInfo(r); setFrom(r.minDate); setTo(r.maxDate); setStep(2);
+    } catch (err) { toast(err.message); }
+    setBusy(false);
+  };
+  const analyze = async () => {
+    setBusy(true);
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/analyze`, { method: 'POST', body: JSON.stringify({ from, to }) }); setReport(r); setStep(3); }
+    catch (err) { toast(err.message); }
+    setBusy(false);
+  };
+  const apply = async (employeeId) => {
+    if (!(await confirmDialog({ title: 'Apply biometric times to HRMS?', message: `This updates login/logout in HRMS attendance for ${from} to ${to}${employeeId ? ' for this employee' : ' for all matched employees'}. WFH days are left untouched.`, confirmText: 'Apply times' }))) return;
+    setBusy(true);
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/apply`, { method: 'POST', body: JSON.stringify({ from, to, employeeId }) }); toast(`Applied to ${r.written} days ✓`); }
+    catch (err) { toast(err.message); }
+    setBusy(false);
+  };
+  const sendFlags = async () => {
+    setBusy(true);
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/flag`, { method: 'POST', body: JSON.stringify({ from, to }) }); toast(`${r.created} flags sent to Review ✓`); }
+    catch (err) { toast(err.message); }
+    setBusy(false);
+  };
+  const exportExcel = () => { window.open(`${API_BASE}/api/hr/attendance/biometric/${info.importId}/export?from=${from}&to=${to}&token=${encodeURIComponent(localStorage.getItem('qtx_hr_token') || '')}`, '_blank'); };
+
+  const defLabel = (min) => (min < 0 ? '-' : '+') + `${Math.floor(Math.abs(min) / 60)}h ${String(Math.round(Math.abs(min) % 60)).padStart(2, '0')}m`;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="text-[15px] font-extrabold text-[#050A1F]">📤 Biometric attendance {step === 3 ? '· Discrepancy & Deficit report' : ''}</div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+
+        <div className="overflow-auto p-5">
+          {/* STEP 1 — upload */}
+          {step === 1 && (
+            <div>
+              <div onClick={() => fileRef.current && fileRef.current.click()} className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center cursor-pointer hover:border-orange-300 hover:bg-orange-50/30">
+                <div className="text-4xl mb-2">📤</div>
+                <div className="text-[14px] font-bold text-slate-600">{busy ? 'Parsing…' : 'Click to upload the device file'}</div>
+                <div className="text-[12px] text-slate-400 mt-1">Raw <b>.dat</b> from the ESSL device, or a converted <b>.xlsx</b></div>
+                <input ref={fileRef} type="file" accept=".dat,.xlsx,.xls,.txt" className="hidden" onChange={onFile} />
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2 — pick range */}
+          {step === 2 && info && (
+            <div>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 mb-4 text-[13px] text-slate-600">
+                <b className="text-[#050A1F]">{info.punchCount.toLocaleString()}</b> punches · <b className="text-[#050A1F]">{info.deviceIdCount}</b> device IDs · available <b className="text-[#050A1F]">{info.minDate}</b> → <b className="text-[#050A1F]">{info.maxDate}</b>
+                <div className="mt-1">Matched <b className="text-green-600">{info.matched}</b> to employees{info.unmatched > 0 && <> · <b className="text-red-600">{info.unmatched} unmatched</b> device IDs (set their Device ID in the employee profile)</>}</div>
+              </div>
+              <div className="flex items-end gap-3 flex-wrap">
+                <div><div className="text-[11px] font-bold text-slate-500 mb-1">From</div><input type="date" value={from} min={info.minDate} max={info.maxDate} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
+                <div><div className="text-[11px] font-bold text-slate-500 mb-1">To</div><input type="date" value={to} min={info.minDate} max={info.maxDate} onChange={(e) => setTo(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
+                <button onClick={analyze} disabled={busy} className="text-white font-bold px-5 py-2 rounded-lg text-[13px]" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Analyzing…' : 'Analyze range →'}</button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3 — report */}
+          {step === 3 && report && !openEmp && (
+            <div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+                {[['Analyzed', report.summary.analyzed, '#334155'], ['On target', report.summary.onTarget, '#16a34a'], ['In deficit', report.summary.inDeficit, '#dc2626'], ['Needs review', report.summary.needsReview, '#a16207'], ['Missing outs', report.summary.missingOuts, '#c2410c']].map(([l, v, c]) => (
+                  <div key={l} className="rounded-xl border border-slate-200 p-2.5 text-center"><div className="text-[18px] font-extrabold" style={{ color: c }}>{v}</div><div className="text-[10px] text-slate-400 font-bold uppercase">{l}</div></div>
+                ))}
+              </div>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-[12.5px]">
+                  <thead><tr className="bg-slate-50 text-[10px] uppercase text-slate-400 font-bold"><th className="text-left px-3 py-2">Employee</th><th className="text-left px-3 py-2">Days</th><th className="text-left px-3 py-2">Worked / Target</th><th className="text-left px-3 py-2">Deficit</th><th className="text-left px-3 py-2">Flags</th><th /></tr></thead>
+                  <tbody>
+                    {report.rows.map((r) => (
+                      <tr key={r.employeeId} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => setOpenEmp(r)}>
+                        <td className="px-3 py-2.5"><div className="font-bold text-[#050A1F]">{titleCase(r.name)}</div><div className="text-[10.5px] text-slate-400">Dev {r.deviceId || '—'} · {r.department || '—'} · {r.shiftLabel}</div></td>
+                        <td className="px-3 py-2.5 text-slate-600">{r.presentDays}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{r.totalWorkedLabel} / {r.totalTargetLabel}</td>
+                        <td className="px-3 py-2.5 font-extrabold" style={{ color: r.inDeficit ? '#dc2626' : '#16a34a' }}>{r.deficitLabel}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex gap-1 flex-wrap">
+                            {r.gaps > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">{r.gaps} gaps</span>}
+                            {r.missingOut > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700">{r.missingOut} miss-out</span>}
+                            {r.missingOut > 3 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700">½-day?</span>}
+                            {r.needsReview > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">⚠ review</span>}
+                            {r.gaps === 0 && r.missingOut === 0 && r.needsReview === 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">clean</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-orange-600 font-bold text-[11px]">View ›</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3b — per-employee detail */}
+          {step === 3 && openEmp && (
+            <div>
+              <button onClick={() => setOpenEmp(null)} className="text-[13px] font-bold text-slate-400 hover:text-slate-600 mb-3">← Back to all employees</button>
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <div><div className="text-[15px] font-extrabold text-[#050A1F]">{titleCase(openEmp.name)}</div><div className="text-[11.5px] text-slate-400">Dev {openEmp.deviceId || '—'} · {openEmp.department} · shift {openEmp.shiftLabel}</div></div>
+                <div className="text-[13px]">Deficit <b style={{ color: openEmp.inDeficit ? '#dc2626' : '#16a34a' }}>{openEmp.deficitLabel}</b> · avg <b>{openEmp.avgHours}h</b>/day over {openEmp.presentDays} days</div>
+              </div>
+              <div className="text-[11px] text-slate-400 mb-2">Worked = higher of biometric / HRMS. <span className="text-amber-600 font-bold">⚠</span> = mismatch to check.</div>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-[12px]">
+                  <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-2">Date</th><th className="text-left px-2.5 py-2">Bio IN→OUT</th><th className="text-left px-2.5 py-2">HRMS IN→OUT</th><th className="text-left px-2.5 py-2">Worked</th><th className="text-left px-2.5 py-2">vs shift</th><th className="text-left px-2.5 py-2">Flag</th></tr></thead>
+                  <tbody>
+                    {openEmp.days.map((d) => (
+                      <tr key={d.date} className="border-t border-slate-50">
+                        <td className="px-2.5 py-2 font-semibold text-slate-600">{new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', weekday: 'short' })}</td>
+                        <td className="px-2.5 py-2">{d.bioIn || '—'} → {d.bioOut || <span className="text-orange-600 font-bold">—</span>}</td>
+                        <td className="px-2.5 py-2 text-slate-500">{d.wfh ? <span className="text-violet-600 font-bold">WFH</span> : <>{d.hrmsIn || '—'} → {d.hrmsOut || '—'}</>}</td>
+                        <td className="px-2.5 py-2 font-bold">{d.workedLabel}{d.highlight && <span className="ml-1 text-amber-600" title="mismatch">⚠</span>}<span className="text-[9px] text-slate-300 ml-1">{d.source}</span></td>
+                        <td className="px-2.5 py-2 font-bold" style={{ color: d.deficit == null ? '#94a3b8' : d.deficit < 0 ? '#dc2626' : '#16a34a' }}>{d.deficit == null ? '—' : defLabel(d.deficit)}</td>
+                        <td className="px-2.5 py-2">
+                          <div className="flex gap-1 flex-wrap">
+                            {d.flags.includes('missing_out') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700">missing out</span>}
+                            {d.flags.includes('in_gap') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">IN gap</span>}
+                            {d.flags.includes('out_gap') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">OUT gap</span>}
+                            {d.flags.includes('no_hrms') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700">no HRMS</span>}
+                            {d.flags.includes('no_biometric') && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">no device</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={() => apply(openEmp.employeeId)} disabled={busy} className="mt-3 rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">✔ Apply this employee's times to HRMS</button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer actions for the report */}
+        {step === 3 && !openEmp && (
+          <div className="px-5 py-3 border-t border-slate-100 flex gap-2 flex-wrap shrink-0">
+            <button onClick={exportExcel} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇ Export report (Excel)</button>
+            <button onClick={() => apply(null)} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">✔ Apply to HRMS</button>
+            <button onClick={sendFlags} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">📩 Send flags to Review</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const canAll = isAdmin || user.hrManagerAll || (user.hrManagerScope === 'all');
   const scopedBranch = !canAll ? (user.hrManagerScope && user.hrManagerScope !== 'all' ? user.hrManagerScope : user.branch) : '';
@@ -4104,6 +4272,7 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const [month, setMonth] = useState(now.toISOString().slice(0, 7));
   const [cal, setCal] = useState(null);
   const [openDate, setOpenDate] = useState(null);
+  const [bioOpen, setBioOpen] = useState(false);
   const [err, setErr] = useState('');
 
   const loadCal = () => {
@@ -4135,8 +4304,10 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
             </select>
           )}
           {!canAll && <span className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs font-bold text-blue-700">{scopedBranch} branch</span>}
+          <button onClick={() => setBioOpen(true)} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>📤 Upload biometric data</button>
         </div>
       </div>
+      {bioOpen && <BiometricModal onClose={() => setBioOpen(false)} onOpenEmployee={onOpenEmployee} />}
 
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">{err}</div>}
 
@@ -4627,6 +4798,9 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
   const loadReviews = () => hrApi('/me/reviews').then((r) => setReviews(r.reviews || [])).catch(() => {});
+  const [attFlags, setAttFlags] = useState([]);
+  const loadAttFlags = () => hrApi('/attendance/flags').then((r) => setAttFlags(r.flags || [])).catch(() => setAttFlags([]));
+  const attFlagAct = async (id, action) => { try { await hrApi(`/attendance/flags/${id}/${action}`, { method: 'POST', body: '{}' }); toast(action === 'email' ? 'Email sent ✓' : 'Done'); loadAttFlags(); } catch (e) { toast(e.message); } };
   const loadClaims = () => hrApi('/me/claims').then((r) => setClaims(r.claims || [])).catch(() => {});
   const loadInterviews = () => hrApi('/my-interviews').then((r) => {
     const jobs = (r && r.jobs) || []; const flat = [];
@@ -4635,7 +4809,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
     setInterviews(flat.filter((c) => c.at && new Date(c.at).getTime() >= t - 3600000));
   }).catch(() => {});
   useEffect(() => {
-    loadClock(); loadLeave(); loadReviews(); loadInterviews();
+    loadClock(); loadLeave(); loadReviews(); loadInterviews(); loadAttFlags();
     hrApi('/me/whos-in').then(setWhos).catch(() => {});
     hrApi('/tasks/my-summary').then(setTaskSummary).catch(() => {});
     hrApi('/me/celebrations').then(setCel).catch(() => {});
@@ -4871,7 +5045,25 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
           {/* REVIEW */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <h3 className={TITLE}><span className={DOT} style={{ background: ORNG }} />Review</h3>
-            {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">Nothing to review right now. You’re all caught up.</div> : (
+            {attFlags.length > 0 && (
+              <div className="mb-3 space-y-2">
+                {attFlags.map((f) => {
+                  const repeat = f.kind === 'repeat_missing_out';
+                  return (
+                    <div key={f.id} className="rounded-xl border p-3" style={{ borderColor: repeat ? '#ddd6fe' : '#fed7aa', background: repeat ? '#f5f3ff66' : '#fff7ed66' }}>
+                      <div className="text-[12.5px] font-extrabold" style={{ color: repeat ? '#6d28d9' : '#c2410c' }}>{repeat ? `Repeat missing punch-out (${f.count}×)` : 'Missing punch-out'} · {titleCase(f.employeeName || 'Employee')}</div>
+                      <div className="text-[11.5px] text-slate-500 mt-0.5 mb-2">{f.detail}</div>
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button onClick={() => attFlagAct(f.id, 'email')} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: '#FF6A00' }}>✉ Send email</button>
+                        {repeat && <button onClick={() => attFlagAct(f.id, 'resolve')} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: '#6d28d9' }}>Mark ½-days</button>}
+                        <button onClick={() => attFlagAct(f.id, 'dismiss')} className="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-lg px-2.5 py-1.5">Dismiss</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {reviews.length === 0 ? <div className="text-sm text-slate-400 py-2">{attFlags.length ? 'No other items to review.' : 'Nothing to review right now. You’re all caught up.'}</div> : (
               <>
                 <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-bold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
                 <div className="max-h-80 overflow-y-auto -mr-1 pr-1">
@@ -5850,17 +6042,26 @@ function MyAttendanceCalendar({ onClose }) {
   const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div className="text-base font-extrabold text-[#050A1F]">My attendance</div>
           <div className="flex items-center gap-2">
-            <button onClick={() => shift(-1)} className="w-7 h-7 rounded-lg hover:bg-slate-100 text-slate-500">‹</button>
+            <button onClick={() => shift(-1)} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500">‹</button>
             <span className="text-sm font-bold text-slate-600 w-36 text-center">{monthLabel}</span>
-            <button onClick={() => shift(1)} className="w-7 h-7 rounded-lg hover:bg-slate-100 text-slate-500">›</button>
-            <button onClick={onClose} className="text-slate-400 text-xl leading-none ml-2">×</button>
+            <button onClick={() => shift(1)} className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500">›</button>
+            <button onClick={onClose} className="ml-1 text-slate-400 text-2xl leading-none">×</button>
           </div>
         </div>
-        <div className="p-6">
+        <div className="overflow-auto p-6">
+          {/* Summary bar */}
+          {data && data.summary && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
+              <div className="rounded-xl border border-slate-200 p-3 text-center"><div className="text-[19px] font-extrabold text-[#050A1F]">{data.summary.workingDays}</div><div className="text-[10px] text-slate-400 font-bold uppercase">Working days</div></div>
+              <div className="rounded-xl border border-slate-200 p-3 text-center"><div className="text-[19px] font-extrabold text-[#050A1F]">{data.summary.totalHoursLabel}</div><div className="text-[10px] text-slate-400 font-bold uppercase">Total hours</div></div>
+              <div className="rounded-xl border border-slate-200 p-3 text-center"><div className="text-[19px] font-extrabold text-[#050A1F]">{data.summary.avgHoursLabel}</div><div className="text-[10px] text-slate-400 font-bold uppercase">Avg / day</div></div>
+              <div className="rounded-xl border p-3 text-center" style={{ borderColor: data.summary.inDeficit ? '#fecaca' : '#bbf7d0', background: data.summary.inDeficit ? '#fef2f2' : '#f0fdf4' }}><div className="text-[19px] font-extrabold" style={{ color: data.summary.inDeficit ? '#dc2626' : '#16a34a' }}>{data.summary.deficitLabel || '—'}</div><div className="text-[10px] text-slate-400 font-bold uppercase">vs shift {data.summary.shiftLabel ? `(${data.summary.shiftLabel})` : ''}</div></div>
+            </div>
+          )}
           <div className="grid grid-cols-7 gap-1.5 mb-1.5">{['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="text-[10px] font-extrabold text-slate-400 text-center uppercase">{d}</div>)}</div>
           <div className="grid grid-cols-7 gap-1.5">
             {Array.from({ length: first }).map((_, i) => <div key={`e${i}`} />)}
@@ -5883,6 +6084,32 @@ function MyAttendanceCalendar({ onClose }) {
               <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: c }} />{l}</span>
             ))}
           </div>
+          {/* Day-by-day: login / logout / hours / discrepancy */}
+          {data && (
+            <div className="mt-5">
+              <div className="text-[12px] font-extrabold text-slate-500 uppercase mb-2">Day-by-day</div>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-[12px]">
+                  <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-3 py-2">Date</th><th className="text-left px-3 py-2">Login</th><th className="text-left px-3 py-2">Logout</th><th className="text-left px-3 py-2">Hours</th><th className="text-left px-3 py-2">Note</th></tr></thead>
+                  <tbody>
+                    {Object.entries(data.days || {}).filter(([, v]) => v.login || v.status === 'present' || v.status === 'late').sort((a, b) => b[0].localeCompare(a[0])).map(([date, v]) => (
+                      <tr key={date} className="border-t border-slate-50">
+                        <td className="px-3 py-2 font-semibold text-slate-600">{new Date(date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', weekday: 'short' })}</td>
+                        <td className="px-3 py-2">{v.login || '—'}</td>
+                        <td className="px-3 py-2">{v.logout || (v.singlePunch ? <span className="text-orange-600 font-bold">missing</span> : '—')}</td>
+                        <td className="px-3 py-2 font-bold text-[#050A1F]">{v.workedLabel || '—'}</td>
+                        <td className="px-3 py-2">
+                          {v.singlePunch && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700">no punch-out</span>}
+                          {v.timeEdited && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 ml-1">HR corrected</span>}
+                        </td>
+                      </tr>
+                    ))}
+                    {Object.entries(data.days || {}).filter(([, v]) => v.login || v.status === 'present' || v.status === 'late').length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-slate-400 text-[12px]">No login records this month.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -7728,6 +7955,7 @@ function CreateEmployeeFromCandidate({ data, candidateId, onClose, onCreated }) 
           <div className="text-[12px] text-slate-400">Details and documents are carried over from onboarding. Enter the organisation-specific fields below.</div>
           <div className="grid grid-cols-2 gap-3">
             <LCE label="Employee ID"><input className={inpCE} value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} placeholder="e.g. QTX-041" /></LCE>
+            <LCE label="Device ID"><input className={inpCE} value={form.deviceId || ''} onChange={(e) => set('deviceId', e.target.value)} placeholder="Biometric User ID (e.g. 423)" /></LCE>
             <LCE label="Role / type *"><select className={inpCE} value={form.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></LCE>
             <LCE label="Login email *"><input className={inpCE} value={form.email} onChange={(e) => set('email', e.target.value)} /></LCE>
             <LCE label="Temp password *"><input className={inpCE} value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="set a starter password" /></LCE>
@@ -10471,6 +10699,7 @@ function HrAdmin({ user, onOpenCandidate }) {
               <div className="grid grid-cols-2 gap-4">
                 <SharedField label="Name"><input className={inputCls} value={edit.name || ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></SharedField>
                 <SharedField label="Employee ID"><input className={inputCls} value={edit.employeeId || ''} onChange={(e) => setEdit({ ...edit, employeeId: e.target.value })} /></SharedField>
+                <SharedField label="Device ID"><input className={inputCls} value={edit.deviceId || ''} onChange={(e) => setEdit({ ...edit, deviceId: e.target.value })} placeholder="Biometric User ID" /></SharedField>
                 <SharedField label="Phone"><input className={inputCls} value={edit.phone || ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></SharedField>
                 <SharedField label="Designation"><input className={inputCls} value={edit.designation || ''} onChange={(e) => setEdit({ ...edit, designation: e.target.value })} /></SharedField>
                 <SharedField label="Role"><select className={inputCls} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })}>{ROLE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></SharedField>

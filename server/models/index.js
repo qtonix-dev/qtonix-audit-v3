@@ -1369,6 +1369,7 @@ const HrUser = sequelize.define('HrUser', {
   name: { type: DataTypes.STRING(120), allowNull: false },
   isDemo: { type: DataTypes.BOOLEAN, defaultValue: false }, // demo-only seeded employee
   employeeId: { type: DataTypes.STRING(40), allowNull: true },
+  deviceId: { type: DataTypes.STRING(40), allowNull: true }, // biometric device User ID
   email: { type: DataTypes.STRING(160), allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING(200), allowNull: false },
   phone: { type: DataTypes.STRING(40), defaultValue: '+91 ' },
@@ -1925,6 +1926,40 @@ const HrAttendance = sequelize.define('HrAttendance', {
   { name: 'idx_hr_att_emp', fields: ['employeeId'] },
 ] });
 HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// A biometric device import: the uploaded file's parsed punches are kept for
+// future re-analysis. One row per uploaded file.
+const BiometricImport = sequelize.define('BiometricImport', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  fileName: { type: DataTypes.STRING(200), allowNull: true },
+  uploadedById: { type: DataTypes.INTEGER, allowNull: true },
+  uploadedByName: { type: DataTypes.STRING(160), allowNull: true },
+  punchCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  deviceIdCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  minDate: { type: DataTypes.STRING(10), allowNull: true },
+  maxDate: { type: DataTypes.STRING(10), allowNull: true },
+  // Parsed punches grouped by deviceId → date → [times]. Kept for re-analysis.
+  // { "423": { "2026-07-21": ["14:18:31","14:18:48"], ... }, ... }
+  data: { type: DataTypes.JSON, defaultValue: {} },
+  appliedRanges: { type: DataTypes.JSON, defaultValue: [] }, // [{from,to,at,by}]
+}, { tableName: 'hr_biometric_imports', indexes: [{ fields: ['uploadedById'] }] });
+BiometricImport.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// An attendance discrepancy flag raised by a biometric comparison, surfaced on
+// the HR dashboard Review tab.
+const AttendanceFlag = sequelize.define('AttendanceFlag', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  employeeName: { type: DataTypes.STRING(160), allowNull: true },
+  kind: { type: DataTypes.STRING(30), defaultValue: 'missing_out' }, // missing_out | repeat_missing_out | time_gap | no_hrms | no_biometric
+  date: { type: DataTypes.STRING(10), allowNull: true },
+  detail: { type: DataTypes.STRING(400), allowNull: true },
+  count: { type: DataTypes.INTEGER, defaultValue: 1 },
+  status: { type: DataTypes.STRING(20), defaultValue: 'open' }, // open | emailed | resolved | dismissed
+  importId: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'hr_attendance_flags', indexes: [{ fields: ['status'] }, { fields: ['employeeId'] }] });
+AttendanceFlag.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 
 // A leave record for an employee. Types: casual, medical, privilege, wfh.
 // duration: full | half. paid indicates whether it's counted against paid
@@ -2764,7 +2799,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
