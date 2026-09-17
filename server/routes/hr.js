@@ -2694,6 +2694,7 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
     if (req.hrActor.kind !== 'hr') return res.json({ state: 'na' });
     const empId = req.hrActor.id;
     const emp = await HrUser.findByPk(empId);
+    const shiftRow = emp && emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
     const date = await attendanceDayFor(emp);
     // On approved leave today?
     const leave = await HrLeave.findOne({ where: { employeeId: empId, date, status: 'approved' } });
@@ -2712,7 +2713,7 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
       loginTime: row ? row.loginTime : null, logoutTime: row ? row.logoutTime : null,
       breakOpen: row ? row.breakOpen : null, breaks, breakMin, late: row ? row.late : false,
       onLeave: !!leave, leaveType: leave ? leave.type : null,
-      shift: null,
+      shift: shiftRow ? { name: shiftRow.name, start: shiftRow.startTime, end: shiftRow.endTime } : null,
     });
   } catch (e) { next(e); }
 });
@@ -8765,6 +8766,46 @@ router.post('/attendance/biometric/:id/ai-review', requireHrAccess, async (req, 
     res.json({ aiUsed: !!digest, insights, digest, from, to });
   } catch (e) { next(e); }
 });
+
+// AI overview run on HRMS attendance data directly (no biometric upload needed).
+// Covers previous month + current month to date, for all employees in scope.
+router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
+    const now = new Date(Date.now() + 330 * 60000);
+    const to = now.toISOString().slice(0, 10);
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const from = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-01`;
+    const branch = req.body && req.body.branch ? String(req.body.branch) : null;
+    // Build employee comparison purely from HRMS (punches empty → HRMS-only).
+    let emps = await loadEmpsForCompare(from, to);
+    if (branch) { const branchUsers = await HrUser.findAll({ where: { branch }, attributes: ['id'] }); const set = new Set(branchUsers.map((u) => u.id)); emps = emps.filter((e) => set.has(e.id)); }
+    const cmp = bioSvc.buildComparison({ emps, punches: {}, from, to });
+    const rows = cmp.rows.filter((r) => r.presentDays > 0);
+    if (!rows.length) return res.json({ aiUsed: false, digest: null, from, to, note: 'No attendance data in range yet.' });
+    // Leaves for context.
+    const leaveByEmp = {};
+    try {
+      const ids = rows.map((r) => r.employeeId);
+      const lvs = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids } } });
+      for (const lv of lvs) { (leaveByEmp[lv.employeeId] = leaveByEmp[lv.employeeId] || []).push({ type: lv.type, from: lv.fromDate || lv.startDate, to: lv.toDate || lv.endDate, status: lv.status }); }
+    } catch {}
+    const payload = bioSvc.aiReviewPayload(rows, leaveByEmp);
+    const key = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; } })();
+    if (!key) return res.json({ aiUsed: false, digest: null, from, to, rows: rows.map(slimAttRow), note: 'AI key not configured.' });
+    const system = 'You are an HR analytics assistant reviewing attendance for a team (gross shift hours as the daily target). '
+      + 'The NUMBERS are already computed and correct — do not recompute. Spot patterns worth a human HR review and prioritize them: chronic lateness (and specific weekdays), large hour deficits, frequent missing punch-outs, and leave clustering (around weekends / month-end). '
+      + 'Be fair and factual, never accusatory; frame as "worth checking". Return ONLY JSON: {"summary":"2-3 sentences","flags":[{"name":"...","severity":"high|medium|low","reason":"one sentence"}]}. Max 12 flags, highest priority first.';
+    const user = `Range ${from} to ${to} (previous month + current to date).\nPer-employee:\n${JSON.stringify(payload).slice(0, 9000)}`;
+    let digest = null;
+    try {
+      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 1400, messages: [{ role: 'user', content: user }] });
+      const m = String(out || '').match(/\{[\s\S]*\}/); digest = m ? JSON.parse(m[0]) : null;
+    } catch { digest = null; }
+    res.json({ aiUsed: !!digest, digest, from, to, rows: rows.map(slimAttRow) });
+  } catch (e) { next(e); }
+});
+function slimAttRow(r) { return { name: r.name, department: r.department, presentDays: r.presentDays, deficitLabel: r.deficitLabel, inDeficit: r.inDeficit, missingOut: r.missingOut, avgHours: r.avgHours }; }
 
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;

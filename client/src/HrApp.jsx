@@ -4187,6 +4187,9 @@ function BiometricModal({ onClose, onOpenEmployee }) {
           {/* STEP 3 — report */}
           {step === 3 && report && !openEmp && (
             <div>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="text-[13px] font-extrabold text-[#050A1F]">{report.rows.length} employees · {report.from} → {report.to}</div>
+              </div>
               {aiReview && (
                 <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
                   <div className="text-[12px] font-extrabold text-violet-700 mb-1.5">🔎 AI Review {aiReview.aiUsed ? '' : '(computed patterns only — AI key not set)'}</div>
@@ -4288,7 +4291,6 @@ function BiometricModal({ onClose, onOpenEmployee }) {
         {/* Footer actions for the report */}
         {step === 3 && !openEmp && (
           <div className="px-5 py-3 border-t border-slate-100 flex gap-2 flex-wrap shrink-0">
-            <button onClick={runAiReview} disabled={aiBusy} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#8B5CF6,#EC4899)' }}>{aiBusy ? '✨ Analyzing…' : '🔎 AI Review'}</button>
             <button onClick={exportExcel} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇ Export report (Excel)</button>
             <button onClick={() => apply(null)} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">✔ Apply to HRMS</button>
             <button onClick={sendFlags} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">📩 Send flags to Review</button>
@@ -4308,6 +4310,14 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const [cal, setCal] = useState(null);
   const [openDate, setOpenDate] = useState(null);
   const [bioOpen, setBioOpen] = useState(false);
+  const [aiOv, setAiOv] = useState(null);
+  const [aiOvBusy, setAiOvBusy] = useState(false);
+  const runAiOverview = async () => {
+    setAiOvBusy(true);
+    try { const r = await hrApi('/attendance/ai-overview', { method: 'POST', body: JSON.stringify({ branch: branch || undefined }) }); setAiOv(r); }
+    catch (e) { toast(e.message); }
+    setAiOvBusy(false);
+  };
   const [err, setErr] = useState('');
 
   const loadCal = () => {
@@ -4339,9 +4349,30 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
             </select>
           )}
           {!canAll && <span className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs font-bold text-blue-700">{scopedBranch} branch</span>}
+          <button onClick={runAiOverview} disabled={aiOvBusy} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#8B5CF6,#EC4899)' }}>{aiOvBusy ? '✨ Analyzing…' : '🔎 AI Overview'}</button>
           <button onClick={() => setBioOpen(true)} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>📤 Upload biometric data</button>
         </div>
       </div>
+      {aiOv && (
+        <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-[12px] font-extrabold text-violet-700">🔎 AI Overview {aiOv.aiUsed ? '' : '(AI key not set)'} · {aiOv.from} → {aiOv.to}</div>
+            <button onClick={() => setAiOv(null)} className="text-slate-400 text-lg leading-none">×</button>
+          </div>
+          {aiOv.digest && aiOv.digest.summary && <div className="text-[12.5px] text-slate-600 mb-2.5">{aiOv.digest.summary}</div>}
+          {aiOv.digest && Array.isArray(aiOv.digest.flags) ? (
+            <div className="space-y-1.5">
+              {aiOv.digest.flags.map((f, i) => (
+                <div key={i} className="flex items-start gap-2 text-[12px]">
+                  <span className="shrink-0 mt-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full" style={{ background: f.severity === 'high' ? '#fee2e2' : f.severity === 'medium' ? '#ffedd5' : '#f1f5f9', color: f.severity === 'high' ? '#b91c1c' : f.severity === 'medium' ? '#c2410c' : '#64748b' }}>{(f.severity || 'low').toUpperCase()}</span>
+                  <span><b className="text-[#050A1F]">{f.name}</b> — <span className="text-slate-500">{f.reason}</span></span>
+                </div>
+              ))}
+            </div>
+          ) : <div className="text-[12px] text-slate-500">{aiOv.note || 'No AI interpretation available. Showing raw deficits in the report below.'}</div>}
+          <div className="text-[10px] text-violet-400 mt-2">AI-generated guidance from HRMS attendance (previous month + current to date). Numbers are exact; interpretation is advisory.</div>
+        </div>
+      )}
       {bioOpen && <BiometricModal onClose={() => setBioOpen(false)} onOpenEmployee={onOpenEmployee} />}
 
       {err && <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">{err}</div>}
@@ -4862,10 +4893,35 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const pad = (n) => String(n).padStart(2, '0');
   const t12 = (hhmm) => { if (!hhmm) return ''; let [h, m] = hhmm.split(':').map(Number); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${pad(h)}:${pad(m)} ${ap}`; };
   const clockAction = async (action) => { setBusy(true); try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action }) }); await loadClock(); } catch (e) { toast(e.message); } finally { setBusy(false); } };
+  // Clock out for the day → then show the day-end report popup (no app sign-out).
+  const [dayEnd, setDayEnd] = useState(null);
+  const clockOutWithReport = async () => {
+    setBusy(true);
+    try {
+      await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action: 'out' }) });
+      await loadClock();
+      const s = await hrApi('/tasks/my-summary').catch(() => ({}));
+      setDayEnd(s || {});
+    } catch (e) { toast(e.message); }
+    finally { setBusy(false); setShowEarly(false); }
+  };
 
   const quote = dailyQuote ? dailyQuote.quote : 'The great thing in this world is not so much where you stand, as in what direction you are moving.';
   const quoteAuthor = dailyQuote ? dailyQuote.author : 'Oliver Wendell Holmes';
   const st = clock ? clock.state : 'out';
+  // Is it at/after the employee's shift end time? (Clock Out only shows then.)
+  const pastShiftEnd = (() => {
+    if (!clock || !clock.shift || !clock.shift.end) return true; // no shift → always allow
+    const now = new Date(Date.now() + 330 * 60000);
+    const [eh, em] = String(clock.shift.end).split(':').map(Number);
+    const [sh] = String(clock.shift.start || '00:00').split(':').map(Number);
+    let endMin = eh * 60 + (em || 0); const startMin = sh * 60;
+    let nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+    // Overnight shift: end is next day.
+    if (endMin <= startMin) { endMin += 1440; if (nowMin < startMin) nowMin += 1440; }
+    return nowMin >= endMin;
+  })();
+  const [showEarly, setShowEarly] = useState(false);
   const breakMin = clock ? (clock.breakMin || 0) : 0;
 
   // upcoming holidays (branch-aware, sorted, future)
@@ -4961,16 +5017,18 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
               <>
                 <div className="mt-4 flex gap-2.5">
                   <button disabled={busy} onClick={() => clockAction('break')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: 'rgba(255,255,255,.18)' }}>Take Break</button>
-                  <button disabled={busy} onClick={() => clockAction('out')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Logout</button>
+                  {(pastShiftEnd || showEarly) && <button disabled={busy} onClick={() => clockOutWithReport()} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Clock Out</button>}
                 </div>
-                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In at <b>{t12(clock.loginTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
+                {!pastShiftEnd && !showEarly && <button onClick={() => setShowEarly(true)} className="mt-2 w-full text-[11px] font-semibold text-white/70 hover:text-white">Need to leave early?</button>}
+                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In at <b>{t12(clock.loginTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}{clock.shift && clock.shift.end && !pastShiftEnd && <> · shift ends {t12(clock.shift.end)}</>}</div>
               </>
             ) : st === 'break' ? (
               <>
                 <div className="mt-4 flex gap-2.5">
                   <button disabled={busy} onClick={() => clockAction('break_end')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm bg-white disabled:opacity-60" style={{ color: '#FF4500' }}>Finish Break</button>
-                  <button disabled={busy} onClick={() => clockAction('out')} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Logout</button>
+                  {(pastShiftEnd || showEarly) && <button disabled={busy} onClick={() => clockOutWithReport()} className="flex-1 rounded-xl py-2.5 font-extrabold text-sm text-white disabled:opacity-60" style={{ background: '#050A1F' }}>Clock Out</button>}
                 </div>
+                {!pastShiftEnd && !showEarly && <button onClick={() => setShowEarly(true)} className="mt-2 w-full text-[11px] font-semibold text-white/70 hover:text-white">Need to leave early?</button>}
                 <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>On break since <b>{t12(clock.breakOpen)}</b> · In at <b>{t12(clock.loginTime)}</b></div>
               </>
             ) : (
@@ -5311,6 +5369,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
       {applyOpen && <ApplyLeaveModal approverName={leave ? leave.approverName : ''} approverChain={leave ? leave.approverChain : []} onClose={() => setApplyOpen(false)} onDone={() => { setApplyOpen(false); loadLeave(); }} />}
       {histOpen && <LeaveHistoryModal leaves={leave ? leave.leaves : []} onClose={() => setHistOpen(false)} />}
       {calOpen && <MyAttendanceCalendar onClose={() => setCalOpen(false)} />}
+      {dayEnd && <LogoutSummary summary={dayEnd} clockOnly onStay={() => setDayEnd(null)} onLogout={() => setDayEnd(null)} name={(user && user.name || '').split(' ')[0]} />}
       {decideItem && <LeaveDecisionModal item={decideItem} onClose={() => setDecideItem(null)} onDecide={(approve, note) => decide(decideItem.id, approve, note)} />}
       {lateItem && <LateCheckModal item={lateItem} onClose={() => setLateItem(null)} onSave={(updates) => saveLateCheck(lateItem.date, updates)} />}
       {lateHrItem && <LateCheckHrModal item={lateHrItem} onClose={() => setLateHrItem(null)} onSave={(updates) => saveLateCheckHr(lateHrItem.date, updates)} />}
@@ -11602,8 +11661,24 @@ export default function HrApp() {
   // Before logging out, fetch a task summary and show a friendly wrap-up popup.
   const [logoutSummary, setLogoutSummary] = useState(null);
   const startLogout = async () => {
-    try { const s = await hrApi('/tasks/my-summary'); setLogoutSummary(s || {}); }
-    catch { logout(); }
+    try {
+      // If it's after shift end and they never clocked out, clock them out now
+      // and show the day-end report (Q: only after shift end; before → normal).
+      const clk = await hrApi('/me/clock').catch(() => null);
+      let pastEnd = false;
+      if (clk && clk.shift && clk.shift.end && (clk.state === 'in' || clk.state === 'break')) {
+        const now = new Date(Date.now() + 330 * 60000);
+        const [eh, em] = String(clk.shift.end).split(':').map(Number);
+        const [sh] = String(clk.shift.start || '00:00').split(':').map(Number);
+        let endMin = eh * 60 + (em || 0); const startMin = sh * 60;
+        let nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+        if (endMin <= startMin) { endMin += 1440; if (nowMin < startMin) nowMin += 1440; }
+        pastEnd = nowMin >= endMin;
+      }
+      if (pastEnd) { try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action: 'out' }) }); } catch {} }
+      const s = await hrApi('/tasks/my-summary').catch(() => ({}));
+      setLogoutSummary(s || {});
+    } catch { logout(); }
   };
 
   // ---- Auto-logout after 30 min of inactivity (with a 5-min warning popup) ----
@@ -11856,7 +11931,7 @@ function NotificationBell({ onOpenCandidate }) {
 
 // Top-right user dropdown: My Profile, Email Template, Email Signature, Logout.
 // Friendly wrap-up shown when signing out: what you did today + what's pending.
-function LogoutSummary({ summary, onStay, onLogout, name }) {
+function LogoutSummary({ summary, onStay, onLogout, name, clockOnly }) {
   const done = summary.completedToday || 0;
   const total = summary.totalToday || (done + (summary.pending || 0));
   const pending = summary.pending || 0;
@@ -11894,8 +11969,8 @@ function LogoutSummary({ summary, onStay, onLogout, name }) {
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="e.g. Finished the payment API, started the refund flow…" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[12.5px] mb-1" />
         <p className="text-[12px] text-slate-500 mb-3 mt-1">{line}</p>
         <div className="flex flex-col gap-2">
-          <button disabled={saving} onClick={finish} className="w-full rounded-xl px-4 py-3 text-sm font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: saving ? 0.6 : 1 }}>Finish for the day →</button>
-          <button onClick={onStay} className="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Actually, stay a bit</button>
+          <button disabled={saving} onClick={finish} className="w-full rounded-xl px-4 py-3 text-sm font-extrabold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: saving ? 0.6 : 1 }}>{clockOnly ? 'Save & done ✓' : 'Finish for the day →'}</button>
+          {!clockOnly && <button onClick={onStay} className="w-full rounded-xl px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Actually, stay a bit</button>}
         </div>
       </div>
     </div>
