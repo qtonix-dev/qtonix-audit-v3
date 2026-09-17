@@ -183,13 +183,21 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
     const body = String(b.body || '').slice(0, 8000).trim();
     const hasFile = !!(b.fileUrl && b.fileName);
     if (!body && !hasFile) return res.status(400).json({ error: 'Nothing to send.' });
-    // Resolve @mentions: match "@Name" against conversation members.
+    // Resolve @mentions: match "@Name" against conversation members. "@all"
+    // (or "@everyone") mentions every other member of the conversation.
     let mentions = [];
+    let mentionAll = false;
     if (body.includes('@')) {
       const memRows = await ChatMembership.findAll({ where: { conversationId: convId } });
       const us = await HrUser.findAll({ where: { id: { [Op.in]: memRows.map((m) => m.userId) } }, attributes: ['id', 'name'] });
       const low = body.toLowerCase();
-      for (const u of us) { if (u.id !== me && low.includes('@' + u.name.toLowerCase())) mentions.push(u.id); }
+      mentionAll = /@all\b/.test(low) || /@everyone\b/.test(low);
+      if (mentionAll) {
+        for (const u of us) if (u.id !== me) mentions.push(u.id);
+      } else {
+        for (const u of us) { if (u.id !== me && low.includes('@' + u.name.toLowerCase())) mentions.push(u.id); }
+      }
+      mentions = [...new Set(mentions)];
     }
     // Reply-to (quoted message). Capture a snippet for display.
     let reply = {};
@@ -215,7 +223,7 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
       } catch {}
     }
     // Notify @mentioned people via the HRMS notification bell.
-    if (mentions.length) { try { const { HrNotification } = require('../models'); for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: `💬 ${meName(req)} mentioned you in chat` }); } catch {} }
+    if (mentions.length) { try { const { HrNotification } = require('../models'); const txt = mentionAll ? `📣 ${meName(req)} mentioned @all in chat` : `💬 ${meName(req)} mentioned you in chat`; for (const uid of mentions) await HrNotification.create({ userId: uid, actorKind: 'hr', type: 'info', text: txt }); } catch {} }
     // Update the conversation's last-message summary + un-hide for everyone.
     const summary = body ? body.slice(0, 200) : (hasFile ? `📎 ${msg.fileName}` : '');
     await ChatConversation.update({ lastMessageAt: msg.createdAt, lastMessageText: summary, lastMessageBy: me }, { where: { id: convId } });

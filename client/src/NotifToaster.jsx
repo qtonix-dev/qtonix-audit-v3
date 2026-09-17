@@ -57,8 +57,41 @@ export default function NotifToaster({ fetchFeed, activeConversationId, openTask
       return next;
     });
     playPop();
+    noteBackground();
   };
   const dismiss = (key) => setToasts((cur) => cur.filter((x) => x._key !== key));
+
+  // Track whether the tab is currently visible/focused. When hidden, the toast
+  // auto-dismiss timers pause and the tab title blinks with the unread count.
+  const [tabHidden, setTabHidden] = useState(typeof document !== 'undefined' && document.hidden);
+  const unreadRef = useRef(0);
+  const baseTitleRef = useRef(typeof document !== 'undefined' ? document.title : '');
+  useEffect(() => {
+    const onVis = () => {
+      const hidden = document.hidden;
+      setTabHidden(hidden);
+      if (!hidden) { unreadRef.current = 0; restoreTitle(); } // focus clears the badge
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
+  }, []);
+  // Title blink loop while the tab is hidden and there are unread items.
+  const blinkRef = useRef(null);
+  const restoreTitle = () => { if (blinkRef.current) { clearInterval(blinkRef.current); blinkRef.current = null; } try { if (baseTitleRef.current) document.title = baseTitleRef.current; } catch {} };
+  const startBlink = () => {
+    if (blinkRef.current || typeof document === 'undefined') return;
+    if (!baseTitleRef.current) baseTitleRef.current = document.title;
+    let on = false;
+    blinkRef.current = setInterval(() => {
+      on = !on;
+      const n = unreadRef.current;
+      document.title = (on && n > 0) ? `(${n}) ${n === 1 ? 'New message' : 'New messages'} • ${baseTitleRef.current}` : baseTitleRef.current;
+    }, 1000);
+  };
+  // A new toast while hidden bumps the unread badge + (re)starts the blink.
+  const noteBackground = () => { if (document.hidden) { unreadRef.current += 1; startBlink(); } };
+  useEffect(() => () => restoreTitle(), []);
 
   useEffect(() => {
     if (!enabled) return;
@@ -102,14 +135,15 @@ export default function NotifToaster({ fetchFeed, activeConversationId, openTask
   return (
     <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 2147483000, display: 'flex', flexDirection: 'column', gap: 10, width: 360, maxWidth: 'calc(100vw - 40px)', pointerEvents: 'none' }}>
       {overflow > 0 && <div style={{ pointerEvents: 'auto', textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#94a3b8', background: '#fff', borderRadius: 20, padding: '3px 10px', alignSelf: 'flex-end', boxShadow: '0 6px 18px rgba(2,6,23,.12)' }}>+{overflow} more</div>}
-      {visible.map((t) => <ToastCard key={t._key} t={t} onClose={() => dismiss(t._key)} onClick={() => { dismiss(t._key); if (t.kind === 'msg') onOpenMessage && onOpenMessage(t.conversationId); else if (t.taskId) onOpenTask && onOpenTask(t.taskId); }} />)}
+      {visible.map((t) => <ToastCard key={t._key} t={t} tabHidden={tabHidden} onClose={() => dismiss(t._key)} onClick={() => { dismiss(t._key); if (t.kind === 'msg') onOpenMessage && onOpenMessage(t.conversationId); else if (t.taskId) onOpenTask && onOpenTask(t.taskId); }} />)}
     </div>
   );
 }
 
-function ToastCard({ t, onClose, onClick }) {
-  const [paused, setPaused] = useState(false);
+function ToastCard({ t, onClose, onClick, tabHidden }) {
+  const [hover, setHover] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const paused = hover || tabHidden; // don't count down while hovered or tab hidden
   const startedRef = useRef(Date.now());
   const remainRef = useRef(AUTO_MS);
   useEffect(() => {
@@ -121,7 +155,7 @@ function ToastCard({ t, onClose, onClick }) {
   const timeLabel = (() => { try { const d = new Date(t.at); const s = Math.round((Date.now() - d) / 1000); if (s < 15) return 'now'; if (s < 60) return `${s}s ago`; const m = Math.round(s / 60); return `${m}m ago`; } catch { return 'now'; } })();
   return (
     <div
-      onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       onClick={onClick}
       style={{ pointerEvents: 'auto', background: '#fff', borderRadius: 16, boxShadow: '0 18px 45px rgba(2,6,23,.25)', overflow: 'hidden', display: 'flex', alignItems: 'stretch', cursor: 'pointer', border: '1px solid rgba(226,232,240,.7)', position: 'relative', transform: leaving ? 'translateX(30px)' : 'none', opacity: leaving ? 0 : 1, transition: 'transform .22s ease, opacity .22s ease', animation: leaving ? 'none' : 'ntSlideIn .32s cubic-bezier(.2,.9,.3,1.15)' }}
     >

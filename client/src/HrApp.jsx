@@ -2213,13 +2213,21 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     const pool = members.filter((u) => u.id !== me.id);
     const starts = pool.filter((u) => u.name.toLowerCase().startsWith(q));
     const contains = pool.filter((u) => !u.name.toLowerCase().startsWith(q) && u.name.toLowerCase().includes(q));
-    return [...starts, ...contains].slice(0, 6);
+    const list = [...starts, ...contains].slice(0, 6);
+    // Offer "@all" at the top for group conversations (3+ members) when it
+    // matches what's being typed.
+    const isGroup = pool.length >= 2;
+    if (isGroup && ('all'.startsWith(q) || 'everyone'.startsWith(q))) {
+      return [{ id: '__all__', name: 'all', isAll: true, count: pool.length }, ...list];
+    }
+    return list;
   };
   // Insert the chosen user into the editor, replacing the trailing @query.
   const pickMention = (u) => {
     if (!u) return;
     const base = text.replace(/@(\w*)$/, '');
-    setEditor(`${base}@${u.name} `);
+    const label = u.isAll ? 'all' : u.name;
+    setEditor(`${base}@${label} `);
     setMention(null);
     setTimeout(() => { if (edRef.current) { edRef.current.focus(); const r = document.createRange(); r.selectNodeContents(edRef.current); r.collapse(false); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } }, 0);
   };
@@ -2662,9 +2670,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     <div className="px-3 pt-1.5 pb-1 text-[10px] font-bold text-slate-300 uppercase">↑↓ to move · Enter/Tab to pick</div>
                     {cands.map((u, i) => (
                       <button key={u.id} onClick={() => pickMention(u)} className={`w-full flex items-center gap-2.5 px-3 py-2 text-left ${i === idx ? 'bg-orange-50' : 'hover:bg-orange-50'}`}>
-                        <Avatar name={u.name} src={u.avatar} size={26} />
-                        <span className="text-[13px] font-bold">{u.name}</span>
-                        {u.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500" />}
+                        {u.isAll
+                          ? <><span className="w-[26px] h-[26px] rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-[13px] font-extrabold">@</span><span className="text-[13px] font-extrabold text-orange-600">all</span><span className="text-[11px] text-slate-400">notify everyone ({u.count})</span></>
+                          : <><Avatar name={u.name} src={u.avatar} size={26} /><span className="text-[13px] font-bold">{u.name}</span>{u.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500" />}</>}
                       </button>
                     ))}
                   </div>
@@ -3348,7 +3356,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   const fmtDate = (d) => d ? new Date(String(d).slice(0, 10) + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
 
   // One editable cell row in the Excel-style grid.
-  const GridRow = ({ t, tracking, isSub }) => {
+  const GridRow = ({ t, tracking, isSub, completedTime }) => {
     const overdue = isOverdue(t);
     const hasSubs = !isSub && t.subtaskCount > 0;
     const expanded = !!expandedTasks[t._id];
@@ -3392,6 +3400,7 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
             <div className="flex items-center min-w-0">
               {isSub && <span className="text-slate-300 mr-1.5 text-xs shrink-0" title="subtask">↳</span>}
               <button onClick={() => setOpenTask(t)} className={`text-sm font-bold truncate text-left hover:underline ${t.stage === 'completed' ? 'text-slate-400 line-through' : 'text-[#050A1F]'}`}>{t.title}</button>
+              {completedTime && <span className="ml-2 text-[10px] text-green-500 shrink-0 font-semibold">✓ {completedTime}</span>}
               {hasSubs && <span className="ml-2 text-[10px] text-slate-400 shrink-0">{t.subtaskDone}/{t.subtaskCount}</span>}
               {tracking && t.assignee && <span className="ml-2 text-[10px] text-purple-500 shrink-0">→ {titleCase(t.assignee.name)}</span>}
               {tracking && (t.reassignChain || []).length > 0 && <span className="ml-1.5 text-[10px] font-bold text-orange-500 shrink-0" title={(t.reassignChain || []).map((c) => `${c.fromName || '—'} → ${c.toName}`).join('\n')}>↪ reassigned ×{(t.reassignChain || []).length}</span>}
@@ -3468,6 +3477,29 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
   );
 
   const bucketByKey = Object.fromEntries((board.buckets || []).map((b) => [b.key, b]));
+
+  // Group completed tasks by their completion date (IST), newest first, so the
+  // section reads as Today / Yesterday / older days instead of one long list.
+  const [completedDaysShown, setCompletedDaysShown] = useState(3);
+  const completedGroups = React.useMemo(() => {
+    const list = [...(board.completed || [])];
+    // Sort newest-completed first (fall back to updated/created if no timestamp).
+    list.sort((a, b) => new Date(b.completedAt || b.updatedAt || 0) - new Date(a.completedAt || a.updatedAt || 0));
+    const istDay = (d) => d ? new Date(new Date(d).getTime() + 330 * 60000).toISOString().slice(0, 10) : 'unknown';
+    const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const yest = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10);
+    const byDay = new Map();
+    for (const t of list) { const k = istDay(t.completedAt || t.updatedAt); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
+    return [...byDay.entries()].map(([day, tasks]) => {
+      let label;
+      if (day === today) label = 'Today';
+      else if (day === yest) label = 'Yesterday';
+      else if (day === 'unknown') label = 'Earlier';
+      else { try { label = new Date(day + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }); } catch { label = day; } }
+      return { day, label, tasks };
+    });
+  }, [board.completed]);
+  const completedTimeLabel = (t) => { try { return new Date(t.completedAt || t.updatedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
 
   return (
     <div className="max-w-6xl">
@@ -3561,7 +3593,23 @@ function HrTasksView({ user, isAdmin, embedded, openTaskId, onTaskOpened }) {
             {showCompleted && (
               (board.completed || []).length === 0
                 ? <div className="px-4 py-4 text-xs text-slate-400 bg-white">No completed tasks yet.</div>
-                : <div className="bg-white"><HeaderRow />{prep(board.completed).map((t) => <GridRow key={t._id} t={t} />)}</div>
+                : <div className="bg-white">
+                    <HeaderRow />
+                    {completedGroups.slice(0, completedDaysShown).map((g) => (
+                      <div key={g.day}>
+                        <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-50/70 border-y border-slate-100">
+                          <span className="text-[10.5px] font-extrabold text-slate-400 uppercase tracking-wide">{g.label}</span>
+                          <span className="text-[10px] font-bold text-slate-400 bg-slate-200/70 rounded-full px-1.5">{g.tasks.length}</span>
+                        </div>
+                        {prep(g.tasks).map((t) => <GridRow key={t._id} t={t} completedTime={completedTimeLabel(t)} />)}
+                      </div>
+                    ))}
+                    {completedGroups.length > completedDaysShown && (
+                      <button onClick={() => setCompletedDaysShown((n) => n + 3)} className="w-full py-2.5 text-[12.5px] font-bold text-slate-500 hover:bg-slate-50 border-t border-slate-100">
+                        ↓ Load older completed tasks ({completedGroups.length - completedDaysShown} more day{completedGroups.length - completedDaysShown === 1 ? '' : 's'})
+                      </button>
+                    )}
+                  </div>
             )}
           </div>
         </div>
