@@ -578,28 +578,63 @@ function IncentivesTable({ period }) {
   const managers = data.items.filter((i) => i.role === 'manager');
   const agents = data.items.filter((i) => i.role === 'agent');
 
-  const Row = ({ i }) => (
-    <tr className="border-t border-slate-50 hover:bg-slate-50/50">
-      <td className="px-4 py-3">
-        <div className="font-bold text-[#050A1F]">{i.name}</div>
-        <div className="text-[11px] text-slate-400">
-          {i.role === 'manager' ? (i.basis === 'manager-solo' ? 'Manager (no team → agent rules)' : `Manager · ${i.agentCount} agent${i.agentCount === 1 ? '' : 's'}`) : 'Agent'}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.targetUsd)}</td>
-      <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.achievedUsd)}</td>
-      <td className="px-4 py-3 text-xs">
-        {i.pct == null ? '—' : <span className={`font-bold ${i.pct >= 100 ? 'text-green-600' : i.pct >= (r.eligibilityPct || 90) ? 'text-amber-600' : 'text-slate-400'}`}>{i.pct}%</span>}
-      </td>
-      <td className="px-4 py-3 text-xs">
-        {i.eligible ? <span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[10px] font-bold">Eligible</span>
-          : <span className="rounded-full bg-slate-100 text-slate-400 px-2 py-0.5 text-[10px] font-bold">Not eligible</span>}
-      </td>
-      <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.baseInr)}</td>
-      <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.overInr)}</td>
-      <td className="px-4 py-3 font-extrabold text-[#050A1F] text-sm">{inr(i.totalInr)}</td>
-    </tr>
-  );
+  const Row = ({ i }) => {
+    const [open, setOpen] = useState(false);
+    const isTeamMgr = i.role === 'manager' && i.basis === 'manager-team';
+    return (
+      <>
+        <tr className={`border-t border-slate-50 hover:bg-slate-50/50 ${isTeamMgr ? 'cursor-pointer' : ''}`} onClick={() => isTeamMgr && setOpen((o) => !o)}>
+          <td className="px-4 py-3">
+            <div className="font-bold text-[#050A1F] flex items-center gap-1.5">
+              {isTeamMgr && <span className={`text-slate-400 text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>}
+              {i.name}
+            </div>
+            <div className="text-[11px] text-slate-400">
+              {i.role === 'manager' ? (i.basis === 'manager-solo' ? 'Manager (no team → agent rules)' : `Manager · ${i.agentCount} agent${i.agentCount === 1 ? '' : 's'} · tap for breakdown`) : 'Agent'}
+            </div>
+          </td>
+          <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.targetUsd)}</td>
+          <td className="px-4 py-3 text-slate-600 text-xs">{usd(i.achievedUsd)}</td>
+          <td className="px-4 py-3 text-xs">
+            {i.pct == null ? '—' : <span className={`font-bold ${i.pct >= 100 ? 'text-green-600' : i.pct >= (r.eligibilityPct || 90) ? 'text-amber-600' : 'text-slate-400'}`}>{i.pct}%</span>}
+          </td>
+          <td className="px-4 py-3 text-xs">
+            {i.eligible ? <span className="rounded-full bg-green-50 text-green-700 px-2 py-0.5 text-[10px] font-bold">Eligible</span>
+              : <span className="rounded-full bg-slate-100 text-slate-400 px-2 py-0.5 text-[10px] font-bold">Not eligible</span>}
+          </td>
+          <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.baseInr)}</td>
+          <td className="px-4 py-3 text-slate-500 text-xs">{inr(i.overInr)}</td>
+          <td className="px-4 py-3 font-extrabold text-[#050A1F] text-sm">{inr(i.totalInr)}</td>
+        </tr>
+        {isTeamMgr && open && (
+          <>
+            {/* Individual sub-row — the manager's own sales incentive. */}
+            <tr className="bg-slate-50/70 text-[12px]">
+              <td className="pl-9 pr-4 py-2.5 text-slate-600 font-semibold">↳ 👤 Individual <span className="text-slate-400 font-normal">(own sales)</span></td>
+              <td className="px-4 py-2.5 text-slate-500">{usd(i.ownTargetUsd)}</td>
+              <td className="px-4 py-2.5 text-slate-500">{usd(i.ownAchievedUsd)}</td>
+              <td className="px-4 py-2.5">{i.ownTargetUsd > 0 ? <span className={`font-bold ${(i.ownAchievedUsd / i.ownTargetUsd) * 100 >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{Math.round((i.ownAchievedUsd / i.ownTargetUsd) * 100)}%</span> : '—'}</td>
+              <td className="px-4 py-2.5"><span className="rounded-full bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold">Own</span></td>
+              <td className="px-4 py-2.5 text-slate-500">{(i.indBaseInr || 0) > 0 ? <>{inr(i.indBaseInr)} <span className="text-slate-300 text-[10px]">base</span></> : '—'}</td>
+              <td className="px-4 py-2.5 text-slate-500">{(i.indOverInr || 0) > 0 ? <>{inr(i.indOverInr)} <span className="text-slate-300 text-[10px]">over</span></> : '—'}</td>
+              <td className="px-4 py-2.5 font-bold text-blue-700">{inr(i.indTotalInr)}</td>
+            </tr>
+            {/* Team sub-row — 5% of the team's over-achievement. */}
+            <tr className="bg-slate-50/70 text-[12px] border-b border-slate-100">
+              <td className="pl-9 pr-4 py-2.5 text-slate-600 font-semibold">↳ 👥 Team <span className="text-slate-400 font-normal">(over-achievement)</span></td>
+              <td className="px-4 py-2.5 text-slate-500">{usd(i.targetUsd)}</td>
+              <td className="px-4 py-2.5 text-slate-500">{usd(i.achievedUsd)}</td>
+              <td className="px-4 py-2.5">{i.pct == null ? '—' : <span className={`font-bold ${i.pct >= 100 ? 'text-green-600' : 'text-slate-400'}`}>{i.pct}%</span>}</td>
+              <td className="px-4 py-2.5"><span className="rounded-full bg-orange-50 text-orange-700 px-2 py-0.5 text-[10px] font-bold">Team</span></td>
+              <td className="px-4 py-2.5 text-slate-400">—</td>
+              <td className="px-4 py-2.5 text-slate-500">{(i.teamOverInr || 0) > 0 ? <>{inr(i.teamOverInr)} <span className="text-slate-300 text-[10px]">{r.managerOverPct || 5}% of {usd(Math.max(0, i.achievedUsd - i.targetUsd))}</span></> : '—'}</td>
+              <td className="px-4 py-2.5 font-bold text-orange-700">{inr(i.teamOverInr)}</td>
+            </tr>
+          </>
+        )}
+      </>
+    );
+  };
 
   return (
     <div>

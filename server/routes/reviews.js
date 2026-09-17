@@ -585,6 +585,7 @@ router.get('/incentives', requireAuth, async (req, res, next) => {
         // Breakdown so the UI can show individual vs team components.
         teamOverUsd: Math.round(calc.teamOver || 0), teamOverInr: toInr(calc.teamOver || 0),
         indTotalUsd: Math.round(calc.indTotal || 0), indTotalInr: toInr(calc.indTotal || 0),
+        indBaseInr: toInr(calc.indBase || 0), indOverInr: toInr(calc.indOver || 0),
         basis,
       });
     }
