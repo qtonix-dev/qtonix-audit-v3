@@ -264,11 +264,34 @@ async function buildBoard(viewerId, ctx) {
     viewer = { id: viewerId, name: admin ? admin.name : 'Admin', designation: 'Admin', department: '', branch: '', avatar: null, isAdmin: true };
   }
 
-  // The set of ALL ids that represent this viewer (their board id + any linked
-  // HrUser records by name/email, incl. the admin's chatOnly Buzz identity + the
-  // admin User id). Computed once in actingContext so a task assigned to any of
-  // the viewer's identities appears on their board.
-  const myIds = new Set([...(ctx.linkedIds || [viewerId]), viewerId].filter((x) => x != null));
+  // The set of ALL ids that represent the VIEWED person. When you view your own
+  // board, that's ctx.linkedIds (your linked identities). When an admin/manager
+  // views SOMEONE ELSE's board (viewerId ≠ your own boardId), it must be the
+  // TARGET person's identities only — NOT the viewer's — otherwise the viewer's
+  // own tasks leak onto the other person's board.
+  let idSet;
+  if (viewerId === ctx.boardId) {
+    idSet = new Set([...(ctx.linkedIds || [viewerId]), viewerId].filter((x) => x != null));
+  } else {
+    // Target's own identities: their id + any HrUser records sharing their email
+    // or adminUserId. Never includes the viewer's ids.
+    idSet = new Set([viewerId].filter((x) => x != null));
+    try {
+      if (viewerId > 0) {
+        const target = await HrUser.findByPk(viewerId, { attributes: ['id', 'email', 'adminUserId'] });
+        if (target) {
+          const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email', 'adminUserId'] });
+          const temail = target.email ? String(target.email).trim().toLowerCase() : null;
+          for (const u of all) {
+            const sameEmail = temail && u.email && String(u.email).trim().toLowerCase() === temail;
+            const sameAdmin = target.adminUserId && u.adminUserId && Number(u.adminUserId) === Number(target.adminUserId);
+            if (sameEmail || sameAdmin) idSet.add(u.id);
+          }
+        }
+      }
+    } catch {}
+  }
+  const myIds = idSet;
   const isMe = (id) => id != null && myIds.has(id);
   const anyMine = (arr) => Array.isArray(arr) && arr.some((id) => myIds.has(id));
 
