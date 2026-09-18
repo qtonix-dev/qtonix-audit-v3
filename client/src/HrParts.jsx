@@ -333,6 +333,23 @@ export function ProfilePage({ me, targetId }) {
   const [ikReady, setIkReady] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
+  const [editEmp, setEditEmp] = useState(false);
+  const [editRefs, setEditRefs] = useState({ branches: [], departments: [], shifts: [], reportingOptions: [] });
+  useEffect(() => {
+    if (!editEmp) return;
+    Promise.all([
+      hrApi('/branches').catch(() => []),
+      hrApi('/departments').catch(() => []),
+      hrApi('/shifts').catch(() => []),
+      hrApi('/reporting-options').catch(() => ({ options: [] })),
+    ]).then(([branches, departments, shifts, ro]) => {
+      const reportingOptions = [
+        ...((ro && ro.hr) || []).map((h) => ({ value: `hr:${h.id}`, label: `${h.name}${h.designation ? ` · ${h.designation}` : ''} (HR)` })),
+        ...((ro && ro.admins) || []).map((a) => ({ value: `admin:${a.id}`, label: `${a.name} (Admin)` })),
+      ];
+      setEditRefs({ branches: branches || [], departments: departments || [], shifts: shifts || [], reportingOptions });
+    });
+  }, [editEmp]);
   const [editMode, setEditMode] = useState(false); // legacy (kept for other tabs)
   const [editSec, setEditSec] = useState(null); // 'personal' | 'bank' | 'documents' — which heading is being edited
   const [payModal, setPayModal] = useState(null); // {reason} when adding a salary record
@@ -478,9 +495,14 @@ export function ProfilePage({ me, targetId }) {
               </div>
             </div>
             {canEditLocked && !isSelf && (
-              <button onClick={() => setResetOpen(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5 shrink-0">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg> Reset password
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setEditEmp(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg> Edit employee
+                </button>
+                <button onClick={() => setResetOpen(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 inline-flex items-center gap-1.5">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg> Reset password
+                </button>
+              </div>
             )}
           </div>
           {isSelf && <p className="text-[11px] text-slate-400 mt-3">These details are managed by HR. Contact your HR team for corrections.</p>}
@@ -817,6 +839,7 @@ export function ProfilePage({ me, targetId }) {
         </div>
       </div>
       {resetOpen && <ResetPasswordModal user={{ _id: id, name: row.name }} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); setMsg('Password reset.'); }} />}
+      {editEmp && <EditEmployeeModal user={row} branches={editRefs.branches} departments={editRefs.departments} reportingOptions={editRefs.reportingOptions} shifts={editRefs.shifts} isAdmin={!!(me && me.isAdmin)} onClose={() => setEditEmp(false)} onSaved={() => { setEditEmp(false); setMsg('Employee updated.'); reload(); }} />}
       {payModal && <SalaryRecordModal initial={payModal} onClose={() => setPayModal(null)} onSave={async (entry) => { const next = { ...p, payrollHistory: [...(p.payrollHistory || []), entry] }; setP(next); setPayModal(null); await save(next); }} />}
       {perfModal && <PerformanceCardModal by={me?.name} kindInit={perfModal.kind} employeeId={id} onClose={() => setPerfModal(null)} onSaved={(card) => { setP((s) => ({ ...s, performanceCards: [...(s.performanceCards || []), card] })); setPerfModal(null); }} />}
     </div>
