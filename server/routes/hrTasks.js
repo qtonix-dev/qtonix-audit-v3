@@ -86,12 +86,15 @@ async function actingContext(req) {
   if (!isAdmin && rawId != null) linkedIds.add(rawId);
   try {
     const emails = [actorUser && actorUser.email, req.adminUser && req.adminUser.email, req.hrActor && req.hrActor.email].filter(Boolean).map((e) => String(e).trim().toLowerCase());
-    if (emails.length) {
-      // Email is the authoritative link — the admin's chatOnly HrUser is created
-      // with the admin's own email, so this cleanly unifies admin ↔ their HrUser
-      // records WITHOUT merging different people (name collisions can't leak in).
-      const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email'] });
-      for (const u of all) { if (u.email && emails.includes(String(u.email).trim().toLowerCase())) linkedIds.add(u.id); }
+    const names = [actorUser && actorUser.name, req.adminUser && req.adminUser.name, req.hrActor && req.hrActor.name].filter(Boolean).map((n) => String(n).trim().toLowerCase());
+    const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email', 'name'] });
+    for (const u of all) {
+      const sameEmail = u.email && emails.includes(String(u.email).trim().toLowerCase());
+      // Name match links this person's own HrUser records (real + chatOnly Buzz).
+      // This is safe: the id-collision leak fixed in v518 was between the CRM
+      // User table and the HrUser table (never mixed here), NOT a name overlap.
+      const sameName = u.name && names.includes(String(u.name).trim().toLowerCase());
+      if (sameEmail || sameName) linkedIds.add(u.id);
     }
   } catch {}
   return {
@@ -390,25 +393,28 @@ router.get('/my-summary', guard, async (req, res, next) => {
     const myIds = new Set([...(ctx.linkedIds || [viewerId]), viewerId].filter((x) => x != null));
     const ist = new Date(Date.now() + 330 * 60000);
     const today = ist.toISOString().slice(0, 10);
-    // All my (co-)assigned top-level tasks.
-    const dbTasks = await Task.findAll({ where: { parentTaskId: null } });
+    // All my (co-)assigned tasks AND subtasks (subtasks were previously excluded,
+    // so the wrap-up popup ignored their completions).
+    const dbTasks = await Task.findAll();
     const mine = dbTasks.filter((t) => myIds.has(t.assigneeId) || (Array.isArray(t.assigneeIds) && t.assigneeIds.some((id) => myIds.has(id))));
     let dueToday = 0, highPriority = 0, pending = 0, overdue = 0, completedToday = 0, totalToday = 0;
+    let taskCompletedToday = 0, subtaskCompletedToday = 0, taskPending = 0, subtaskPending = 0;
     for (const t of mine) {
+      const isSub = !!t.parentTaskId;
       if (t.stage === 'completed') {
         const cd = t.completedAt ? new Date(new Date(t.completedAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : '';
-        if (cd === today) { completedToday++; totalToday++; }
+        if (cd === today) { completedToday++; totalToday++; if (isSub) subtaskCompletedToday++; else taskCompletedToday++; }
         continue;
       }
-      pending++;
+      pending++; if (isSub) subtaskPending++; else taskPending++;
       if (['urgent', 'high'].includes(t.priority)) highPriority++;
       const due = t.dueDate ? String(t.dueDate).slice(0, 10) : (t.bucket === 'today' ? today : '');
       if (due && due === today) { dueToday++; totalToday++; }
       if (due && due < today) overdue++;
     }
-    // Progress = tasks completed today out of everything that was on today's plate.
     const pct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : (pending === 0 ? 100 : 0);
-    res.json({ dueToday, highPriority, pending, overdue, completedToday, totalToday, pct });
+    res.json({ dueToday, highPriority, pending, overdue, completedToday, totalToday, pct,
+      taskCompletedToday, subtaskCompletedToday, taskPending, subtaskPending });
   } catch (e) { next(e); }
 });
 

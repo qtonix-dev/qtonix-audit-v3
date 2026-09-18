@@ -2070,7 +2070,7 @@ router.get('/employees/:id/attendance', requireHrAccess, async (req, res, next) 
         holidayName: holidays[ds] || null,
         workedMin, workedLabel: workedMin == null ? null : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
         deficitMin: deficit, deficitLabel: deficit == null ? null : (deficit < 0 ? '-' : '+') + `${Math.floor(Math.abs(deficit) / 60)}h ${String(Math.abs(deficit) % 60).padStart(2, '0')}m`,
-        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime),
+        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime), bioMeta: mk ? (mk.bioMeta || null) : null,
       });
     }
     // Summary: worked days, total & avg hours, deficit vs shift.
@@ -4290,7 +4290,7 @@ router.get('/me/attendance-calendar', requireHrAccess, async (req, res, next) =>
       if (mk && mk.loginTime && mk.logoutTime) { let a = toMin(mk.loginTime), b = toMin(mk.logoutTime); if (b < a) b += 1440; workedMin = b - a; }
       days[ds] = { status, login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null, holiday: holidays[ds] || null,
         workedMin, workedLabel: workedMin == null ? null : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
-        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime),
+        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime), bioMeta: mk ? (mk.bioMeta || null) : null,
         timeEdited: mk && mk.timeEditedAt ? { byName: mk.timeEditedByName, byAvatar: mk.timeEditedByAvatar, at: mk.timeEditedAt, originalLogin: mk.originalLoginTime, originalLogout: mk.originalLogoutTime } : null };
     }
     // Month summary: working days, total & avg hours, deficit vs shift.
@@ -8734,6 +8734,51 @@ router.post('/attendance/biometric/:id/apply', requireHrAccess, async (req, res,
     ranges.push({ from, to, at: new Date(), by: req.hrActor.name, employeeId: onlyEmpId });
     imp.appliedRanges = ranges; imp.changed('appliedRanges', true); await imp.save();
     res.json({ ok: true, written });
+  } catch (e) { next(e); }
+});
+
+// Per-day, per-employee reconcile decision (saved immediately). body:
+// { employeeId, date, choice:'yes'|'no' }. Yes → use biometric times; No →
+// keep HRMS. Either way the bio+HRMS breakdown is stored on the day for the
+// "click a date" detail in View Attendance.
+router.post('/attendance/biometric/:id/apply-day', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const b = req.body || {};
+    const empId = Number(b.employeeId); const date = String(b.date || '');
+    const choice = b.choice === 'yes' ? 'yes' : 'no';
+    if (!empId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Bad request.' });
+    // Reconcile just this employee for this single day to get the resolved values.
+    const emps = (await loadEmpsForCompare(date, date)).filter((e) => e.id === empId);
+    if (!emps.length) return res.status(404).json({ error: 'Employee not found.' });
+    const rec = bioSvc.reconcile({ emps, punches: imp.data || {}, from: date, to: date, reconcile: choice === 'yes', gapMin: 20 });
+    const day = (rec.rows[0] && rec.rows[0].days.find((d) => d.date === date)) || null;
+    if (!day) return res.status(404).json({ error: 'No data for that day.' });
+    const [row] = await HrAttendance.findOrCreate({ where: { employeeId: empId, date }, defaults: { employeeId: empId, date, status: 'present' } });
+    // Store the full breakdown either way.
+    const meta = {
+      bioIn: day.bioIn || null, bioOut: day.bioOut || null, hrmsIn: day.hrmsIn || null, hrmsOut: day.hrmsOut || null,
+      chosen: choice === 'yes' ? 'bio' : 'hrms', outNextDay: !!day.outNextDay, middle: day.middle || [],
+      missingBioOut: !!(day.bioIn && !day.bioOut), missingHrms: !(day.hrmsIn || day.hrmsOut),
+      diffMin: (day.bioIn && day.hrmsIn) ? Math.abs(hhmmToMin(day.bioIn) - hhmmToMin(day.hrmsIn)) : null,
+      importId: imp.id, at: new Date(),
+    };
+    if (choice === 'yes') {
+      if (day.finalIn) row.loginTime = day.finalIn;      // reconciled (bio-preferred)
+      if (day.finalOut) row.logoutTime = day.finalOut;
+      row.source = 'biometric';
+      if (row.status === 'absent') row.status = 'present';
+    } else {
+      // No → keep HRMS times as-is (only ensure they reflect the HRMS record).
+      if (day.hrmsIn) row.loginTime = day.hrmsIn;
+      if (day.hrmsOut) row.logoutTime = day.hrmsOut;
+      row.source = 'hrms';
+    }
+    row.bioMeta = meta; row.changed('bioMeta', true);
+    await row.save();
+    res.json({ ok: true, loginTime: row.loginTime, logoutTime: row.logoutTime, chosen: meta.chosen });
   } catch (e) { next(e); }
 });
 

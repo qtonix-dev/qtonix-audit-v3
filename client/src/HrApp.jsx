@@ -4106,11 +4106,17 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const [recon, setRecon] = useState(null);      // reconciliation result (per-employee days)
   const [doRecon, setDoRecon] = useState(true);  // HR's Yes/No for the ≤20/>20 rule
   const [expanded, setExpanded] = useState({});  // employeeId → open?
+  const [dayChoice, setDayChoice] = useState({}); // "empId:date" → 'yes'|'no'
   const runReconcile = async () => {
     setBusy(true);
-    try { const r = await hrApi(`/attendance/biometric/${info.importId}/reconcile`, { method: 'POST', body: JSON.stringify({ from, to, reconcile: doRecon }) }); setRecon(r); setStep(3); }
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/reconcile`, { method: 'POST', body: JSON.stringify({ from, to, reconcile: true }) }); setRecon(r); setStep(3); }
     catch (err) { toast(err.message); }
     setBusy(false);
+  };
+  const applyDay = async (empId, date, choice) => {
+    setDayChoice((x) => ({ ...x, [`${empId}:${date}`]: choice }));
+    try { await hrApi(`/attendance/biometric/${info.importId}/apply-day`, { method: 'POST', body: JSON.stringify({ employeeId: empId, date, choice }) }); toast(choice === 'yes' ? 'Biometric time applied ✓' : 'Kept HRMS time ✓'); }
+    catch (e) { toast(e.message); setDayChoice((x) => { const n = { ...x }; delete n[`${empId}:${date}`]; return n; }); }
   };
   const [openEmp, setOpenEmp] = useState(null);
   const [aiReview, setAiReview] = useState(null); // { digest, insights }
@@ -4185,14 +4191,6 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                 <b className="text-[#050A1F]">{info.punchCount.toLocaleString()}</b> punches · <b className="text-[#050A1F]">{info.deviceIdCount}</b> device IDs · available <b className="text-[#050A1F]">{info.minDate}</b> → <b className="text-[#050A1F]">{info.maxDate}</b>
                 <div className="mt-1">Matched <b className="text-green-600">{info.matched}</b> to employees{info.unmatched > 0 && <> · <b className="text-red-600">{info.unmatched} unmatched</b> device IDs (set their Device ID in the employee profile)</>}</div>
               </div>
-              <div className="rounded-xl border border-slate-200 p-3.5 mb-4">
-                <div className="text-[12px] font-bold text-slate-600 mb-2">Reconcile biometric vs HRMS clock-in times?</div>
-                <div className="flex gap-2">
-                  <button onClick={() => setDoRecon(true)} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold border-2 transition" style={{ borderColor: doRecon ? '#16a34a' : '#e2e8f0', background: doRecon ? '#f0fdf4' : '#fff', color: doRecon ? '#15803d' : '#64748b' }}>{doRecon ? '✓ ' : ''}Yes — auto-reconcile</button>
-                  <button onClick={() => setDoRecon(false)} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold border-2 transition" style={{ borderColor: !doRecon ? '#334155' : '#e2e8f0', background: !doRecon ? '#f1f5f9' : '#fff', color: !doRecon ? '#334155' : '#64748b' }}>{!doRecon ? '✓ ' : ''}No — keep HRMS times</button>
-                </div>
-                <div className="text-[11px] text-slate-400 mt-2">{doRecon ? 'If biometric and HRMS clock-in differ by ≤20 min, biometric time is used. If >20 min, HRMS time is kept and the row is highlighted for you to check.' : 'Clock-in/out will stick to the HRMS system times.'}</div>
-              </div>
               <div className="flex items-end gap-3 flex-wrap">
                 <div><div className="text-[11px] font-bold text-slate-500 mb-1">From</div><input type="date" value={from} min={info.minDate} max={info.maxDate} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
                 <div><div className="text-[11px] font-bold text-slate-500 mb-1">To</div><input type="date" value={to} min={info.minDate} max={info.maxDate} onChange={(e) => setTo(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
@@ -4228,31 +4226,48 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                       {open && (
                         <div className="overflow-x-auto border-t border-slate-100">
                           <table className="w-full text-[11.5px]">
-                            <thead><tr className="bg-slate-50 text-[9px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-1.5">Date</th><th className="text-left px-2.5 py-1.5">Clock in</th><th className="text-left px-2.5 py-1.5">Clock out</th><th className="text-left px-2.5 py-1.5">Intermediate punches</th><th className="text-left px-2.5 py-1.5">Worked</th><th className="text-left px-2.5 py-1.5">Deficit</th></tr></thead>
+                            <thead><tr className="bg-slate-50 text-[9px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-1.5">Date</th><th className="text-left px-2.5 py-1.5">Clock in</th><th className="text-left px-2.5 py-1.5">Clock out</th><th className="text-left px-2.5 py-1.5">Intermediate punches</th><th className="text-left px-2.5 py-1.5">Worked</th><th className="text-left px-2.5 py-1.5">Deficit</th><th className="text-left px-2.5 py-1.5">Use bio?</th></tr></thead>
                             <tbody>
-                              {r.days.map((d) => (
-                                <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (d.highlight ? 'bg-amber-50/60' : '')}>
-                                  <td className="px-2.5 py-1.5 font-semibold" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
-                                    {new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} <span className="text-[9px] text-slate-400">{d.dow}</span>
-                                    {d.off && <span className="ml-1 text-[8.5px] font-bold px-1 py-0.5 rounded" style={{ background: d.offKind === 'holiday' ? '#dbeafe' : '#e2e8f0', color: d.offKind === 'holiday' ? '#1d4ed8' : '#64748b' }}>{d.offKind === 'holiday' ? (d.offName || 'Holiday') : 'Week off'}</span>}
-                                    {d.punchedOnOff && <span className="ml-1 text-[8.5px] font-bold text-red-600">● punched</span>}
-                                  </td>
-                                  {d.off && !d.punchCount ? (
-                                    <td colSpan={5} className="px-2.5 py-1.5 text-slate-300 text-center italic">— off day —</td>
-                                  ) : (
-                                    <>
-                                      <td className="px-2.5 py-1.5">{d.finalIn || '—'}{d.inSource === 'hrms' && d.bioIn && <span className="text-[8.5px] text-amber-600 ml-1" title={`biometric ${d.bioIn}`}>⚠</span>}{d.inSource && <span className="text-[8px] text-slate-300 ml-1">{d.inSource}</span>}</td>
-                                      <td className="px-2.5 py-1.5">{d.finalOut || <span className="text-orange-500">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}{d.outSource && d.finalOut && <span className="text-[8px] text-slate-300 ml-1">{d.outSource}</span>}</td>
-                                      <td className="px-2.5 py-1.5 text-slate-500">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
-                                      <td className="px-2.5 py-1.5 font-bold text-[#050A1F]">{d.workedLabel}</td>
-                                      <td className="px-2.5 py-1.5 font-bold" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
-                                    </>
-                                  )}
-                                </tr>
-                              ))}
+                              {r.days.map((d) => {
+                                const key = `${r.employeeId}:${d.date}`;
+                                const chosen = dayChoice[key]; // 'yes'|'no'|undefined
+                                // A row needs a decision when biometric & HRMS clock-in
+                                // differ, or one side is missing a punch that the other has.
+                                const hasDiscrepancy = !d.off && ((d.bioIn && d.hrmsIn && d.finalIn && d.inSource === 'hrms') || (d.bioIn && !d.hrmsIn) || (!d.bioIn && d.hrmsIn) || (d.bioOut && !d.hrmsOut) || (!d.bioOut && d.hrmsOut && d.bioIn));
+                                // Displayed final in/out reflect the choice (yes=bio, no=hrms).
+                                const showIn = chosen === 'yes' ? (d.bioIn || d.finalIn) : chosen === 'no' ? (d.hrmsIn || d.finalIn) : d.finalIn;
+                                const showOut = chosen === 'yes' ? (d.bioOut || d.finalOut) : chosen === 'no' ? (d.hrmsOut || d.finalOut) : d.finalOut;
+                                return (
+                                  <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (hasDiscrepancy && !chosen ? 'bg-amber-50/60' : '')}>
+                                    <td className="px-2.5 py-1.5 font-semibold" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
+                                      {new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} <span className="text-[9px] text-slate-400">{d.dow}</span>
+                                      {d.off && <span className="ml-1 text-[8.5px] font-bold px-1 py-0.5 rounded" style={{ background: d.offKind === 'holiday' ? '#dbeafe' : '#e2e8f0', color: d.offKind === 'holiday' ? '#1d4ed8' : '#64748b' }}>{d.offKind === 'holiday' ? (d.offName || 'Holiday') : 'Week off'}</span>}
+                                      {d.punchedOnOff && <span className="ml-1 text-[8.5px] font-bold text-red-600">● punched</span>}
+                                    </td>
+                                    {d.off && !d.punchCount ? (
+                                      <td colSpan={6} className="px-2.5 py-1.5 text-slate-300 text-center italic">— off day —</td>
+                                    ) : (
+                                      <>
+                                        <td className="px-2.5 py-1.5 font-medium text-[#050A1F]">{showIn || '—'}</td>
+                                        <td className="px-2.5 py-1.5 font-medium text-[#050A1F]">{showOut || <span className="text-orange-500 font-normal">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}</td>
+                                        <td className="px-2.5 py-1.5 text-slate-500">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
+                                        <td className="px-2.5 py-1.5 font-bold text-[#050A1F]">{d.workedLabel}</td>
+                                        <td className="px-2.5 py-1.5 font-bold" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
+                                        <td className="px-2.5 py-1.5">
+                                          {hasDiscrepancy ? (
+                                            <div className="flex gap-1">
+                                              <button onClick={() => applyDay(r.employeeId, d.date, 'yes')} className="px-2 py-0.5 rounded text-[10px] font-bold border transition" style={{ borderColor: chosen === 'yes' ? '#16a34a' : '#e2e8f0', background: chosen === 'yes' ? '#16a34a' : '#fff', color: chosen === 'yes' ? '#fff' : '#64748b' }}>Yes</button>
+                                              <button onClick={() => applyDay(r.employeeId, d.date, 'no')} className="px-2 py-0.5 rounded text-[10px] font-bold border transition" style={{ borderColor: chosen === 'no' ? '#334155' : '#e2e8f0', background: chosen === 'no' ? '#334155' : '#fff', color: chosen === 'no' ? '#fff' : '#64748b' }}>No</button>
+                                            </div>
+                                          ) : <span className="text-slate-300 text-[9px]">—</span>}
+                                        </td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
-                          <div className="px-2.5 py-2 bg-slate-50/50 text-right"><button onClick={() => apply(r.employeeId)} disabled={busy} className="text-[11px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5">✔ Apply this employee to HRMS</button></div>
                         </div>
                       )}
                     </div>
@@ -6205,6 +6220,7 @@ function LeaveHistoryModal({ leaves, onClose }) {
 function MyAttendanceCalendar({ onClose }) {
   const [month, setMonth] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7));
   const [data, setData] = useState(null);
+  const [dayDetail, setDayDetail] = useState(null);
   useEffect(() => { hrApi(`/me/attendance-calendar?month=${month}`).then(setData).catch(() => setData({ days: {} })); }, [month]);
   const [y, m] = month.split('-').map(Number);
   const first = new Date(y, m - 1, 1).getDay();
@@ -6248,14 +6264,16 @@ function MyAttendanceCalendar({ onClose }) {
             {Array.from({ length: dim }).map((_, i) => {
               const d = i + 1; const ds = `${month}-${String(d).padStart(2, '0')}`;
               const info = data && data.days ? data.days[ds] : null; const stt = info ? info.status : 'none'; const c = cls[stt] || cls.none;
+              const clickable = info && (info.login || info.logout || info.bioMeta);
               return (
-                <div key={d} className="rounded-lg border p-1.5 relative" style={{ aspectRatio: '1', background: c.background, borderColor: c.borderColor }} title={info && info.timeEdited ? `Time corrected by ${info.timeEdited.byName || 'HR'}` : (info && info.login ? `In ${info.login}${info.logout ? ` · Out ${info.logout}` : ''}` : (info && info.holiday) || '')}>
+                <button key={d} onClick={() => clickable && setDayDetail({ date: ds, info })} disabled={!clickable} className="rounded-lg border p-1.5 relative text-left" style={{ aspectRatio: '1', background: c.background, borderColor: c.borderColor, cursor: clickable ? 'pointer' : 'default' }} title={info && info.timeEdited ? `Time corrected by ${info.timeEdited.byName || 'HR'}` : (info && info.login ? `In ${info.login}${info.logout ? ` · Out ${info.logout}` : ''}` : (info && info.holiday) || '')}>
                   <div className="text-[11px] font-bold text-slate-700">{d}</div>
                   {c.label && <div className="absolute bottom-1 left-1.5 text-[9px] font-extrabold" style={{ color: c.mk }}>{c.label}</div>}
+                  {info && info.bioMeta && <span className="absolute bottom-1 right-1 text-[8px]" title="biometric reconciled">🔎</span>}
                   {info && info.timeEdited && (info.timeEdited.byAvatar
                     ? <img src={info.timeEdited.byAvatar} alt="edited" className="absolute top-1 right-1 w-4 h-4 rounded-full object-cover border border-amber-300" title={`Corrected by ${info.timeEdited.byName || 'HR'}`} />
                     : <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-amber-100 text-amber-700 text-[7px] font-extrabold flex items-center justify-center border border-amber-300">{String(info.timeEdited.byName || 'HR').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase()}</span>)}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -6290,6 +6308,47 @@ function MyAttendanceCalendar({ onClose }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+      {dayDetail && <AttendanceDayDetail date={dayDetail.date} info={dayDetail.info} onClose={() => setDayDetail(null)} />}
+    </div>
+  );
+}
+
+function AttendanceDayDetail({ date, info, onClose }) {
+  const bm = info && info.bioMeta;
+  const Row = ({ label, val, hint }) => <div className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0"><span className="text-[12px] text-slate-500">{label}</span><span className="text-[13px] font-bold text-[#050A1F]">{val || '—'}{hint && <span className="text-[10px] text-slate-400 font-normal ml-1">{hint}</span>}</span></div>;
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[140] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+          <div className="text-[14px] font-extrabold text-[#050A1F]">{new Date(date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}</div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5">
+          <div className="mb-3">
+            <Row label="Clock in (used)" val={info.login} hint={bm ? (bm.chosen === 'bio' ? 'biometric' : 'HRMS') : ''} />
+            <Row label="Clock out (used)" val={info.logout} hint={info.workedLabel ? `· ${info.workedLabel}` : ''} />
+          </div>
+          {bm ? (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+              <div className="text-[10px] font-extrabold text-slate-400 uppercase mb-1.5">Reconciliation detail</div>
+              <Row label="Biometric in" val={bm.bioIn} />
+              <Row label="Biometric out" val={bm.bioOut} hint={bm.outNextDay ? '(next day)' : ''} />
+              <Row label="HRMS in" val={bm.hrmsIn} />
+              <Row label="HRMS out" val={bm.hrmsOut} />
+              {bm.middle && bm.middle.length > 0 && <Row label="Intermediate punches" val={bm.middle.join(', ')} />}
+              {bm.diffMin != null && <Row label="In-time difference" val={`${bm.diffMin} min`} />}
+              <div className="flex gap-1.5 flex-wrap mt-2">
+                {bm.missingBioOut && <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">No biometric punch-out</span>}
+                {bm.missingHrms && <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">No HRMS record</span>}
+                <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700">Used: {bm.chosen === 'bio' ? 'Biometric' : 'HRMS'}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[12px] text-slate-400">No biometric reconciliation data for this day — showing the HRMS record.</div>
+          )}
+          {info.deficitLabel && info.deficitMin < 0 && <div className="mt-3 text-[12px] font-bold text-red-600">Deficit vs shift: {info.deficitLabel}</div>}
         </div>
       </div>
     </div>
@@ -12047,7 +12106,10 @@ function LogoutSummary({ summary, onStay, onLogout, name, clockOnly }) {
           <ProgressRing pct={pct} size={110} stroke={9} from="#22c55e" to="#16a34a"><div className="text-3xl">{done > 0 ? '🌙' : '👋'}</div></ProgressRing>
         </div>
         <div className="text-[19px] font-extrabold text-[#050A1F]">{done > 0 ? 'Great day' : 'Wrapping up'}{name ? `, ${name}` : ''}!</div>
-        <div className="text-[12.5px] text-slate-500 mt-0.5">You completed <b className="text-green-600">{done} of {total}</b> tasks today</div>
+        <div className="text-[12.5px] text-slate-500 mt-0.5">You completed <b className="text-green-600">{done} of {total}</b> today</div>
+        {(summary.taskCompletedToday != null || summary.subtaskCompletedToday != null) && (done > 0) && (
+          <div className="text-[11px] text-slate-400 mt-0.5">{summary.taskCompletedToday || 0} task{(summary.taskCompletedToday || 0) === 1 ? '' : 's'} · {summary.subtaskCompletedToday || 0} subtask{(summary.subtaskCompletedToday || 0) === 1 ? '' : 's'}</div>
+        )}
         <div className="grid grid-cols-2 gap-3 my-4">
           <div className="rounded-xl p-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
             <div className="text-2xl font-black text-green-600 leading-none">{done}</div>

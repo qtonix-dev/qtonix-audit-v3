@@ -1328,6 +1328,14 @@ async function initDb({ sync = true } = {}) {
     }
     if (isSqlite) await sequelize.query('PRAGMA foreign_keys = ON');
   }
+  // Guarantee the tasks.stage column is wide enough for the 7 workflow statuses
+  // (e.g. changes_requested = 17 chars). alter-sync usually handles this, but on
+  // some MySQL configs it doesn't widen an existing column, causing
+  // "Data too long for column 'stage'". Force it here.
+  if (dialect !== 'sqlite') {
+    try { await sequelize.query("ALTER TABLE `tasks` MODIFY COLUMN `stage` VARCHAR(30) NOT NULL DEFAULT 'not_started'"); }
+    catch (e) { console.error('[schema] widen tasks.stage failed (non-fatal):', e.message); }
+  }
   let s = await Settings.findOne({ where: { singleton: 'settings' } });
   if (!s) s = await Settings.create({ singleton: 'settings', pricing: defaultPricing() });
   if (!s.pricing) {
@@ -1901,6 +1909,10 @@ const HrAttendance = sequelize.define('HrAttendance', {
   status: { type: DataTypes.STRING(20), defaultValue: 'present' }, // present|absent|half_day|leave|holiday|week_off
   loginTime: { type: DataTypes.STRING(5), allowNull: true },  // HH:MM
   logoutTime: { type: DataTypes.STRING(5), allowNull: true }, // HH:MM
+  // Biometric reconciliation breakdown, for the "click a date" detail:
+  // { bioIn, bioOut, hrmsIn, hrmsOut, chosen:'bio'|'hrms', outNextDay, middle:[],
+  //   missingBioOut, missingHrms, diffMin }
+  bioMeta: { type: DataTypes.JSON, allowNull: true },
   late: { type: DataTypes.BOOLEAN, defaultValue: false },
   note: { type: DataTypes.STRING(200), allowNull: true },
   approvedBy: { type: DataTypes.STRING(160), allowNull: true }, // approver name (leave/WFH)
@@ -2736,7 +2748,7 @@ const Task = sequelize.define('Task', {
   origAssignedById: { type: DataTypes.INTEGER, allowNull: true }, // the FIRST assigner (never overwritten) so it stays in their "Assigned by me"
   origAssignedByName: { type: DataTypes.STRING(120), defaultValue: '' },
   priority: { type: DataTypes.STRING(10), defaultValue: 'medium' },   // urgent|high|medium|low
-  stage: { type: DataTypes.STRING(14), defaultValue: 'not_started' }, // not_started|in_progress|completed
+  stage: { type: DataTypes.STRING(30), defaultValue: 'not_started' }, // not_started|in_progress|pending_review|changes_requested|pending_approval|completed|on_hold
   dueDate: { type: DataTypes.DATEONLY, allowNull: true },
   order: { type: DataTypes.INTEGER, defaultValue: 0 },
   createdById: { type: DataTypes.INTEGER, allowNull: true },
