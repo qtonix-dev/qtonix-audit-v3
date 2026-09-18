@@ -2045,6 +2045,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   const [manageFor, setManageFor] = useState(null);      // {teamId,teamName}
   const [q, setQ] = useState('');
   const [sending, setSending] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null); // { file, url } staged, not sent
   const [uploading, setUploading] = useState(false);
   const [typing, setTyping] = useState([]);
   const [reactPickerFor, setReactPickerFor] = useState(null);
@@ -2264,6 +2265,15 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   };
 
   const send = async () => {
+    // If there's a staged pasted image, send it (with any typed caption) first.
+    if (pendingImage && pendingImage.file) {
+      const caption = text.replace(/<[^>]*>/g, '').trim();
+      const img = pendingImage.file;
+      setPendingImage(null); if (pendingImage.url) URL.revokeObjectURL(pendingImage.url);
+      clearEditor();
+      await sendFile(img, caption);
+      return;
+    }
     if (!active || (!text.trim() && !sending)) return;
     const body = text.trim(); if (!body) return;
     // Slash commands. All shortcuts only work inside the personal #task channel.
@@ -2352,13 +2362,13 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     try { const r = await hrApi('/chat/ai/retone', { method: 'POST', body: JSON.stringify({ text, mode }) }); if (r.text) setEditor(r.text); } catch (e) { toast(e.message || 'AI failed'); }
     setAiBusy('');
   };
-  const sendFile = async (file) => {
+  const sendFile = async (file, caption) => {
     if (!file || !active) return;
     setUploading(true);
     try {
       const up = await uploadToImageKit(file, `/qtonix-hr/chat/${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, file.name);
       const isImage = /^image\//.test(file.type);
-      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: up.url, fileId: up.fileId, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage }) });
+      const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: up.url, fileId: up.fileId, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage, body: (caption || '').trim() || undefined }) });
       setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { toast('Upload failed: ' + e.message); }
@@ -2603,13 +2613,19 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     )}
                     {m.editedAt && !editingMsg && <div className={`text-[10px] text-slate-300 italic mt-0.5 ${mine ? 'text-right' : ''}`}>edited</div>}
                     {m.fileUrl && (m.isImage ? (
-                      <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 block"><img src={m.fileUrl} alt={m.fileName} className="rounded-xl max-w-[240px] max-h-[240px] object-cover border border-slate-200" /></a>
+                      <div className={`flex items-end gap-1 mt-1 ${mine ? 'flex-row-reverse' : ''}`}>
+                        <a href={m.fileUrl} target="_blank" rel="noreferrer" className="block"><img src={m.fileUrl} alt={m.fileName} className="rounded-xl max-w-[240px] max-h-[240px] object-cover border border-slate-200" /></a>
+                        {mine && !m.kindTag && <button onClick={() => openReads(m)} title={m.allRead ? 'Read' : 'Sent'} className="shrink-0 leading-none pb-0.5 hover:opacity-70"><ReadTick read={!!m.allRead} size={18} /></button>}
+                      </div>
                     ) : (
-                      <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2.5 hover:border-orange-300">
-                        <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>📄</span>
-                        <span><span className="block text-[13px] font-bold truncate max-w-[180px]">{m.fileName}</span><span className="block text-[11px] text-slate-400">{m.fileSize ? fmtSize(m.fileSize) : ''}</span></span>
-                        <span className="text-orange-500">⬇</span>
-                      </a>
+                      <div className={`flex items-end gap-1 mt-1 ${mine ? 'flex-row-reverse' : ''}`}>
+                        <a href={m.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2.5 hover:border-orange-300">
+                          <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>📄</span>
+                          <span><span className="block text-[13px] font-bold truncate max-w-[180px]">{m.fileName}</span><span className="block text-[11px] text-slate-400">{m.fileSize ? fmtSize(m.fileSize) : ''}</span></span>
+                          <span className="text-orange-500">⬇</span>
+                        </a>
+                        {mine && !m.kindTag && <button onClick={() => openReads(m)} title={m.allRead ? 'Read' : 'Sent'} className="shrink-0 leading-none pb-0.5 hover:opacity-70"><ReadTick read={!!m.allRead} size={18} /></button>}
+                      </div>
                     ))}
                     {m.reactions && Object.keys(m.reactions).length > 0 && (
                       <div className={`flex flex-wrap gap-1 mt-1 ${mine ? 'justify-end' : ''}`}>
@@ -2695,6 +2711,13 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                   {['😀','😂','😊','😍','🤔','👍','🙏','🎉','🔥','❤️','👀','✅','🚀','💯','🙌','😅','👏','💪','🎯','⭐','😎','🤝','📌','⏰'].map((e) => <button key={e} onClick={() => { insertAtCursor(e); setEmojiOpen(false); }} className="text-xl p-1 rounded hover:bg-slate-100">{e}</button>)}
                 </div>
               )}
+              {pendingImage && (
+                <div className="mb-2 inline-flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 relative">
+                  <img src={pendingImage.url} alt="pasted" className="h-20 w-20 object-cover rounded-lg" />
+                  <div className="text-[11px] text-slate-500 pr-4 self-center">Image ready to send.<br />Hit ➤ to send, or remove it.</div>
+                  <button onClick={() => { if (pendingImage.url) URL.revokeObjectURL(pendingImage.url); setPendingImage(null); }} title="Remove" className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-700 text-white text-sm font-bold flex items-center justify-center shadow hover:bg-red-600">×</button>
+                </div>
+              )}
               <div className="border-[1.5px] border-slate-200 rounded-2xl focus-within:border-orange-400 overflow-hidden">
                 <div className="flex items-center gap-1 px-2.5 pt-2">
                   <button onMouseDown={(e) => { e.preventDefault(); document.execCommand('bold'); syncEditor(); }} title="Bold (Ctrl/Cmd+B)" className="w-7 h-7 rounded-lg text-slate-500 hover:bg-slate-100 font-bold text-[13px]">B</button>
@@ -2724,8 +2747,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     contentEditable
                     role="textbox"
                     onPaste={(e) => {
-                      // Paste an image directly from the clipboard (screenshot, copied
-                      // image) — upload + send it like a file, no download needed.
+                      // Paste an image from the clipboard → STAGE it as a pending
+                      // attachment (preview above the composer). It sends only when
+                      // the user hits Send, and can be removed with the × button.
                       const items = (e.clipboardData && e.clipboardData.items) || [];
                       for (const it of items) {
                         if (it.kind === 'file' && /^image\//.test(it.type)) {
@@ -2734,7 +2758,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                             e.preventDefault();
                             const ext = (it.type.split('/')[1] || 'png').split('+')[0];
                             const named = new File([file], file.name && file.name !== 'image.png' ? file.name : `pasted-${Date.now()}.${ext}`, { type: it.type });
-                            sendFile(named);
+                            setPendingImage((prev) => { if (prev && prev.url) URL.revokeObjectURL(prev.url); return { file: named, url: URL.createObjectURL(named) }; });
                             return;
                           }
                         }
@@ -2794,7 +2818,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
                     style={{ minHeight: '1.6em', wordBreak: 'break-word' }}
                   />
                   <button onClick={aiSuggestReply} disabled={aiBusy === 'sug'} title="AI reply" className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>{aiBusy === 'sug' ? '…' : '✨'}</button>
-                  <button onClick={send} disabled={sending || !text.trim()} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
+                  <button onClick={send} disabled={sending || uploading || (!text.trim() && !pendingImage)} className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 disabled:opacity-40" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>➤</button>
                 </div>
               </div>
             </div>
