@@ -5077,6 +5077,7 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   const loadClock = () => hrApi('/me/clock').then(setClock).catch(() => {});
   const loadLeave = () => hrApi('/me/leave').then(setLeave).catch(() => {});
   const loadReviews = () => hrApi('/me/reviews').then((r) => setReviews(r.reviews || [])).catch(() => {});
+  const ackFeedback = async (id) => { try { await hrApi(`/me/feedback/${id}/ack`, { method: 'POST', body: '{}' }); loadReviews(); } catch (e) { toast(e.message); } };
   const [attFlags, setAttFlags] = useState([]);
   const loadAttFlags = () => hrApi('/attendance/flags').then((r) => setAttFlags(r.flags || [])).catch(() => setAttFlags([]));
   const attFlagAct = async (id, action) => { try { await hrApi(`/attendance/flags/${id}/${action}`, { method: 'POST', body: '{}' }); toast(action === 'email' ? 'Email sent ✓' : 'Done'); loadAttFlags(); } catch (e) { toast(e.message); } };
@@ -5374,6 +5375,17 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
                 <div className="flex items-end gap-2.5"><div className="text-4xl font-extrabold leading-none" style={{ color: '#FF4500' }}>{reviews.length}</div><span className="rounded-full text-[11px] font-bold px-2.5 py-0.5" style={{ background: '#FEF2F2', color: '#DC2626' }}>Things to review</span></div>
                 <div className="max-h-80 overflow-y-auto -mr-1 pr-1">
                 {reviews.map((it) => {
+                  if (it.kind === 'feedback_resolved') return (
+                    <div key={it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-base shrink-0" style={{ background: it.reportKind === 'suggestion' ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'linear-gradient(135deg,#22C55E,#16A34A)' }}>{it.reportKind === 'suggestion' ? '💡' : '✅'}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className={NAME}>{it.reportKind === 'suggestion' ? 'Your suggestion was implemented' : (it.reportKind === 'bug' ? 'Your bug report was fixed' : 'Your report was resolved')} 🎉</div>
+                        <div className={`${SUBT} mb-1`}>“{it.message}”</div>
+                        {it.adminNote && <div className="text-[11.5px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5 mb-1.5">Note: {it.adminNote}</div>}
+                        <button onClick={() => ackFeedback(it.feedbackId)} className="text-[11px] font-bold rounded-lg px-3 py-1.5 text-white" style={{ background: ORNG }}>Got it</button>
+                      </div>
+                    </div>
+                  );
                   if (it.kind === 'leave') return (
                     <div key={it.groupKey || it.id} className="flex gap-2.5 py-3 border-t border-slate-100 mt-2">
                       <ReviewIcon kind="leave" />

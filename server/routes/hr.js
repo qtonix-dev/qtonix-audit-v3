@@ -3190,6 +3190,23 @@ router.get('/me/reviews', requireHrAccess, async (req, res, next) => {
       }
     } catch {}
 
+    // Resolved bug/suggestion reports the current user submitted — so they see
+    // the good news in the dashboard Review area, not just the bell. Shown until
+    // acknowledged (dismissing the review marks it acknowledged client-side; the
+    // bell notification remains the durable record).
+    try {
+      if (req.hrActor && req.hrActor.kind === 'hr') {
+        const mine = await HrFeedback.findAll({ where: { reporterId: req.hrActor.id, reporterKind: 'hr', status: 'resolved' }, order: [['updatedAt', 'DESC']], limit: 10 });
+        for (const f of mine) {
+          if (!f.resolvedNotifiedAt) continue; // only ones we actually closed the loop on
+          const isBug = String(f.kind) === 'bug';
+          out.push({ id: `feedback-${f.id}`, kind: 'feedback_resolved', feedbackId: f.id, reportKind: f.kind,
+            verb: isBug ? 'fixed' : (String(f.kind) === 'suggestion' ? 'implemented' : 'resolved'),
+            message: String(f.message || '').slice(0, 200), adminNote: f.adminNote || '', resolvedAt: f.updatedAt });
+        }
+      }
+    } catch {}
+
     res.json({ reviews: out, count: out.length });
   } catch (e) { next(e); }
 });
@@ -4200,10 +4217,45 @@ router.patch('/feedback/:id', requireHrAccess, requireHrAdmin, async (req, res, 
     const row = await HrFeedback.findByPk(req.params.id);
     if (!row) return res.status(404).json({ error: 'Report not found.' });
     const b = req.body || {};
+    const wasResolved = row.status === 'resolved';
     if (b.status !== undefined && ['new', 'seen', 'resolved'].includes(b.status)) row.status = b.status;
     if (b.adminNote !== undefined) row.adminNote = String(b.adminNote || '').slice(0, 2000);
     await row.save();
+
+    // When a report becomes resolved, notify the person who submitted it — once.
+    // Only HR-user reporters get in-app + Buzz (admins don't need self-notice).
+    if (row.status === 'resolved' && !wasResolved && !row.resolvedNotifiedAt && row.reporterId && row.reporterKind === 'hr') {
+      const isBug = String(row.kind) === 'bug';
+      const verb = isBug ? 'fixed' : (String(row.kind) === 'suggestion' ? 'implemented' : 'resolved');
+      const icon = isBug ? '✅' : '💡';
+      const snippet = String(row.message || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      const noteLine = row.adminNote ? ` Note from the team: "${String(row.adminNote).slice(0, 160)}"` : '';
+      // 1) In-app bell notification.
+      try {
+        await HrNotification.create({
+          userId: row.reporterId, actorKind: 'hr', type: 'feedback_resolved',
+          text: `${icon} Your ${isBug ? 'bug report' : (String(row.kind) === 'suggestion' ? 'suggestion' : 'report')} was ${verb}: "${snippet}"`,
+          meta: { feedbackId: row.id, kind: row.kind, resolvedAt: new Date() },
+        });
+      } catch {}
+      // 2) Buzz DM from an HR/system account → the reporter.
+      try {
+        const chatNotify = require('../services/feedbackBuzz');
+        await chatNotify.sendResolutionDm(require('../models'), { reporterId: row.reporterId, kind: row.kind, verb, icon, snippet, noteLine });
+      } catch (e) { /* Buzz is best-effort */ }
+      row.resolvedNotifiedAt = new Date(); await row.save();
+    }
     res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
+// Reporter acknowledges the "resolved" review card → drops off their review list.
+router.post('/me/feedback/:id/ack', requireHrAccess, async (req, res, next) => {
+  try {
+    const f = await HrFeedback.findByPk(Number(req.params.id));
+    if (!f || f.reporterId !== req.hrActor.id) return res.status(404).json({ error: 'Not found.' });
+    f.status = 'acknowledged'; await f.save();
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

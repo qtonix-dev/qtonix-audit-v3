@@ -1739,6 +1739,9 @@ const HrFeedback = sequelize.define('HrFeedback', {
   userAgent: { type: DataTypes.STRING(400), allowNull: true },
   status: { type: DataTypes.STRING(20), defaultValue: 'new' }, // 'new' | 'seen' | 'resolved'
   adminNote: { type: DataTypes.TEXT, allowNull: true },
+  // Set when the reporter was notified that their report was resolved, so we
+  // never notify twice even if the status is toggled.
+  resolvedNotifiedAt: { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName: 'hr_feedback',
   indexes: [{ name: 'idx_hr_feedback_status', fields: ['status'] }],
