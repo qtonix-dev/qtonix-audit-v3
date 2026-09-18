@@ -8628,7 +8628,8 @@ router.post('/attendance/biometric/upload', requireHrAccess, async (req, res, ne
     const known = new Set(emps.map((e) => e.deviceId).filter(Boolean));
     const deviceIds = Object.keys(parsed.data);
     const matched = deviceIds.filter((d) => known.has(d)).length;
-    res.json({ importId: imp.id, fileName, punchCount: parsed.punchCount, deviceIdCount: parsed.deviceIdCount, minDate: parsed.minDate, maxDate: parsed.maxDate, matched, unmatched: deviceIds.length - matched, deviceIds });
+    const unmatchedIds = deviceIds.filter((d) => !known.has(d)).sort();
+    res.json({ importId: imp.id, fileName, punchCount: parsed.punchCount, deviceIdCount: parsed.deviceIdCount, minDate: parsed.minDate, maxDate: parsed.maxDate, matched, unmatched: unmatchedIds.length, deviceIds, unmatchedIds });
   } catch (e) { next(e); }
 });
 
@@ -8675,7 +8676,9 @@ router.post('/attendance/biometric/:id/reconcile', requireHrAccess, async (req, 
     const emps = await loadEmpsForCompare(from, to);
     const r = bioSvc.reconcile({ emps, punches: imp.data || {}, from, to, reconcile: doRecon, gapMin: 20 });
     // Only employees that actually have log data in the file.
-    const withData = r.rows.filter((row) => row.days.some((d) => d.bioIn || d.hrmsIn));
+    // Only employees whose device ID is IN the file AND have punches in range.
+    const fileDevices = new Set(Object.keys(imp.data || {}));
+    const withData = r.rows.filter((row) => row.deviceId && fileDevices.has(row.deviceId) && row.days.some((d) => d.bioIn));
     res.json({ from, to, reconcile: doRecon, rows: withData });
   } catch (e) { next(e); }
 });

@@ -4107,6 +4107,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const [doRecon, setDoRecon] = useState(true);  // HR's Yes/No for the ≤20/>20 rule
   const [expanded, setExpanded] = useState({});  // employeeId → open?
   const [dayChoice, setDayChoice] = useState({}); // "empId:date" → 'yes'|'no'
+  const [showUnmatched, setShowUnmatched] = useState(false);
   const runReconcile = async () => {
     setBusy(true);
     try { const r = await hrApi(`/attendance/biometric/${info.importId}/reconcile`, { method: 'POST', body: JSON.stringify({ from, to, reconcile: true }) }); setRecon(r); setStep(3); }
@@ -4189,7 +4190,16 @@ function BiometricModal({ onClose, onOpenEmployee }) {
             <div>
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 mb-4 text-[13px] text-slate-600">
                 <b className="text-[#050A1F]">{info.punchCount.toLocaleString()}</b> punches · <b className="text-[#050A1F]">{info.deviceIdCount}</b> device IDs · available <b className="text-[#050A1F]">{info.minDate}</b> → <b className="text-[#050A1F]">{info.maxDate}</b>
-                <div className="mt-1">Matched <b className="text-green-600">{info.matched}</b> to employees{info.unmatched > 0 && <> · <b className="text-red-600">{info.unmatched} unmatched</b> device IDs (set their Device ID in the employee profile)</>}</div>
+                <div className="mt-1">Matched <b className="text-green-600">{info.matched}</b> to employees{info.unmatched > 0 && <> · <button onClick={() => setShowUnmatched((v) => !v)} className="text-red-600 font-bold underline decoration-dotted">{info.unmatched} unmatched {showUnmatched ? '▲' : '▼'}</button></>}</div>
+                {showUnmatched && info.unmatchedIds && (
+                  <div className="mt-2 rounded-lg bg-red-50/60 border border-red-100 p-2.5">
+                    <div className="text-[11px] font-bold text-red-700 mb-1">Device IDs in the file with no matching employee:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {info.unmatchedIds.map((id) => <span key={id} className="text-[11px] font-mono font-bold bg-white border border-red-200 text-red-600 rounded px-2 py-0.5">{id}</span>)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1.5">Set these as the Device ID on the matching employee's profile, then re-upload.</div>
+                  </div>
+                )}
               </div>
               <div className="flex items-end gap-3 flex-wrap">
                 <div><div className="text-[11px] font-bold text-slate-500 mb-1">From</div><input type="date" value={from} min={info.minDate} max={info.maxDate} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
@@ -4231,15 +4241,15 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                               {r.days.map((d) => {
                                 const key = `${r.employeeId}:${d.date}`;
                                 const chosen = dayChoice[key]; // 'yes'|'no'|undefined
-                                // A row needs a decision when biometric & HRMS clock-in
-                                // differ, or one side is missing a punch that the other has.
-                                const hasDiscrepancy = !d.off && ((d.bioIn && d.hrmsIn && d.finalIn && d.inSource === 'hrms') || (d.bioIn && !d.hrmsIn) || (!d.bioIn && d.hrmsIn) || (d.bioOut && !d.hrmsOut) || (!d.bioOut && d.hrmsOut && d.bioIn));
-                                // Displayed final in/out reflect the choice (yes=bio, no=hrms).
-                                const showIn = chosen === 'yes' ? (d.bioIn || d.finalIn) : chosen === 'no' ? (d.hrmsIn || d.finalIn) : d.finalIn;
-                                const showOut = chosen === 'yes' ? (d.bioOut || d.finalOut) : chosen === 'no' ? (d.hrmsOut || d.finalOut) : d.finalOut;
+                                const hasDiscrepancy = !!d.highlight;
+                                // Clock in/out ALWAYS show the biometric first & last
+                                // punch (per requirement). "No" applies HRMS on save
+                                // but the displayed times stay biometric.
+                                const cin = d.bioIn || d.finalIn;
+                                const cout = d.bioOut;
                                 return (
                                   <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (hasDiscrepancy && !chosen ? 'bg-amber-50/60' : '')}>
-                                    <td className="px-2.5 py-1.5 font-semibold" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
+                                    <td className="px-2.5 py-1.5 font-semibold align-top" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
                                       {new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} <span className="text-[9px] text-slate-400">{d.dow}</span>
                                       {d.off && <span className="ml-1 text-[8.5px] font-bold px-1 py-0.5 rounded" style={{ background: d.offKind === 'holiday' ? '#dbeafe' : '#e2e8f0', color: d.offKind === 'holiday' ? '#1d4ed8' : '#64748b' }}>{d.offKind === 'holiday' ? (d.offName || 'Holiday') : 'Week off'}</span>}
                                       {d.punchedOnOff && <span className="ml-1 text-[8.5px] font-bold text-red-600">● punched</span>}
@@ -4248,12 +4258,19 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                                       <td colSpan={6} className="px-2.5 py-1.5 text-slate-300 text-center italic">— off day —</td>
                                     ) : (
                                       <>
-                                        <td className="px-2.5 py-1.5 font-medium text-[#050A1F]">{showIn || '—'}</td>
-                                        <td className="px-2.5 py-1.5 font-medium text-[#050A1F]">{showOut || <span className="text-orange-500 font-normal">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}</td>
-                                        <td className="px-2.5 py-1.5 text-slate-500">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
-                                        <td className="px-2.5 py-1.5 font-bold text-[#050A1F]">{d.workedLabel}</td>
-                                        <td className="px-2.5 py-1.5 font-bold" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
-                                        <td className="px-2.5 py-1.5">
+                                        <td className="px-2.5 py-1.5 align-top">
+                                          <div className="font-semibold text-[#050A1F]">{cin || '—'}</div>
+                                          {d.inDiffers && <div className={`text-[9px] mt-0.5 ${chosen === 'no' ? 'text-slate-700 font-bold' : 'text-amber-600'}`}>HRMS: {d.hrmsIn}{chosen !== 'no' && ' ⚠'}</div>}
+                                        </td>
+                                        <td className="px-2.5 py-1.5 align-top">
+                                          <div className="font-semibold text-[#050A1F]">{cout || <span className="text-orange-500 font-normal">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}</div>
+                                          {d.outFromHrms && <div className="text-[9px] text-teal-600 mt-0.5">HRMS {d.hrmsOut} ↩ used</div>}
+                                          {d.outDiffers && !d.outFromHrms && <div className={`text-[9px] mt-0.5 ${chosen === 'no' ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>HRMS: {d.hrmsOut}</div>}
+                                        </td>
+                                        <td className="px-2.5 py-1.5 text-slate-500 align-top">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
+                                        <td className="px-2.5 py-1.5 font-bold text-[#050A1F] align-top">{d.workedLabel}</td>
+                                        <td className="px-2.5 py-1.5 font-bold align-top" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
+                                        <td className="px-2.5 py-1.5 align-top">
                                           {hasDiscrepancy ? (
                                             <div className="flex gap-1">
                                               <button onClick={() => applyDay(r.employeeId, d.date, 'yes')} className="px-2 py-0.5 rounded text-[10px] font-bold border transition" style={{ borderColor: chosen === 'yes' ? '#16a34a' : '#e2e8f0', background: chosen === 'yes' ? '#16a34a' : '#fff', color: chosen === 'yes' ? '#fff' : '#64748b' }}>Yes</button>

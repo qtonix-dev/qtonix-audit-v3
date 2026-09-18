@@ -292,44 +292,49 @@ function reconcile({ emps, punches, from, to, reconcile: doRecon = true, gapMin 
     for (const d of [...days].sort()) {
       const off = e.offInfo ? e.offInfo(d) : { off: false };
       const raw = (dayPunches[d] || []);
-      // Collapse duplicate/burst punches (< breakMin apart).
-      const kept = [];
-      for (const p of raw) { const pm = toMin(p.raw) + (p.date > d ? 1440 : 0); if (!kept.length || (pm - (toMin(kept[kept.length - 1].raw) + (kept[kept.length - 1].date > d ? 1440 : 0))) >= breakMin) kept.push(p); }
-      const bioIn = kept.length ? kept[0].raw.slice(0, 5) : null;
-      const bioOut = kept.length > 1 ? kept[kept.length - 1].raw.slice(0, 5) : null;
-      const bioOutNextDay = kept.length > 1 ? (kept[kept.length - 1].date > d) : false;
-      // Intermediate punches (everything between first and last).
-      const middle = kept.slice(1, -1).map((p) => p.raw.slice(0, 5));
+      // De-dupe only EXACT repeat scans (same HH:MM), so the true first and last
+      // punch are always preserved. We do NOT collapse by a break window here —
+      // that previously dropped a valid last punch (e.g. 18:52 after 18:49).
+      const seen = new Set(); const clean = [];
+      for (const p of raw) { const key = p.raw.slice(0, 5) + '|' + (p.date > d ? '1' : '0'); if (seen.has(key)) continue; seen.add(key); clean.push(p); }
+      const bioIn = clean.length ? clean[0].raw.slice(0, 5) : null;
+      const bioOut = clean.length > 1 ? clean[clean.length - 1].raw.slice(0, 5) : null;
+      const bioOutNextDay = clean.length > 1 ? (clean[clean.length - 1].date > d) : false;
+      // Intermediate punches = everything strictly between first and last.
+      const middle = clean.slice(1, -1).map((p) => p.raw.slice(0, 5));
 
       const hrms = (e.hrmsByDate && e.hrmsByDate[d]) || null;
       const hrmsIn = hrms && hrms.login ? String(hrms.login).slice(0, 5) : null;
       const hrmsOut = hrms && hrms.logout ? String(hrms.logout).slice(0, 5) : null;
 
-      // ---- Clock-IN reconciliation ----
-      let finalIn = null, inSource = null, highlight = false;
-      if (!doRecon) { finalIn = hrmsIn; inSource = 'hrms'; }         // HR chose "No" → stick to HRMS
-      else if (bioIn && hrmsIn) {
-        const diff = Math.abs(toMin(bioIn) - toMin(hrmsIn));
-        if (diff <= gapMin) { finalIn = bioIn; inSource = 'bio'; }
-        else { finalIn = hrmsIn; inSource = 'hrms'; highlight = true; } // >20 → HRMS + highlight
-      } else if (bioIn) { finalIn = bioIn; inSource = 'bio'; }
-      else if (hrmsIn) { finalIn = hrmsIn; inSource = 'hrms'; }
+      // A row needs an HR decision when biometric & HRMS clock-in differ by >gap,
+      // or the biometric punch-out is missing (so HRMS is used).
+      const inDiff = (bioIn && hrmsIn) ? Math.abs(toMin(bioIn) - toMin(hrmsIn)) : null;
+      const highlight = !off.off && ((inDiff != null && inDiff > gapMin) || (bioIn && !bioOut) || (!bioIn && hrmsIn));
 
-      // ---- Clock-OUT: biometric, else HRMS fallback ----
-      let finalOut = null, outSource = null, outNextDay = false;
-      if (bioOut) { finalOut = bioOut; outSource = 'bio'; outNextDay = bioOutNextDay; }
-      else if (hrmsOut) { finalOut = hrmsOut; outSource = 'hrms'; outNextDay = isNight && toMin(hrmsOut) < shiftStartMin; }
+      // ---- Which source is applied ----
+      // doRecon=true (default / "Yes"): use BIOMETRIC first & last punch. Missing
+      //   biometric out falls back to HRMS out.
+      // doRecon=false ("No"): keep HRMS clock-in/out.
+      let finalIn, finalOut, inSource, outSource, outNextDay = false;
+      if (!doRecon) {
+        finalIn = hrmsIn; inSource = 'hrms';
+        finalOut = hrmsOut; outSource = 'hrms';
+      } else {
+        finalIn = bioIn || hrmsIn; inSource = bioIn ? 'bio' : 'hrms';
+        if (bioOut) { finalOut = bioOut; outSource = 'bio'; outNextDay = bioOutNextDay; }
+        else if (hrmsOut) { finalOut = hrmsOut; outSource = 'hrms'; outNextDay = isNight && toMin(hrmsOut) < shiftStartMin; }
+      }
 
-      // ---- Working hours (night-shift aware) ----
+      // ---- Working hours from the chosen final in/out (night-shift aware) ----
       let workedMin = null;
       if (finalIn && finalOut) {
         let a = toMin(finalIn), b = toMin(finalOut);
-        if (outNextDay || b < a) b += 1440; // crosses midnight
+        if (outNextDay || b < a) b += 1440;
         workedMin = b - a;
       }
 
-      const punchedOnOff = off.off && kept.length > 0;
-      if (punchedOnOff) highlight = true;
+      const punchedOnOff = off.off && clean.length > 0;
 
       const deficit = (workedMin != null && !off.off) ? workedMin - shiftMin : null;
       if (!off.off && workedMin != null) { presentDays++; totalWorked += workedMin; totalTarget += shiftMin; if (deficit < 0) deficitDays++; }
@@ -340,7 +345,12 @@ function reconcile({ emps, punches, from, to, reconcile: doRecon = true, gapMin 
         off: !!off.off, offKind: off.kind || null, offName: off.name || null,
         bioIn, bioOut, bioOutNextDay, hrmsIn, hrmsOut,
         finalIn, finalOut, inSource, outSource, outNextDay,
-        middle, punchCount: kept.length,
+        middle, punchCount: clean.length, inDiff,
+        // Flags for the UI: show HRMS-in note only when it differs; show
+        // HRMS-out-used note when biometric out was missing.
+        inDiffers: !!(bioIn && hrmsIn && inDiff > 0),
+        outDiffers: !!(bioOut && hrmsOut && Math.abs(toMin(bioOut) - toMin(hrmsOut)) > 0),
+        outFromHrms: !!(doRecon && !bioOut && hrmsOut),
         workedMin, workedLabel: workedMin == null ? '—' : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
         target: off.off ? 0 : shiftMin, deficitMin: deficit,
         deficitLabel: deficit == null ? '—' : (deficit < 0 ? '-' : '+') + `${Math.floor(Math.abs(deficit) / 60)}h ${String(Math.abs(deficit) % 60).padStart(2, '0')}m`,
