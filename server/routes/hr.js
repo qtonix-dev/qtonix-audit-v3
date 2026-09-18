@@ -2028,10 +2028,65 @@ router.get('/employees/:id/attendance', requireHrAccess, async (req, res, next) 
   try {
     const id = Number(req.params.id);
     const isSelf = req.hrUser && req.hrUser.id === id;
-    if (!canManagePeople(req) && !isSelf) return res.status(403).json({ error: 'Not allowed.' });
+    if (!canManagePeople(req) && !isSelf && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'Not allowed.' });
     const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? req.query.month : new Date().toISOString().slice(0, 7);
+    const emp = await HrUser.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const shift = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+    const shiftMin = bioSvc.shiftGrossMinutes(shift);
     const rows = await HrAttendance.findAll({ where: { employeeId: id, date: { [Op.like]: `${month}-%` } }, order: [['date', 'ASC']] });
-    res.json({ month, canManage: canManagePeople(req), days: rows.map((r) => r.toJSON()) });
+    const marks = {}; rows.forEach((r) => { marks[r.date] = r; });
+    const holidaysAll = await HrHoliday.findAll();
+    const holidays = {};
+    holidaysAll.forEach((h) => { if (String(h.date).slice(0, 7) === month && (!h.branch || h.branch === emp.branch)) holidays[String(h.date)] = h.name; });
+    const [yy, mm] = month.split('-').map(Number);
+    const daysInMonth = new Date(yy, mm, 0).getDate();
+    const toMin = (t) => { if (!t) return null; const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
+    const days = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${month}-${String(d).padStart(2, '0')}`;
+      const mk = marks[ds];
+      // Weekoff / holiday take precedence and are shown DISABLED (not leave).
+      let status = 'none';
+      if (holidays[ds]) status = 'holiday';
+      else if (branchWeekendOff(ds, emp.branch)) status = 'weekoff';
+      else if (mk) {
+        if (mk.status === 'leave') status = 'leave';
+        else if (mk.status === 'half_day') status = 'half_day';
+        else if (mk.status === 'wfh') status = 'wfh';
+        else if (mk.status === 'absent' || mk.status === 'lop') status = 'absent';
+        else if (mk.loginTime) status = mk.late ? 'late' : 'present';
+        // A row with NO login/logout and no real status → blank (not leave/present).
+        else status = 'none';
+      }
+      let workedMin = null;
+      if (mk && mk.loginTime && mk.logoutTime) { let a = toMin(mk.loginTime), b = toMin(mk.logoutTime); if (b <= a) b += 1440; workedMin = b - a; }
+      const off = status === 'weekoff' || status === 'holiday';
+      const deficit = (!off && workedMin != null && shiftMin) ? workedMin - shiftMin : null;
+      days.push({
+        date: ds, status, off,
+        login: mk ? mk.loginTime : null, logout: mk ? mk.logoutTime : null,
+        late: mk ? mk.late : false, note: mk ? mk.note : null, leaveType: mk && mk.note && String(mk.note).startsWith('leave:') ? String(mk.note).slice(6) : null,
+        holidayName: holidays[ds] || null,
+        workedMin, workedLabel: workedMin == null ? null : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
+        deficitMin: deficit, deficitLabel: deficit == null ? null : (deficit < 0 ? '-' : '+') + `${Math.floor(Math.abs(deficit) / 60)}h ${String(Math.abs(deficit) % 60).padStart(2, '0')}m`,
+        singlePunch: !!(mk && mk.loginTime && !mk.logoutTime),
+      });
+    }
+    // Summary: worked days, total & avg hours, deficit vs shift.
+    const worked = days.filter((d) => d.workedMin != null);
+    const totalMin = worked.reduce((n, d) => n + d.workedMin, 0);
+    const presentCount = days.filter((d) => d.status === 'present' || d.status === 'late').length;
+    const targetMin = shiftMin ? presentCount * shiftMin : null;
+    const summary = {
+      workingDays: presentCount,
+      totalHoursLabel: `${Math.floor(totalMin / 60)}h ${String(totalMin % 60).padStart(2, '0')}m`,
+      avgHoursLabel: worked.length ? `${Math.floor(Math.round(totalMin / worked.length) / 60)}h ${String(Math.round(totalMin / worked.length) % 60).padStart(2, '0')}m` : '0h 00m',
+      shiftLabel: shift ? `${shift.startTime}–${shift.endTime}` : null,
+      deficitLabel: targetMin == null ? null : ((totalMin - targetMin) < 0 ? '-' : '+') + `${Math.floor(Math.abs(totalMin - targetMin) / 60)}h ${String(Math.abs(totalMin - targetMin) % 60).padStart(2, '0')}m`,
+      inDeficit: targetMin != null && totalMin < targetMin,
+    };
+    res.json({ month, canManage: canManagePeople(req) || PERMS.can(req, 'corehr_attendance', 'edit'), days, summary });
   } catch (e) { next(e); }
 });
 
@@ -8596,8 +8651,34 @@ async function loadEmpsForCompare(from, to) {
       (wfhByEmp[lv.employeeId] = wfhByEmp[lv.employeeId] || new Set()).add(d.toISOString().slice(0, 10));
     }
   }
-  return users.map((u) => ({ id: u.id, name: u.name, deviceId: u.deviceId || null, department: u.department || '', shift: u.shiftId ? shiftById[u.shiftId] : null, wfhDates: wfhByEmp[u.id] || new Set(), hrmsByDate: hrmsByEmp[u.id] || {} }));
+  // Weekoff/holiday context per branch (for disabling + highlight).
+  let wd = null;
+  try { wd = await require('../services/workingDays').loadContext(); } catch {}
+  const offInfoFor = (branch) => (date) => {
+    if (!wd || !wd.offInfo) return { off: false };
+    const info = wd.offInfo(branch, date);
+    return info && info.off ? { off: true, kind: info.kind || 'weekoff', name: info.name || '' } : { off: false };
+  };
+  return users.map((u) => ({ id: u.id, name: u.name, deviceId: u.deviceId || null, department: u.department || '', branch: u.branch || '', shift: u.shiftId ? shiftById[u.shiftId] : null, wfhDates: wfhByEmp[u.id] || new Set(), hrmsByDate: hrmsByEmp[u.id] || {}, offInfo: offInfoFor(u.branch) }));
 }
+
+// Detailed per-employee reconciliation (the upload's next step): date-wise
+// in/out with intermediate punches, weekoff/holiday, ≤20/>20 rule + highlight,
+// HRMS clock-out fallback, night-shift cross-midnight, per-day deficit.
+router.post('/attendance/biometric/:id/reconcile', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'You don\u2019t have access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    const doRecon = req.body.reconcile !== false; // HR's Yes/No (default Yes)
+    const emps = await loadEmpsForCompare(from, to);
+    const r = bioSvc.reconcile({ emps, punches: imp.data || {}, from, to, reconcile: doRecon, gapMin: 20 });
+    // Only employees that actually have log data in the file.
+    const withData = r.rows.filter((row) => row.days.some((d) => d.bioIn || d.hrmsIn));
+    res.json({ from, to, reconcile: doRecon, rows: withData });
+  } catch (e) { next(e); }
+});
 
 router.post('/attendance/biometric/:id/analyze', requireHrAccess, async (req, res, next) => {
   try {

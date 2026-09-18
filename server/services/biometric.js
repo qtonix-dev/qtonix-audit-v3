@@ -241,4 +241,124 @@ function aiReviewPayload(rows, leaveByEmp) {
   });
 }
 
-module.exports = { parseDat, parseWorkbook, buildComparison, shiftGrossMinutes, fmtHM, breakInsights, aiReviewPayload };
+// ===== RECONCILIATION ENGINE =====
+// Combines biometric punches with HRMS attendance into a per-employee, per-day
+// reconciled record, honouring: night shifts (cross-midnight), the ≤20/>20 min
+// clock-in rule, HRMS clock-out fallback, weekoff/holiday, and per-day deficit.
+//
+// emps: [{ id, name, deviceId, department, branch, shift, hrmsByDate, offInfo(date)→{off,kind,name} }]
+// punches: { [deviceId]: { [YYYY-MM-DD]: ["HH:MM:SS", ...] } }
+// opts: { from, to, reconcile:true|false (HR's Yes/No), gapMin:20, breakMin:5 }
+function reconcile({ emps, punches, from, to, reconcile: doRecon = true, gapMin = 20, breakMin = 5 }) {
+  const inRange = (d) => (!from || d >= from) && (!to || d <= to);
+  const addDays = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+
+  const rows = emps.map((e) => {
+    const shiftMin = shiftGrossMinutes(e.shift) || 8 * 60;
+    const isNight = !!(e.shift && e.shift.startTime && e.shift.endTime && toMin(e.shift.endTime) <= toMin(e.shift.startTime));
+    const bio = (e.deviceId && punches[e.deviceId]) || {};
+
+    // For NIGHT shifts, punches after midnight up to shift-end belong to the
+    // PREVIOUS day's shift. Re-bucket the device punches into "work days".
+    const dayPunches = {}; // workDay → [times...] (as minutes-from-workday-start-midnight, but store HH:MM:SS + dayOffset)
+    const shiftStartMin = e.shift && e.shift.startTime ? toMin(e.shift.startTime) : 0;
+    for (const d of Object.keys(bio)) {
+      for (const t of bio[d]) {
+        let workDay = d;
+        if (isNight) {
+          // A punch earlier than the shift start (e.g. 05:00 < 19:00) is the tail
+          // of the previous day's shift.
+          if (toMin(t) < shiftStartMin) workDay = addDays(d, -1);
+        }
+        (dayPunches[workDay] = dayPunches[workDay] || []).push({ raw: t, date: d });
+      }
+    }
+    // Sort each work day's punches chronologically (accounting for next-day tail).
+    for (const wd of Object.keys(dayPunches)) {
+      dayPunches[wd].sort((a, b) => {
+        const am = toMin(a.raw) + (a.date > wd ? 1440 : 0);
+        const bm = toMin(b.raw) + (b.date > wd ? 1440 : 0);
+        return am - bm;
+      });
+    }
+
+    // Union of all work days (bio + hrms) in range.
+    const days = new Set();
+    for (const d of Object.keys(dayPunches)) if (inRange(d)) days.add(d);
+    for (const d of Object.keys(e.hrmsByDate || {})) if (inRange(d)) days.add(d);
+
+    let totalWorked = 0, totalTarget = 0, presentDays = 0, deficitDays = 0, highlightDays = 0;
+    const dayRows = [];
+    for (const d of [...days].sort()) {
+      const off = e.offInfo ? e.offInfo(d) : { off: false };
+      const raw = (dayPunches[d] || []);
+      // Collapse duplicate/burst punches (< breakMin apart).
+      const kept = [];
+      for (const p of raw) { const pm = toMin(p.raw) + (p.date > d ? 1440 : 0); if (!kept.length || (pm - (toMin(kept[kept.length - 1].raw) + (kept[kept.length - 1].date > d ? 1440 : 0))) >= breakMin) kept.push(p); }
+      const bioIn = kept.length ? kept[0].raw.slice(0, 5) : null;
+      const bioOut = kept.length > 1 ? kept[kept.length - 1].raw.slice(0, 5) : null;
+      const bioOutNextDay = kept.length > 1 ? (kept[kept.length - 1].date > d) : false;
+      // Intermediate punches (everything between first and last).
+      const middle = kept.slice(1, -1).map((p) => p.raw.slice(0, 5));
+
+      const hrms = (e.hrmsByDate && e.hrmsByDate[d]) || null;
+      const hrmsIn = hrms && hrms.login ? String(hrms.login).slice(0, 5) : null;
+      const hrmsOut = hrms && hrms.logout ? String(hrms.logout).slice(0, 5) : null;
+
+      // ---- Clock-IN reconciliation ----
+      let finalIn = null, inSource = null, highlight = false;
+      if (!doRecon) { finalIn = hrmsIn; inSource = 'hrms'; }         // HR chose "No" → stick to HRMS
+      else if (bioIn && hrmsIn) {
+        const diff = Math.abs(toMin(bioIn) - toMin(hrmsIn));
+        if (diff <= gapMin) { finalIn = bioIn; inSource = 'bio'; }
+        else { finalIn = hrmsIn; inSource = 'hrms'; highlight = true; } // >20 → HRMS + highlight
+      } else if (bioIn) { finalIn = bioIn; inSource = 'bio'; }
+      else if (hrmsIn) { finalIn = hrmsIn; inSource = 'hrms'; }
+
+      // ---- Clock-OUT: biometric, else HRMS fallback ----
+      let finalOut = null, outSource = null, outNextDay = false;
+      if (bioOut) { finalOut = bioOut; outSource = 'bio'; outNextDay = bioOutNextDay; }
+      else if (hrmsOut) { finalOut = hrmsOut; outSource = 'hrms'; outNextDay = isNight && toMin(hrmsOut) < shiftStartMin; }
+
+      // ---- Working hours (night-shift aware) ----
+      let workedMin = null;
+      if (finalIn && finalOut) {
+        let a = toMin(finalIn), b = toMin(finalOut);
+        if (outNextDay || b < a) b += 1440; // crosses midnight
+        workedMin = b - a;
+      }
+
+      const punchedOnOff = off.off && kept.length > 0;
+      if (punchedOnOff) highlight = true;
+
+      const deficit = (workedMin != null && !off.off) ? workedMin - shiftMin : null;
+      if (!off.off && workedMin != null) { presentDays++; totalWorked += workedMin; totalTarget += shiftMin; if (deficit < 0) deficitDays++; }
+      if (highlight && !off.off) highlightDays++;
+
+      dayRows.push({
+        date: d, dow: new Date(d + 'T00:00:00+05:30').toLocaleDateString('en-IN', { weekday: 'short' }),
+        off: !!off.off, offKind: off.kind || null, offName: off.name || null,
+        bioIn, bioOut, bioOutNextDay, hrmsIn, hrmsOut,
+        finalIn, finalOut, inSource, outSource, outNextDay,
+        middle, punchCount: kept.length,
+        workedMin, workedLabel: workedMin == null ? '—' : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
+        target: off.off ? 0 : shiftMin, deficitMin: deficit,
+        deficitLabel: deficit == null ? '—' : (deficit < 0 ? '-' : '+') + `${Math.floor(Math.abs(deficit) / 60)}h ${String(Math.abs(deficit) % 60).padStart(2, '0')}m`,
+        highlight, punchedOnOff,
+      });
+    }
+    const totalDeficit = totalWorked - totalTarget;
+    return {
+      employeeId: e.id, name: e.name, deviceId: e.deviceId || null, department: e.department || '',
+      branch: e.branch || '', shiftLabel: e.shift ? `${e.shift.startTime}–${e.shift.endTime}` : 'no shift',
+      isNight, shiftMin, presentDays, deficitDays, highlightDays,
+      totalWorkedMin: totalWorked, totalTargetMin: totalTarget, totalDeficitMin: totalDeficit,
+      totalWorkedLabel: fmtHM(totalWorked), totalDeficitLabel: (totalDeficit < 0 ? '-' : '+') + fmtHM(totalDeficit),
+      inDeficit: totalDeficit < -1, avgHours: presentDays ? (totalWorked / presentDays / 60).toFixed(2) : '0',
+      days: dayRows,
+    };
+  });
+  return { rows: rows.filter((r) => r.days.length > 0) };
+}
+
+module.exports = { parseDat, parseWorkbook, buildComparison, reconcile, shiftGrossMinutes, fmtHM, breakInsights, aiReviewPayload };

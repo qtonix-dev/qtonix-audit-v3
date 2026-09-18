@@ -961,11 +961,14 @@ function PerformanceCardModal({ by, kindInit, employeeId, onClose, onSaved }) {
 // ---- Attendance tab: month grid, mark each day, late by login/logout ----
 const ATT_STATUS = {
   present: { label: 'Present', short: 'P', bg: '#DCFCE7', fg: '#16A34A' },
+  late: { label: 'Late', short: 'L', bg: '#FEF3C7', fg: '#B45309' },
   absent: { label: 'Absent', short: 'A', bg: '#FEE2E2', fg: '#DC2626' },
   half_day: { label: 'Half day', short: 'H', bg: '#FEF9C3', fg: '#CA8A04' },
   leave: { label: 'Leave', short: 'L', bg: '#E0E7FF', fg: '#4F46E5' },
-  holiday: { label: 'Holiday', short: 'Ho', bg: '#F1F5F9', fg: '#64748B' },
-  week_off: { label: 'Week off', short: 'W', bg: '#F1F5F9', fg: '#94A3B8' },
+  wfh: { label: 'WFH', short: 'W', bg: '#F5F3FF', fg: '#7C3AED' },
+  holiday: { label: 'Holiday', short: 'Ho', bg: '#EFF6FF', fg: '#2563EB' },
+  weekoff: { label: 'Week off', short: 'Off', bg: '#F1F5F9', fg: '#94A3B8' },
+  none: { label: '', short: '', bg: '#FFFFFF', fg: '#CBD5E1' },
 };
 function AttendanceTab({ employeeId, canManage }) {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -1001,14 +1004,20 @@ function AttendanceTab({ employeeId, canManage }) {
         {cells.map((d, i) => {
           if (d === null) return <div key={`b${i}`} className="min-h-[64px]" />;
           const rec = byDate[dkey(d)];
-          const st = rec ? (ATT_STATUS[rec.status] || ATT_STATUS.present) : null;
+          const stKey = rec ? rec.status : 'none';
+          const st = ATT_STATUS[stKey] || ATT_STATUS.none;
+          const isOff = rec && (rec.status === 'weekoff' || rec.status === 'holiday');
+          const isBlank = !rec || rec.status === 'none';
           return (
-            <button key={d} onClick={() => canManage && setDayModal({ date: dkey(d), rec: rec || { date: dkey(d), status: 'present' } })}
-              className={`min-h-[64px] rounded-lg border p-1.5 text-left ${canManage ? 'hover:border-orange-300' : ''} border-slate-100`} style={st ? { background: st.bg } : {}}>
-              <div className="text-[11px] font-bold" style={{ color: st ? st.fg : '#94A3B8' }}>{d}</div>
-              {rec && <div className="text-[10px] font-bold mt-0.5" style={{ color: st.fg }}>{st.label}</div>}
-              {rec && rec.late && <div className="text-[9px] font-bold text-red-500">Late</div>}
-              {rec && rec.loginTime && <div className="text-[9px] text-slate-400">{rec.loginTime}{rec.logoutTime ? `–${rec.logoutTime}` : ''}</div>}
+            <button key={d} disabled={!canManage || isOff}
+              onClick={() => canManage && !isOff && setDayModal({ date: dkey(d), rec: rec || { date: dkey(d), status: 'present' } })}
+              className={`min-h-[64px] rounded-lg border p-1.5 text-left ${canManage && !isOff ? 'hover:border-orange-300 cursor-pointer' : 'cursor-default'} ${isOff ? 'border-slate-200' : 'border-slate-100'}`}
+              style={{ background: st.bg, opacity: isOff ? 0.7 : 1 }}>
+              <div className="text-[11px] font-bold" style={{ color: st.fg || '#94A3B8' }}>{d}</div>
+              {!isBlank && <div className="text-[10px] font-bold mt-0.5" style={{ color: st.fg }}>{st.label}</div>}
+              {rec && rec.login && <div className="text-[9px] text-slate-500">{rec.login}{rec.logout ? `–${rec.logout}` : ''}</div>}
+              {rec && rec.workedLabel && <div className="text-[9px] font-bold text-slate-600">{rec.workedLabel}</div>}
+              {rec && rec.deficitLabel && rec.deficitMin < 0 && <div className="text-[8.5px] font-bold text-red-500">{rec.deficitLabel}</div>}
             </button>
           );
         })}
@@ -1019,9 +1028,9 @@ function AttendanceTab({ employeeId, canManage }) {
 }
 
 function AttendanceDayModal({ employeeId, day, onClose, onSaved }) {
-  const [status, setStatus] = useState(day.rec.status || 'present');
-  const [loginTime, setLoginTime] = useState(day.rec.loginTime || '');
-  const [logoutTime, setLogoutTime] = useState(day.rec.logoutTime || '');
+  const [status, setStatus] = useState(day.rec.status && day.rec.status !== 'none' ? day.rec.status : 'present');
+  const [loginTime, setLoginTime] = useState(day.rec.login || day.rec.loginTime || '');
+  const [logoutTime, setLogoutTime] = useState(day.rec.logout || day.rec.logoutTime || '');
   const [note, setNote] = useState(day.rec.note || '');
   const [busy, setBusy] = useState(false);
   const save = async () => { setBusy(true); try { await hrApi(`/employees/${employeeId}/attendance/${day.date}`, { method: 'PUT', body: JSON.stringify({ status, loginTime, logoutTime, note }) }); onSaved(); } catch (e) { toast(e.message); setBusy(false); } };
