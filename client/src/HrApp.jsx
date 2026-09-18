@@ -4108,6 +4108,22 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const [expanded, setExpanded] = useState({});  // employeeId → open?
   const [dayChoice, setDayChoice] = useState({}); // "empId:date" → 'yes'|'no'
   const [showUnmatched, setShowUnmatched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveAll = async () => {
+    // Count undecided discrepancy rows so we can warn HR before saving.
+    let undecided = 0;
+    (recon.rows || []).forEach((r) => r.days.forEach((d) => { if (d.highlight && !d.off && !dayChoice[`${r.employeeId}:${d.date}`]) undecided++; }));
+    const msg = undecided > 0
+      ? `This saves clock-in/out to HRMS attendance for all employees. ${undecided} highlighted day(s) still need a Yes/No decision and will be SKIPPED — you can review and apply them after.`
+      : 'This saves clock-in/out to HRMS attendance for all employees in this report.';
+    if (!(await confirmDialog({ title: 'Save all to HRMS attendance?', message: msg, confirmText: 'Save to HRMS' }))) return;
+    setSaving(true);
+    try {
+      const r = await hrApi(`/attendance/biometric/${info.importId}/apply-all`, { method: 'POST', body: JSON.stringify({ from, to, choices: dayChoice }) });
+      toast(`Saved ${r.written} day(s) to HRMS${r.skipped ? ` · ${r.skipped} skipped (need review)` : ''} ✓`);
+    } catch (e) { toast(e.message); }
+    setSaving(false);
+  };
   const runReconcile = async () => {
     setBusy(true);
     try { const r = await hrApi(`/attendance/biometric/${info.importId}/reconcile`, { method: 'POST', body: JSON.stringify({ from, to, reconcile: true }) }); setRecon(r); setStep(3); }
@@ -4408,9 +4424,10 @@ function BiometricModal({ onClose, onOpenEmployee }) {
 
         {/* Footer: send flags to Review */}
         {step === 3 && recon && (
-          <div className="px-5 py-3 border-t border-slate-100 flex gap-2 flex-wrap shrink-0">
+          <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2 flex-wrap shrink-0">
+            <button onClick={saveAll} disabled={saving} className="rounded-lg text-white font-extrabold text-[13px] px-6 py-2.5" style={{ background: 'linear-gradient(90deg,#16a34a,#15803d)', opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving…' : '💾 Save all to HRMS attendance'}</button>
             <button onClick={sendFlags} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">📩 Send flags to Review</button>
-            <div className="text-[11px] text-slate-400 self-center">Highlighted rows (⚠) need your review before applying.</div>
+            <div className="text-[11px] text-slate-400 self-center">Saves clock-in/out for all employees. Highlighted rows (⚠) are saved only after you pick Yes/No.</div>
           </div>
         )}
       </div>

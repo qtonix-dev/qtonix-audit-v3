@@ -8744,6 +8744,60 @@ router.post('/attendance/biometric/:id/apply', requireHrAccess, async (req, res,
 // { employeeId, date, choice:'yes'|'no' }. Yes → use biometric times; No →
 // keep HRMS. Either way the bio+HRMS breakdown is stored on the day for the
 // "click a date" detail in View Attendance.
+// Bulk save the whole report to HRMS. Applies:
+//  - every clean day (no discrepancy) → biometric first/last punch,
+//  - discrepancy days ONLY where HR already chose Yes/No (choices in body),
+//  - skips undecided discrepancy days and reports them so HR can review.
+// Also marks matched employees present on days they have punches.
+router.post('/attendance/biometric/:id/apply-all', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
+    const imp = await BiometricImport.findByPk(Number(req.params.id));
+    if (!imp) return res.status(404).json({ error: 'Import not found.' });
+    const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
+    // Per-day HR decisions already made in the UI: { "empId:date": "yes"|"no" }.
+    const choices = (req.body && req.body.choices) || {};
+    const emps = await loadEmpsForCompare(from, to);
+    const fileDevices = new Set(Object.keys(imp.data || {}));
+    // Reconcile with biometric-preferred so clean rows resolve to bio times.
+    const rec = bioSvc.reconcile({ emps, punches: imp.data || {}, from, to, reconcile: true, gapMin: 20 });
+    const rows = rec.rows.filter((r) => r.deviceId && fileDevices.has(r.deviceId));
+
+    let written = 0, skipped = 0; const skippedDays = [];
+    for (const r of rows) {
+      const emp = emps.find((e) => e.id === r.employeeId);
+      for (const d of r.days) {
+        if (d.off) continue;                                  // weekoff/holiday
+        if (emp && emp.wfhDates && emp.wfhDates.has(d.date)) continue; // leave WFH
+        if (!d.bioIn && !d.hrmsIn) continue;                  // nothing to save
+        const key = `${r.employeeId}:${d.date}`;
+        let useBio = true;
+        if (d.highlight) {
+          // Discrepancy day: only apply if HR decided; otherwise skip + report.
+          const ch = choices[key];
+          if (!ch) { skipped++; skippedDays.push({ employeeId: r.employeeId, name: r.name, date: d.date }); continue; }
+          useBio = ch === 'yes';
+        }
+        const login = useBio ? (d.bioIn || d.hrmsIn) : (d.hrmsIn || d.bioIn);
+        let logout = useBio ? (d.bioOut || d.hrmsOut) : (d.hrmsOut || d.bioOut);
+        if (!login) { continue; }
+        const [row] = await HrAttendance.findOrCreate({ where: { employeeId: r.employeeId, date: d.date }, defaults: { employeeId: r.employeeId, date: d.date, status: 'present' } });
+        row.loginTime = login; if (logout) row.logoutTime = logout;
+        if (row.status === 'absent') row.status = 'present';
+        if (!row.status || row.status === 'none') row.status = 'present';
+        row.source = 'biometric';
+        row.bioMeta = { bioIn: d.bioIn, bioOut: d.bioOut, hrmsIn: d.hrmsIn, hrmsOut: d.hrmsOut, chosen: useBio ? 'bio' : 'hrms', outNextDay: !!d.outNextDay, middle: d.middle || [], missingBioOut: !!(d.bioIn && !d.bioOut), missingHrms: !(d.hrmsIn || d.hrmsOut), importId: imp.id, at: new Date() };
+        row.changed('bioMeta', true);
+        await row.save(); written++;
+      }
+    }
+    const ranges = Array.isArray(imp.appliedRanges) ? imp.appliedRanges : [];
+    ranges.push({ from, to, at: new Date(), by: req.hrActor.name, written });
+    imp.appliedRanges = ranges; imp.changed('appliedRanges', true); await imp.save();
+    res.json({ ok: true, written, skipped, skippedDays: skippedDays.slice(0, 50) });
+  } catch (e) { next(e); }
+});
+
 router.post('/attendance/biometric/:id/apply-day', requireHrAccess, async (req, res, next) => {
   try {
     if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'edit')) return res.status(403).json({ error: 'You don\u2019t have edit access to Attendance.' });
