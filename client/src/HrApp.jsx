@@ -11667,10 +11667,12 @@ export default function HrApp() {
   const [logoutSummary, setLogoutSummary] = useState(null);
   const startLogout = async () => {
     try {
-      // If it's after shift end and they never clocked out, clock them out now
-      // and show the day-end report (Q: only after shift end; before → normal).
+      // The wrap-up popup only appears when the employee is logging out AFTER
+      // their shift end WITHOUT having clocked out — we then clock them out
+      // (saving logout time) and show the day-end report. In every other case
+      // (before shift end, or already clocked out) we just sign out silently.
       const clk = await hrApi('/me/clock').catch(() => null);
-      let pastEnd = false;
+      let pastEndNotOut = false;
       if (clk && clk.shift && clk.shift.end && (clk.state === 'in' || clk.state === 'break')) {
         const now = new Date(Date.now() + 330 * 60000);
         const [eh, em] = String(clk.shift.end).split(':').map(Number);
@@ -11678,11 +11680,16 @@ export default function HrApp() {
         let endMin = eh * 60 + (em || 0); const startMin = sh * 60;
         let nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
         if (endMin <= startMin) { endMin += 1440; if (nowMin < startMin) nowMin += 1440; }
-        pastEnd = nowMin >= endMin;
+        pastEndNotOut = nowMin >= endMin;
       }
-      if (pastEnd) { try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action: 'out' }) }); } catch {} }
-      const s = await hrApi('/tasks/my-summary').catch(() => ({}));
-      setLogoutSummary(s || {});
+      if (pastEndNotOut) {
+        // Clock out (save logout time) then show the day-end report before signing out.
+        try { await hrApi('/me/clock', { method: 'POST', body: JSON.stringify({ action: 'out' }) }); } catch {}
+        const s = await hrApi('/tasks/my-summary').catch(() => ({}));
+        setLogoutSummary(s || {});
+      } else {
+        logout(); // normal sign-out, no popup
+      }
     } catch { logout(); }
   };
 

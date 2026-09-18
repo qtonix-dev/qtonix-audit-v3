@@ -2582,6 +2582,8 @@ router.get('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
       activeBranches.some((b) => b.toLowerCase() === String(e.branch || '').toLowerCase())
       && !branchWeekendOff(date, e.branch)
       && !branchHoliday(e.branch)
+      // Only show an employee from their joining date onward.
+      && (() => { const j = parseJoin(e.joiningDate || (e.profile && e.profile.joiningDate)); return !j || j.toISOString().slice(0, 10) <= date; })()
     );
     const shifts = {}; (await HrShift.findAll()).forEach((sh) => { shifts[sh.id] = sh; });
     const marks = {}; (await HrAttendance.findAll({ where: { date } })).forEach((m) => { marks[m.employeeId] = m; });
@@ -4272,7 +4274,10 @@ router.put('/attendance/day/:date', requireHrAccess, async (req, res, next) => {
     for (const en of entries) {
       const emp = await HrUser.findByPk(Number(en.employeeId));
       if (!emp) { results.push({ employeeId: en.employeeId, error: 'not found' }); continue; }
-      if (!canManageBranch(req, emp.branch)) { results.push({ employeeId: en.employeeId, error: 'out of scope' }); continue; }
+      // A granted-but-not-manager HR user can edit attendance for their OWN
+      // branch (matches their view scope). Admins/managers use canManageBranch.
+      const grantedSameBranch = PERMS.can(req, 'corehr_attendance', 'edit') && (!req.hrBranch || !emp.branch || String(emp.branch).toLowerCase() === String(req.hrBranch).toLowerCase());
+      if (!canManageBranch(req, emp.branch) && !grantedSameBranch) { results.push({ employeeId: en.employeeId, error: 'out of scope' }); continue; }
       // Toggled-off → remove this day's attendance + leave for the employee.
       if (en.clear) {
         await HrAttendance.destroy({ where: { employeeId: emp.id, date } });
