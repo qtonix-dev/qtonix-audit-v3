@@ -1519,7 +1519,7 @@ export function DirectorEditModal({ director, onClose, onSaved }) {
 
 export function EditEmployeeModal({ user, branches, departments, reportingOptions, shifts, isAdmin, onClose, onSaved }) {
   const [f, setF] = useState({
-    name: user.name || '', employeeId: user.employeeId || '', phone: user.phone || '', designation: user.designation || '',
+    name: user.name || '', employeeId: user.employeeId || '', deviceId: user.deviceId || '', phone: user.phone || '', designation: user.designation || '',
     type: user.type || 'employee', branch: user.branch || '', department: user.department || '',
     joiningDate: user.joiningDate || '', birthday: user.birthday || '', maritalStatus: user.maritalStatus || '', anniversary: user.anniversary || '',
     reportsTo: user.reportsToId ? `hr:${user.reportsToId}` : (user.reportsToAdminId ? `admin:${user.reportsToAdminId}` : ''),
@@ -1537,7 +1537,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
     const [kind, id] = (f.reportsTo || '').split(':');
     try {
       await hrApi(`/users/${user._id}`, { method: 'PUT', body: JSON.stringify({
-        name: f.name, employeeId: f.employeeId, phone: f.phone, designation: f.designation, type: f.type,
+        name: f.name, employeeId: f.employeeId, deviceId: f.deviceId, phone: f.phone, designation: f.designation, type: f.type,
         branch: f.branch, department: f.department, joiningDate: f.joiningDate || null, birthday: f.birthday || null,
         maritalStatus: f.maritalStatus || null, anniversary: f.anniversary || null,
         reportsToId: kind === 'hr' ? Number(id) : null, reportsToAdminId: kind === 'admin' ? Number(id) : null,
@@ -1558,6 +1558,7 @@ export function EditEmployeeModal({ user, branches, departments, reportingOption
           {err && <div className="col-span-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{err}</div>}
           <label className="text-xs font-bold text-slate-500">Name<input className={inputCls} value={f.name} onChange={(e) => set('name', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Employee ID<input className={inputCls} value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)} /></label>
+          <label className="text-xs font-bold text-slate-500">Device ID<input className={inputCls} value={f.deviceId || ''} onChange={(e) => set('deviceId', e.target.value)} placeholder="Biometric User ID (e.g. 423)" /></label>
           <label className="text-xs font-bold text-slate-500">Phone<input className={inputCls} value={f.phone} onChange={(e) => set('phone', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Designation<input className={inputCls} value={f.designation} onChange={(e) => set('designation', e.target.value)} /></label>
           <label className="text-xs font-bold text-slate-500">Role<select className={inputCls} value={f.type} onChange={(e) => set('type', e.target.value)}>{ROLE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>

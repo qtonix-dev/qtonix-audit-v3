@@ -729,7 +729,7 @@ router.get('/employees', requireHrAccess, async (req, res, next) => {
   try {
     const rows = await HrUser.findAll({ where: { chatOnly: { [Op.not]: true }, isDemo: !!req.isDemoSession }, order: [['name', 'ASC']] });
     let list = rows.map((u) => ({
-      _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, email: u.email,
+      _id: u.id, id: u.id, name: u.name, employeeId: u.employeeId, deviceId: u.deviceId, email: u.email,
       type: u.type, designation: u.designation, branch: u.branch, department: u.department,
       avatar: u.avatar, active: u.active, completion: profileCompletion(u),
       shiftId: u.shiftId, isHrManager: u.isHrManager, hrManagerScope: u.hrManagerScope || '',
