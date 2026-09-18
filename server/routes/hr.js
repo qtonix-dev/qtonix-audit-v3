@@ -8710,17 +8710,23 @@ router.post('/attendance/biometric/:id/apply', requireHrAccess, async (req, res,
     if (!imp) return res.status(404).json({ error: 'Import not found.' });
     const from = String(req.body.from || imp.minDate), to = String(req.body.to || imp.maxDate);
     const onlyEmpId = req.body.employeeId ? Number(req.body.employeeId) : null;
+    const doRecon = req.body.reconcile !== false;
     const emps = (await loadEmpsForCompare(from, to)).filter((e) => e.deviceId && (!onlyEmpId || e.id === onlyEmpId));
+    // Use the reconciliation engine so the APPLIED times match what HR reviewed
+    // (≤20/>20 rule, HRMS clock-out fallback, night-shift, weekoff skipped).
+    const rec = bioSvc.reconcile({ emps, punches: imp.data || {}, from, to, reconcile: doRecon, gapMin: 20 });
     let written = 0;
-    for (const e of emps) {
-      const bio = imp.data[e.deviceId] || {};
-      for (const d of Object.keys(bio)) {
-        if (d < from || d > to) continue;
-        if (e.wfhDates && e.wfhDates.has(d)) continue; // don't overwrite WFH
-        const times = bio[d]; if (!times.length) continue;
-        const login = times[0].slice(0, 5); const logout = times.length > 1 ? times[times.length - 1].slice(0, 5) : null;
-        const [row] = await HrAttendance.findOrCreate({ where: { employeeId: e.id, date: d }, defaults: { employeeId: e.id, date: d, status: 'present' } });
-        row.loginTime = login; if (logout) row.logoutTime = logout; row.status = row.status === 'absent' ? 'present' : row.status; row.source = 'biometric';
+    for (const row0 of rec.rows) {
+      const e = emps.find((x) => x.id === row0.employeeId);
+      for (const d of row0.days) {
+        if (d.off) continue;                 // don't write weekoff/holiday
+        if (e && e.wfhDates && e.wfhDates.has(d.date)) continue; // leave WFH untouched
+        if (!d.finalIn && !d.finalOut) continue;
+        const [row] = await HrAttendance.findOrCreate({ where: { employeeId: row0.employeeId, date: d.date }, defaults: { employeeId: row0.employeeId, date: d.date, status: 'present' } });
+        if (d.finalIn) row.loginTime = d.finalIn;
+        if (d.finalOut) row.logoutTime = d.finalOut;
+        if (row.status === 'absent') row.status = 'present';
+        row.source = 'biometric';
         await row.save(); written++;
       }
     }

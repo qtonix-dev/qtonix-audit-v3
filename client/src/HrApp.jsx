@@ -4103,6 +4103,15 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const [info, setInfo] = useState(null);   // upload result
   const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const [report, setReport] = useState(null);
+  const [recon, setRecon] = useState(null);      // reconciliation result (per-employee days)
+  const [doRecon, setDoRecon] = useState(true);  // HR's Yes/No for the ≤20/>20 rule
+  const [expanded, setExpanded] = useState({});  // employeeId → open?
+  const runReconcile = async () => {
+    setBusy(true);
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/reconcile`, { method: 'POST', body: JSON.stringify({ from, to, reconcile: doRecon }) }); setRecon(r); setStep(3); }
+    catch (err) { toast(err.message); }
+    setBusy(false);
+  };
   const [openEmp, setOpenEmp] = useState(null);
   const [aiReview, setAiReview] = useState(null); // { digest, insights }
   const [aiBusy, setAiBusy] = useState(false);
@@ -4134,7 +4143,7 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   const apply = async (employeeId) => {
     if (!(await confirmDialog({ title: 'Apply biometric times to HRMS?', message: `This updates login/logout in HRMS attendance for ${from} to ${to}${employeeId ? ' for this employee' : ' for all matched employees'}. WFH days are left untouched.`, confirmText: 'Apply times' }))) return;
     setBusy(true);
-    try { const r = await hrApi(`/attendance/biometric/${info.importId}/apply`, { method: 'POST', body: JSON.stringify({ from, to, employeeId }) }); toast(`Applied to ${r.written} days ✓`); }
+    try { const r = await hrApi(`/attendance/biometric/${info.importId}/apply`, { method: 'POST', body: JSON.stringify({ from, to, employeeId, reconcile: doRecon }) }); toast(`Applied to ${r.written} days ✓`); }
     catch (err) { toast(err.message); }
     setBusy(false);
   };
@@ -4176,16 +4185,85 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                 <b className="text-[#050A1F]">{info.punchCount.toLocaleString()}</b> punches · <b className="text-[#050A1F]">{info.deviceIdCount}</b> device IDs · available <b className="text-[#050A1F]">{info.minDate}</b> → <b className="text-[#050A1F]">{info.maxDate}</b>
                 <div className="mt-1">Matched <b className="text-green-600">{info.matched}</b> to employees{info.unmatched > 0 && <> · <b className="text-red-600">{info.unmatched} unmatched</b> device IDs (set their Device ID in the employee profile)</>}</div>
               </div>
+              <div className="rounded-xl border border-slate-200 p-3.5 mb-4">
+                <div className="text-[12px] font-bold text-slate-600 mb-2">Reconcile biometric vs HRMS clock-in times?</div>
+                <div className="flex gap-2">
+                  <button onClick={() => setDoRecon(true)} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold border-2 transition" style={{ borderColor: doRecon ? '#16a34a' : '#e2e8f0', background: doRecon ? '#f0fdf4' : '#fff', color: doRecon ? '#15803d' : '#64748b' }}>{doRecon ? '✓ ' : ''}Yes — auto-reconcile</button>
+                  <button onClick={() => setDoRecon(false)} className="px-3.5 py-1.5 rounded-lg text-[12.5px] font-bold border-2 transition" style={{ borderColor: !doRecon ? '#334155' : '#e2e8f0', background: !doRecon ? '#f1f5f9' : '#fff', color: !doRecon ? '#334155' : '#64748b' }}>{!doRecon ? '✓ ' : ''}No — keep HRMS times</button>
+                </div>
+                <div className="text-[11px] text-slate-400 mt-2">{doRecon ? 'If biometric and HRMS clock-in differ by ≤20 min, biometric time is used. If >20 min, HRMS time is kept and the row is highlighted for you to check.' : 'Clock-in/out will stick to the HRMS system times.'}</div>
+              </div>
               <div className="flex items-end gap-3 flex-wrap">
                 <div><div className="text-[11px] font-bold text-slate-500 mb-1">From</div><input type="date" value={from} min={info.minDate} max={info.maxDate} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
                 <div><div className="text-[11px] font-bold text-slate-500 mb-1">To</div><input type="date" value={to} min={info.minDate} max={info.maxDate} onChange={(e) => setTo(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
-                <button onClick={analyze} disabled={busy} className="text-white font-bold px-5 py-2 rounded-lg text-[13px]" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Analyzing…' : 'Analyze range →'}</button>
+                <button onClick={runReconcile} disabled={busy} className="text-white font-bold px-5 py-2 rounded-lg text-[13px]" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)', opacity: busy ? 0.6 : 1 }}>{busy ? 'Processing…' : 'View log data →'}</button>
               </div>
             </div>
           )}
 
-          {/* STEP 3 — report */}
-          {step === 3 && report && !openEmp && (
+          {/* STEP 3 — reconciliation: per-employee expandable list */}
+          {step === 3 && recon && (
+            <div>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="text-[13px] font-extrabold text-[#050A1F]">{recon.rows.length} employees with log data · {recon.from} → {recon.to}</div>
+                <div className="flex gap-2">
+                  <button onClick={exportExcel} className="rounded-lg text-white font-bold text-[12px] px-3 py-1.5" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇ Excel</button>
+                  <button onClick={() => apply(null)} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12px] px-3 py-1.5">✔ Apply to HRMS</button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {recon.rows.map((r) => {
+                  const open = !!expanded[r.employeeId];
+                  return (
+                    <div key={r.employeeId} className="border border-slate-200 rounded-xl overflow-hidden">
+                      <button onClick={() => setExpanded((x) => ({ ...x, [r.employeeId]: !x[r.employeeId] }))} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-left">
+                        <span className={`text-slate-400 text-[11px] transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-bold text-[#050A1F]">{r.deviceId ? `Emp ${r.deviceId} · ` : ''}{titleCase(r.name)}{r.isNight && <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600">Night</span>}</div>
+                          <div className="text-[10.5px] text-slate-400">{r.department || '—'} · {r.shiftLabel} · {r.presentDays} days</div>
+                        </div>
+                        {r.highlightDays > 0 && <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 shrink-0">⚠ {r.highlightDays} to check</span>}
+                        <span className="text-[12.5px] font-extrabold shrink-0" style={{ color: r.inDeficit ? '#dc2626' : '#16a34a' }}>{r.totalDeficitLabel}</span>
+                      </button>
+                      {open && (
+                        <div className="overflow-x-auto border-t border-slate-100">
+                          <table className="w-full text-[11.5px]">
+                            <thead><tr className="bg-slate-50 text-[9px] uppercase text-slate-400 font-bold"><th className="text-left px-2.5 py-1.5">Date</th><th className="text-left px-2.5 py-1.5">Clock in</th><th className="text-left px-2.5 py-1.5">Clock out</th><th className="text-left px-2.5 py-1.5">Intermediate punches</th><th className="text-left px-2.5 py-1.5">Worked</th><th className="text-left px-2.5 py-1.5">Deficit</th></tr></thead>
+                            <tbody>
+                              {r.days.map((d) => (
+                                <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (d.highlight ? 'bg-amber-50/60' : '')}>
+                                  <td className="px-2.5 py-1.5 font-semibold" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
+                                    {new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} <span className="text-[9px] text-slate-400">{d.dow}</span>
+                                    {d.off && <span className="ml-1 text-[8.5px] font-bold px-1 py-0.5 rounded" style={{ background: d.offKind === 'holiday' ? '#dbeafe' : '#e2e8f0', color: d.offKind === 'holiday' ? '#1d4ed8' : '#64748b' }}>{d.offKind === 'holiday' ? (d.offName || 'Holiday') : 'Week off'}</span>}
+                                    {d.punchedOnOff && <span className="ml-1 text-[8.5px] font-bold text-red-600">● punched</span>}
+                                  </td>
+                                  {d.off && !d.punchCount ? (
+                                    <td colSpan={5} className="px-2.5 py-1.5 text-slate-300 text-center italic">— off day —</td>
+                                  ) : (
+                                    <>
+                                      <td className="px-2.5 py-1.5">{d.finalIn || '—'}{d.inSource === 'hrms' && d.bioIn && <span className="text-[8.5px] text-amber-600 ml-1" title={`biometric ${d.bioIn}`}>⚠</span>}{d.inSource && <span className="text-[8px] text-slate-300 ml-1">{d.inSource}</span>}</td>
+                                      <td className="px-2.5 py-1.5">{d.finalOut || <span className="text-orange-500">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}{d.outSource && d.finalOut && <span className="text-[8px] text-slate-300 ml-1">{d.outSource}</span>}</td>
+                                      <td className="px-2.5 py-1.5 text-slate-500">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
+                                      <td className="px-2.5 py-1.5 font-bold text-[#050A1F]">{d.workedLabel}</td>
+                                      <td className="px-2.5 py-1.5 font-bold" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div className="px-2.5 py-2 bg-slate-50/50 text-right"><button onClick={() => apply(r.employeeId)} disabled={busy} className="text-[11px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5">✔ Apply this employee to HRMS</button></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* (legacy) STEP 3 — old summary report — kept but not primary */}
+          {false && step === 3 && report && !openEmp && (
             <div>
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <div className="text-[13px] font-extrabold text-[#050A1F]">{report.rows.length} employees · {report.from} → {report.to}</div>
@@ -4288,12 +4366,11 @@ function BiometricModal({ onClose, onOpenEmployee }) {
           )}
         </div>
 
-        {/* Footer actions for the report */}
-        {step === 3 && !openEmp && (
+        {/* Footer: send flags to Review */}
+        {step === 3 && recon && (
           <div className="px-5 py-3 border-t border-slate-100 flex gap-2 flex-wrap shrink-0">
-            <button onClick={exportExcel} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>⬇ Export report (Excel)</button>
-            <button onClick={() => apply(null)} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">✔ Apply to HRMS</button>
             <button onClick={sendFlags} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[12.5px] px-4 py-2">📩 Send flags to Review</button>
+            <div className="text-[11px] text-slate-400 self-center">Highlighted rows (⚠) need your review before applying.</div>
           </div>
         )}
       </div>
