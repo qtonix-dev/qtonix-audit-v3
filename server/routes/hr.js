@@ -632,9 +632,14 @@ router.get('/users/:id', requireHrAccess, requireScheduler, async (req, res, nex
   try {
     const u = await HrUser.findByPk(req.params.id);
     if (!u) return res.status(404).json({ error: 'Employee not found.' });
-    res.json({ ...u.toJSON(), completion: profileCompletion(u) });
+    // Resolve the immediate senior's name (HR manager or admin) for display.
+    let reportsToName = null, reportsToRole = null;
+    if (u.reportsToId) { const mgr = await HrUser.findByPk(u.reportsToId); if (mgr) { reportsToName = mgr.name; reportsToRole = mgr.designation || ROLE_LABELS_SRV(mgr.type); } }
+    else if (u.reportsToAdminId) { const adm = await User.findByPk(u.reportsToAdminId); if (adm) { reportsToName = adm.name; reportsToRole = 'Admin'; } }
+    res.json({ ...u.toJSON(), reportsToName, reportsToRole, completion: profileCompletion(u) });
   } catch (e) { next(e); }
 });
+function ROLE_LABELS_SRV(t) { return ({ junior: 'Employee', manager: 'Manager', hr: 'HR', recruiter: 'Recruiter', senior: 'Senior' })[t] || t || ''; }
 
 /**
  * GET /api/hr/employees — directory of all HR staff with completion %. Powers

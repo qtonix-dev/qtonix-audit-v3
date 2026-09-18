@@ -403,7 +403,9 @@ export function ProfilePage({ me, targetId }) {
   if (!row) return <div className="text-slate-400 text-sm py-12 text-center">{err || 'Loading…'}</div>;
 
   const roleLabel = ROLE_LABELS[row.type] || row.type;
-  const reportsToName = row.reportsToAdminId ? '(Admin)' : (row.reportsToId ? `HR #${row.reportsToId}` : '—');
+  const reportsToName = row.reportsToName
+    ? `${row.reportsToName}${row.reportsToRole ? ` · ${row.reportsToRole}` : ''}`
+    : (row.reportsToAdminId ? 'Admin' : (row.reportsToId ? `HR #${row.reportsToId}` : '—'));
   const TABS = [['timeline', 'Timeline'], ['personal', 'Personal Information'], ['payroll', 'Payroll & Compensation'], ['education', 'Professional & Education'], ['documents', 'Documents'], ['attendance', 'Attendance'], ['leave', 'Leave'], ['onboarding', 'Onboarding']];
 
   // A read-only identity field for the header meta rows.
@@ -465,7 +467,7 @@ export function ProfilePage({ me, targetId }) {
                   </div>
                   <div className="flex flex-wrap gap-x-4 text-xs text-slate-400 pt-1">
                     {row.joiningDate && <span>Joined: <b className="text-slate-600">{row.joiningDate}</b></span>}
-                    <span>Reports to: <b className="text-slate-600">{reportsToName}</b></span>
+                    <span>Immediate senior: <b className="text-slate-600">{reportsToName}</b></span>
                     {row.shift && <span>Shift: <b className="text-slate-600">{row.shift.name}</b></span>}
                   </div>
                   <div className="flex items-center gap-2 pt-2">
