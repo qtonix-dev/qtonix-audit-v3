@@ -2381,8 +2381,9 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
 
   return (
     <div className="flex h-full bg-white">
-      {/* Conversation list */}
-      <div className="flex flex-col border-r border-slate-200 shrink-0 min-h-0 overflow-x-hidden" style={{ width: 300, background: '#f8fafc' }}>
+      {/* Conversation list — full width on mobile, fixed sidebar on desktop.
+          Hides once a conversation is open on mobile (Google Chat style). */}
+      <div className={`flex-col border-r border-slate-200 shrink-0 min-h-0 overflow-x-hidden w-full md:w-[300px] ${active ? 'hidden md:flex' : 'flex'}`} style={{ background: '#f8fafc' }}>
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <div className="text-xl font-extrabold">Chat</div>
           <div className="flex items-center gap-2">
@@ -2527,14 +2528,15 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
 
       {/* Conversation panel */}
       {!active ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-slate-400" style={{ background: '#fdfdfe' }}>
+        <div className="flex-1 flex-col items-center justify-center text-slate-400 hidden md:flex" style={{ background: '#fdfdfe' }}>
           <div className="text-5xl mb-3">💬</div>
           <div className="text-sm font-semibold">Select a conversation or start a new one</div>
           <button onClick={() => setShowNew(true)} className="mt-3 rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Message a colleague</button>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col min-w-0 min-h-0" style={{ background: '#fdfdfe' }}>
-          <div className="border-b border-slate-100 px-6 py-3 flex items-center gap-3 bg-white">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 w-full" style={{ background: '#fdfdfe' }}>
+          <div className="border-b border-slate-100 px-3 md:px-6 py-3 flex items-center gap-2 md:gap-3 bg-white">
+            <button onClick={() => setActive(null)} title="Back" className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 shrink-0 text-lg">‹</button>
             {active.channel ? (
               <>
                 <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-base font-extrabold" style={{ background: (active.team && active.team.color) || '#FF6A00' }}>#</span>
@@ -2553,7 +2555,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
               <button onClick={() => { setInChatSearch((v) => !v); setInChatQ(''); setInChatHits([]); }} title="Search this chat" className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">🔍</button>
             </div>
           </div>
-          {membersModal && <GroupMembersModal data={membersModal} onClose={() => setMembersModal(null)} onDeleted={() => { setMembersModal(null); setActive(null); loadConversations(); toast('Group deleted'); }} />}
+          {membersModal && <GroupMembersModal data={membersModal} directory={directory} canManage={!!(me && (me.isAdmin || me.type === 'hr' || me.isHrManager))} onChanged={() => { loadConversations(); loadTeams(); }} onClose={() => setMembersModal(null)} onDeleted={() => { setMembersModal(null); setActive(null); loadConversations(); toast('Group deleted'); }} />}
           {inChatSearch && (
             <div className="border-b border-slate-100 bg-slate-50 px-4 py-2">
               <input autoFocus value={inChatQ} onChange={(e) => runInChatSearch(e.target.value)} placeholder="Search in this conversation…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
@@ -2569,7 +2571,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
               )}
             </div>
           )}
-          <div ref={scrollRef} className="flex-1 overflow-auto px-6 py-5">
+          <div ref={scrollRef} className="flex-1 overflow-auto px-3 md:px-6 py-4 md:py-5">
             {messages.map((m, i) => {
               const mine = m.mine != null ? m.mine : (m.senderId === me.id);
               const showHead = i === 0 || messages[i - 1].senderId !== m.senderId;
@@ -2675,7 +2677,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
             {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">{active.team && active.team.isTask ? '🔒 Your private space — task alerts land here, and you can jot notes too.' : 'Say hello 👋'}</div>}
           </div>
           {/* Composer: reply chip, AI suggestions ABOVE, box, tone BELOW */}
-          <div className="px-5 py-4">
+          <div className="px-3 md:px-5 py-3 md:py-4 border-t border-slate-100 bg-white shrink-0">
             {typing.length > 0 && <div className="text-[12px] text-slate-400 italic mb-1.5 ml-1">{typing.join(', ')} {typing.length === 1 ? 'is' : 'are'} typing…</div>}
             {replyTo && (
               <div className="flex items-center gap-2 mb-2 rounded-lg px-3 py-1.5 text-[12px]" style={{ background: '#f8fafc', borderLeft: '3px solid #FF6A00' }}>
@@ -3093,34 +3095,78 @@ function ShortcutCard({ card, onClose, onOpenTask }) {
   return null;
 }
 
-// Group members list + delete-group action (shown from the chat header).
-function GroupMembersModal({ data, onClose, onDeleted }) {
+// Group members list + add/delete-group actions (shown from the chat header).
+function GroupMembersModal({ data, onClose, onDeleted, onChanged, directory = [], canManage }) {
   const [busy, setBusy] = useState(false);
-  const members = data.members || [];
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState('');
+  const [members, setMembers] = useState(data.members || []);
+  const memberIds = new Set(members.map((m) => m.id));
+  const candidates = (directory || []).filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
   const del = async () => {
     if (!(await confirmDialog({ title: `Delete "${data.name}"?`, message: 'This permanently deletes the group and ALL its messages and images for everyone. This cannot be undone.', confirmText: 'Delete group', danger: true }))) return;
     setBusy(true);
     try { await hrApi(`/chat/channels/${data.convId}`, { method: 'DELETE' }); onDeleted(); }
     catch (e) { toast(e.message); setBusy(false); }
   };
+  const addMember = async (u) => {
+    setBusy(true);
+    try {
+      await hrApi(`/chat/channels/${data.convId}/members`, { method: 'POST', body: JSON.stringify({ add: [u.id] }) });
+      setMembers((prev) => [...prev, { id: u.id, name: u.name, avatar: u.avatar, designation: u.designation, department: u.department }]);
+      setQ(''); if (onChanged) onChanged();
+      toast(`${titleCase(u.name)} added ✓`);
+    } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  const removeMember = async (m) => {
+    if (m.isCreator) { toast('The creator can\u2019t be removed.'); return; }
+    if (!(await confirmDialog({ title: `Remove ${titleCase(m.name)}?`, message: 'They will lose access to this group\u2019s messages.', confirmText: 'Remove' }))) return;
+    setBusy(true);
+    try { await hrApi(`/chat/channels/${data.convId}/members`, { method: 'POST', body: JSON.stringify({ remove: [m.id] }) }); setMembers((prev) => prev.filter((x) => x.id !== m.id)); if (onChanged) onChanged(); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div><div className="text-[15px] font-extrabold text-[#050A1F]">Group members</div><div className="text-[12px] text-slate-400">#{data.name} · {members.length}</div></div>
           <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
         </div>
-        <div className="max-h-[50vh] overflow-auto p-2">
+        {canManage && (
+          <div className="px-4 pt-3 shrink-0">
+            {!adding ? (
+              <button onClick={() => setAdding(true)} className="w-full rounded-lg border border-dashed border-orange-300 text-orange-600 font-bold text-[12.5px] py-2 hover:bg-orange-50">+ Add member</button>
+            ) : (
+              <div className="rounded-lg border border-slate-200 p-2">
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people to add…" className="w-full text-[13px] px-2 py-1.5 border-b border-slate-100 focus:outline-none" />
+                <div className="max-h-[30vh] overflow-auto mt-1">
+                  {candidates.length === 0 ? <div className="text-[12px] text-slate-400 px-2 py-2">No one to add.</div> : candidates.slice(0, 30).map((u) => (
+                    <button key={u.id} onClick={() => addMember(u)} disabled={busy} className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-left disabled:opacity-50">
+                      <Avatar name={u.name} src={u.avatar} size={26} />
+                      <div className="min-w-0 flex-1"><div className="text-[12.5px] font-bold text-[#050A1F] truncate">{titleCase(u.name)}</div>{(u.designation || u.department) && <div className="text-[10.5px] text-slate-400 truncate">{[u.designation, u.department].filter(Boolean).join(' · ')}</div>}</div>
+                      <span className="text-orange-500 font-bold text-[16px]">+</span>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => { setAdding(false); setQ(''); }} className="w-full text-[11px] text-slate-400 font-bold py-1 mt-1">Done</button>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="flex-1 overflow-auto p-2">
           {members.map((m) => (
-            <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-50">
+            <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-50 group">
               <Avatar name={m.name} src={m.avatar} size={30} />
-              <div className="min-w-0"><div className="text-[13px] font-bold text-[#050A1F] truncate">{titleCase(m.name)}{m.isCreator && <span className="ml-1.5 text-[10px] font-bold text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">Creator</span>}</div>{(m.designation || m.department) && <div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</div>}</div>
-              {m.online && <span className="ml-auto w-2 h-2 rounded-full bg-green-500 shrink-0" />}
+              <div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-[#050A1F] truncate">{titleCase(m.name)}{m.isCreator && <span className="ml-1.5 text-[10px] font-bold text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">Creator</span>}</div>{(m.designation || m.department) && <div className="text-[11px] text-slate-400 truncate">{[m.designation, m.department].filter(Boolean).join(' · ')}</div>}</div>
+              {m.online && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />}
+              {canManage && !m.isCreator && <button onClick={() => removeMember(m)} title="Remove" className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-[15px] shrink-0">×</button>}
             </div>
           ))}
         </div>
         {data.canDelete && (
-          <div className="px-5 py-3 border-t border-slate-100">
+          <div className="px-5 py-3 border-t border-slate-100 shrink-0">
             <button onClick={del} disabled={busy} className="w-full rounded-lg bg-red-50 text-red-600 font-bold text-[13px] py-2.5 hover:bg-red-100 disabled:opacity-50">{busy ? 'Deleting…' : '🗑 Delete this group'}</button>
             <div className="text-[10.5px] text-slate-400 text-center mt-1.5">Deletes all messages & images for everyone</div>
           </div>
