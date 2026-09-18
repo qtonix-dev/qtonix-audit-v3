@@ -48,25 +48,18 @@ async function actingContext(req) {
   let actorUser = null;
   if (req.hrUser) actorUser = req.hrUser;
   else if (req.hrActor && req.hrActor.kind === 'hr') actorUser = await HrUser.findByPk(req.hrActor.id);
-  // If an admin also has a matching HR profile, act AS that HR profile so they
-  // have ONE unified board. Match by email first, then exact name. IMPORTANT:
-  // include chatOnly HrUsers here — an admin often has ONLY a chatOnly HrUser
-  // (auto-created for Buzz), and that record's id is what tasks are assigned to.
-  // Without this the admin falls back to a negative id built from their CRM
-  // User-table id, which can COLLIDE with a real HrUser id (different tables,
-  // overlapping ids) and leak another person's board. See the id-collision fix.
+  // If an admin also has an HR profile, act AS it so they have ONE unified
+  // board. Resolution is DETERMINISTIC and by stable id only — never by name
+  // (names collide) and email only as a legacy fallback:
+  //   1. An HrUser whose adminUserId == this admin's CRM User id (the canonical link).
+  //   2. Else an HrUser whose email matches the admin's email.
+  // We do NOT name-match: that merged different people's boards.
   if (!actorUser && isAdmin) {
     try {
-      const { Op } = require('sequelize');
+      const adminId = req.adminUser && req.adminUser.id;
       let hr = null;
-      if (req.adminUser && req.adminUser.email) hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true } });
-      if (!hr) {
-        const nm = (req.adminUser && req.adminUser.name) || (req.hrActor && req.hrActor.name);
-        if (nm) {
-          const matches = await HrUser.findAll({ where: { active: true } });
-          hr = matches.find((u) => String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase()) || null;
-        }
-      }
+      if (adminId) hr = await HrUser.findOne({ where: { adminUserId: adminId, active: true } });
+      if (!hr && req.adminUser && req.adminUser.email) hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true } });
       if (hr) actorUser = hr;
     } catch {}
   }
@@ -82,19 +75,20 @@ async function actingContext(req) {
   // We match ONLY by name/email against HrUser rows — we do NOT throw the admin's
   // CRM User-table id into this set, because that id lives in a different table
   // and can collide with an unrelated HrUser id (the bug that leaked boards).
+  // Collect EVERY HrUser id that represents THIS person (real profile + chatOnly
+  // Buzz record), so a task assigned to any of their identities is theirs.
+  // Linked strictly by stable ids — adminUserId and email — NEVER by name, which
+  // merged different people's boards (the cross-admin leak).
   const linkedIds = new Set([boardId].filter((x) => x != null));
   if (!isAdmin && rawId != null) linkedIds.add(rawId);
   try {
-    const emails = [actorUser && actorUser.email, req.adminUser && req.adminUser.email, req.hrActor && req.hrActor.email].filter(Boolean).map((e) => String(e).trim().toLowerCase());
-    const names = [actorUser && actorUser.name, req.adminUser && req.adminUser.name, req.hrActor && req.hrActor.name].filter(Boolean).map((n) => String(n).trim().toLowerCase());
-    const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email', 'name'] });
+    const adminId = req.adminUser && req.adminUser.id;
+    const emails = [actorUser && actorUser.email, req.adminUser && req.adminUser.email].filter(Boolean).map((e) => String(e).trim().toLowerCase());
+    const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email', 'adminUserId'] });
     for (const u of all) {
+      const sameAdmin = adminId && u.adminUserId && Number(u.adminUserId) === Number(adminId);
       const sameEmail = u.email && emails.includes(String(u.email).trim().toLowerCase());
-      // Name match links this person's own HrUser records (real + chatOnly Buzz).
-      // This is safe: the id-collision leak fixed in v518 was between the CRM
-      // User table and the HrUser table (never mixed here), NOT a name overlap.
-      const sameName = u.name && names.includes(String(u.name).trim().toLowerCase());
-      if (sameEmail || sameName) linkedIds.add(u.id);
+      if (sameAdmin || sameEmail) linkedIds.add(u.id);
     }
   } catch {}
   return {

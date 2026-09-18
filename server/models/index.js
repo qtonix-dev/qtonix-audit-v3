@@ -1387,6 +1387,10 @@ const HrUser = sequelize.define('HrUser', {
   // Chat-only participants (e.g. an admin auto-added to use chat) — excluded
   // from employee/attendance/payroll/reward lists; only visible inside chat.
   chatOnly: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Stable link to the CRM User (admin) this HrUser represents. Set when an
+  // admin's Buzz/chatOnly HrUser is created, so board identity is resolved by a
+  // deterministic id — never by email or name (which collide).
+  adminUserId: { type: DataTypes.INTEGER, allowNull: true },
   // RBAC: admin-granted extra access per module, ADDITIVE to role defaults.
   // Shape: { moduleId: { read: bool, edit: bool, delete: bool } }.
   permissions: { type: DataTypes.JSON, defaultValue: {} },

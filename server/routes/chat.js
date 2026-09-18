@@ -81,7 +81,7 @@ router.get('/directory', requireHrAccess, async (req, res, next) => {
       const em = (a.email || '').toLowerCase();
       if (em && !haveEmail.has(em)) {
         try {
-          const hr = await HrUser.create({ name: a.name || 'Admin', email: a.email, passwordHash: require('crypto').randomBytes(24).toString('hex'), type: 'manager', designation: a.designation || 'Admin', active: true, chatOnly: true });
+          const hr = await HrUser.create({ name: a.name || 'Admin', email: a.email, passwordHash: require('crypto').randomBytes(24).toString('hex'), type: 'manager', designation: a.designation || 'Admin', active: true, chatOnly: true, adminUserId: a.id });
           users.push(hr); haveEmail.add(em);
         } catch { const hr = await HrUser.findOne({ where: { email: a.email } }); if (hr) users.push(hr); }
       }

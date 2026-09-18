@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Task, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
 const bioSvc = require('../services/biometric');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
@@ -8948,6 +8948,79 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
   } catch (e) { next(e); }
 });
 function slimAttRow(r) { return { name: r.name, department: r.department, presentDays: r.presentDays, deficitLabel: r.deficitLabel, inDeficit: r.inDeficit, missingOut: r.missingOut, avgHours: r.avgHours }; }
+
+// ADMIN IDENTITY REPAIR — fixes cross-admin board leaks + orphaned tasks caused
+// by earlier identity models. Two modes:
+//   GET  /admin/identity-repair          → DRY RUN (reports what WOULD change)
+//   POST /admin/identity-repair {confirm:true} → APPLY the changes
+// Requires a real CRM admin (requireHrAdmin). Idempotent + safe to re-run.
+async function identityRepairPlan() {
+  const admins = await User.findAll({ where: { role: 'admin' }, attributes: ['id', 'name', 'email'] });
+  const hrUsers = await HrUser.findAll();
+  const plan = { linkAdminUserId: [], canonicalByAdmin: {}, repointTasks: [], warnings: [] };
+  const norm = (e) => String(e || '').trim().toLowerCase();
+
+  for (const a of admins) {
+    // Candidate HrUsers for this admin: by adminUserId, by email, or a chatOnly
+    // orphan with the same NAME (name-match is used ONLY here in the one-time
+    // repair to recover orphaned records — never in live board resolution).
+    const byId = hrUsers.filter((u) => u.adminUserId && Number(u.adminUserId) === Number(a.id));
+    const byEmail = hrUsers.filter((u) => u.email && norm(u.email) === norm(a.email));
+    const byNameOrphan = hrUsers.filter((u) => u.chatOnly && (!u.email || norm(u.email) === norm(a.email)) && String(u.name || '').trim().toLowerCase() === String(a.name || '').trim().toLowerCase());
+    const candidates = [...new Set([...byId, ...byEmail, ...byNameOrphan])];
+    if (!candidates.length) { plan.warnings.push(`Admin ${a.name} (${a.email}) has no HrUser record yet — will be created on next Buzz load.`); continue; }
+    // Canonical = prefer a non-chatOnly real profile, else the chatOnly one; lowest id wins for stability.
+    const real = candidates.filter((u) => !u.chatOnly).sort((x, y) => x.id - y.id);
+    const canonical = (real[0] || candidates.sort((x, y) => x.id - y.id)[0]);
+    plan.canonicalByAdmin[a.id] = { adminName: a.name, canonicalHrId: canonical.id, canonicalName: canonical.name, duplicates: candidates.filter((u) => u.id !== canonical.id).map((u) => u.id) };
+    // Ensure every candidate carries this admin's adminUserId (so future resolution is deterministic).
+    for (const u of candidates) {
+      if (Number(u.adminUserId) !== Number(a.id)) plan.linkAdminUserId.push({ hrId: u.id, hrName: u.name, hrEmail: u.email, setAdminUserId: a.id, adminName: a.name });
+    }
+  }
+  // Detect email collisions between two DIFFERENT admins (the actual leak cause).
+  const emailToAdmins = {};
+  for (const a of admins) { const e = norm(a.email); if (e) (emailToAdmins[e] = emailToAdmins[e] || []).push(a.name); }
+  for (const [e, names] of Object.entries(emailToAdmins)) if (names.length > 1) plan.warnings.push(`Multiple admins share email ${e}: ${names.join(', ')} — this WILL leak boards; give them distinct emails.`);
+  // Tasks assigned to a duplicate HrUser id → repoint to that admin's canonical id.
+  const dupToCanonical = {};
+  for (const [, info] of Object.entries(plan.canonicalByAdmin)) for (const dupId of info.duplicates) dupToCanonical[dupId] = info.canonicalHrId;
+  if (Object.keys(dupToCanonical).length) {
+    const tasks = await Task.findAll();
+    for (const t of tasks) {
+      let changed = false; const before = { assigneeId: t.assigneeId, assigneeIds: t.assigneeIds, boardOwnerId: t.boardOwnerId };
+      const after = {};
+      if (t.assigneeId && dupToCanonical[t.assigneeId]) { after.assigneeId = dupToCanonical[t.assigneeId]; changed = true; }
+      if (t.boardOwnerId && dupToCanonical[t.boardOwnerId]) { after.boardOwnerId = dupToCanonical[t.boardOwnerId]; changed = true; }
+      if (Array.isArray(t.assigneeIds)) { const mapped = t.assigneeIds.map((id) => dupToCanonical[id] || id); if (JSON.stringify(mapped) !== JSON.stringify(t.assigneeIds)) { after.assigneeIds = [...new Set(mapped)]; changed = true; } }
+      if (changed) plan.repointTasks.push({ taskId: t.id, title: t.title, before, after });
+    }
+  }
+  return plan;
+}
+
+router.get('/admin/identity-repair', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try { const plan = await identityRepairPlan(); res.json({ dryRun: true, ...plan, summary: { adminsLinked: plan.linkAdminUserId.length, tasksToRepoint: plan.repointTasks.length, warnings: plan.warnings.length } }); }
+  catch (e) { next(e); }
+});
+
+router.post('/admin/identity-repair', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'Pass { confirm: true } to apply. Use GET for a dry run first.' });
+    const plan = await identityRepairPlan();
+    let linked = 0, repointed = 0;
+    for (const l of plan.linkAdminUserId) { const u = await HrUser.findByPk(l.hrId); if (u) { u.adminUserId = l.setAdminUserId; await u.save(); linked++; } }
+    for (const r of plan.repointTasks) {
+      const t = await Task.findByPk(r.taskId); if (!t) continue;
+      if (r.after.assigneeId !== undefined) t.assigneeId = r.after.assigneeId;
+      if (r.after.boardOwnerId !== undefined) t.boardOwnerId = r.after.boardOwnerId;
+      if (r.after.assigneeIds !== undefined) { t.assigneeIds = r.after.assigneeIds; t.changed('assigneeIds', true); }
+      await t.save(); repointed++;
+    }
+    try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'admin.identity-repair', target: `linked ${linked}, repointed ${repointed}`, ip: req.ip }); } catch {}
+    res.json({ ok: true, linked, repointed, warnings: plan.warnings });
+  } catch (e) { next(e); }
+});
 
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;
