@@ -75,6 +75,19 @@ async function employeeShiftEnd(emp) {
   return null;
 }
 
+// Returns { start, end, isNight } for an employee's shift, or null. isNight is
+// true when the shift crosses midnight (end <= start), e.g. 19:00–05:00.
+async function employeeShift(emp) {
+  if (emp && emp.shiftId) {
+    const shift = await HrShift.findByPk(emp.shiftId);
+    if (shift && shift.startTime && shift.endTime) {
+      const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+      return { start: shift.startTime, end: shift.endTime, isNight: toMin(shift.endTime) <= toMin(shift.startTime) };
+    }
+  }
+  return null;
+}
+
 // Has this employee's working day ended for the given date? True if they've
 // logged out, OR their shift end-time has passed (IST now), OR they're absent.
 async function employeeDayEnded(emp, date) {
@@ -283,4 +296,4 @@ async function dayCounts(roster, date, cache) {
   return { present, absent: roster.length - present, totalDone: done, totalPlanned: total };
 }
 
-module.exports = { istDateStr, fmtDur, directReports, teamOf, seniorOf, employeeShiftEnd, employeeDayEnded, loadDayCache, dayCounts, buildEmployeeDay, buildTeamDay, buildAdminDay, dayFingerprint };
+module.exports = { istDateStr, fmtDur, directReports, teamOf, seniorOf, employeeShiftEnd, employeeShift, employeeDayEnded, loadDayCache, dayCounts, buildEmployeeDay, buildTeamDay, buildAdminDay, dayFingerprint };

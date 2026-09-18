@@ -92,23 +92,44 @@ async function runLogoutReminders(models) {
   const date = now.toISOString().slice(0, 10);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const GRACE = Number(process.env.LOGOUT_REMINDER_GRACE_MIN || 10);
+  const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 
   const users = await HrUser.findAll({ where: { active: true, chatOnly: { [require('sequelize').Op.not]: true } } });
   for (const emp of users) {
-    const shiftEnd = await teamReport.employeeShiftEnd(emp); // "HH:MM" or null
-    if (!shiftEnd) continue;
-    const [h, m] = shiftEnd.split(':').map(Number);
-    const endMin = h * 60 + m;
-    // Only same-day shifts (skip midnight-crossing to avoid false positives).
+    const shift = await teamReport.employeeShift(emp); // { start, end, isNight } or null
+    if (!shift) continue;
+    const endMin = toMin(shift.end);
+
+    if (shift.isNight) {
+      // NIGHT SHIFT (e.g. 19:00–05:00): the shift that STARTED yesterday ends
+      // early today. The person is only "past shift end" in the early-morning
+      // window today (after end + grace, before their next shift starts). Check
+      // YESTERDAY's attendance row — that's the shift now ending.
+      const startMin = toMin(shift.start);
+      const pastEnd = nowMin >= endMin + GRACE && nowMin < startMin; // morning window only
+      if (!pastEnd) continue;
+      const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+      const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date: y } });
+      if (!att || !att.loginTime) continue;
+      if (['absent', 'leave', 'week_off', 'holiday'].includes(att.status)) continue;
+      if (att.logoutTime) continue;              // they DID log out — no email
+      if (att.logoutReminderAt) continue;
+      if (!emp.email) continue;
+      const html = logoutReminderHtml(hrEmail.shell, emp, shift.end);
+      const sent = await sendHrEmailTo(models, emp.email, html, 'Action required: please log out');
+      if (sent) { att.logoutReminderAt = new Date(); await att.save(); }
+      continue;
+    }
+
+    // DAY SHIFT: only remind once we're past today's shift end + grace.
     if (nowMin < endMin + GRACE) continue;
     const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
-    // Must have logged in, not be absent/leave, and have NO logout time.
     if (!att || !att.loginTime) continue;
     if (['absent', 'leave', 'week_off', 'holiday'].includes(att.status)) continue;
     if (att.logoutTime) continue;
-    if (att.logoutReminderAt) continue; // already reminded today
+    if (att.logoutReminderAt) continue;
     if (!emp.email) continue;
-    const html = logoutReminderHtml(hrEmail.shell, emp, shiftEnd);
+    const html = logoutReminderHtml(hrEmail.shell, emp, shift.end);
     const sent = await sendHrEmailTo(models, emp.email, html, 'Action required: please log out');
     if (sent) { att.logoutReminderAt = new Date(); await att.save(); }
   }
@@ -173,6 +194,9 @@ async function runDailies(models) {
 // senior on WEEKLY_DAY. Guarded by a per-senior marker key in HrTeamReview
 // (date = 'weekly-YYYY-WW').
 async function runWeekly(models) {
+  // PAUSED by request: the weekly team productivity digest is disabled until
+  // further notice. Set TEAM_REPORT_WEEKLY_PAUSED=false to re-enable.
+  if (String(process.env.TEAM_REPORT_WEEKLY_PAUSED || 'true').toLowerCase() !== 'false') return;
   const { HrUser } = models;
   const now = istNow();
   if (now.getDay() !== WEEKLY_DAY) return;
