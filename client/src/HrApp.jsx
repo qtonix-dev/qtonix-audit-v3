@@ -4242,13 +4242,21 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                                 const key = `${r.employeeId}:${d.date}`;
                                 const chosen = dayChoice[key]; // 'yes'|'no'|undefined
                                 const hasDiscrepancy = !!d.highlight;
-                                // Clock in/out ALWAYS show the biometric first & last
-                                // punch (per requirement). "No" applies HRMS on save
-                                // but the displayed times stay biometric.
-                                const cin = d.bioIn || d.finalIn;
-                                const cout = d.bioOut;
+                                // The CHOSEN source is the main (top) time; the other
+                                // shows below so it's always clear which was taken.
+                                // Default (undecided) = biometric on top.
+                                const useHrms = chosen === 'no';
+                                const mainIn = useHrms ? (d.hrmsIn || d.bioIn) : (d.bioIn || d.finalIn);
+                                const otherIn = useHrms ? d.bioIn : d.hrmsIn;
+                                const mainOut = useHrms ? (d.hrmsOut || d.bioOut) : (d.bioOut || (d.outFromHrms ? d.hrmsOut : null));
+                                const otherOut = useHrms ? d.bioOut : d.hrmsOut;
+                                // Worked/deficit follow the chosen source.
+                                const workedLabel = useHrms ? d.hrmsWorkedLabel : d.bioWorkedLabel;
+                                const deficitLabel = useHrms ? d.hrmsDeficitLabel : d.bioDeficitLabel;
+                                const deficitMin = useHrms ? d.hrmsDeficitMin : d.bioDeficitMin;
+                                const srcTag = (which) => <span className="text-[8px] font-bold uppercase px-1 py-px rounded ml-1" style={{ background: which === 'bio' ? '#dbeafe' : '#ccfbf1', color: which === 'bio' ? '#1d4ed8' : '#0f766e' }}>{which === 'bio' ? 'Bio' : 'HRMS'}</span>;
                                 return (
-                                  <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (hasDiscrepancy && !chosen ? 'bg-amber-50/60' : '')}>
+                                  <tr key={d.date} className={d.off ? 'bg-slate-50/60' : (hasDiscrepancy && !chosen ? 'bg-amber-50/60' : (chosen ? 'bg-green-50/30' : ''))}>
                                     <td className="px-2.5 py-1.5 font-semibold align-top" style={{ color: d.off ? '#94a3b8' : '#475569' }}>
                                       {new Date(d.date + 'T00:00:00+05:30').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} <span className="text-[9px] text-slate-400">{d.dow}</span>
                                       {d.off && <span className="ml-1 text-[8.5px] font-bold px-1 py-0.5 rounded" style={{ background: d.offKind === 'holiday' ? '#dbeafe' : '#e2e8f0', color: d.offKind === 'holiday' ? '#1d4ed8' : '#64748b' }}>{d.offKind === 'holiday' ? (d.offName || 'Holiday') : 'Week off'}</span>}
@@ -4259,17 +4267,17 @@ function BiometricModal({ onClose, onOpenEmployee }) {
                                     ) : (
                                       <>
                                         <td className="px-2.5 py-1.5 align-top">
-                                          <div className="font-semibold text-[#050A1F]">{cin || '—'}</div>
-                                          {d.inDiffers && <div className={`text-[9px] mt-0.5 ${chosen === 'no' ? 'text-slate-700 font-bold' : 'text-amber-600'}`}>HRMS: {d.hrmsIn}{chosen !== 'no' && ' ⚠'}</div>}
+                                          <div className="font-semibold text-[#050A1F]">{mainIn || '—'}{chosen && srcTag(useHrms ? 'hrms' : 'bio')}</div>
+                                          {d.inDiffers && otherIn && <div className={`text-[9px] mt-0.5 ${!chosen ? 'text-amber-600' : 'text-slate-400'}`}>{useHrms ? 'Bio' : 'HRMS'}: {otherIn}{!chosen && ' ⚠'}</div>}
                                         </td>
                                         <td className="px-2.5 py-1.5 align-top">
-                                          <div className="font-semibold text-[#050A1F]">{cout || <span className="text-orange-500 font-normal">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}</div>
-                                          {d.outFromHrms && <div className="text-[9px] text-teal-600 mt-0.5">HRMS {d.hrmsOut} ↩ used</div>}
-                                          {d.outDiffers && !d.outFromHrms && <div className={`text-[9px] mt-0.5 ${chosen === 'no' ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>HRMS: {d.hrmsOut}</div>}
+                                          <div className="font-semibold text-[#050A1F]">{mainOut || <span className="text-orange-500 font-normal">missing</span>}{d.outNextDay && <span className="text-[8.5px] text-indigo-500 ml-0.5">+1d</span>}{chosen && mainOut && srcTag(useHrms ? 'hrms' : (d.bioOut ? 'bio' : 'hrms'))}</div>
+                                          {!useHrms && d.outFromHrms && <div className="text-[9px] text-teal-600 mt-0.5">HRMS {d.hrmsOut} ↩ used</div>}
+                                          {d.outDiffers && !d.outFromHrms && otherOut && <div className="text-[9px] text-slate-400 mt-0.5">{useHrms ? 'Bio' : 'HRMS'}: {otherOut}</div>}
                                         </td>
                                         <td className="px-2.5 py-1.5 text-slate-500 align-top">{(d.middle && d.middle.length) ? d.middle.join(', ') : '—'}</td>
-                                        <td className="px-2.5 py-1.5 font-bold text-[#050A1F] align-top">{d.workedLabel}</td>
-                                        <td className="px-2.5 py-1.5 font-bold align-top" style={{ color: d.deficitMin == null ? '#94a3b8' : d.deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{d.deficitLabel || '—'}</td>
+                                        <td className="px-2.5 py-1.5 font-bold text-[#050A1F] align-top">{workedLabel}</td>
+                                        <td className="px-2.5 py-1.5 font-bold align-top" style={{ color: deficitMin == null ? '#94a3b8' : deficitMin < 0 ? '#dc2626' : '#16a34a' }}>{deficitLabel || '—'}</td>
                                         <td className="px-2.5 py-1.5 align-top">
                                           {hasDiscrepancy ? (
                                             <div className="flex gap-1">

@@ -334,6 +334,18 @@ function reconcile({ emps, punches, from, to, reconcile: doRecon = true, gapMin 
         workedMin = b - a;
       }
 
+      // Also compute the worked/deficit for EACH source, so the UI can recompute
+      // live when HR flips Yes/No without another round-trip.
+      const wl = (mins) => mins == null ? '—' : `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+      const dl = (mins) => mins == null ? '—' : (mins < 0 ? '-' : '+') + `${Math.floor(Math.abs(mins) / 60)}h ${String(Math.abs(mins) % 60).padStart(2, '0')}m`;
+      // Biometric-based (bio in → bio out, else HRMS out fallback).
+      const bIn = bioIn, bOut = bioOut || hrmsOut;
+      let bioWorkedMin = null;
+      if (bIn && bOut) { let a = toMin(bIn), b = toMin(bOut); if ((!bioOut && isNight && toMin(hrmsOut) < shiftStartMin) || bioOutNextDay || b < a) b += 1440; bioWorkedMin = b - a; }
+      const hrmsWorkedMin = (hrmsIn && hrmsOut) ? (() => { let a = toMin(hrmsIn), b = toMin(hrmsOut); if (isNight && toMin(hrmsOut) < shiftStartMin || b < a) b += 1440; return b - a; })() : null;
+      const bioDeficit = (bioWorkedMin != null && !off.off) ? bioWorkedMin - shiftMin : null;
+      const hrmsDeficit = (hrmsWorkedMin != null && !off.off) ? hrmsWorkedMin - shiftMin : null;
+
       const punchedOnOff = off.off && clean.length > 0;
 
       const deficit = (workedMin != null && !off.off) ? workedMin - shiftMin : null;
@@ -346,14 +358,14 @@ function reconcile({ emps, punches, from, to, reconcile: doRecon = true, gapMin 
         bioIn, bioOut, bioOutNextDay, hrmsIn, hrmsOut,
         finalIn, finalOut, inSource, outSource, outNextDay,
         middle, punchCount: clean.length, inDiff,
-        // Flags for the UI: show HRMS-in note only when it differs; show
-        // HRMS-out-used note when biometric out was missing.
         inDiffers: !!(bioIn && hrmsIn && inDiff > 0),
         outDiffers: !!(bioOut && hrmsOut && Math.abs(toMin(bioOut) - toMin(hrmsOut)) > 0),
         outFromHrms: !!(doRecon && !bioOut && hrmsOut),
-        workedMin, workedLabel: workedMin == null ? '—' : `${Math.floor(workedMin / 60)}h ${String(workedMin % 60).padStart(2, '0')}m`,
-        target: off.off ? 0 : shiftMin, deficitMin: deficit,
-        deficitLabel: deficit == null ? '—' : (deficit < 0 ? '-' : '+') + `${Math.floor(Math.abs(deficit) / 60)}h ${String(Math.abs(deficit) % 60).padStart(2, '0')}m`,
+        workedMin, workedLabel: wl(workedMin),
+        // Per-source values for live recompute on Yes/No.
+        bioWorkedLabel: wl(bioWorkedMin), bioDeficitMin: bioDeficit, bioDeficitLabel: dl(bioDeficit),
+        hrmsWorkedLabel: wl(hrmsWorkedMin), hrmsDeficitMin: hrmsDeficit, hrmsDeficitLabel: dl(hrmsDeficit),
+        target: off.off ? 0 : shiftMin, deficitMin: deficit, deficitLabel: dl(deficit),
         highlight, punchedOnOff,
       });
     }
