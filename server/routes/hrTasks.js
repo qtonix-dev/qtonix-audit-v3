@@ -49,18 +49,21 @@ async function actingContext(req) {
   if (req.hrUser) actorUser = req.hrUser;
   else if (req.hrActor && req.hrActor.kind === 'hr') actorUser = await HrUser.findByPk(req.hrActor.id);
   // If an admin also has a matching HR profile, act AS that HR profile so they
-  // have ONE unified board (not a separate negative-id admin board + an HR board).
-  // Match by email first, then fall back to an exact name match — because the
-  // admin account and their HR profile often have different email addresses.
+  // have ONE unified board. Match by email first, then exact name. IMPORTANT:
+  // include chatOnly HrUsers here — an admin often has ONLY a chatOnly HrUser
+  // (auto-created for Buzz), and that record's id is what tasks are assigned to.
+  // Without this the admin falls back to a negative id built from their CRM
+  // User-table id, which can COLLIDE with a real HrUser id (different tables,
+  // overlapping ids) and leak another person's board. See the id-collision fix.
   if (!actorUser && isAdmin) {
     try {
       const { Op } = require('sequelize');
       let hr = null;
-      if (req.adminUser && req.adminUser.email) hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true, chatOnly: { [Op.not]: true } } });
+      if (req.adminUser && req.adminUser.email) hr = await HrUser.findOne({ where: { email: req.adminUser.email, active: true } });
       if (!hr) {
         const nm = (req.adminUser && req.adminUser.name) || (req.hrActor && req.hrActor.name);
         if (nm) {
-          const matches = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } } });
+          const matches = await HrUser.findAll({ where: { active: true } });
           hr = matches.find((u) => String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase()) || null;
         }
       }
@@ -68,27 +71,28 @@ async function actingContext(req) {
     } catch {}
   }
   const rawId = req.hrActor && req.hrActor.id;
-  const boardId = actorUser ? actorUser.id : (rawId ? -Math.abs(rawId) : null);
+  // The board id is the resolved HrUser id. For an admin with no HrUser at all,
+  // use a NEGATIVE id derived from their CRM User id so it can NEVER collide
+  // with a positive HrUser id (which is what tasks store).
+  const boardId = actorUser ? actorUser.id : (isAdmin && rawId ? -Math.abs(rawId) : (rawId || null));
   const HR_ROLE_TYPES = new Set(['hr', 'recruiter']);
   const isHr = isAdmin || !!(actorUser && (HR_ROLE_TYPES.has(actorUser.type) || actorUser.isHrManager));
-  // Collect EVERY id that represents this person, so a task assigned to any of
-  // their identities is theirs. Critically this includes the chatOnly HrUser
-  // auto-created for admins in Buzz — an employee's assignee picker can list
-  // that record, so an admin gets added under it while their board resolves to
-  // a different (real HrUser or negative admin) id. Matching by name/email links
-  // them back together.
-  const linkedIds = new Set([boardId, rawId].filter((x) => x != null));
+  // Collect EVERY HrUser id that represents this person (real profile + chatOnly
+  // Buzz record), so a task assigned to any of their identities is theirs.
+  // We match ONLY by name/email against HrUser rows — we do NOT throw the admin's
+  // CRM User-table id into this set, because that id lives in a different table
+  // and can collide with an unrelated HrUser id (the bug that leaked boards).
+  const linkedIds = new Set([boardId].filter((x) => x != null));
+  if (!isAdmin && rawId != null) linkedIds.add(rawId);
   try {
-    const { Op } = require('sequelize');
-    const nm = (actorUser && actorUser.name) || (req.adminUser && req.adminUser.name) || (req.hrActor && req.hrActor.name) || null;
     const emails = [actorUser && actorUser.email, req.adminUser && req.adminUser.email, req.hrActor && req.hrActor.email].filter(Boolean).map((e) => String(e).trim().toLowerCase());
-    const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name', 'email'] });
-    for (const u of all) {
-      const sameName = nm && String(u.name || '').trim().toLowerCase() === String(nm).trim().toLowerCase();
-      const sameEmail = u.email && emails.includes(String(u.email).trim().toLowerCase());
-      if (sameName || sameEmail) linkedIds.add(u.id);
+    if (emails.length) {
+      // Email is the authoritative link — the admin's chatOnly HrUser is created
+      // with the admin's own email, so this cleanly unifies admin ↔ their HrUser
+      // records WITHOUT merging different people (name collisions can't leak in).
+      const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'email'] });
+      for (const u of all) { if (u.email && emails.includes(String(u.email).trim().toLowerCase())) linkedIds.add(u.id); }
     }
-    if (req.adminUser && req.adminUser.id) linkedIds.add(req.adminUser.id);
   } catch {}
   return {
     isAdmin,
