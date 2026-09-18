@@ -4510,7 +4510,12 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
 
   const save = async () => {
     setErr(''); setMsg(''); setSaving(true);
-    const entries = Object.entries(marks).filter(([, v]) => v && v.status).map(([id, v]) => ({ employeeId: Number(id), status: v.status, loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '', approvedBy: v.approvedBy || '', notes: v.notes || '', duration: v.duration || '' }));
+    // Include any mark that has a status OR has login/logout times set (a
+    // time-only edit on an otherwise-unset row still needs to save → default to
+    // present so the times persist).
+    const entries = Object.entries(marks)
+      .filter(([, v]) => v && (v.status || v.loginTime || v.logoutTime))
+      .map(([id, v]) => ({ employeeId: Number(id), status: v.status || 'present', loginTime: v.loginTime || null, logoutTime: v.logoutTime || null, leaveType: v.leaveType || '', approvedBy: v.approvedBy || '', notes: v.notes || '', duration: v.duration || '' }));
     // Toggled-off employees → tell the server to delete their record for this day.
     Object.keys(cleared).forEach((id) => { if (!marks[id]) entries.push({ employeeId: Number(id), clear: true }); });
     try {
