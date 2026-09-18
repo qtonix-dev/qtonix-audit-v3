@@ -4602,16 +4602,20 @@ function AttendanceDay({ date, branch, onBack, onOpenEmployee }) {
                             </div>
                             <div className="text-[11px] text-slate-400">{e.employeeId || '—'}{e.shiftName ? ` · ${e.shiftName} (${e.shiftStart})` : ''}</div>
                           </div>
-                          {/* Two buttons: Present (toggle) + Absent (opens popup). */}
+                          {/* Present (toggle). When Present is on, the Absent button
+                              is hidden and the clock-in/out fields show. Unchecking
+                              Present brings the Absent button back. */}
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => pick(e.id, 'present')}
                               className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold border transition ${isPresent ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-                              style={isPresent ? { background: '#22C55E' } : {}}>Present</button>
-                            <button onClick={() => openAbsent(e)}
-                              className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold border transition ${isAbsentish ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-                              style={isAbsentish ? { background: mk.status === 'wfh' ? '#8B5CF6' : mk.status === 'lop' ? '#64748B' : mk.status === 'half_day' ? '#F59E0B' : '#EF4444' } : {}}>
-                              {isAbsentish ? absentLabel : 'Absent'}
-                            </button>
+                              style={isPresent ? { background: '#22C55E' } : {}}>{isPresent ? '✓ Present' : 'Present'}</button>
+                            {!isPresent && (
+                              <button onClick={() => openAbsent(e)}
+                                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold border transition ${isAbsentish ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                                style={isAbsentish ? { background: mk.status === 'wfh' ? '#8B5CF6' : mk.status === 'lop' ? '#64748B' : mk.status === 'half_day' ? '#F59E0B' : '#EF4444' } : {}}>
+                                {isAbsentish ? absentLabel : 'Absent'}
+                              </button>
+                            )}
                           </div>
                           {/* login/logout times for present, wfh, half day */}
                           {(isPresent || mk.status === 'wfh' || mk.status === 'half_day') && (
