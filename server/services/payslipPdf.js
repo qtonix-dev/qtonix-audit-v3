@@ -109,25 +109,30 @@ async function buildPdf(p, company) {
   rightText(amountInWords(p.netSalary), W - M, y, 9, italic, GREY);
   y -= 26;
 
-  // Footer divider position.
-  const dividerY = 78;
-  // Note sits JUST above the footer divider, and includes the computer-generated line.
+  // Note — clean left-accent panel, ~28px above the footer band.
+  const footH = 62;
   const noteH = 46;
-  const noteY = dividerY + 14 + noteH;
-  page.drawRectangle({ x: M, y: noteY - noteH, width: W - 2 * M, height: noteH, color: rgb(255 / 255, 251 / 255, 235 / 255), borderColor: rgb(253 / 255, 230 / 255, 138 / 255), borderWidth: 1 });
-  text('Note: If you find any mismatch in this payslip, please reach out to the HR department at', M + 12, noteY - 15, 8.5, font, rgb(146 / 255, 64 / 255, 14 / 255));
-  text('hr@qtonix.com within 7 days of issue.', M + 12, noteY - 26, 8.5, bold, rgb(146 / 255, 64 / 255, 14 / 255));
-  text('This is a computer-generated payslip and does not require a signature.', M + 12, noteY - 39, 8, italic, rgb(180 / 255, 120 / 255, 40 / 255));
+  const noteY = footH + 28 + noteH;
+  page.drawRectangle({ x: M, y: noteY - noteH, width: W - 2 * M, height: noteH, color: rgb(248 / 255, 250 / 255, 252 / 255) });
+  page.drawRectangle({ x: M, y: noteY - noteH, width: 3.5, height: noteH, color: ORANGE });
+  text('IMPORTANT', M + 14, noteY - 14, 7.5, bold, ORANGE);
+  text('Found a mismatch? Please contact the HR department at ', M + 14, noteY - 26, 8.5, font, GREY);
+  const w1 = font.widthOfTextAtSize('Found a mismatch? Please contact the HR department at ', 8.5);
+  text('hr@qtonix.com', M + 14 + w1, noteY - 26, 8.5, bold, DARK);
+  text(' within 7 days of issue.', M + 14 + w1 + bold.widthOfTextAtSize('hr@qtonix.com', 8.5), noteY - 26, 8.5, font, GREY);
+  text('This is a computer-generated payslip and does not require a signature.', M + 14, noteY - 39, 8, italic, LIGHT);
 
-  // Footer.
-  page.drawLine({ start: { x: M, y: dividerY }, end: { x: W - M, y: dividerY }, thickness: 1, color: rgb(226 / 255, 232 / 255, 240 / 255) });
-  const cLines = [
-    company.name || 'Qtonix Software Pvt. Ltd.',
-    company.address || 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032',
-    `Phone: ${company.phone || '+91-93488 78088'}   ·   Email: hr@qtonix.com   ·   Website: www.qtonix.com`,
-  ];
-  let fyy = dividerY - 14;
-  cLines.forEach((l, i) => { const f = i === 0 ? bold : font; const sz = i === 0 ? 9 : 7.5; const w = f.widthOfTextAtSize(l, sz); text(l, (W - w) / 2, fyy, sz, f, i === 0 ? GREY : LIGHT); fyy -= 12; });
+  // Footer — a dark band with roomy, well-spaced company details.
+  page.drawRectangle({ x: 0, y: 0, width: W, height: footH, color: NAVY });
+  // small orange accent line at the very top of the band
+  page.drawRectangle({ x: 0, y: footH - 2.5, width: W, height: 2.5, color: ORANGE });
+  const cName = company.name || 'Qtonix Software Pvt. Ltd.';
+  text(cName, (W - bold.widthOfTextAtSize(cName, 10.5)) / 2, footH - 22, 10.5, bold, rgb(1, 1, 1));
+  const addr = (company.address || 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032').replace(/^Registered Office:\s*/, '');
+  text(addr, (W - font.widthOfTextAtSize(addr, 7.5)) / 2, footH - 35, 7.5, font, rgb(0.72, 0.76, 0.82));
+  const contact = `${company.phone || '+91-93488 78088'}      hr@qtonix.com      www.qtonix.com`;
+  const cx = (W - font.widthOfTextAtSize(contact, 8)) / 2;
+  text(contact, cx, footH - 49, 8, font, rgb(1, 178 / 255, 122 / 255));
 
   return Buffer.from(await doc.save());
 }
