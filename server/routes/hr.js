@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Task, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Payslip, PayrollConfig, Task, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
 const bioSvc = require('../services/biometric');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
@@ -9319,6 +9319,172 @@ router.post('/admin/identity-repair', requireHrAccess, requireHrAdmin, async (re
     }
     try { await AuditLog.create({ userId: req.hrActor.id, userName: req.hrActor.name, action: 'admin.identity-repair', target: `linked ${linked}, repointed ${repointed}`, ip: req.ip }); } catch {}
     res.json({ ok: true, linked, repointed, warnings: plan.warnings });
+  } catch (e) { next(e); }
+});
+
+// ===== PAYROLL (Phase 1) =====
+const payroll = require('../services/payroll');
+function canPayroll(req) { return req.isHrAdmin || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type)); }
+function lastCompletedMonth() { const n = new Date(Date.now() + 330 * 60000); const d = new Date(n.getFullYear(), n.getMonth() - 1, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function isMonthAllowed(month) { return /^\d{4}-\d{2}$/.test(month) && month <= lastCompletedMonth(); }
+async function holidaysForMonthPay(month, branch) { const all = await HrHoliday.findAll(); const h = {}; all.forEach((x) => { if (String(x.date).slice(0, 7) === month && (!x.branch || x.branch === branch)) h[String(x.date)] = x.name; }); return h; }
+
+// Pay-day config for a month (set once before generating).
+router.get('/payroll/config', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const month = String(req.query.month || lastCompletedMonth());
+    const cfg = await PayrollConfig.findOne({ where: { month } });
+    res.json({ month, lastCompletedMonth: lastCompletedMonth(), payDay: cfg ? cfg.payDay : null, allowed: isMonthAllowed(month) });
+  } catch (e) { next(e); }
+});
+router.post('/payroll/config', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const month = String(req.body.month || '');
+    const payDay = Number(req.body.payDay);
+    if (!isMonthAllowed(month)) return res.status(400).json({ error: 'You can only run payroll for a completed month.' });
+    if (!(payDay >= 1 && payDay <= 31)) return res.status(400).json({ error: 'Enter a valid pay day (1–31).' });
+    const [cfg] = await PayrollConfig.findOrCreate({ where: { month }, defaults: { month } });
+    cfg.payDay = payDay; cfg.setById = req.hrActor.id; cfg.setByName = req.hrActor.name; await cfg.save();
+    res.json({ ok: true, month, payDay });
+  } catch (e) { next(e); }
+});
+
+// Employee list for a month + existing payslips, filtered like the attendance page.
+router.get('/payroll/list', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const month = String(req.query.month || lastCompletedMonth());
+    if (!isMonthAllowed(month)) return res.json({ month, allowed: false, payDay: null, rows: [] });
+    const branch = req.query.branch ? String(req.query.branch) : null;
+    const dept = req.query.department ? String(req.query.department) : null;
+    const q = req.query.q ? String(req.query.q).toLowerCase() : '';
+    const cfg = await PayrollConfig.findOne({ where: { month } });
+    // Employees active + joined on/before month end.
+    const monthEnd = `${month}-31`;
+    let emps = await HrUser.findAll({ where: { active: true, chatOnly: { [Op.not]: true } }, order: [['name', 'ASC']] });
+    emps = emps.filter((e) => {
+      if (branch && String(e.branch || '').toLowerCase() !== branch.toLowerCase()) return false;
+      if (dept && String(e.department || '').toLowerCase() !== dept.toLowerCase()) return false;
+      if (q && !(`${e.name} ${e.employeeId || ''} ${e.deviceId || ''}`.toLowerCase().includes(q))) return false;
+      const j = e.joiningDate ? String(e.joiningDate).slice(0, 10) : null;
+      if (j && j > monthEnd) return false;
+      return true;
+    });
+    const slips = {}; (await Payslip.findAll({ where: { month, employeeId: { [Op.in]: emps.map((e) => e.id) } } })).forEach((s) => { slips[s.employeeId] = s.toJSON(); });
+    const rows = emps.map((e) => {
+      const s = slips[e.id] || null;
+      return {
+        employeeId: e.id, name: e.name, employeeCode: e.employeeId || '', department: e.department || '', branch: e.branch || '',
+        slip: s,
+      };
+    });
+    res.json({ month, allowed: true, payDay: cfg ? cfg.payDay : null, lastCompletedMonth: lastCompletedMonth(), rows });
+  } catch (e) { next(e); }
+});
+
+// Auto-fetch the attendance figures + defaults for one employee/month (for the edit popup).
+router.get('/payroll/prefill', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const month = String(req.query.month || lastCompletedMonth());
+    const empId = Number(req.query.employeeId);
+    const emp = await HrUser.findByPk(empId);
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    // existing slip?
+    const existing = await Payslip.findOne({ where: { employeeId: empId, month } });
+    if (existing) return res.json({ slip: existing.toJSON(), fresh: false });
+    const shifts = await HrShift.findAll(); const shiftById = Object.fromEntries(shifts.map((s) => [s.id, s]));
+    const fig = await payroll.fetchAttendanceFigures(require('../models'), emp, month, { branchWeekendOff, shiftGrossMinutes: bioSvc.shiftGrossMinutes, holidaysForMonth: holidaysForMonthPay, shiftById });
+    const [yy, mm] = month.split('-').map(Number);
+    const daysInMonth = new Date(yy, mm, 0).getDate();
+    const shift = emp.shiftId ? shiftById[emp.shiftId] : null;
+    const cfg = await PayrollConfig.findOne({ where: { month } });
+    const draft = {
+      employeeId: empId, month, employeeName: emp.name, employeeCode: emp.employeeId || '', designation: emp.designation || '', department: emp.department || '', branch: emp.branch || '',
+      shiftHours: fig.shiftHours || 8, daysInMonth,
+      workingDays: fig.workingDays, leaveTaken: fig.leaveTaken, lopDays: fig.lopDays,
+      lateConsecutive: fig.lateConsecutive, lateTotal: fig.lateTotal, deficitHours: fig.deficitHours,
+      basic: (emp.profile && emp.profile.payroll && Number(emp.profile.payroll.basic)) || 0,
+      ta: (emp.profile && emp.profile.payroll && Number(emp.profile.payroll.ta)) || 0,
+      incentive: 0, arrear: 0, reimbursement: 0, advance: 0, otherDeduction: 0, status: 'draft',
+      payDay: cfg ? cfg.payDay : null,
+    };
+    res.json({ slip: draft, fresh: true, daysInMonth, payDay: cfg ? cfg.payDay : null });
+  } catch (e) { next(e); }
+});
+
+// Save (create/update) a payslip.
+router.post('/payroll/save', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const b = req.body || {};
+    const month = String(b.month || '');
+    if (!isMonthAllowed(month)) return res.status(400).json({ error: 'Payroll can only be saved for a completed month.' });
+    const cfg = await PayrollConfig.findOne({ where: { month } });
+    if (!cfg || !cfg.payDay) return res.status(400).json({ error: 'Set the pay day for this month before saving payslips.' });
+    const emp = await HrUser.findByPk(Number(b.employeeId));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    const num = (v) => Number(v) || 0;
+    const fields = {
+      employeeId: emp.id, month,
+      employeeName: emp.name, employeeCode: emp.employeeId || '', designation: emp.designation || '', department: emp.department || '', branch: emp.branch || '',
+      shiftHours: num(b.shiftHours) || 8,
+      workingDays: num(b.workingDays), leaveTaken: num(b.leaveTaken), lopDays: num(b.lopDays),
+      lateConsecutive: num(b.lateConsecutive), lateTotal: num(b.lateTotal), deficitHours: num(b.deficitHours),
+      basic: num(b.basic), ta: num(b.ta), incentive: num(b.incentive), arrear: num(b.arrear), reimbursement: num(b.reimbursement),
+      advance: num(b.advance), otherDeduction: num(b.otherDeduction),
+      status: b.status === 'finalized' ? 'finalized' : 'draft',
+      processedById: req.hrActor.id, processedByName: req.hrActor.name,
+    };
+    const comp = payroll.computePayslip(fields);
+    Object.assign(fields, { perDay: comp.perDay, perHour: comp.perHour, lateDeductionDays: comp.lateDeductionDays, grossEarnings: comp.grossEarnings, totalDeductions: comp.totalDeductions, netSalary: comp.netSalary });
+    const [row] = await Payslip.findOrCreate({ where: { employeeId: emp.id, month }, defaults: fields });
+    Object.assign(row, fields); await row.save();
+    res.json({ ok: true, slip: row.toJSON() });
+  } catch (e) { next(e); }
+});
+
+router.delete('/payroll/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const row = await Payslip.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Not found.' });
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Download the password-protected PDF payslip.
+router.get('/payroll/:id/pdf', async (req, res, next) => {
+  try {
+    const jwt = require('jsonwebtoken');
+    let token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    try { jwt.verify(token, process.env.JWT_SECRET); } catch { return res.status(401).send('Unauthorized'); }
+    const row = await Payslip.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).send('Not found');
+    const emp = await HrUser.findByPk(row.employeeId);
+    const cfg = await PayrollConfig.findOne({ where: { month: row.month } });
+    const comp = payroll.computePayslip(row.toJSON());
+    const [yy, mm] = row.month.split('-').map(Number);
+    const daysInMonth = new Date(yy, mm, 0).getDate();
+    const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    const payDay = cfg ? cfg.payDay : null;
+    const s = row.toJSON();
+    const p = {
+      ...s, ...comp,
+      monthLabel, periodLabel: `1 - ${daysInMonth} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`,
+      daysInMonth, email: emp ? emp.email : '', phone: emp ? emp.phone : '',
+      payDateLabel: payDay ? `${String(payDay).padStart(2, '0')} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}` : '-',
+      generatedLabel: new Date(Date.now() + 330 * 60000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+    };
+    const company = { name: 'Qtonix Software Pvt. Ltd.', address: 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032', phone: '+91-93488 78088' };
+    const password = emp ? payroll.payslipPassword(emp, row.month) : null;
+    const pdf = await require('../services/payslipPdf').generatePayslipPdf(p, company, password);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="payslip-${(s.employeeName || 'emp').replace(/\s+/g, '-')}-${row.month}.pdf"`);
+    res.send(pdf);
   } catch (e) { next(e); }
 });
 

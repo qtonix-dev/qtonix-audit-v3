@@ -1946,7 +1946,58 @@ const HrAttendance = sequelize.define('HrAttendance', {
 ] });
 HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
-// A biometric device import: the uploaded file's parsed punches are kept for
+// A processed payslip for one employee for one month. Phase 1: HR enters/edits
+// the figures (auto-fetched from attendance where available). One per emp+month.
+const Payslip = sequelize.define('Payslip', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  employeeId: { type: DataTypes.INTEGER, allowNull: false },
+  month: { type: DataTypes.STRING(7), allowNull: false },       // YYYY-MM (the pay month)
+  // Snapshot of identity at generation time.
+  employeeName: { type: DataTypes.STRING(160), allowNull: true },
+  employeeCode: { type: DataTypes.STRING(40), allowNull: true },
+  designation: { type: DataTypes.STRING(120), allowNull: true },
+  department: { type: DataTypes.STRING(120), allowNull: true },
+  branch: { type: DataTypes.STRING(120), allowNull: true },
+  shiftHours: { type: DataTypes.FLOAT, defaultValue: 8 },
+  // Attendance figures (auto-fetched, HR-editable).
+  workingDays: { type: DataTypes.FLOAT, defaultValue: 0 },
+  leaveTaken: { type: DataTypes.FLOAT, defaultValue: 0 },
+  lopDays: { type: DataTypes.FLOAT, defaultValue: 0 },
+  lateConsecutive: { type: DataTypes.INTEGER, defaultValue: 0 },
+  lateTotal: { type: DataTypes.INTEGER, defaultValue: 0 },
+  deficitHours: { type: DataTypes.FLOAT, defaultValue: 0 },
+  // Money — earnings.
+  basic: { type: DataTypes.FLOAT, defaultValue: 0 },
+  ta: { type: DataTypes.FLOAT, defaultValue: 0 },
+  incentive: { type: DataTypes.FLOAT, defaultValue: 0 },
+  arrear: { type: DataTypes.FLOAT, defaultValue: 0 },
+  reimbursement: { type: DataTypes.FLOAT, defaultValue: 0 },
+  // Money — deductions.
+  advance: { type: DataTypes.FLOAT, defaultValue: 0 },
+  otherDeduction: { type: DataTypes.FLOAT, defaultValue: 0 },
+  // Computed (stored for the record).
+  perDay: { type: DataTypes.FLOAT, defaultValue: 0 },
+  perHour: { type: DataTypes.FLOAT, defaultValue: 0 },
+  lateDeductionDays: { type: DataTypes.FLOAT, defaultValue: 0 },
+  grossEarnings: { type: DataTypes.FLOAT, defaultValue: 0 },
+  totalDeductions: { type: DataTypes.FLOAT, defaultValue: 0 },
+  netSalary: { type: DataTypes.FLOAT, defaultValue: 0 },
+  status: { type: DataTypes.STRING(12), defaultValue: 'draft' }, // draft | finalized
+  processedById: { type: DataTypes.INTEGER, allowNull: true },
+  processedByName: { type: DataTypes.STRING(160), allowNull: true },
+}, { tableName: 'hr_payslips', indexes: [{ unique: true, fields: ['employeeId', 'month'] }, { fields: ['month'] }] });
+Payslip.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Per-month payroll settings: the pay day HR sets once before generating.
+const PayrollConfig = sequelize.define('PayrollConfig', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  month: { type: DataTypes.STRING(7), allowNull: false, unique: true }, // YYYY-MM
+  payDay: { type: DataTypes.INTEGER, allowNull: true },                 // 1..31
+  setById: { type: DataTypes.INTEGER, allowNull: true },
+  setByName: { type: DataTypes.STRING(160), allowNull: true },
+}, { tableName: 'hr_payroll_config' });
+PayrollConfig.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 // future re-analysis. One row per uploaded file.
 const BiometricImport = sequelize.define('BiometricImport', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
@@ -2818,7 +2869,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

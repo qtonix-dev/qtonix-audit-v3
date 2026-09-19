@@ -4505,6 +4505,198 @@ function BiometricModal({ onClose, onOpenEmployee }) {
   );
 }
 
+// ===== Payroll module (Core HR → Payroll) =====
+function PayrollModule({ user, isAdmin }) {
+  const monthOptions = (() => { const out = []; const n = new Date(); for (let i = 1; i <= 15; i++) { const d = new Date(n.getFullYear(), n.getMonth() - i, 1); out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } return out; })();
+  const [month, setMonth] = useState(monthOptions[0]);
+  const [payDay, setPayDay] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [branch, setBranch] = useState('');
+  const [dept, setDept] = useState('');
+  const [q, setQ] = useState('');
+  const [branches, setBranches] = useState([]); const [depts, setDepts] = useState([]);
+  const [edit, setEdit] = useState(null);
+  const [payDayInput, setPayDayInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const monthLabel = new Date(month + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  const daysInMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(y, m, 0).getDate(); })();
+  const periodLabel = `1 – ${daysInMonth} ${new Date(month + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`;
+  const genMonth = new Date(new Date(month + '-01T00:00:00').getFullYear(), new Date(month + '-01T00:00:00').getMonth() + 1, 1).toLocaleDateString('en-IN', { month: 'long' });
+
+  const load = () => {
+    const p = new URLSearchParams({ month }); if (branch) p.set('branch', branch); if (dept) p.set('department', dept); if (q) p.set('q', q);
+    hrApi(`/payroll/list?${p}`).then((r) => { setRows(r.rows || []); setPayDay(r.payDay); }).catch((e) => toast(e.message));
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [month, branch, dept, q]);
+  useEffect(() => { hrApi('/branches').then((b) => setBranches(b || [])).catch(() => {}); hrApi('/departments').then((d) => setDepts(d || [])).catch(() => {}); }, []);
+
+  const savePayDay = async () => {
+    const d = Number(payDayInput);
+    if (!(d >= 1 && d <= 31)) { toast('Enter a pay day between 1 and 31.'); return; }
+    setBusy(true);
+    try { await hrApi('/payroll/config', { method: 'POST', body: JSON.stringify({ month, payDay: d }) }); setPayDay(d); toast('Pay day set ✓'); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  const openEdit = async (empId) => {
+    try { const r = await hrApi(`/payroll/prefill?month=${month}&employeeId=${empId}`); setEdit({ ...r.slip, daysInMonth, _fresh: r.fresh }); }
+    catch (e) { toast(e.message); }
+  };
+  const del = async (id) => { if (!(await confirmDialog({ title: 'Delete payslip?', message: 'This removes the processed payslip for this employee and month.', confirmText: 'Delete', danger: true }))) return; try { await hrApi(`/payroll/${id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  const pdf = (id) => window.open(`${API_BASE}/api/hr/payroll/${id}/pdf?token=${encodeURIComponent(localStorage.getItem('qtx_hr_token') || '')}`, '_blank');
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex items-start justify-between mb-1 flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#050A1F]">💰 Payroll</h1>
+          <div className="text-[12.5px] text-slate-500 mt-0.5">Payslip period: <b className="text-[#050A1F]">{periodLabel}</b> · {daysInMonth} days · generated in {genMonth}</div>
+        </div>
+        <select value={month} onChange={(e) => setMonth(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white">
+          {monthOptions.map((m) => <option key={m} value={m}>{new Date(m + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</option>)}
+        </select>
+      </div>
+
+      {/* Pay-day gate */}
+      {payDay == null ? (
+        <div className="rounded-xl bg-orange-50 border border-orange-200 p-4 my-4 flex items-center gap-3 flex-wrap">
+          <div className="text-[13px] text-orange-800 font-semibold flex-1">Set the pay day for <b>{monthLabel}</b> to enable payslip generation.</div>
+          <input type="number" min="1" max="31" value={payDayInput} onChange={(e) => setPayDayInput(e.target.value)} placeholder="Day (1–31)" className="border border-orange-200 rounded-lg px-3 py-2 text-[13px] w-28" />
+          <button onClick={savePayDay} disabled={busy} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Set pay day</button>
+        </div>
+      ) : (
+        <div className="rounded-xl bg-green-50 border border-green-100 p-2.5 my-4 flex items-center gap-2 text-[12.5px]">
+          <span className="text-green-700 font-semibold flex-1">Pay day for <b>{monthLabel}</b>: <b>{payDay}{['th', 'st', 'nd', 'rd'][(payDay % 10 > 3 || (payDay >= 11 && payDay <= 13)) ? 0 : payDay % 10]}</b>. Payslips enabled.</span>
+          <button onClick={() => { setPayDayInput(String(payDay)); setPayDay(null); }} className="text-green-700 font-bold underline text-[11.5px]">Change</button>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]"><span className="absolute left-3 top-2.5 text-slate-400 text-sm">🔍</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search employee…" className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-[13px]" /></div>
+        <select value={branch} onChange={(e) => setBranch(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All branches</option>{branches.map((b) => <option key={b.id || b.name} value={b.name}>{b.name}</option>)}</select>
+        <select value={dept} onChange={(e) => setDept(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All departments</option>{depts.map((d) => <option key={d.id || d.name} value={d.name}>{d.name}</option>)}</select>
+      </div>
+
+      {/* Listing */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
+        <table className="w-full text-[12.5px]">
+          <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-4 py-3">Emp ID</th><th className="text-left px-4 py-3">Name</th><th className="text-left px-4 py-3">Department</th><th className="text-left px-4 py-3">Basic Pay</th><th className="text-left px-4 py-3">LOP</th><th className="text-left px-4 py-3">Late (c·t)</th><th className="text-left px-4 py-3">Deficit</th><th className="text-left px-4 py-3">Net Salary</th><th className="text-left px-4 py-3">Status</th><th /></tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const s = r.slip;
+              return (
+                <tr key={r.employeeId} className="border-t border-slate-50 hover:bg-slate-50/40">
+                  <td className="px-4 py-3 text-slate-600">{r.employeeCode || '—'}</td>
+                  <td className="px-4 py-3 font-bold text-[#050A1F]">{titleCase(r.name)}</td>
+                  <td className="px-4 py-3 text-slate-500">{r.department || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600">{s ? inrFmt(s.basic) : <span className="text-slate-300">blank</span>}</td>
+                  <td className="px-4 py-3 text-slate-600">{s ? s.lopDays : '—'}</td>
+                  <td className="px-4 py-3 text-slate-600">{s ? `${s.lateConsecutive} · ${s.lateTotal}` : '—'}</td>
+                  <td className="px-4 py-3 text-slate-600">{s ? `${s.deficitHours}h` : '—'}</td>
+                  <td className="px-4 py-3 font-extrabold text-green-600">{s ? inrFmt(s.netSalary) : <span className="text-slate-300 font-normal">— not processed —</span>}</td>
+                  <td className="px-4 py-3">{s ? <span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: s.status === 'finalized' ? '#dcfce7' : '#fef3c7', color: s.status === 'finalized' ? '#16a34a' : '#b45309' }}>{s.status === 'finalized' ? 'Finalized' : 'Draft'}</span> : ''}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1.5">
+                      {s && <button onClick={() => setEdit({ ...s, daysInMonth, _view: true })} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500">View</button>}
+                      {s && <button onClick={() => pdf(s.id)} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>PDF</button>}
+                      <button onClick={() => openEdit(r.employeeId)} disabled={payDay == null} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500 disabled:opacity-40">{s ? '✏️' : '✏️ Add'}</button>
+                      {s && <button onClick={() => del(s.id)} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-red-400">🗑</button>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400 text-[13px]">No employees match the filters.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {edit && <PayslipEditor data={edit} month={month} monthLabel={monthLabel} periodLabel={periodLabel} payDay={payDay} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
+    </div>
+  );
+}
+
+function inrFmt(n) { return '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN'); }
+
+// Payslip edit/view popup with live calculation.
+function PayslipEditor({ data, month, monthLabel, periodLabel, payDay, onClose, onSaved }) {
+  const [f, setF] = useState(data);
+  const [busy, setBusy] = useState(false);
+  const view = !!data._view;
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const N = (v) => Number(v) || 0;
+  const shiftHours = N(f.shiftHours) || 8;
+  const perDay = N(f.basic) / 30;
+  const perHour = perDay / shiftHours;
+  const lateDed = Math.floor(N(f.lateConsecutive) / 3) * 0.5 + Math.floor(N(f.lateTotal) / 6) * 0.5;
+  const gross = N(f.basic) + N(f.ta) + N(f.incentive) + N(f.arrear) + N(f.reimbursement);
+  const lopAmt = N(f.lopDays) * perDay, lateAmt = lateDed * perDay, defAmt = N(f.deficitHours) * perHour;
+  const ded = lopAmt + lateAmt + defAmt + N(f.advance) + N(f.otherDeduction);
+  const net = gross - ded;
+  const money = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
+
+  const save = async (status) => {
+    setBusy(true);
+    try { await hrApi('/payroll/save', { method: 'POST', body: JSON.stringify({ ...f, status }) }); toast('Payslip saved ✓'); onSaved(); }
+    catch (e) { toast(e.message); setBusy(false); }
+  };
+  const Fld = ({ label, k, auto, w }) => (
+    <div style={w ? { width: w } : {}}>
+      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">{label}{auto && <span className="text-teal-600 text-[9px] ml-1">auto</span>}</label>
+      <input type="number" value={f[k] == null ? '' : f[k]} disabled={view} onChange={(e) => set(k, e.target.value)} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[13px] disabled:bg-slate-50" />
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl flex flex-col" style={{ maxHeight: '92vh' }}>
+        <div className="px-5 py-4 shrink-0 rounded-t-2xl" style={{ background: '#050A1F' }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-[11px] font-extrabold uppercase" style={{ color: '#FF8C42' }}>Payslip · {monthLabel}</div>
+              <div className="text-white font-extrabold text-[16px] mt-0.5">{titleCase(f.employeeName || '')}</div>
+              <div className="text-slate-400 text-[12px]">{[f.designation, f.branch, f.employeeCode].filter(Boolean).join(' · ')}</div>
+              <div className="text-slate-500 text-[11px] mt-1">Period: {periodLabel} · Shift {shiftHours}h{payDay ? ` · Pay day ${payDay}` : ''}</div>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+          </div>
+        </div>
+        <div className="overflow-auto p-5">
+          <div className="grid grid-cols-3 gap-2.5">
+            <Fld label="Basic Pay (₹)" k="basic" />
+            <Fld label="Working days" k="workingDays" auto />
+            <Fld label="Leave taken" k="leaveTaken" auto />
+            <Fld label="LOP days" k="lopDays" auto />
+            <Fld label="Consecutive late" k="lateConsecutive" auto />
+            <Fld label="Total late" k="lateTotal" auto />
+          </div>
+          <div className="mt-2.5"><Fld label="Deficit hours (worked days only)" k="deficitHours" auto w={180} /></div>
+          <div className="text-[11px] text-slate-400 mt-1.5">Late rule: 3 consecutive = ½ day · every 6 late = ½ day → <b className="text-red-500">{lateDed} day</b></div>
+          <div className="text-[10px] font-extrabold text-slate-400 uppercase mt-4 mb-2">Earnings (additions)</div>
+          <div className="grid grid-cols-4 gap-2.5"><Fld label="TA (₹)" k="ta" /><Fld label="Incentive (₹)" k="incentive" /><Fld label="Arrear (₹)" k="arrear" /><Fld label="Reimburse. (₹)" k="reimbursement" /></div>
+          <div className="text-[10px] font-extrabold text-slate-400 uppercase mt-4 mb-2">Deductions</div>
+          <div className="grid grid-cols-2 gap-2.5"><Fld label="Advance taken (₹)" k="advance" /><Fld label="Other deductions (₹)" k="otherDeduction" /></div>
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 mt-4 text-[12px]">
+            <div className="flex justify-between py-0.5 text-slate-500"><span>Per-day salary <span className="text-slate-400">(Basic / 30)</span></span><b>{money(perDay)}</b></div>
+            <div className="flex justify-between py-0.5 text-slate-500"><span>Per-hour salary <span className="text-slate-400">(per-day / {shiftHours}h)</span></span><b>{money(perHour)}</b></div>
+            <div className="flex justify-between py-0.5 text-green-600"><span>+ Gross earnings</span><b>+ {money(gross)}</b></div>
+            <div className="flex justify-between py-0.5 text-red-500"><span>− LOP + Late + Deficit</span><b>− {money(lopAmt + lateAmt + defAmt)}</b></div>
+            <div className="flex justify-between py-0.5 text-red-500"><span>− Advance + Other</span><b>− {money(N(f.advance) + N(f.otherDeduction))}</b></div>
+            <div className="flex justify-between border-t border-slate-200 mt-1.5 pt-2 text-[16px] font-extrabold text-green-600"><span>Net Salary Payable</span><span>{money(net)}</span></div>
+          </div>
+        </div>
+        {!view && (
+          <div className="px-5 py-3 border-t border-slate-100 flex gap-2 justify-end shrink-0">
+            <button onClick={() => save('draft')} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 font-bold text-[13px] px-4 py-2">Save as draft</button>
+            <button onClick={() => save('finalized')} disabled={busy} className="rounded-lg text-white font-bold text-[13px] px-5 py-2" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Finalize payslip'}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const canAll = isAdmin || user.hrManagerAll || (user.hrManagerScope === 'all');
   const scopedBranch = !canAll ? (user.hrManagerScope && user.hrManagerScope !== 'all' ? user.hrManagerScope : user.branch) : '';
@@ -12270,7 +12462,7 @@ export default function HrApp() {
         {effectiveView === 'rewards' && <MyRewardsPage user={user} />}
         {effectiveView === 'corehr_attendance' && <AttendanceModule user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
         {effectiveView === 'corehr_leave' && <LeaveConsole user={user} isAdmin={isAdmin} onOpenEmployee={(id) => { setProfileTarget(id); setView('employees'); setNavKey((k) => k + 1); }} />}
-        {effectiveView === 'corehr_payroll' && <CoreHrPlaceholder title="Payroll" />}
+        {effectiveView === 'corehr_payroll' && <PayrollModule user={user} isAdmin={isAdmin} />}
         {effectiveView === 'corehr_expenses' && <HrExpenses user={user} isAdmin={isAdmin} openExpenseId={expenseIntent} onIntentConsumed={() => setExpenseIntent(null)} />}
         {effectiveView === 'corehr_stock' && <CoreHrPlaceholder title="Stock Management" />}
         {effectiveView === 'corehr_onboarding' && <OnboardingListPage isAdmin={isAdmin} onOpenCandidate={(id) => goRecruit({ tab: 'candidates', openCandidateId: id })} />}
