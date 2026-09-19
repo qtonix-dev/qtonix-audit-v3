@@ -256,7 +256,7 @@ router.patch('/messages/:id', requireHrAccess, async (req, res, next) => {
     const body = String((req.body && req.body.body) || '').trim();
     if (!body) return res.status(400).json({ error: 'Message can’t be empty.' });
     msg.body = body.slice(0, 5000); msg.editedAt = new Date(); await msg.save();
-    res.json({ message: msg.toJSON() });
+    res.json({ message: { ...msg.toJSON(), mine: true } });
   } catch (e) { next(e); }
 });
 
@@ -345,7 +345,7 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
         const where = { conversationId: convId, deleted: false };
         if (after) where.id = { [Op.gt]: after };
         const rows = await ChatMessage.findAll({ where, order: [['id', 'ASC']], limit: 60 });
-        messages = rows.map((r) => r.toJSON());
+        messages = rows.map((r) => ({ ...r.toJSON(), mine: r.senderId === me }));
         // Reaction/edit deltas for the recent window so others' reactions appear.
         const recent = await ChatMessage.findAll({ where: { conversationId: convId }, order: [['id', 'DESC']], limit: 30 });
         reactions = recent.map((r) => ({ id: r.id, reactions: r.reactions || {}, deleted: r.deleted }));

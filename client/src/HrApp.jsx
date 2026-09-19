@@ -2300,7 +2300,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     clearEditor(); setReplyTo(null); setAiSuggests([]); setSending(true);
     try {
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body, replyToId: rid }) });
-      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      setMessages((prev) => prev.some((m) => m.id === r.message.id) ? prev : [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { toast(e.message); setEditor(body); }
     setSending(false);
@@ -2312,7 +2312,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     setSending(true);
     try {
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
-      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      setMessages((prev) => prev.some((m) => m.id === r.message.id) ? prev : [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { toast(e.message); }
     setSending(false);
@@ -2369,7 +2369,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
       const up = await uploadToImageKit(file, `/qtonix-hr/chat/${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, file.name);
       const isImage = /^image\//.test(file.type);
       const r = await hrApi(`/chat/conversations/${active.id}/messages`, { method: 'POST', body: JSON.stringify({ fileUrl: up.url, fileId: up.fileId, fileName: file.name, fileType: file.type || '', fileSize: file.size || 0, isImage, body: (caption || '').trim() || undefined }) });
-      setMessages((prev) => [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
+      setMessages((prev) => prev.some((m) => m.id === r.message.id) ? prev : [...prev, r.message]); lastMsgId.current = Math.max(lastMsgId.current, r.message.id);
       loadConversations();
     } catch (e) { toast('Upload failed: ' + e.message); }
     setUploading(false);
