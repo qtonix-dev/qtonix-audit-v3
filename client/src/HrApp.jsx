@@ -4551,6 +4551,14 @@ function PayrollModule({ user, isAdmin }) {
   };
   const del = async (id) => { if (!(await confirmDialog({ title: 'Delete payslip?', message: 'This removes the processed payslip for this employee and month.', confirmText: 'Delete', danger: true }))) return; try { await hrApi(`/payroll/${id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
   const pdf = (id) => window.open(`${API_BASE}/api/hr/payroll/${id}/pdf?token=${encodeURIComponent(localStorage.getItem('qtx_hr_token') || '')}`, '_blank');
+  const [emailing, setEmailing] = useState(null);
+  const sendEmail = async (s) => {
+    if (!(await confirmDialog({ title: `Email payslip to ${titleCase(s.employeeName || 'employee')}?`, message: `The password-protected payslip PDF will be emailed to the employee, with instructions to open it.${s.emailedAt ? ' It was already emailed once — this will resend it.' : ''}`, confirmText: 'Send email' }))) return;
+    setEmailing(s.id);
+    try { const r = await hrApi(`/payroll/${s.id}/email`, { method: 'POST', body: '{}' }); toast(`Payslip emailed to ${r.emailedTo} ✓`); load(); }
+    catch (e) { toast(e.message); }
+    setEmailing(null);
+  };
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -4629,6 +4637,7 @@ function PayrollModule({ user, isAdmin }) {
                     <div className="flex gap-1.5">
                       {s && <button onClick={() => setEdit({ ...s, daysInMonth, _view: true })} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500">View</button>}
                       {s && <button onClick={() => pdf(s.id)} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>PDF</button>}
+                      {s && <button onClick={() => sendEmail(s)} disabled={emailing === s.id} className="text-[11px] font-bold border rounded-lg px-2.5 py-1.5" style={{ borderColor: s.emailedAt ? '#bbf7d0' : '#e2e8f0', color: s.emailedAt ? '#16a34a' : '#64748b' }}>{emailing === s.id ? '…' : (s.emailedAt ? '✓ Emailed' : '✉ Email')}</button>}
                       <button onClick={() => openEdit(r.employeeId)} disabled={!hasAnyPayDate} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500 disabled:opacity-40">{s ? '✏️' : '✏️ Add'}</button>
                       {s && <button onClick={() => del(s.id)} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-red-400">🗑</button>}
                     </div>

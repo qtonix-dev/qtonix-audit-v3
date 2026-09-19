@@ -87,17 +87,17 @@ async function callOpenai(apiKey, { system, messages, maxTokens = 1500 }) {
 // Resilient AI call: try Claude first; on ANY failure (timeout, rate limit,
 // error) automatically fall back to OpenAI if its key is available. Callers pass
 // both keys. Never leaks the provider error unless BOTH fail.
-async function callAI({ anthropicKey, openaiKey, system, messages, maxTokens = 1500 }) {
-  let claudeErr = null;
-  if (anthropicKey) {
-    try { const t = await callClaude(anthropicKey, { system, messages, maxTokens }); if (t && t.trim()) return t; }
-    catch (e) { claudeErr = e; }
+async function callAI({ anthropicKey, openaiKey, system, messages, maxTokens = 1500, preferOpenai = false }) {
+  let firstErr = null;
+  const providers = preferOpenai
+    ? [['openai', openaiKey, callOpenai], ['anthropic', anthropicKey, callClaude]]
+    : [['anthropic', anthropicKey, callClaude], ['openai', openaiKey, callOpenai]];
+  for (const [, key, fn] of providers) {
+    if (!key) continue;
+    try { const t = await fn(key, { system, messages, maxTokens }); if (t && t.trim()) return t; }
+    catch (e) { if (!firstErr) firstErr = e; }
   }
-  if (openaiKey) {
-    try { const t = await callOpenai(openaiKey, { system, messages, maxTokens }); if (t && t.trim()) return t; }
-    catch (e) { if (claudeErr) throw claudeErr; throw e; }
-  }
-  if (claudeErr) throw claudeErr;
+  if (firstErr) throw firstErr;
   throw new Error('No AI provider configured.');
 }
 

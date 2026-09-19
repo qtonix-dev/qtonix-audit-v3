@@ -9511,6 +9511,85 @@ router.get('/payroll/:id/pdf', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Draft the personalized HR note for the payslip email (OpenAI, fail-safe).
+async function payslipAiNotes(keys, slip) {
+  const notes = { positive: null, attendance: null };
+  const showPositive = Number(slip.incentive) > 0;
+  const showAttendance = Number(slip.leaveTaken) > 3 || Number(slip.lopDays) > 0 || Number(slip.lateDeductionDays) > 0;
+  if (!showPositive && !showAttendance) return notes;
+  const ai = require('../services/aiVisibility');
+  const call = async (system, user, fallback) => {
+    try {
+      const out = await ai.callAI({ anthropicKey: keys.anthropic, openaiKey: keys.openai, preferOpenai: true, system, messages: [{ role: 'user', content: user }], maxTokens: 200 });
+      const t = String(out || '').trim().replace(/^["']|["']$/g, '');
+      return t || fallback;
+    } catch { return fallback; }
+  };
+  if (showPositive) {
+    notes.positive = await call(
+      'You are an HR manager writing one short, warm sentence (max 2 sentences) to an employee whose payslip includes an incentive this month. Encourage them to keep up the good work. Return only the message text, no greeting, no quotes.',
+      `Employee ${slip.employeeName}. Incentive this month: Rs ${Math.round(slip.incentive)}.`,
+      'Congratulations — your incentive this month reflects your excellent contribution. Thank you for your dedication, and keep up the fantastic work!');
+  }
+  if (showAttendance) {
+    notes.attendance = await call(
+      'You are an HR manager writing one short, kind, non-accusatory reminder (max 2 sentences) to an employee whose pay was reduced this month due to leaves, LOP, or late entries. Gently emphasize the value of regular, punctual attendance. Return only the message text, no greeting, no quotes.',
+      `Employee ${slip.employeeName}. Leave taken: ${slip.leaveTaken} days. LOP: ${slip.lopDays} days. Late-entry deduction: ${slip.lateDeductionDays} day(s).`,
+      'We noticed a few leaves and some late entries this month, which affected your pay. Regular and punctual attendance makes a real difference for you and the team — let us make the most of every working day next month!');
+  }
+  return notes;
+}
+
+// Send the payslip email to the employee with the password-protected PDF.
+router.post('/payroll/:id/email', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
+    const row = await Payslip.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Payslip not found.' });
+    const emp = await HrUser.findByPk(row.employeeId);
+    if (!emp || !emp.email) return res.status(400).json({ error: 'This employee has no email address on file.' });
+
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const mailbox = mailboxEmail(s);
+    const token = s && s.getKey ? s.getKey('hrMailboxToken') : null;
+    if (!mailbox || !token) return res.status(400).json({ error: 'HR mailbox is not connected. Connect it in HR → Email settings.' });
+
+    // Build the PDF (reuse the same generator + password).
+    const cfg = await PayrollConfig.findOne({ where: { month: row.month } });
+    const branchDate = cfg && cfg.payDates && emp ? cfg.payDates[emp.branch] : null;
+    const comp = payroll.computePayslip(row.toJSON());
+    const [yy, mm] = row.month.split('-').map(Number);
+    const daysInMonth = new Date(yy, mm, 0).getDate();
+    const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    const payDateLabel = branchDate ? new Date(branchDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : (cfg && cfg.payDay ? `${String(cfg.payDay).padStart(2, '0')} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}` : '-');
+    const sj = row.toJSON();
+    const pdfPayload = { ...sj, ...comp, monthLabel, periodLabel: `1 - ${daysInMonth} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`, daysInMonth, email: emp.email, phone: emp.phone, payDateLabel, generatedLabel: new Date(Date.now() + 330 * 60000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) };
+    const company = { name: 'Qtonix Software Pvt. Ltd.', address: 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032', phone: '+91-93488 78088' };
+    const password = payroll.payslipPassword(emp, row.month);
+    const pdf = await require('../services/payslipPdf').generatePayslipPdf(pdfPayload, company, password);
+
+    // AI personalized note.
+    const keys = { anthropic: s && s.getKey ? s.getKey('anthropic') : null, openai: s && s.getKey ? s.getKey('openai') : null };
+    const notes = await payslipAiNotes(keys, { ...sj, lateDeductionDays: comp.lateDeductionDays });
+
+    const html = require('../services/payslipEmail').payslipEmailHtml({
+      firstName: String(emp.name || '').split(' ')[0], monthLabel,
+      periodLabel: pdfPayload.periodLabel, payDateLabel, netSalary: comp.netSalary, notes,
+    });
+    const subject = `Your payslip for ${monthLabel} — Qtonix`;
+    const fileName = `payslip-${String(emp.name || 'employee').replace(/\s+/g, '-')}-${row.month}.pdf`;
+    await sendHrEmailLogged(s, token, mailbox, {
+      from: mailbox, fromName: 'HR Qtonix', to: emp.email, subject, bodyHtml: html,
+      attachments: [{ filename: fileName, mimeType: 'application/pdf', contentBase64: pdf.toString('base64') }],
+    }, { type: 'payslip' });
+
+    row.status = row.status === 'draft' ? 'finalized' : row.status;
+    row.set('emailedAt', new Date(), { raw: false });
+    try { await row.save(); } catch {}
+    res.json({ ok: true, emailedTo: emp.email });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.scoreResumeMatchBg = scoreResumeMatchBg;
 module.exports.notify = notify;

@@ -1983,6 +1983,7 @@ const Payslip = sequelize.define('Payslip', {
   totalDeductions: { type: DataTypes.FLOAT, defaultValue: 0 },
   netSalary: { type: DataTypes.FLOAT, defaultValue: 0 },
   status: { type: DataTypes.STRING(12), defaultValue: 'draft' }, // draft | finalized
+  emailedAt: { type: DataTypes.DATE, allowNull: true },
   processedById: { type: DataTypes.INTEGER, allowNull: true },
   processedByName: { type: DataTypes.STRING(160), allowNull: true },
 }, { tableName: 'hr_payslips', indexes: [{ unique: true, fields: ['employeeId', 'month'] }, { fields: ['month'] }] });
