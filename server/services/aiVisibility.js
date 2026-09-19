@@ -57,6 +57,50 @@ async function callClaude(apiKey, { system, messages, maxTokens = 1500, tools })
     .join('\n');
 }
 
+const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODEL = 'gpt-4o-mini';
+
+// Call OpenAI's chat completions with the same shape as callClaude (system +
+// messages → text). Used as an automatic fallback when Claude fails/times out.
+async function callOpenai(apiKey, { system, messages, maxTokens = 1500 }) {
+  try { recordApiCall && recordApiCall('openai'); } catch {}
+  const oaMessages = [];
+  if (system) oaMessages.push({ role: 'system', content: system });
+  for (const m of (messages || [])) oaMessages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120000);
+  let res;
+  try {
+    res = await fetch(OPENAI_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: OPENAI_MODEL, max_tokens: maxTokens, messages: oaMessages }),
+      signal: ctrl.signal,
+    });
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'OpenAI request timed out' : e.message); }
+  finally { clearTimeout(timer); }
+  if (!res.ok) { const err = await res.text(); throw new Error(`OpenAI API ${res.status}: ${err.slice(0, 300)}`); }
+  const data = await res.json();
+  return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+}
+
+// Resilient AI call: try Claude first; on ANY failure (timeout, rate limit,
+// error) automatically fall back to OpenAI if its key is available. Callers pass
+// both keys. Never leaks the provider error unless BOTH fail.
+async function callAI({ anthropicKey, openaiKey, system, messages, maxTokens = 1500 }) {
+  let claudeErr = null;
+  if (anthropicKey) {
+    try { const t = await callClaude(anthropicKey, { system, messages, maxTokens }); if (t && t.trim()) return t; }
+    catch (e) { claudeErr = e; }
+  }
+  if (openaiKey) {
+    try { const t = await callOpenai(openaiKey, { system, messages, maxTokens }); if (t && t.trim()) return t; }
+    catch (e) { if (claudeErr) throw claudeErr; throw e; }
+  }
+  if (claudeErr) throw claudeErr;
+  throw new Error('No AI provider configured.');
+}
+
 function parseJson(text) {
   const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
   const start = cleaned.search(/[[{]/);
@@ -586,6 +630,8 @@ module.exports = {
   assessOnPage,
   assessSocial,
   callClaude,
+  callOpenai,
+  callAI,
   analyseAiReadiness,
   scoreAiDimensions,
   detectBusinessServices,

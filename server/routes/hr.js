@@ -2892,13 +2892,14 @@ async function medicalDocRequirement(emp, { dates, reason }) {
   if (!reasons.length && reason && String(reason).trim().length >= 3) {
     try {
       const s = await Settings.findOne({ where: { singleton: 'settings' } });
-      const key = s && s.getKey ? s.getKey('anthropic') : null;
-      if (key) {
+      const aKey = s && s.getKey ? s.getKey('anthropic') : null;
+      const oKey = s && s.getKey ? s.getKey('openai') : null;
+      if (aKey || oKey) {
         const sys = 'You decide if a medical certificate should be required for a single-day medical leave, based only on the stated reason. '
           + 'Minor, self-limiting issues that do NOT normally need a doctor (mild fever, cold, headache, period cramps, routine/minor checkup, feeling unwell, stomach upset, rest at home) → NOT required. '
           + 'Reasons implying a doctor visit, hospitalization, procedure, surgery, injury, or a serious/ongoing condition → required. '
           + 'Return ONLY JSON: {"required":true|false,"why":"short reason"}.';
-        const out = await require('../services/aiVisibility').callClaude(key, { system: sys, maxTokens: 200, messages: [{ role: 'user', content: `Reason: "${String(reason).slice(0, 300)}"` }] });
+        const out = await require('../services/aiVisibility').callAI({ anthropicKey: aKey, openaiKey: oKey, system: sys, maxTokens: 200, messages: [{ role: 'user', content: `Reason: "${String(reason).slice(0, 300)}"` }] });
         const m = String(out || '').match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
         if (j && j.required === true) { reasons.push(j.why ? `the stated reason (${j.why})` : 'the stated reason suggests a certificate is appropriate'); }
         aiChecked = true;
@@ -9176,8 +9177,8 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
       };
     });
 
-    const key = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; } })();
-    if (!key) return res.json({ aiUsed: false, digest: null, from, to: dispTo, hasBiometric, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
+    const keys = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return { anthropic: s && s.getKey ? s.getKey('anthropic') : null, openai: s && s.getKey ? s.getKey('openai') : null }; } catch { return {}; } })();
+    if (!keys.anthropic && !keys.openai) return res.json({ aiUsed: false, digest: null, from, to: dispTo, hasBiometric, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
 
     const system = [
       'You are a senior HR operations analyst and workforce-management expert advising HR and company management.',
@@ -9193,7 +9194,7 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
 
     let digest = null, aiError = null;
     try {
-      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 8000, messages: [{ role: 'user', content: user }] });
+      const out = await require('../services/aiVisibility').callAI({ anthropicKey: keys.anthropic, openaiKey: keys.openai, system, messages: [{ role: 'user', content: user }], maxTokens: 8000 });
       digest = parseAiJson(String(out || ''));
       // Drop any incomplete attention entries from a repaired/truncated response.
       if (digest && Array.isArray(digest.attention)) {
