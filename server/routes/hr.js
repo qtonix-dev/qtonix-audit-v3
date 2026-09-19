@@ -9159,7 +9159,7 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
         interPunchTotal += nInter;
         if (nInter > 2) highBreakDays++;
         // Keep a compact sample of recent days (cap to keep payload small).
-        if (daySamples.length < 20) daySamples.push({ date: d.date, dow: d.dow, bioIn: d.bioIn || null, bioOut: d.bioOut || null, hrmsIn: d.hrmsIn || null, hrmsOut: d.hrmsOut || null, worked: d.workedLabel, deficit: d.deficitLabel, inter: nInter });
+        if (daySamples.length < 12) daySamples.push({ date: d.date, dow: d.dow, bioIn: d.bioIn || null, bioOut: d.bioOut || null, hrmsIn: d.hrmsIn || null, hrmsOut: d.hrmsOut || null, worked: d.workedLabel, deficit: d.deficitLabel, inter: nInter });
       }
       const present = r.days.filter((d) => !d.off && (d.bioIn || d.hrmsIn)).length;
       return {
@@ -9193,13 +9193,59 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
 
     let digest = null, aiError = null;
     try {
-      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 3000, messages: [{ role: 'user', content: user }] });
-      const m = String(out || '').match(/\{[\s\S]*\}/); digest = m ? JSON.parse(m[0]) : null;
+      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 8000, messages: [{ role: 'user', content: user }] });
+      digest = parseAiJson(String(out || ''));
+      // Drop any incomplete attention entries from a repaired/truncated response.
+      if (digest && Array.isArray(digest.attention)) {
+        digest.attention = digest.attention.filter((a) => a && a.name && (a.headline || (Array.isArray(a.reasons) && a.reasons.length)));
+      }
       if (!digest) aiError = 'The AI response could not be parsed. Please try again.';
     } catch (e) { aiError = (e && e.message) ? `AI request failed: ${e.message}` : 'AI request failed. Please try again.'; }
     res.json({ aiUsed: !!digest, digest, from, to: dispTo, hasBiometric, scope, rows: rows.map(slimAttRow), note: digest ? undefined : aiError, reason: digest ? undefined : 'api_error' });
   } catch (e) { next(e); }
 });
+
+// Robustly parse the model's JSON. If the response was truncated (hit the token
+// limit mid-array), repair it by closing open strings/brackets and dropping any
+// trailing partial element, so we keep the complete entries it did produce.
+function parseAiJson(text) {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let s = text.slice(start);
+  // First try: from first { to last } as-is.
+  const lastClose = s.lastIndexOf('}');
+  if (lastClose > 0) { try { return JSON.parse(s.slice(0, lastClose + 1)); } catch {} }
+  // Repair a truncated tail.
+  try {
+    let depth = 0, inStr = false, esc = false, lastGood = -1; const stack = [];
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === '{' || ch === '[') stack.push(ch);
+      else if (ch === '}' || ch === ']') stack.pop();
+      // A complete top-level element boundary (comma at depth where arrays are open).
+      if (ch === ',' && stack.length) lastGood = i;
+      if (stack.length === 0 && (ch === '}')) { lastGood = i; }
+    }
+    // Trim to the last complete element, drop a dangling partial one, then close brackets.
+    let body = s;
+    if (inStr) { /* cut off inside a string → trim to last comma */ if (lastGood > 0) body = s.slice(0, lastGood); }
+    else if (lastGood > 0 && lastGood < s.length - 1) body = s.slice(0, lastGood);
+    // Recompute open brackets on the trimmed body and close them.
+    const open = [];
+    let iStr = false, e2 = false;
+    for (const ch of body) {
+      if (iStr) { if (e2) e2 = false; else if (ch === '\\') e2 = true; else if (ch === '"') iStr = false; continue; }
+      if (ch === '"') iStr = true;
+      else if (ch === '{' || ch === '[') open.push(ch);
+      else if (ch === '}' || ch === ']') open.pop();
+    }
+    if (iStr) body += '"';
+    while (open.length) { const b = open.pop(); body += (b === '{' ? '}' : ']'); }
+    return JSON.parse(body);
+  } catch { return null; }
+}
 function slimAttRow(r) { return { name: r.name, department: r.department, presentDays: r.presentDays, deficitLabel: r.deficitLabel, inDeficit: r.inDeficit, missingOut: r.missingOut, avgHours: r.avgHours }; }
 
 // ADMIN IDENTITY REPAIR — fixes cross-admin board leaks + orphaned tasks caused
