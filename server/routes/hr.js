@@ -9043,17 +9043,18 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
     } catch {}
     const payload = bioSvc.aiReviewPayload(rows, leaveByEmp);
     const key = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; } })();
-    if (!key) return res.json({ aiUsed: false, digest: null, from, to, rows: rows.map(slimAttRow), note: 'AI key not configured.' });
+    if (!key) return res.json({ aiUsed: false, digest: null, from, to, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
     const system = 'You are an HR analytics assistant reviewing attendance for a team (gross shift hours as the daily target). '
       + 'The NUMBERS are already computed and correct — do not recompute. Spot patterns worth a human HR review and prioritize them: chronic lateness (and specific weekdays), large hour deficits, frequent missing punch-outs, and leave clustering (around weekends / month-end). '
       + 'Be fair and factual, never accusatory; frame as "worth checking". Return ONLY JSON: {"summary":"2-3 sentences","flags":[{"name":"...","severity":"high|medium|low","reason":"one sentence"}]}. Max 12 flags, highest priority first.';
     const user = `Range ${from} to ${to} (previous month + current to date).\nPer-employee:\n${JSON.stringify(payload).slice(0, 9000)}`;
-    let digest = null;
+    let digest = null, aiError = null;
     try {
       const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 1400, messages: [{ role: 'user', content: user }] });
       const m = String(out || '').match(/\{[\s\S]*\}/); digest = m ? JSON.parse(m[0]) : null;
-    } catch { digest = null; }
-    res.json({ aiUsed: !!digest, digest, from, to, rows: rows.map(slimAttRow) });
+      if (!digest) aiError = 'The AI response could not be parsed. Please try again.';
+    } catch (e) { aiError = (e && e.message) ? `AI request failed: ${e.message}` : 'AI request failed. Please try again.'; }
+    res.json({ aiUsed: !!digest, digest, from, to, rows: rows.map(slimAttRow), note: digest ? undefined : aiError, reason: digest ? undefined : 'api_error' });
   } catch (e) { next(e); }
 });
 function slimAttRow(r) { return { name: r.name, department: r.department, presentDays: r.presentDays, deficitLabel: r.deficitLabel, inDeficit: r.inDeficit, missingOut: r.missingOut, avgHours: r.avgHours }; }

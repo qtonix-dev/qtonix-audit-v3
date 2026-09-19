@@ -4560,7 +4560,7 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
       {aiOv && (
         <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
           <div className="flex items-center justify-between mb-1.5">
-            <div className="text-[12px] font-extrabold text-violet-700">🔎 AI Overview {aiOv.aiUsed ? '' : '(AI key not set)'} · {aiOv.from} → {aiOv.to}</div>
+            <div className="text-[12px] font-extrabold text-violet-700">🔎 AI Overview{aiOv.aiUsed ? '' : (aiOv.reason === 'no_key' ? ' (AI key not set)' : '')} · {aiOv.from} → {aiOv.to}</div>
             <button onClick={() => setAiOv(null)} className="text-slate-400 text-lg leading-none">×</button>
           </div>
           {aiOv.digest && aiOv.digest.summary && <div className="text-[12.5px] text-slate-600 mb-2.5">{aiOv.digest.summary}</div>}
@@ -4573,7 +4573,13 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
                 </div>
               ))}
             </div>
-          ) : <div className="text-[12px] text-slate-500">{aiOv.note || 'No AI interpretation available. Showing raw deficits in the report below.'}</div>}
+          ) : (
+            <div className="text-[12px] text-slate-600">
+              {aiOv.reason === 'no_key'
+                ? 'Add an Anthropic API key in Admin → Settings to enable AI interpretation. Raw deficits are shown in the report below.'
+                : <>{aiOv.note || 'AI interpretation is temporarily unavailable.'} <button onClick={runAiOverview} className="ml-1 font-bold text-violet-700 underline">Retry</button></>}
+            </div>
+          )}
           <div className="text-[10px] text-violet-400 mt-2">AI-generated guidance from HRMS attendance (previous month + current to date). Numbers are exact; interpretation is advisory.</div>
         </div>
       )}
