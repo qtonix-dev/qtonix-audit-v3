@@ -4509,14 +4509,16 @@ function BiometricModal({ onClose, onOpenEmployee }) {
 function PayrollModule({ user, isAdmin }) {
   const monthOptions = (() => { const out = []; const n = new Date(); for (let i = 1; i <= 15; i++) { const d = new Date(n.getFullYear(), n.getMonth() - i, 1); out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); } return out; })();
   const [month, setMonth] = useState(monthOptions[0]);
-  const [payDay, setPayDay] = useState(null);
+  const [payDates, setPayDates] = useState({});
+  const [configBranches, setConfigBranches] = useState([]);
+  const [payEditOpen, setPayEditOpen] = useState(false);
+  const [payDraft, setPayDraft] = useState({});
   const [rows, setRows] = useState([]);
   const [branch, setBranch] = useState('');
   const [dept, setDept] = useState('');
   const [q, setQ] = useState('');
   const [branches, setBranches] = useState([]); const [depts, setDepts] = useState([]);
   const [edit, setEdit] = useState(null);
-  const [payDayInput, setPayDayInput] = useState('');
   const [busy, setBusy] = useState(false);
   const monthLabel = new Date(month + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   const daysInMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(y, m, 0).getDate(); })();
@@ -4525,19 +4527,24 @@ function PayrollModule({ user, isAdmin }) {
 
   const load = () => {
     const p = new URLSearchParams({ month }); if (branch) p.set('branch', branch); if (dept) p.set('department', dept); if (q) p.set('q', q);
-    hrApi(`/payroll/list?${p}`).then((r) => { setRows(r.rows || []); setPayDay(r.payDay); }).catch((e) => toast(e.message));
+    hrApi(`/payroll/list?${p}`).then((r) => { setRows(r.rows || []); setPayDates(r.payDates || {}); }).catch((e) => toast(e.message));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [month, branch, dept, q]);
   useEffect(() => { hrApi('/branches').then((b) => setBranches(b || [])).catch(() => {}); hrApi('/departments').then((d) => setDepts(d || [])).catch(() => {}); }, []);
-
-  const savePayDay = async () => {
-    const d = Number(payDayInput);
-    if (!(d >= 1 && d <= 31)) { toast('Enter a pay day between 1 and 31.'); return; }
+  const openPayEdit = async () => {
+    try { const cfg = await hrApi(`/payroll/config?month=${month}`); setConfigBranches(cfg.branches || []); setPayDraft({ ...(cfg.payDates || {}) }); setPayEditOpen(true); }
+    catch (e) { toast(e.message); }
+  };
+  const savePayDates = async () => {
     setBusy(true);
-    try { await hrApi('/payroll/config', { method: 'POST', body: JSON.stringify({ month, payDay: d }) }); setPayDay(d); toast('Pay day set ✓'); }
+    try { await hrApi('/payroll/config', { method: 'POST', body: JSON.stringify({ month, payDates: payDraft }) }); setPayDates(payDraft); setPayEditOpen(false); toast('Salary processing dates saved ✓'); load(); }
     catch (e) { toast(e.message); }
     setBusy(false);
   };
+  const hasAnyPayDate = Object.values(payDates || {}).some((d) => d);
+  // month bounds for the calendar (only within the pay month).
+  const monthStart = `${month}-01`; const monthEndDate = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+
   const openEdit = async (empId) => {
     try { const r = await hrApi(`/payroll/prefill?month=${month}&employeeId=${empId}`); setEdit({ ...r.slip, daysInMonth, _fresh: r.fresh }); }
     catch (e) { toast(e.message); }
@@ -4557,17 +4564,39 @@ function PayrollModule({ user, isAdmin }) {
         </select>
       </div>
 
-      {/* Pay-day gate */}
-      {payDay == null ? (
+      {/* Salary processing date gate (per branch) */}
+      {!hasAnyPayDate ? (
         <div className="rounded-xl bg-orange-50 border border-orange-200 p-4 my-4 flex items-center gap-3 flex-wrap">
-          <div className="text-[13px] text-orange-800 font-semibold flex-1">Set the pay day for <b>{monthLabel}</b> to enable payslip generation.</div>
-          <input type="number" min="1" max="31" value={payDayInput} onChange={(e) => setPayDayInput(e.target.value)} placeholder="Day (1–31)" className="border border-orange-200 rounded-lg px-3 py-2 text-[13px] w-28" />
-          <button onClick={savePayDay} disabled={busy} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Set pay day</button>
+          <div className="text-[13px] text-orange-800 font-semibold flex-1">Set the <b>salary processing date</b> for {monthLabel} (per branch) to enable payslip generation.</div>
+          <button onClick={openPayEdit} className="rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>📅 Set processing dates</button>
         </div>
       ) : (
-        <div className="rounded-xl bg-green-50 border border-green-100 p-2.5 my-4 flex items-center gap-2 text-[12.5px]">
-          <span className="text-green-700 font-semibold flex-1">Pay day for <b>{monthLabel}</b>: <b>{payDay}{['th', 'st', 'nd', 'rd'][(payDay % 10 > 3 || (payDay >= 11 && payDay <= 13)) ? 0 : payDay % 10]}</b>. Payslips enabled.</span>
-          <button onClick={() => { setPayDayInput(String(payDay)); setPayDay(null); }} className="text-green-700 font-bold underline text-[11.5px]">Change</button>
+        <div className="rounded-xl bg-green-50 border border-green-100 p-2.5 my-4 flex items-center gap-2 text-[12.5px] flex-wrap">
+          <span className="text-green-700 font-semibold flex-1">Processing dates for <b>{monthLabel}</b>: {Object.entries(payDates).filter(([, d]) => d).map(([b, d]) => `${b} — ${new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`).join('  ·  ')}</span>
+          <button onClick={openPayEdit} className="text-green-700 font-bold underline text-[11.5px]">Change</button>
+        </div>
+      )}
+
+      {payEditOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={() => setPayEditOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div><div className="text-[15px] font-extrabold text-[#050A1F]">📅 Salary processing dates</div><div className="text-[12px] text-slate-400">{monthLabel} · one date per branch</div></div>
+              <button onClick={() => setPayEditOpen(false)} className="text-slate-400 text-2xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              {(configBranches.length ? configBranches : ['Bhubaneswar', 'Kolkata']).map((b) => (
+                <div key={b} className="flex items-center justify-between gap-3">
+                  <label className="text-[13px] font-bold text-slate-600">{b}</label>
+                  <input type="date" min={monthStart} value={payDraft[b] || ''} onChange={(e) => setPayDraft((p) => ({ ...p, [b]: e.target.value }))} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+                </div>
+              ))}
+              <div className="text-[11px] text-slate-400">Pick the date the salary is processed for each branch. This shows as the Pay date on payslips.</div>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex justify-end">
+              <button onClick={savePayDates} disabled={busy} className="rounded-lg text-white font-bold text-[13px] px-5 py-2" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : 'Save dates'}</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -4600,7 +4629,7 @@ function PayrollModule({ user, isAdmin }) {
                     <div className="flex gap-1.5">
                       {s && <button onClick={() => setEdit({ ...s, daysInMonth, _view: true })} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500">View</button>}
                       {s && <button onClick={() => pdf(s.id)} className="text-[11px] font-bold text-white rounded-lg px-2.5 py-1.5" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>PDF</button>}
-                      <button onClick={() => openEdit(r.employeeId)} disabled={payDay == null} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500 disabled:opacity-40">{s ? '✏️' : '✏️ Add'}</button>
+                      <button onClick={() => openEdit(r.employeeId)} disabled={!hasAnyPayDate} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-500 disabled:opacity-40">{s ? '✏️' : '✏️ Add'}</button>
                       {s && <button onClick={() => del(s.id)} className="text-[11px] font-bold border border-slate-200 rounded-lg px-2.5 py-1.5 text-red-400">🗑</button>}
                     </div>
                   </td>
@@ -4612,7 +4641,7 @@ function PayrollModule({ user, isAdmin }) {
         </table>
       </div>
 
-      {edit && <PayslipEditor data={edit} month={month} monthLabel={monthLabel} periodLabel={periodLabel} payDay={payDay} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
+      {edit && <PayslipEditor data={edit} month={month} monthLabel={monthLabel} periodLabel={periodLabel} payDates={payDates} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
     </div>
   );
 }
@@ -4620,10 +4649,12 @@ function PayrollModule({ user, isAdmin }) {
 function inrFmt(n) { return '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN'); }
 
 // Payslip edit/view popup with live calculation.
-function PayslipEditor({ data, month, monthLabel, periodLabel, payDay, onClose, onSaved }) {
+function PayslipEditor({ data, month, monthLabel, periodLabel, payDates, onClose, onSaved }) {
   const [f, setF] = useState(data);
   const [busy, setBusy] = useState(false);
   const view = !!data._view;
+  const branchDate = (payDates && data.branch && payDates[data.branch]) || null;
+  const payDateLabel = branchDate ? new Date(branchDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const N = (v) => Number(v) || 0;
   const shiftHours = N(f.shiftHours) || 8;
@@ -4657,7 +4688,7 @@ function PayslipEditor({ data, month, monthLabel, periodLabel, payDay, onClose, 
               <div className="text-[11px] font-extrabold uppercase" style={{ color: '#FF8C42' }}>Payslip · {monthLabel}</div>
               <div className="text-white font-extrabold text-[16px] mt-0.5">{titleCase(f.employeeName || '')}</div>
               <div className="text-slate-400 text-[12px]">{[f.designation, f.branch, f.employeeCode].filter(Boolean).join(' · ')}</div>
-              <div className="text-slate-500 text-[11px] mt-1">Period: {periodLabel} · Shift {shiftHours}h{payDay ? ` · Pay day ${payDay}` : ''}</div>
+              <div className="text-slate-500 text-[11px] mt-1">Period: {periodLabel} · Shift {shiftHours}h{payDateLabel ? ` · Pay date ${payDateLabel}` : ""}</div>
             </div>
             <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
           </div>

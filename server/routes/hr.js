@@ -9335,19 +9335,27 @@ router.get('/payroll/config', requireHrAccess, async (req, res, next) => {
     if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
     const month = String(req.query.month || lastCompletedMonth());
     const cfg = await PayrollConfig.findOne({ where: { month } });
-    res.json({ month, lastCompletedMonth: lastCompletedMonth(), payDay: cfg ? cfg.payDay : null, allowed: isMonthAllowed(month) });
+    // Branches that have employees, so HR sets a processing date for each.
+    const branches = (await HrBranch.findAll({ order: [['name', 'ASC']] })).map((b) => b.name);
+    res.json({ month, lastCompletedMonth: lastCompletedMonth(), payDates: (cfg && cfg.payDates) || {}, payDay: cfg ? cfg.payDay : null, branches, allowed: isMonthAllowed(month) });
   } catch (e) { next(e); }
 });
 router.post('/payroll/config', requireHrAccess, async (req, res, next) => {
   try {
     if (!canPayroll(req)) return res.status(403).json({ error: 'No access.' });
     const month = String(req.body.month || '');
-    const payDay = Number(req.body.payDay);
     if (!isMonthAllowed(month)) return res.status(400).json({ error: 'You can only run payroll for a completed month.' });
-    if (!(payDay >= 1 && payDay <= 31)) return res.status(400).json({ error: 'Enter a valid pay day (1–31).' });
+    const payDates = req.body.payDates || {};
+    // Validate each date is a real YYYY-MM-DD.
+    for (const [b, d] of Object.entries(payDates)) { if (d && !/^\d{4}-\d{2}-\d{2}$/.test(String(d))) return res.status(400).json({ error: `Invalid date for ${b}.` }); }
+    if (!Object.values(payDates).some((d) => d)) return res.status(400).json({ error: 'Select at least one salary processing date.' });
     const [cfg] = await PayrollConfig.findOrCreate({ where: { month }, defaults: { month } });
-    cfg.payDay = payDay; cfg.setById = req.hrActor.id; cfg.setByName = req.hrActor.name; await cfg.save();
-    res.json({ ok: true, month, payDay });
+    cfg.payDates = payDates; cfg.changed('payDates', true);
+    // keep a legacy payDay (day-of-month of the first set date) for compatibility.
+    const firstDate = Object.values(payDates).find((d) => d);
+    cfg.payDay = firstDate ? Number(String(firstDate).slice(8, 10)) : cfg.payDay;
+    cfg.setById = req.hrActor.id; cfg.setByName = req.hrActor.name; await cfg.save();
+    res.json({ ok: true, month, payDates });
   } catch (e) { next(e); }
 });
 
@@ -9380,7 +9388,7 @@ router.get('/payroll/list', requireHrAccess, async (req, res, next) => {
         slip: s,
       };
     });
-    res.json({ month, allowed: true, payDay: cfg ? cfg.payDay : null, lastCompletedMonth: lastCompletedMonth(), rows });
+    res.json({ month, allowed: true, payDates: (cfg && cfg.payDates) || {}, payDay: cfg ? cfg.payDay : null, lastCompletedMonth: lastCompletedMonth(), rows });
   } catch (e) { next(e); }
 });
 
@@ -9406,7 +9414,16 @@ router.get('/payroll/prefill', requireHrAccess, async (req, res, next) => {
       shiftHours: fig.shiftHours || 8, daysInMonth,
       workingDays: fig.workingDays, leaveTaken: fig.leaveTaken, lopDays: fig.lopDays,
       lateConsecutive: fig.lateConsecutive, lateTotal: fig.lateTotal, deficitHours: fig.deficitHours,
-      basic: (emp.profile && emp.profile.payroll && Number(emp.profile.payroll.basic)) || 0,
+      // Basic pay = the latest salary record (payrollHistory) effective on or
+      // before the pay month end. That's how it's shown in the profile's
+      // "Salary History" (latest effective = current monthly salary).
+      basic: (() => {
+        const hist = (emp.profile && emp.profile.payrollHistory) || [];
+        const monthEnd = `${month}-31`;
+        const eligible = hist.filter((h) => !h.effectiveDate || String(h.effectiveDate).slice(0, 10) <= monthEnd)
+          .sort((a, b) => String(b.effectiveDate || '').localeCompare(String(a.effectiveDate || '')));
+        return eligible.length ? Number(eligible[0].ctc) || 0 : ((emp.profile && emp.profile.payroll && Number(emp.profile.payroll.basic)) || 0);
+      })(),
       ta: (emp.profile && emp.profile.payroll && Number(emp.profile.payroll.ta)) || 0,
       incentive: 0, arrear: 0, reimbursement: 0, advance: 0, otherDeduction: 0, status: 'draft',
       payDay: cfg ? cfg.payDay : null,
@@ -9423,7 +9440,9 @@ router.post('/payroll/save', requireHrAccess, async (req, res, next) => {
     const month = String(b.month || '');
     if (!isMonthAllowed(month)) return res.status(400).json({ error: 'Payroll can only be saved for a completed month.' });
     const cfg = await PayrollConfig.findOne({ where: { month } });
-    if (!cfg || !cfg.payDay) return res.status(400).json({ error: 'Set the pay day for this month before saving payslips.' });
+    const emp0 = await HrUser.findByPk(Number(b.employeeId));
+    const branchDate = cfg && cfg.payDates && emp0 ? cfg.payDates[emp0.branch] : null;
+    if (!cfg || (!branchDate && !cfg.payDay)) return res.status(400).json({ error: 'Set the salary processing date for this branch before saving payslips.' });
     const emp = await HrUser.findByPk(Number(b.employeeId));
     if (!emp) return res.status(404).json({ error: 'Employee not found.' });
     const num = (v) => Number(v) || 0;
@@ -9466,17 +9485,21 @@ router.get('/payroll/:id/pdf', async (req, res, next) => {
     if (!row) return res.status(404).send('Not found');
     const emp = await HrUser.findByPk(row.employeeId);
     const cfg = await PayrollConfig.findOne({ where: { month: row.month } });
+    const branchDate = cfg && cfg.payDates && emp ? cfg.payDates[emp.branch] : null;
     const comp = payroll.computePayslip(row.toJSON());
     const [yy, mm] = row.month.split('-').map(Number);
     const daysInMonth = new Date(yy, mm, 0).getDate();
     const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
     const payDay = cfg ? cfg.payDay : null;
+    const payDateLabel = branchDate
+      ? new Date(branchDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      : (payDay ? `${String(payDay).padStart(2, '0')} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}` : '-');
     const s = row.toJSON();
     const p = {
       ...s, ...comp,
       monthLabel, periodLabel: `1 - ${daysInMonth} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`,
       daysInMonth, email: emp ? emp.email : '', phone: emp ? emp.phone : '',
-      payDateLabel: payDay ? `${String(payDay).padStart(2, '0')} ${new Date(yy, mm - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}` : '-',
+      payDateLabel,
       generatedLabel: new Date(Date.now() + 330 * 60000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
     };
     const company = { name: 'Qtonix Software Pvt. Ltd.', address: 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032', phone: '+91-93488 78088' };

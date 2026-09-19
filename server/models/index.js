@@ -1992,7 +1992,10 @@ Payslip.prototype.toJSON = function () { const o = Object.assign({}, this.get())
 const PayrollConfig = sequelize.define('PayrollConfig', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   month: { type: DataTypes.STRING(7), allowNull: false, unique: true }, // YYYY-MM
-  payDay: { type: DataTypes.INTEGER, allowNull: true },                 // 1..31
+  payDay: { type: DataTypes.INTEGER, allowNull: true },                 // legacy single day (fallback)
+  // Per-branch salary processing DATES (full YYYY-MM-DD), chosen on a calendar.
+  // { "Bhubaneswar": "2026-09-01", "Kolkata": "2026-09-02" }
+  payDates: { type: DataTypes.JSON, defaultValue: {} },
   setById: { type: DataTypes.INTEGER, allowNull: true },
   setByName: { type: DataTypes.STRING(160), allowNull: true },
 }, { tableName: 'hr_payroll_config' });

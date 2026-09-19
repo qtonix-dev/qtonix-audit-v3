@@ -46,33 +46,42 @@ function computePayslip(p) {
 // Auto-fetch attendance figures for an employee for a month from HRMS.
 // Returns { workingDays, leaveTaken, lopDays, lateConsecutive, lateTotal, deficitHours }.
 async function fetchAttendanceFigures(models, emp, month, helpers) {
-  const { HrAttendance } = models;
+  const { HrAttendance, HrLeave, Op } = models;
   const { branchWeekendOff, shiftGrossMinutes, holidaysForMonth } = helpers;
-  const rows = await HrAttendance.findAll({ where: { employeeId: emp.id, date: { [models.Op.like]: `${month}-%` } }, order: [['date', 'ASC']] });
+  const rows = await HrAttendance.findAll({ where: { employeeId: emp.id, date: { [Op.like]: `${month}-%` } }, order: [['date', 'ASC']] });
   const holidays = holidaysForMonth ? await holidaysForMonth(month, emp.branch) : {};
   const shift = emp.shiftId && helpers.shiftById ? helpers.shiftById[emp.shiftId] : null;
   const shiftMin = shift ? shiftGrossMinutes(shift) : 8 * 60;
   const shiftHours = shiftMin ? shiftMin / 60 : 8;
   const toMin = (t) => { if (!t) return null; const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
 
-  let workingDays = 0, leaveTaken = 0, lopDays = 0, lateTotal = 0, deficitMin = 0;
+  // Leave & LOP come from the LEAVE records (the source of truth shown in the
+  // profile's Leave tab), not just attendance status.
+  let leaveTaken = 0, lopDays = 0;
+  const lopDates = new Set();
+  try {
+    const lvs = await HrLeave.findAll({ where: { employeeId: emp.id, date: { [Op.like]: `${month}-%` }, status: { [Op.in]: ['approved', 'pending'] } } });
+    for (const lv of lvs) {
+      const units = String(lv.duration) === 'half' ? 0.5 : 1;
+      const isLop = String(lv.type) === 'lop' || lv.paid === false;
+      if (isLop) { lopDays += units; lopDates.add(lv.date); }
+      else if (String(lv.type) !== 'wfh') leaveTaken += units; // WFH isn't "leave taken"
+    }
+  } catch {}
+
+  let workingDays = 0, lateTotal = 0, deficitMin = 0;
   let curConsec = 0, maxConsec = 0;
   for (const r of rows) {
     const ds = r.date;
     const off = (holidays && holidays[ds]) || (branchWeekendOff && branchWeekendOff(ds, emp.branch));
     if (off) { curConsec = 0; continue; }
-    const st = r.status;
-    if (st === 'leave' || st === 'half_day') { leaveTaken += (st === 'half_day' ? 0.5 : 1); curConsec = 0; continue; }
-    if (st === 'lop') { lopDays += 1; curConsec = 0; continue; }
-    if (st === 'absent') { lopDays += 1; curConsec = 0; continue; }
-    // Present-ish day.
-    if (r.loginTime || st === 'present' || st === 'late') {
+    if (lopDates.has(ds) || r.status === 'lop' || r.status === 'absent') { if (!lopDates.has(ds) && (r.status === 'lop' || r.status === 'absent')) lopDays += 1; curConsec = 0; continue; }
+    if (r.status === 'leave' || r.status === 'half_day') { curConsec = 0; continue; }
+    if (r.loginTime || r.status === 'present' || r.status === 'late') {
       workingDays += 1;
-      // Late?
       const late = r.late || (shift && r.loginTime && toMin(r.loginTime) > toMin(shift.startTime) + 10);
       if (late) { lateTotal += 1; curConsec += 1; if (curConsec > maxConsec) maxConsec = curConsec; }
       else curConsec = 0;
-      // Deficit (worked-day shortfall only).
       if (r.loginTime && r.logoutTime) {
         let a = toMin(r.loginTime), b = toMin(r.logoutTime); if (b <= a) b += 1440;
         const worked = b - a;
