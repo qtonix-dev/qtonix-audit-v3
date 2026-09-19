@@ -75,22 +75,23 @@ async function buildPdf(p, company) {
   const colW = (W - 2 * M - 20) / 2;
   const drawTable = (x, title, color, rows, total, totalLabel) => {
     let ty = y;
+    const headTop = ty; // top of the coloured header — border wraps down from here
     page.drawRectangle({ x, y: ty - 18, width: colW, height: 18, color });
     text(title.toUpperCase(), x + 8, ty - 13, 9, bold, rgb(1, 1, 1));
     ty -= 18;
-    const startY = ty;
-    rows.forEach((r) => {
+    rows.forEach((r, ri) => {
       ty -= 20;
       text(r[0], x + 8, ty + 6, 10, font, DARK);
       rightText(inr(r[1]), x + colW - 8, ty + 6, 10, bold, DARK);
-      page.drawLine({ start: { x: x, y: ty }, end: { x: x + colW, y: ty }, thickness: 0.5, color: rgb(246 / 255, 247 / 255, 249 / 255) });
+      if (ri < rows.length - 1) page.drawLine({ start: { x: x + 6, y: ty }, end: { x: x + colW - 6, y: ty }, thickness: 0.5, color: rgb(241 / 255, 245 / 255, 249 / 255) });
     });
-    ty -= 22;
-    page.drawRectangle({ x, y: ty + 4, width: colW, height: 20, color: rgb(248 / 255, 250 / 255, 252 / 255) });
-    text(totalLabel, x + 8, ty + 10, 10, bold, DARK);
-    rightText(inr(total), x + colW - 8, ty + 10, 10, bold, DARK);
-    // border
-    page.drawRectangle({ x, y: ty + 4, width: colW, height: (startY - ty), borderColor: rgb(238 / 255, 240 / 255, 244 / 255), borderWidth: 1, color: undefined });
+    // Total row.
+    ty -= 24;
+    page.drawRectangle({ x, y: ty, width: colW, height: 22, color: rgb(248 / 255, 250 / 255, 252 / 255) });
+    text(totalLabel, x + 8, ty + 7, 10, bold, DARK);
+    rightText(inr(total), x + colW - 8, ty + 7, 10, bold, DARK);
+    // Outer border wraps header(18) through the total row exactly — no stray line.
+    page.drawRectangle({ x, y: ty, width: colW, height: (headTop - ty), borderColor: rgb(226 / 255, 232 / 255, 240 / 255), borderWidth: 1, color: undefined });
     return ty;
   };
   const eRows = [['Basic Pay', p.basic], ['Travel Allowance (TA)', p.ta], ['Incentive', p.incentive], ['Arrear', p.arrear], ['Reimbursement', p.reimbursement]];
@@ -108,23 +109,25 @@ async function buildPdf(p, company) {
   rightText(amountInWords(p.netSalary), W - M, y, 9, italic, GREY);
   y -= 26;
 
-  // Note (just above footer).
-  const noteH = 34;
-  page.drawRectangle({ x: M, y: y - noteH, width: W - 2 * M, height: noteH, color: rgb(255 / 255, 251 / 255, 235 / 255), borderColor: rgb(253 / 255, 230 / 255, 138 / 255), borderWidth: 1 });
-  text('Note: If you find any mismatch in this payslip, please reach out to the HR department at', M + 12, y - 15, 8.5, font, rgb(146 / 255, 64 / 255, 14 / 255));
-  text('hr@qtonix.com within 7 days of issue.', M + 12, y - 26, 8.5, bold, rgb(146 / 255, 64 / 255, 14 / 255));
+  // Footer divider position.
+  const dividerY = 78;
+  // Note sits JUST above the footer divider, and includes the computer-generated line.
+  const noteH = 46;
+  const noteY = dividerY + 14 + noteH;
+  page.drawRectangle({ x: M, y: noteY - noteH, width: W - 2 * M, height: noteH, color: rgb(255 / 255, 251 / 255, 235 / 255), borderColor: rgb(253 / 255, 230 / 255, 138 / 255), borderWidth: 1 });
+  text('Note: If you find any mismatch in this payslip, please reach out to the HR department at', M + 12, noteY - 15, 8.5, font, rgb(146 / 255, 64 / 255, 14 / 255));
+  text('hr@qtonix.com within 7 days of issue.', M + 12, noteY - 26, 8.5, bold, rgb(146 / 255, 64 / 255, 14 / 255));
+  text('This is a computer-generated payslip and does not require a signature.', M + 12, noteY - 39, 8, italic, rgb(180 / 255, 120 / 255, 40 / 255));
 
   // Footer.
-  const fy = 60;
-  page.drawLine({ start: { x: M, y: fy + 34 }, end: { x: W - M, y: fy + 34 }, thickness: 1, color: rgb(226 / 255, 232 / 255, 240 / 255) });
+  page.drawLine({ start: { x: M, y: dividerY }, end: { x: W - M, y: dividerY }, thickness: 1, color: rgb(226 / 255, 232 / 255, 240 / 255) });
   const cLines = [
     company.name || 'Qtonix Software Pvt. Ltd.',
     company.address || 'Registered Office: 609, Utkal Signature, National Highway 5, Pahala, 270, Bhubaneswar, Odisha 751032',
-    `Phone: ${company.phone || '+91-93488 78088'}   -   Generated ${p.generatedLabel}   -   (C) Qtonix Software Pvt. Ltd.`,
-    'This is a computer-generated payslip and does not require a signature.',
+    `Phone: ${company.phone || '+91-93488 78088'}   ·   Email: hr@qtonix.com   ·   Website: www.qtonix.com`,
   ];
-  let fyy = fy + 22;
-  cLines.forEach((l, i) => { const f = i === 0 ? bold : (i === 3 ? italic : font); const sz = i === 0 ? 9 : 7.5; const w = f.widthOfTextAtSize(l, sz); text(l, (W - w) / 2, fyy, sz, f, i === 0 ? GREY : LIGHT); fyy -= 11; });
+  let fyy = dividerY - 14;
+  cLines.forEach((l, i) => { const f = i === 0 ? bold : font; const sz = i === 0 ? 9 : 7.5; const w = f.widthOfTextAtSize(l, sz); text(l, (W - w) / 2, fyy, sz, f, i === 0 ? GREY : LIGHT); fyy -= 12; });
 
   return Buffer.from(await doc.save());
 }
