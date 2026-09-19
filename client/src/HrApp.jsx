@@ -4558,29 +4558,64 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
         </div>
       </div>
       {aiOv && (
-        <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="text-[12px] font-extrabold text-violet-700">🔎 AI Overview{aiOv.aiUsed ? '' : (aiOv.reason === 'no_key' ? ' (AI key not set)' : '')} · {aiOv.from} → {aiOv.to}</div>
-            <button onClick={() => setAiOv(null)} className="text-slate-400 text-lg leading-none">×</button>
+        <div className="mb-4">
+          {/* Hero summary */}
+          <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#4f46e5,#7c3aed)' }}>
+            <button onClick={() => setAiOv(null)} className="absolute top-3 right-3 text-white/70 hover:text-white text-xl leading-none">×</button>
+            <div className="text-[16px] font-extrabold flex items-center gap-2">🔎 AI Attendance Overview</div>
+            {aiOv.digest && aiOv.digest.summary
+              ? <div className="text-[13px] opacity-90 mt-1.5 leading-relaxed pr-6">{aiOv.digest.summary}</div>
+              : <div className="text-[12.5px] opacity-90 mt-1.5">{aiOv.reason === 'no_key' ? 'Add an Anthropic API key in Admin → Settings to enable AI analysis.' : <>{aiOv.note || 'AI analysis unavailable.'} <button onClick={runAiOverview} className="underline font-bold ml-1">Retry</button></>}</div>}
+            <div className="flex gap-2 mt-3 flex-wrap">
+              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">📅 {aiOv.from} – {aiOv.to}</span>
+              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">{aiOv.hasBiometric ? '📟 HRMS + biometric' : '💻 HRMS only'}</span>
+              {aiOv.rows && <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">👥 {aiOv.rows.length} analyzed</span>}
+            </div>
           </div>
-          {aiOv.digest && aiOv.digest.summary && <div className="text-[12.5px] text-slate-600 mb-2.5">{aiOv.digest.summary}</div>}
-          {aiOv.digest && Array.isArray(aiOv.digest.flags) ? (
-            <div className="space-y-1.5">
-              {aiOv.digest.flags.map((f, i) => (
-                <div key={i} className="flex items-start gap-2 text-[12px]">
-                  <span className="shrink-0 mt-0.5 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full" style={{ background: f.severity === 'high' ? '#fee2e2' : f.severity === 'medium' ? '#ffedd5' : '#f1f5f9', color: f.severity === 'high' ? '#b91c1c' : f.severity === 'medium' ? '#c2410c' : '#64748b' }}>{(f.severity || 'low').toUpperCase()}</span>
-                  <span><b className="text-[#050A1F]">{f.name}</b> — <span className="text-slate-500">{f.reason}</span></span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-[12px] text-slate-600">
-              {aiOv.reason === 'no_key'
-                ? 'Add an Anthropic API key in Admin → Settings to enable AI interpretation. Raw deficits are shown in the report below.'
-                : <>{aiOv.note || 'AI interpretation is temporarily unavailable.'} <button onClick={runAiOverview} className="ml-1 font-bold text-violet-700 underline">Retry</button></>}
-            </div>
+
+          {/* Needs attention */}
+          {aiOv.digest && Array.isArray(aiOv.digest.attention) && aiOv.digest.attention.length > 0 && (
+            <>
+              <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mt-4 mb-2.5">⚠ Needs attention ({aiOv.digest.attention.length})</div>
+              <div className="space-y-2.5">
+                {aiOv.digest.attention.map((a, i) => {
+                  const sev = (a.severity || 'low').toLowerCase();
+                  const bar = sev === 'high' ? '#ef4444' : sev === 'medium' ? '#f59e0b' : '#94a3b8';
+                  const badgeBg = sev === 'high' ? '#fee2e2' : sev === 'medium' ? '#fef3c7' : '#f1f5f9';
+                  const badgeFg = sev === 'high' ? '#b91c1c' : sev === 'medium' ? '#b45309' : '#64748b';
+                  return (
+                    <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3.5">
+                      <div className="w-1 rounded shrink-0" style={{ background: bar }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <b className="text-[14px] text-[#050A1F]">{titleCase(a.name)}</b>
+                          <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full" style={{ background: badgeBg, color: badgeFg }}>{sev}</span>
+                          <span className="text-[11px] text-slate-400">{[a.department, a.manager && `reports to ${a.manager}`].filter(Boolean).join(' · ')}</span>
+                        </div>
+                        {a.headline && <div className="text-[12.5px] text-slate-700 font-semibold mt-1">{a.headline}</div>}
+                        {Array.isArray(a.reasons) && a.reasons.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {a.reasons.map((r, j) => <div key={j} className="text-[12.5px] text-slate-500 pl-4 relative"><span className="absolute left-1 text-indigo-300 font-black">•</span>{r}</div>)}
+                          </div>
+                        )}
+                        {a.recommendation && <div className="mt-2 rounded-lg bg-green-50 border border-green-100 px-3 py-2 text-[12px] text-green-800">✅ {a.recommendation}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
-          <div className="text-[10px] text-violet-400 mt-2">AI-generated guidance from HRMS attendance (previous month + current to date). Numbers are exact; interpretation is advisory.</div>
+
+          {/* Positives */}
+          {aiOv.digest && Array.isArray(aiOv.digest.positives) && aiOv.digest.positives.length > 0 && (
+            <>
+              <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mt-4 mb-2.5">🌟 Doing well</div>
+              <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3 text-[12.5px] text-green-800">{aiOv.digest.positives.join(' ')}</div>
+            </>
+          )}
+
+          <div className="text-[10px] text-slate-400 mt-3">AI-generated guidance from HRMS{aiOv.hasBiometric ? ' + biometric' : ''} attendance over the analysis window. Numbers are exact; interpretation is advisory — verify before acting.</div>
         </div>
       )}
       {bioOpen && <BiometricModal onClose={() => setBioOpen(false)} onOpenEmployee={onOpenEmployee} />}

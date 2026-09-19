@@ -9025,36 +9025,113 @@ router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) =
     if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
     const now = new Date(Date.now() + 330 * 60000);
     const to = now.toISOString().slice(0, 10);
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const from = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-01`;
+    // Default range: current month to date. If HR picks "last month", show that
+    // month. Either way we ANALYZE at least the last 45 days so Claude has enough
+    // history to spot patterns.
+    const scope = (req.body && req.body.scope) || 'current'; // 'current' | 'last'
+    let dispFrom, dispTo = to;
+    if (scope === 'last') {
+      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      dispFrom = `${lm.getFullYear()}-${String(lm.getMonth() + 1).padStart(2, '0')}-01`;
+      dispTo = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+    } else {
+      dispFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    }
+    // Analysis window: at least 45 days back from dispTo.
+    const anchor = new Date(dispTo + 'T00:00:00Z'); anchor.setUTCDate(anchor.getUTCDate() - 45);
+    const from = anchor.toISOString().slice(0, 10) < dispFrom ? anchor.toISOString().slice(0, 10) : dispFrom;
     const branch = req.body && req.body.branch ? String(req.body.branch) : null;
-    // Build employee comparison purely from HRMS (punches empty → HRMS-only).
-    let emps = await loadEmpsForCompare(from, to);
+
+    let emps = await loadEmpsForCompare(from, dispTo);
     if (branch) { const branchUsers = await HrUser.findAll({ where: { branch }, attributes: ['id'] }); const set = new Set(branchUsers.map((u) => u.id)); emps = emps.filter((e) => set.has(e.id)); }
-    const cmp = bioSvc.buildComparison({ emps, punches: {}, from, to });
-    const rows = cmp.rows.filter((r) => r.presentDays > 0);
-    if (!rows.length) return res.json({ aiUsed: false, digest: null, from, to, note: 'No attendance data in range yet.' });
-    // Leaves for context.
+
+    // Merge STORED biometric punches (latest imports covering the window) so the
+    // AI sees biometric in/out + intermediate-punch frequency, not just HRMS.
+    const punches = {};
+    try {
+      const imports = await BiometricImport.findAll({ where: { maxDate: { [Op.gte]: from } }, order: [['id', 'ASC']] });
+      for (const imp of imports) { const data = imp.data || {}; for (const dev of Object.keys(data)) { punches[dev] = Object.assign(punches[dev] || {}, data[dev]); } }
+    } catch {}
+    const hasBiometric = Object.keys(punches).length > 0;
+
+    // Reconcile so we get biometric in/out, intermediate punches, deficit per day.
+    const rec = bioSvc.reconcile({ emps, punches, from, to: dispTo, reconcile: true, gapMin: 20 });
+    const rows = rec.rows.filter((r) => r.days.some((d) => d.bioIn || d.hrmsIn));
+    if (!rows.length) return res.json({ aiUsed: false, digest: null, from, to: dispTo, note: 'No attendance data in range yet.' });
+
+    // Reporting managers.
+    const mgrName = {};
+    try {
+      const mgrIds = [...new Set(emps.map((e) => e.reportsToId).filter(Boolean))];
+      if (mgrIds.length) { const mgrs = await HrUser.findAll({ where: { id: { [Op.in]: mgrIds } }, attributes: ['id', 'name'] }); mgrs.forEach((m) => { mgrName[m.id] = m.name; }); }
+    } catch {}
+    const empById = Object.fromEntries(emps.map((e) => [e.id, e]));
+
+    // Leaves.
     const leaveByEmp = {};
     try {
       const ids = rows.map((r) => r.employeeId);
       const lvs = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids } } });
       for (const lv of lvs) { (leaveByEmp[lv.employeeId] = leaveByEmp[lv.employeeId] || []).push({ type: lv.type, from: lv.fromDate || lv.startDate, to: lv.toDate || lv.endDate, status: lv.status }); }
     } catch {}
-    const payload = bioSvc.aiReviewPayload(rows, leaveByEmp);
+
+    // Build a rich, compact per-employee record for the AI.
+    const toMin = (t) => { if (!t) return null; const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
+    const payload = rows.map((r) => {
+      const e = empById[r.employeeId] || {};
+      const shiftStart = e.shift && e.shift.startTime ? e.shift.startTime : null;
+      const lateDays = []; const missedBioOut = []; const missedHrms = []; let highBreakDays = 0; let interPunchTotal = 0;
+      const daySamples = [];
+      for (const d of r.days) {
+        if (d.off) continue;
+        // Late = biometric/HRMS in later than shift start + 10min grace.
+        const inT = d.bioIn || d.hrmsIn;
+        if (shiftStart && inT && toMin(inT) > toMin(shiftStart) + 10) lateDays.push({ date: d.date, in: inT });
+        if (d.bioIn && !d.bioOut) missedBioOut.push(d.date);
+        if (!d.hrmsIn && !d.hrmsOut && (d.bioIn)) missedHrms.push(d.date);
+        const nInter = (d.middle || []).length;
+        interPunchTotal += nInter;
+        if (nInter > 2) highBreakDays++;
+        // Keep a compact sample of recent days (cap to keep payload small).
+        if (daySamples.length < 20) daySamples.push({ date: d.date, dow: d.dow, bioIn: d.bioIn || null, bioOut: d.bioOut || null, hrmsIn: d.hrmsIn || null, hrmsOut: d.hrmsOut || null, worked: d.workedLabel, deficit: d.deficitLabel, inter: nInter });
+      }
+      const present = r.days.filter((d) => !d.off && (d.bioIn || d.hrmsIn)).length;
+      return {
+        name: r.name, department: e.department || r.department || '', shift: r.shiftLabel,
+        reportingManager: (e.reportsToId && mgrName[e.reportsToId]) || (e.reportsToAdminId ? 'Admin' : '—'),
+        presentDays: present, avgHours: r.avgHours, totalDeficit: r.totalDeficitLabel,
+        lateCount: lateDays.length, lateDays: lateDays.slice(0, 10),
+        missedBiometricPunchOut: missedBioOut.length, missedBioOutDays: missedBioOut.slice(0, 8),
+        missedHrmsRecord: missedHrms.length,
+        avgIntermediatePunchesPerDay: present ? +(interPunchTotal / present).toFixed(1) : 0,
+        highIntermediateDays: highBreakDays, // days with >2 mid-day punches
+        leaves: (leaveByEmp[r.employeeId] || []).slice(0, 8),
+        recentDays: daySamples,
+      };
+    });
+
     const key = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s && s.getKey ? s.getKey('anthropic') : null; } catch { return null; } })();
-    if (!key) return res.json({ aiUsed: false, digest: null, from, to, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
-    const system = 'You are an HR analytics assistant reviewing attendance for a team (gross shift hours as the daily target). '
-      + 'The NUMBERS are already computed and correct — do not recompute. Spot patterns worth a human HR review and prioritize them: chronic lateness (and specific weekdays), large hour deficits, frequent missing punch-outs, and leave clustering (around weekends / month-end). '
-      + 'Be fair and factual, never accusatory; frame as "worth checking". Return ONLY JSON: {"summary":"2-3 sentences","flags":[{"name":"...","severity":"high|medium|low","reason":"one sentence"}]}. Max 12 flags, highest priority first.';
-    const user = `Range ${from} to ${to} (previous month + current to date).\nPer-employee:\n${JSON.stringify(payload).slice(0, 9000)}`;
+    if (!key) return res.json({ aiUsed: false, digest: null, from, to: dispTo, hasBiometric, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
+
+    const system = [
+      'You are a senior HR operations analyst and workforce-management expert advising HR and company management.',
+      'Analyze EACH employee individually the way an experienced HR + admin expert would, using the attendance data provided.',
+      'The numbers are already computed and correct — do NOT recompute. Interpret them fairly, factually, and without accusation; frame findings as "worth checking / needs attention".',
+      'Consider, per employee: chronic or patterned lateness (note specific weekdays if any), large working-hour deficits, frequent missed punch-outs (biometric or HRMS), missing HRMS records, leave patterns (clustering around weekends/month-end or excessive), and BREAK BEHAVIOUR via intermediate punches — 1–2 mid-day punches a day is normal, but a high average or many days with >2 intermediate punches suggests frequent breaks worth reviewing.',
+      'Where biometric and HRMS differ meaningfully, mention it. Distinguish likely genuine issues from probable data/device artifacts.',
+      'Return ONLY JSON with this exact shape:',
+      '{"summary":"2-4 sentence team overview","attention":[{"name":"...","department":"...","manager":"...","severity":"high|medium|low","headline":"one-line why they need attention","reasons":["specific reason with numbers","..."],"recommendation":"one concrete HR next step"}],"positives":["short note on employees doing well, optional"]}',
+      'Order "attention" by severity (highest first). Include only employees who genuinely need attention (not everyone). Be specific and cite the numbers (e.g. "late 6 of 20 days, avg 25 min", "avg 3.4 intermediate punches/day").',
+    ].join(' ');
+    const user = `Analysis window ${from} to ${dispTo} (${hasBiometric ? 'HRMS + biometric data' : 'HRMS only — no biometric import for this range'}).\nEmployees (${payload.length}):\n${JSON.stringify(payload).slice(0, 24000)}`;
+
     let digest = null, aiError = null;
     try {
-      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 1400, messages: [{ role: 'user', content: user }] });
+      const out = await require('../services/aiVisibility').callClaude(key, { system, maxTokens: 3000, messages: [{ role: 'user', content: user }] });
       const m = String(out || '').match(/\{[\s\S]*\}/); digest = m ? JSON.parse(m[0]) : null;
       if (!digest) aiError = 'The AI response could not be parsed. Please try again.';
     } catch (e) { aiError = (e && e.message) ? `AI request failed: ${e.message}` : 'AI request failed. Please try again.'; }
-    res.json({ aiUsed: !!digest, digest, from, to, rows: rows.map(slimAttRow), note: digest ? undefined : aiError, reason: digest ? undefined : 'api_error' });
+    res.json({ aiUsed: !!digest, digest, from, to: dispTo, hasBiometric, scope, rows: rows.map(slimAttRow), note: digest ? undefined : aiError, reason: digest ? undefined : 'api_error' });
   } catch (e) { next(e); }
 });
 function slimAttRow(r) { return { name: r.name, department: r.department, presentDays: r.presentDays, deficitLabel: r.deficitLabel, inDeficit: r.inDeficit, missingOut: r.missingOut, avgHours: r.avgHours }; }
