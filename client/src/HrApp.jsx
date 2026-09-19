@@ -6319,14 +6319,31 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
   const submit = async () => {
     setErr('');
     if (duration === 'full' && to < from) { setErr('The end date can’t be before the start date.'); return; }
-    // Employees must attach a medical certificate for medical leave.
-    if (type === 'medical' && !documentUrl) { setErr('Please upload your medical certificate to apply for medical leave.'); return; }
+    // Medical: certificate only required under specific rules (checked server-side).
+    if (type === 'medical' && !documentUrl && medReq && medReq.required) {
+      setErr(`A medical certificate is required because ${medReq.reasons.join(', and ')}. Please upload it.`);
+      return;
+    }
     const body = duration === 'half'
       ? { type, duration: 'half', date: halfDate, reason, documentUrl }
       : { type, duration: 'full', from, to, reason, documentUrl };
     setBusy(true);
     try { await hrApi('/me/leave', { method: 'POST', body: JSON.stringify(body) }); onDone(); }
     catch (e) { setErr(e.message); setBusy(false); }
+  };
+  // Check whether a medical certificate is required, after the reason is entered.
+  const [medReq, setMedReq] = useState(null); // { required, reasons }
+  const [medChecking, setMedChecking] = useState(false);
+  useEffect(() => { if (type === 'medical') checkMedical(); else setMedReq(null); /* eslint-disable-next-line */ }, [type, duration, from, to, halfDate]);
+  const checkMedical = async () => {
+    if (type !== 'medical') { setMedReq(null); return; }
+    setMedChecking(true);
+    try {
+      const dates = duration === 'half' ? [halfDate] : undefined;
+      const r = await hrApi('/me/leave/medical-check', { method: 'POST', body: JSON.stringify({ type, duration, from, to, date: halfDate, dates, reason }) });
+      setMedReq(r);
+    } catch { setMedReq(null); }
+    setMedChecking(false);
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[130] p-4" onClick={onClose}>
@@ -6353,16 +6370,31 @@ function ApplyLeaveModal({ approverName, approverChain, onClose, onDone }) {
           ) : (
             <div><div className="text-[12px] font-bold text-slate-600 mb-1">Date</div><input type="date" value={halfDate} min={today} onChange={(e) => setHalfDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></div>
           )}
-          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
+          <div><div className="text-[12px] font-bold text-slate-600 mb-1">Reason</div><textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} onBlur={checkMedical} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Add a short reason…" /></div>
           {type === 'medical' && (
             <div>
-              <div className="text-[12px] font-bold text-slate-600 mb-1">Medical certificate <span className="text-red-500">*</span></div>
-              {documentUrl ? (
-                <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
+              {medChecking && <div className="text-[11px] text-slate-400 mb-1">Checking if a certificate is needed…</div>}
+              {medReq && medReq.required ? (
+                <>
+                  <div className="text-[12px] font-bold text-slate-600 mb-1">Medical certificate <span className="text-red-500">*</span></div>
+                  <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-1.5">Required because {medReq.reasons.join(', and ')}.</div>
+                  {documentUrl ? (
+                    <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
+                  ) : (
+                    <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Upload certificate'}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>
+                  )}
+                </>
               ) : (
-                <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Upload certificate'}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>
+                <>
+                  <div className="text-[12px] font-bold text-slate-600 mb-1">Medical certificate <span className="text-slate-400 font-normal">(optional)</span></div>
+                  {documentUrl ? (
+                    <div className="flex items-center gap-2"><a href={documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View uploaded ↗</a><button onClick={() => setDocumentUrl('')} className="text-xs text-slate-400">Remove</button></div>
+                  ) : (
+                    <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">{uploading ? 'Uploading…' : 'Attach certificate (if you have one)'}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files[0] && uploadMedical(e.target.files[0])} /></label>
+                  )}
+                  <div className="text-[11px] text-slate-400 mt-1">Not required for this application — attach only if you have one.</div>
+                </>
               )}
-              <div className="text-[11px] text-slate-400 mt-1">Required for medical leave.</div>
             </div>
           )}
           <div className="flex items-center justify-between text-[12px]">

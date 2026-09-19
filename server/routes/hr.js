@@ -2861,6 +2861,69 @@ router.get('/me/leave', requireHrAccess, async (req, res, next) => {
 
 // POST /me/leave → apply for leave (self). Creates a PENDING request routed to
 // the employee's approver.
+// Decide whether a medical-leave application requires a supporting document.
+// Deterministic rules 1–3 always apply; rule 4 (AI reason check) is best-effort
+// and fails OPEN (not required) so a transient AI issue never blocks a genuine
+// single-day sick leave.
+async function medicalDocRequirement(emp, { dates, reason }) {
+  const reasons = [];
+  const first = dates[0]; const last = dates[dates.length - 1];
+  // Rule 1: more than one day.
+  if (dates.length > 1) reasons.push('the leave is for more than one day');
+  // Rule 2: another medical leave within the last 20 days.
+  try {
+    const since = new Date(new Date(first + 'T00:00:00').getTime() - 20 * 86400000).toISOString().slice(0, 10);
+    const recentMed = await HrLeave.findOne({ where: { employeeId: emp.id, type: 'medical', status: { [Op.in]: ['pending', 'approved'] }, date: { [Op.between]: [since, first] } } });
+    if (recentMed) reasons.push('you have taken medical leave within the last 20 days');
+  } catch {}
+  // Rule 3: this medical leave is adjacent to (extends) another leave — i.e. any
+  // prior leave ends within 1 day before this leave starts.
+  try {
+    const dayBefore = new Date(new Date(first + 'T00:00:00').getTime() - 86400000).toISOString().slice(0, 10);
+    const adjacent = await HrLeave.findOne({ where: { employeeId: emp.id, status: { [Op.in]: ['pending', 'approved'] }, date: { [Op.in]: [dayBefore, first] }, type: { [Op.ne]: 'medical' } } });
+    // also catch a prior medical block that this continues
+    const adjacentMed = await HrLeave.findOne({ where: { employeeId: emp.id, status: { [Op.in]: ['pending', 'approved'] }, date: dayBefore } });
+    if (adjacent || adjacentMed) reasons.push('this continues right after another leave');
+  } catch {}
+
+  // Rule 4: AI validates the reason — only consulted if rules 1–3 didn't already
+  // require it (no point spending a call). Fails open.
+  let aiChecked = false;
+  if (!reasons.length && reason && String(reason).trim().length >= 3) {
+    try {
+      const s = await Settings.findOne({ where: { singleton: 'settings' } });
+      const key = s && s.getKey ? s.getKey('anthropic') : null;
+      if (key) {
+        const sys = 'You decide if a medical certificate should be required for a single-day medical leave, based only on the stated reason. '
+          + 'Minor, self-limiting issues that do NOT normally need a doctor (mild fever, cold, headache, period cramps, routine/minor checkup, feeling unwell, stomach upset, rest at home) → NOT required. '
+          + 'Reasons implying a doctor visit, hospitalization, procedure, surgery, injury, or a serious/ongoing condition → required. '
+          + 'Return ONLY JSON: {"required":true|false,"why":"short reason"}.';
+        const out = await require('../services/aiVisibility').callClaude(key, { system: sys, maxTokens: 200, messages: [{ role: 'user', content: `Reason: "${String(reason).slice(0, 300)}"` }] });
+        const m = String(out || '').match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
+        if (j && j.required === true) { reasons.push(j.why ? `the stated reason (${j.why})` : 'the stated reason suggests a certificate is appropriate'); }
+        aiChecked = true;
+      }
+    } catch { /* fail open — no requirement from AI */ }
+  }
+  return { required: reasons.length > 0, reasons, aiChecked };
+}
+
+// Employee checks (live) whether their medical application will need a document.
+router.post('/me/leave/medical-check', requireHrAccess, async (req, res, next) => {
+  try {
+    if (req.hrActor.kind !== 'hr') return res.json({ required: false });
+    const emp = await HrUser.findByPk(req.hrActor.id);
+    const b = req.body || {};
+    if (b.type !== 'medical') return res.json({ required: false });
+    const dates = Array.isArray(b.dates) && b.dates.length ? b.dates
+      : (b.duration === 'half' ? [b.date || b.from] : expandRange(b.from, b.to));
+    if (!dates.length || !dates[0]) return res.json({ required: false });
+    const r = await medicalDocRequirement(emp, { dates, reason: b.reason || '' });
+    res.json(r);
+  } catch (e) { next(e); }
+});
+function expandRange(from, to) { if (!from) return []; const out = []; let cur = new Date(from + 'T00:00:00'); const end = new Date((to || from) + 'T00:00:00'); let g = 0; while (cur <= end && g < 60) { out.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); g++; } return out; }
+
 router.post('/me/leave', requireHrAccess, async (req, res, next) => {
   try {
     if (req.hrActor.kind !== 'hr') return res.status(403).json({ error: 'Only employees can apply for leave.' });
@@ -2893,12 +2956,14 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const clash = dates.find((d) => existing.some((e) => e.date === d));
     if (clash) return res.status(400).json({ error: `You already have a request for ${clash}.` });
 
-    // Medical leave requires a supporting document when the EMPLOYEE applies
-    // themselves (HR recording on an employee's behalf is exempt).
-    const s = await Settings.findOne({ where: { singleton: 'settings' } });
-    const rules = (getHrPolicy(s).leaveRules) || {};
-    if (type === 'medical' && rules.medical && rules.medical.requireDocument && !b.documentUrl) {
-      return res.status(400).json({ error: 'Medical leave requires a supporting document. Please attach the medical certificate.', policyBlock: 'medical_doc' });
+    // Medical leave requires a supporting document only under specific rules
+    // (multi-day, recent medical leave, extending another leave, or the AI
+    // judges the reason serious). HR recording on an employee's behalf is exempt.
+    if (type === 'medical' && !b.documentUrl) {
+      const reqd = await medicalDocRequirement(emp, { dates, reason: b.reason || '' });
+      if (reqd.required) {
+        return res.status(400).json({ error: `A medical certificate is required because ${reqd.reasons.join(', and ')}. Please attach it.`, policyBlock: 'medical_doc', reasons: reqd.reasons });
+      }
     }
 
     const approver = await resolveLeaveApprover(emp);
@@ -2906,6 +2971,7 @@ router.post('/me/leave', requireHrAccess, async (req, res, next) => {
     const reason = String(b.reason || '').slice(0, 300);
     const documentUrl = b.documentUrl ? String(b.documentUrl).slice(0, 500) : null;
     const created = [];
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const _pol = getHrPolicy(s);
     let anyLop = false;
     for (const date of dates) {
