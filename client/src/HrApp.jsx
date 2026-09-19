@@ -4797,12 +4797,40 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
     if (!w) { toast('Allow pop-ups to download the PDF.'); return; }
     w.document.write(html); w.document.close();
   };
-  const runAiOverview = async () => {
-    setAiOvBusy(true);
-    try { const r = await hrApi('/attendance/ai-overview', { method: 'POST', body: JSON.stringify({ branch: branch || undefined }) }); setAiOv(r); }
-    catch (e) { toast(e.message); }
-    setAiOvBusy(false);
+  const [aiPolling, setAiPolling] = useState(false);
+  const aiPollRef = useRef(null);
+  const stopPoll = () => { if (aiPollRef.current) { clearInterval(aiPollRef.current); aiPollRef.current = null; } setAiPolling(false); };
+  const applyReport = (r) => {
+    // Normalize the cached-report shape into what the UI renders.
+    setAiOv({
+      status: r.status, digest: r.digest || null, from: r.fromDate || r.from, to: r.toDate || r.to,
+      hasBiometric: r.hasBiometric, employeeCount: r.employeeCount, generatedAt: r.generatedAt, error: r.error, note: r.note,
+    });
   };
+  const pollAiOverview = () => {
+    aiPollRef.current = setInterval(async () => {
+      try {
+        const r = await hrApi(`/attendance/ai-overview?scope=current&branch=${encodeURIComponent(branch || '')}`);
+        if (r.status === 'ready') { applyReport(r); stopPoll(); }
+        else if (r.status === 'error') { applyReport(r); stopPoll(); }
+        // 'processing' / 'none' → keep polling
+      } catch { /* keep polling */ }
+    }, 4000);
+  };
+  const runAiOverview = async (regenerate = false) => {
+    setAiOv({ status: 'processing' }); // opens the popup with the spinner immediately
+    setAiPolling(true);
+    try {
+      const r = await hrApi('/attendance/ai-overview', { method: 'POST', body: JSON.stringify({ scope: 'current', branch: branch || undefined, regenerate }) });
+      if (r.status === 'ready') { applyReport(r); setAiPolling(false); return; }
+      if (r.status === 'empty') { setAiOv({ status: 'empty', note: r.note }); setAiPolling(false); return; }
+      // processing → poll for the result (runs in background server-side)
+      setAiOv((prev) => ({ ...(prev || {}), status: 'processing', from: r.from, to: r.to, employeeCount: r.employeeCount, hasBiometric: r.hasBiometric }));
+      pollAiOverview();
+    } catch (e) { toast(e.message); setAiOv({ status: 'error', error: e.message }); setAiPolling(false); }
+  };
+  const closeAiOverview = () => { stopPoll(); setAiOv(null); }; // background job keeps running server-side
+  useEffect(() => () => stopPoll(), []);
   const [err, setErr] = useState('');
 
   const loadCal = () => {
@@ -4834,7 +4862,7 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
             </select>
           )}
           {!canAll && <span className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs font-bold text-blue-700">{scopedBranch} branch</span>}
-          <button onClick={runAiOverview} disabled={aiOvBusy} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#8B5CF6,#EC4899)' }}>{aiOvBusy ? '✨ Analyzing…' : '🔎 AI Overview'}</button>
+          <button onClick={() => runAiOverview(false)} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#8B5CF6,#EC4899)' }}>🔎 AI Overview</button>
           <button onClick={() => setBioOpen(true)} className="rounded-lg px-3 py-2 text-sm font-bold text-white flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>📤 Upload biometric data</button>
         </div>
       </div>
@@ -4847,25 +4875,43 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-lg" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Q</div>
                 <div>
                   <div className="text-white font-extrabold text-[15px]">AI Attendance Overview</div>
-                  <div className="text-slate-400 text-[11px]">{aiOv.from} – {aiOv.to} · {aiOv.hasBiometric ? 'HRMS + biometric' : 'HRMS only'}{aiOv.rows ? ` · ${aiOv.rows.length} employees` : ''}</div>
+                  <div className="text-slate-400 text-[11px]">{aiOv.from ? `${aiOv.from} – ${aiOv.to} · ` : ''}{aiOv.hasBiometric ? 'HRMS + biometric' : 'HRMS only'}{aiOv.employeeCount ? ` · ${aiOv.employeeCount} employees` : ''}{aiOv.generatedAt ? ` · generated ${timeAgo(aiOv.generatedAt)}` : ''}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {aiOv.status === 'ready' && aiOv.digest && <button onClick={() => runAiOverview(true)} className="rounded-lg text-slate-200 font-bold text-[12px] px-3 py-1.5 border border-slate-600 hover:bg-slate-700">↻ Regenerate</button>}
                 {aiOv.digest && <button onClick={() => downloadAiOverviewPdf(aiOv)} className="rounded-lg text-white font-bold text-[12px] px-3 py-1.5 flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>⬇ Download PDF</button>}
-                <button onClick={() => setAiOv(null)} className="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center">×</button>
+                <button onClick={closeAiOverview} className="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center">×</button>
               </div>
             </div>
 
             {/* Scrollable body */}
             <div className="flex-1 overflow-auto p-5" style={{ background: '#f8fafc' }}>
+              {/* Processing / loading state */}
+              {aiOv.status === 'processing' && (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="w-14 h-14 rounded-full border-4 border-violet-200 border-t-violet-600 animate-spin mb-5" />
+                  <div className="text-[15px] font-extrabold text-[#050A1F]">Analyzing attendance…</div>
+                  <div className="text-[12.5px] text-slate-500 mt-1.5 max-w-sm">{aiOv.employeeCount ? `Reviewing ${aiOv.employeeCount} employees` : 'Preparing the data'} over the last 45 days. This usually takes 30–60 seconds.</div>
+                  <div className="text-[11.5px] text-slate-400 mt-3 max-w-sm">You can close this window — the analysis keeps running in the background and will be saved. Reopen anytime to see the result.</div>
+                </div>
+              )}
+              {aiOv.status === 'empty' && <div className="py-16 text-center text-slate-400 text-[13px]">{aiOv.note || 'No attendance data in range yet.'}</div>}
+              {aiOv.status === 'error' && (
+                <div className="py-16 text-center">
+                  <div className="text-[14px] font-bold text-red-500">Couldn’t generate the report</div>
+                  <div className="text-[12.5px] text-slate-500 mt-1.5">{aiOv.error || 'Please try again.'}</div>
+                  <button onClick={() => runAiOverview(true)} className="mt-4 rounded-lg text-white font-bold text-[12.5px] px-4 py-2" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>↻ Try again</button>
+                </div>
+              )}
+
+              {aiOv.status === 'ready' && aiOv.digest && (<>
               {/* Summary */}
               <div className="rounded-2xl p-5 text-white relative overflow-hidden mb-4" style={{ background: 'linear-gradient(120deg,#050A1F,#1e293b)' }}>
                 <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full opacity-20" style={{ background: 'radial-gradient(circle,#FF6A00,transparent)' }} />
                 <div className="text-[13px] font-extrabold flex items-center gap-2 mb-1" style={{ color: '#FF8C42' }}>Executive summary</div>
-                {aiOv.digest && aiOv.digest.summary
-                  ? <div className="text-[13px] opacity-95 leading-relaxed relative">{aiOv.digest.summary}</div>
-                  : <div className="text-[12.5px] opacity-90">{aiOv.reason === 'no_key' ? 'Add an Anthropic API key in Admin → Settings to enable AI analysis.' : <>{aiOv.note || 'AI analysis unavailable.'} <button onClick={runAiOverview} className="underline font-bold ml-1">Retry</button></>}</div>}
-              </div>
+                {aiOv.digest.summary && <div className="text-[13px] opacity-95 leading-relaxed relative">{aiOv.digest.summary}</div>}
+              </div></>)}
 
               {/* Needs attention */}
               {aiOv.digest && Array.isArray(aiOv.digest.attention) && aiOv.digest.attention.length > 0 && (

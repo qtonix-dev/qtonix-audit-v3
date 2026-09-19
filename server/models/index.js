@@ -1948,6 +1948,26 @@ HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.g
 
 // A processed payslip for one employee for one month. Phase 1: HR enters/edits
 // the figures (auto-fetched from attendance where available). One per emp+month.
+// Cached AI attendance-overview reports. One row per (month + branch + scope).
+// Generated in the background; HR reuses the cache until they Regenerate.
+const AiOverviewReport = sequelize.define('AiOverviewReport', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  cacheKey: { type: DataTypes.STRING(120), allowNull: false, unique: true },
+  scope: { type: DataTypes.STRING(12), defaultValue: 'current' },
+  month: { type: DataTypes.STRING(7), allowNull: true },
+  branch: { type: DataTypes.STRING(120), allowNull: true },
+  fromDate: { type: DataTypes.STRING(10), allowNull: true },
+  toDate: { type: DataTypes.STRING(10), allowNull: true },
+  status: { type: DataTypes.STRING(12), defaultValue: 'processing' },
+  hasBiometric: { type: DataTypes.BOOLEAN, defaultValue: false },
+  employeeCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  digest: { type: DataTypes.JSON, allowNull: true },
+  error: { type: DataTypes.STRING(400), allowNull: true },
+  generatedAt: { type: DataTypes.DATE, allowNull: true },
+  requestedById: { type: DataTypes.INTEGER, allowNull: true },
+}, { tableName: 'hr_ai_overview_reports' });
+AiOverviewReport.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 const Payslip = sequelize.define('Payslip', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   employeeId: { type: DataTypes.INTEGER, allowNull: false },
@@ -2873,7 +2893,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

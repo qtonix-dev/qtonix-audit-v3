@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, Payslip, PayrollConfig, Task, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
+const { Op, HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, Payslip, PayrollConfig, Task, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrEmail, User, AuditLog, Settings, CrmEmailLog, RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption } = require('../models');
 const bioSvc = require('../services/biometric');
 const models = require('../models'); // full module, for services that take a models bag (rewards engine)
 const { signHr, requireHrAccess, requireHrAdmin, requireScheduler, requireHrManager, requireJobPoster, canViewInternal, canManageBranch } = require('../middleware/hrAuth');
@@ -9087,122 +9087,135 @@ router.post('/attendance/biometric/:id/ai-review', requireHrAccess, async (req, 
 
 // AI overview run on HRMS attendance data directly (no biometric upload needed).
 // Covers previous month + current month to date, for all employees in scope.
+// Build the CONSOLIDATED dataset (single object) for the AI, plus meta.
+async function buildAiOverviewData(req) {
+  const now = new Date(Date.now() + 330 * 60000);
+  const to = now.toISOString().slice(0, 10);
+  const scope = (req.scope) || 'current';
+  let dispFrom, dispTo = to;
+  if (scope === 'last') {
+    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    dispFrom = `${lm.getFullYear()}-${String(lm.getMonth() + 1).padStart(2, '0')}-01`;
+    dispTo = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+  } else {
+    dispFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  }
+  const anchor = new Date(dispTo + 'T00:00:00Z'); anchor.setUTCDate(anchor.getUTCDate() - 45);
+  const from = anchor.toISOString().slice(0, 10) < dispFrom ? anchor.toISOString().slice(0, 10) : dispFrom;
+  const branch = req.branch || null;
+
+  let emps = await loadEmpsForCompare(from, dispTo);
+  if (branch) { const bu = await HrUser.findAll({ where: { branch }, attributes: ['id'] }); const set = new Set(bu.map((u) => u.id)); emps = emps.filter((e) => set.has(e.id)); }
+
+  const punches = {};
+  try { const imports = await BiometricImport.findAll({ where: { maxDate: { [Op.gte]: from } }, order: [['id', 'ASC']] }); for (const imp of imports) { const data = imp.data || {}; for (const dev of Object.keys(data)) punches[dev] = Object.assign(punches[dev] || {}, data[dev]); } } catch {}
+  const hasBiometric = Object.keys(punches).length > 0;
+
+  const rec = bioSvc.reconcile({ emps, punches, from, to: dispTo, reconcile: true, gapMin: 20 });
+  const rows = rec.rows.filter((r) => r.days.some((d) => d.bioIn || d.hrmsIn));
+
+  const mgrName = {};
+  try { const mgrIds = [...new Set(emps.map((e) => e.reportsToId).filter(Boolean))]; if (mgrIds.length) { const mgrs = await HrUser.findAll({ where: { id: { [Op.in]: mgrIds } }, attributes: ['id', 'name'] }); mgrs.forEach((m) => { mgrName[m.id] = m.name; }); } } catch {}
+  const empById = Object.fromEntries(emps.map((e) => [e.id, e]));
+  const leaveByEmp = {};
+  try { const ids = rows.map((r) => r.employeeId); const lvs = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids } } }); for (const lv of lvs) (leaveByEmp[lv.employeeId] = leaveByEmp[lv.employeeId] || []).push({ type: lv.type, date: lv.date, status: lv.status }); } catch {}
+
+  const toMin = (t) => { if (!t) return null; const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
+  const employees = rows.map((r) => {
+    const e = empById[r.employeeId] || {};
+    const shiftStart = e.shift && e.shift.startTime ? e.shift.startTime : null;
+    let lateCount = 0, missedBioOut = 0, missedHrms = 0, highBreakDays = 0, interPunchTotal = 0; const lateDates = [];
+    for (const d of r.days) {
+      if (d.off) continue;
+      const inT = d.bioIn || d.hrmsIn;
+      if (shiftStart && inT && toMin(inT) > toMin(shiftStart) + 10) { lateCount++; if (lateDates.length < 8) lateDates.push(`${d.date}(${inT})`); }
+      if (d.bioIn && !d.bioOut) missedBioOut++;
+      if (!d.hrmsIn && !d.hrmsOut && d.bioIn) missedHrms++;
+      const nInter = (d.middle || []).length; interPunchTotal += nInter; if (nInter > 2) highBreakDays++;
+    }
+    const present = r.days.filter((d) => !d.off && (d.bioIn || d.hrmsIn)).length;
+    const lvs = leaveByEmp[r.employeeId] || [];
+    return {
+      name: r.name, department: e.department || r.department || '', shift: r.shiftLabel,
+      manager: (e.reportsToId && mgrName[e.reportsToId]) || (e.reportsToAdminId ? 'Admin' : '-'),
+      presentDays: present, avgHours: r.avgHours, totalDeficit: r.totalDeficitLabel,
+      lateCount, lateDates, missedBiometricPunchOut: missedBioOut, missedHrmsRecord: missedHrms,
+      avgIntermediatePunches: present ? +(interPunchTotal / present).toFixed(1) : 0, highIntermediateDays: highBreakDays,
+      leaveDays: lvs.length, leaveDates: lvs.slice(0, 10).map((l) => `${l.date}(${l.type})`),
+    };
+  });
+  // ONE consolidated dataset object.
+  const consolidated = { window: { from, to: dispTo, days: 45 }, dataSource: hasBiometric ? 'HRMS + biometric' : 'HRMS only', employeeCount: employees.length, employees };
+  return { consolidated, from, to: dispTo, scope, branch, hasBiometric, employeeCount: employees.length, rows };
+}
+
+// Run the AI generation for a cache row (background). Saves result to the row.
+async function runAiOverviewJob(reportId, consolidated) {
+  const report = await AiOverviewReport.findByPk(reportId);
+  if (!report) return;
+  try {
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const keys = { anthropic: s && s.getKey ? s.getKey('anthropic') : null, openai: s && s.getKey ? s.getKey('openai') : null };
+    if (!keys.anthropic && !keys.openai) { report.status = 'error'; report.error = 'AI key not configured.'; await report.save(); return; }
+    const system = [
+      'You are a senior HR operations analyst and workforce-management expert advising HR and management.',
+      'You are given ONE consolidated JSON dataset with every employee\'s attendance figures for the analysis window. Analyze each employee individually as an experienced HR + admin expert.',
+      'The numbers are already computed and correct — do NOT recompute. Interpret them fairly and factually, never accusatory; frame findings as "worth checking / needs attention".',
+      'Consider per employee: chronic/patterned lateness, large hour deficits, frequent missed punch-outs, missing HRMS records, leave clustering or excess, and break behaviour via intermediate punches (1-2/day normal; higher is worth reviewing).',
+      'Return ONLY JSON: {"summary":"2-4 sentence team overview","attention":[{"name":"...","department":"...","manager":"...","severity":"high|medium|low","headline":"one line","reasons":["reason with numbers"],"recommendation":"one concrete HR step"}],"positives":["short note, optional"]}.',
+      'Order attention by severity (highest first). Include only employees who genuinely need attention. Cite specific numbers.',
+    ].join(' ');
+    const user = `Consolidated attendance dataset:\n${JSON.stringify(consolidated).slice(0, 45000)}`;
+    // OpenAI-preferred (per HR preference), Claude as fallback.
+    const out = await require('../services/aiVisibility').callAI({ anthropicKey: keys.anthropic, openaiKey: keys.openai, preferOpenai: true, system, messages: [{ role: 'user', content: user }], maxTokens: 8000 });
+    let digest = parseAiJson(String(out || ''));
+    if (digest && Array.isArray(digest.attention)) digest.attention = digest.attention.filter((a) => a && a.name && (a.headline || (Array.isArray(a.reasons) && a.reasons.length)));
+    if (!digest) { report.status = 'error'; report.error = 'The AI response could not be parsed.'; await report.save(); return; }
+    report.digest = digest; report.status = 'ready'; report.generatedAt = new Date(); report.error = null; await report.save();
+  } catch (e) {
+    try { report.status = 'error'; report.error = (e && e.message) ? e.message.slice(0, 380) : 'AI request failed.'; await report.save(); } catch {}
+  }
+}
+
+// POST — return the cached report if ready, else start a background job and
+// return "processing". Pass { regenerate: true } to force a fresh run.
 router.post('/attendance/ai-overview', requireHrAccess, async (req, res, next) => {
   try {
     if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
-    const now = new Date(Date.now() + 330 * 60000);
-    const to = now.toISOString().slice(0, 10);
-    // Default range: current month to date. If HR picks "last month", show that
-    // month. Either way we ANALYZE at least the last 45 days so Claude has enough
-    // history to spot patterns.
-    const scope = (req.body && req.body.scope) || 'current'; // 'current' | 'last'
-    let dispFrom, dispTo = to;
-    if (scope === 'last') {
-      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      dispFrom = `${lm.getFullYear()}-${String(lm.getMonth() + 1).padStart(2, '0')}-01`;
-      dispTo = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
-    } else {
-      dispFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const scope = (req.body && req.body.scope) || 'current';
+    const branch = req.body && req.body.branch ? String(req.body.branch) : '';
+    const regenerate = !!(req.body && req.body.regenerate);
+    const cacheKey = `${scope}|${branch || 'all'}`;
+    let report = await AiOverviewReport.findOne({ where: { cacheKey } });
+    // Serve cache when ready and not forcing a refresh.
+    if (report && report.status === 'ready' && !regenerate) {
+      return res.json({ status: 'ready', ...report.toJSON() });
     }
-    // Analysis window: at least 45 days back from dispTo.
-    const anchor = new Date(dispTo + 'T00:00:00Z'); anchor.setUTCDate(anchor.getUTCDate() - 45);
-    const from = anchor.toISOString().slice(0, 10) < dispFrom ? anchor.toISOString().slice(0, 10) : dispFrom;
-    const branch = req.body && req.body.branch ? String(req.body.branch) : null;
+    // If already processing (and not forcing), just report processing.
+    if (report && report.status === 'processing' && !regenerate) {
+      return res.json({ status: 'processing', generatedAt: report.generatedAt });
+    }
+    // Build the consolidated data (fast) then kick off the AI in the background.
+    const built = await buildAiOverviewData({ scope, branch: branch || null });
+    if (!built.employeeCount) return res.json({ status: 'empty', note: 'No attendance data in range yet.' });
+    if (!report) report = await AiOverviewReport.create({ cacheKey, scope, branch: branch || null });
+    report.status = 'processing'; report.scope = scope; report.branch = branch || null; report.fromDate = built.from; report.toDate = built.to; report.hasBiometric = built.hasBiometric; report.employeeCount = built.employeeCount; report.requestedById = req.hrActor.id; report.digest = null; report.error = null; await report.save();
+    // Fire-and-forget — keeps running even if HR closes the popup.
+    setImmediate(() => runAiOverviewJob(report.id, built.consolidated));
+    res.json({ status: 'processing', from: built.from, to: built.to, hasBiometric: built.hasBiometric, employeeCount: built.employeeCount });
+  } catch (e) { next(e); }
+});
 
-    let emps = await loadEmpsForCompare(from, dispTo);
-    if (branch) { const branchUsers = await HrUser.findAll({ where: { branch }, attributes: ['id'] }); const set = new Set(branchUsers.map((u) => u.id)); emps = emps.filter((e) => set.has(e.id)); }
-
-    // Merge STORED biometric punches (latest imports covering the window) so the
-    // AI sees biometric in/out + intermediate-punch frequency, not just HRMS.
-    const punches = {};
-    try {
-      const imports = await BiometricImport.findAll({ where: { maxDate: { [Op.gte]: from } }, order: [['id', 'ASC']] });
-      for (const imp of imports) { const data = imp.data || {}; for (const dev of Object.keys(data)) { punches[dev] = Object.assign(punches[dev] || {}, data[dev]); } }
-    } catch {}
-    const hasBiometric = Object.keys(punches).length > 0;
-
-    // Reconcile so we get biometric in/out, intermediate punches, deficit per day.
-    const rec = bioSvc.reconcile({ emps, punches, from, to: dispTo, reconcile: true, gapMin: 20 });
-    const rows = rec.rows.filter((r) => r.days.some((d) => d.bioIn || d.hrmsIn));
-    if (!rows.length) return res.json({ aiUsed: false, digest: null, from, to: dispTo, note: 'No attendance data in range yet.' });
-
-    // Reporting managers.
-    const mgrName = {};
-    try {
-      const mgrIds = [...new Set(emps.map((e) => e.reportsToId).filter(Boolean))];
-      if (mgrIds.length) { const mgrs = await HrUser.findAll({ where: { id: { [Op.in]: mgrIds } }, attributes: ['id', 'name'] }); mgrs.forEach((m) => { mgrName[m.id] = m.name; }); }
-    } catch {}
-    const empById = Object.fromEntries(emps.map((e) => [e.id, e]));
-
-    // Leaves.
-    const leaveByEmp = {};
-    try {
-      const ids = rows.map((r) => r.employeeId);
-      const lvs = await HrLeave.findAll({ where: { employeeId: { [Op.in]: ids } } });
-      for (const lv of lvs) { (leaveByEmp[lv.employeeId] = leaveByEmp[lv.employeeId] || []).push({ type: lv.type, from: lv.fromDate || lv.startDate, to: lv.toDate || lv.endDate, status: lv.status }); }
-    } catch {}
-
-    // Build a rich, compact per-employee record for the AI.
-    const toMin = (t) => { if (!t) return null; const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
-    const payload = rows.map((r) => {
-      const e = empById[r.employeeId] || {};
-      const shiftStart = e.shift && e.shift.startTime ? e.shift.startTime : null;
-      const lateDays = []; const missedBioOut = []; const missedHrms = []; let highBreakDays = 0; let interPunchTotal = 0;
-      const daySamples = [];
-      for (const d of r.days) {
-        if (d.off) continue;
-        // Late = biometric/HRMS in later than shift start + 10min grace.
-        const inT = d.bioIn || d.hrmsIn;
-        if (shiftStart && inT && toMin(inT) > toMin(shiftStart) + 10) lateDays.push({ date: d.date, in: inT });
-        if (d.bioIn && !d.bioOut) missedBioOut.push(d.date);
-        if (!d.hrmsIn && !d.hrmsOut && (d.bioIn)) missedHrms.push(d.date);
-        const nInter = (d.middle || []).length;
-        interPunchTotal += nInter;
-        if (nInter > 2) highBreakDays++;
-        // Keep a compact sample of recent days (cap to keep payload small).
-        if (daySamples.length < 12) daySamples.push({ date: d.date, dow: d.dow, bioIn: d.bioIn || null, bioOut: d.bioOut || null, hrmsIn: d.hrmsIn || null, hrmsOut: d.hrmsOut || null, worked: d.workedLabel, deficit: d.deficitLabel, inter: nInter });
-      }
-      const present = r.days.filter((d) => !d.off && (d.bioIn || d.hrmsIn)).length;
-      return {
-        name: r.name, department: e.department || r.department || '', shift: r.shiftLabel,
-        reportingManager: (e.reportsToId && mgrName[e.reportsToId]) || (e.reportsToAdminId ? 'Admin' : '—'),
-        presentDays: present, avgHours: r.avgHours, totalDeficit: r.totalDeficitLabel,
-        lateCount: lateDays.length, lateDays: lateDays.slice(0, 10),
-        missedBiometricPunchOut: missedBioOut.length, missedBioOutDays: missedBioOut.slice(0, 8),
-        missedHrmsRecord: missedHrms.length,
-        avgIntermediatePunchesPerDay: present ? +(interPunchTotal / present).toFixed(1) : 0,
-        highIntermediateDays: highBreakDays, // days with >2 mid-day punches
-        leaves: (leaveByEmp[r.employeeId] || []).slice(0, 8),
-        recentDays: daySamples,
-      };
-    });
-
-    const keys = await (async () => { try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return { anthropic: s && s.getKey ? s.getKey('anthropic') : null, openai: s && s.getKey ? s.getKey('openai') : null }; } catch { return {}; } })();
-    if (!keys.anthropic && !keys.openai) return res.json({ aiUsed: false, digest: null, from, to: dispTo, hasBiometric, rows: rows.map(slimAttRow), note: 'AI key not configured.', reason: 'no_key' });
-
-    const system = [
-      'You are a senior HR operations analyst and workforce-management expert advising HR and company management.',
-      'Analyze EACH employee individually the way an experienced HR + admin expert would, using the attendance data provided.',
-      'The numbers are already computed and correct — do NOT recompute. Interpret them fairly, factually, and without accusation; frame findings as "worth checking / needs attention".',
-      'Consider, per employee: chronic or patterned lateness (note specific weekdays if any), large working-hour deficits, frequent missed punch-outs (biometric or HRMS), missing HRMS records, leave patterns (clustering around weekends/month-end or excessive), and BREAK BEHAVIOUR via intermediate punches — 1–2 mid-day punches a day is normal, but a high average or many days with >2 intermediate punches suggests frequent breaks worth reviewing.',
-      'Where biometric and HRMS differ meaningfully, mention it. Distinguish likely genuine issues from probable data/device artifacts.',
-      'Return ONLY JSON with this exact shape:',
-      '{"summary":"2-4 sentence team overview","attention":[{"name":"...","department":"...","manager":"...","severity":"high|medium|low","headline":"one-line why they need attention","reasons":["specific reason with numbers","..."],"recommendation":"one concrete HR next step"}],"positives":["short note on employees doing well, optional"]}',
-      'Order "attention" by severity (highest first). Include only employees who genuinely need attention (not everyone). Be specific and cite the numbers (e.g. "late 6 of 20 days, avg 25 min", "avg 3.4 intermediate punches/day").',
-    ].join(' ');
-    const user = `Analysis window ${from} to ${dispTo} (${hasBiometric ? 'HRMS + biometric data' : 'HRMS only — no biometric import for this range'}).\nEmployees (${payload.length}):\n${JSON.stringify(payload).slice(0, 24000)}`;
-
-    let digest = null, aiError = null;
-    try {
-      const out = await require('../services/aiVisibility').callAI({ anthropicKey: keys.anthropic, openaiKey: keys.openai, system, messages: [{ role: 'user', content: user }], maxTokens: 8000 });
-      digest = parseAiJson(String(out || ''));
-      // Drop any incomplete attention entries from a repaired/truncated response.
-      if (digest && Array.isArray(digest.attention)) {
-        digest.attention = digest.attention.filter((a) => a && a.name && (a.headline || (Array.isArray(a.reasons) && a.reasons.length)));
-      }
-      if (!digest) aiError = 'The AI response could not be parsed. Please try again.';
-    } catch (e) { aiError = (e && e.message) ? `AI request failed: ${e.message}` : 'AI request failed. Please try again.'; }
-    res.json({ aiUsed: !!digest, digest, from, to: dispTo, hasBiometric, scope, rows: rows.map(slimAttRow), note: digest ? undefined : aiError, reason: digest ? undefined : 'api_error' });
+// GET — poll the cached report status/result.
+router.get('/attendance/ai-overview', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req) && !PERMS.can(req, 'corehr_attendance', 'read')) return res.status(403).json({ error: 'No access.' });
+    const scope = (req.query.scope) || 'current';
+    const branch = req.query.branch ? String(req.query.branch) : '';
+    const cacheKey = `${scope}|${branch || 'all'}`;
+    const report = await AiOverviewReport.findOne({ where: { cacheKey } });
+    if (!report) return res.json({ status: 'none' });
+    res.json({ status: report.status, ...report.toJSON() });
   } catch (e) { next(e); }
 });
 
