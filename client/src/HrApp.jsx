@@ -4516,6 +4516,55 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
   const [bioOpen, setBioOpen] = useState(false);
   const [aiOv, setAiOv] = useState(null);
   const [aiOvBusy, setAiOvBusy] = useState(false);
+  // Build a branded, print-optimized HTML and open the browser's print-to-PDF.
+  const downloadAiOverviewPdf = (ov) => {
+    const d = ov.digest || {};
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const sevColor = (s) => ({ high: '#ef4444', medium: '#f59e0b', low: '#94a3b8' }[(s || 'low').toLowerCase()] || '#94a3b8');
+    const attn = (d.attention || []).map((a) => `
+      <div class="card" style="border-left:4px solid ${sevColor(a.severity)}">
+        <div class="cardhd"><b>${esc(titleCase(a.name || ''))}</b>
+          <span class="badge" style="background:${sevColor(a.severity)}22;color:${sevColor(a.severity)}">${esc((a.severity || 'low').toUpperCase())}</span>
+          <span class="muted">${esc([a.department, a.manager && 'reports to ' + a.manager].filter(Boolean).join(' · '))}</span></div>
+        ${a.headline ? `<div class="hl">${esc(a.headline)}</div>` : ''}
+        ${Array.isArray(a.reasons) ? `<ul>${a.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+        ${a.recommendation ? `<div class="rec">✅ ${esc(a.recommendation)}</div>` : ''}
+      </div>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>AI Attendance Overview — Qtonix</title>
+      <style>
+        *{box-sizing:border-box;font-family:-apple-system,system-ui,'Segoe UI',Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        body{margin:0;color:#1e293b;background:#fff}
+        .head{background:#050A1F;color:#fff;padding:22px 28px;display:flex;align-items:center;gap:14px}
+        .logo{width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#FF6A00,#FF4500);color:#fff;font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center}
+        .head h1{font-size:18px;margin:0}.head .sub{color:#94a3b8;font-size:12px;margin-top:2px}
+        .wrap{padding:24px 28px;max-width:820px;margin:0 auto}
+        .summary{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px 18px;font-size:13px;line-height:1.55;margin-bottom:20px}
+        .summary .lbl{color:#FF8C42;font-weight:800;font-size:12px;text-transform:uppercase;margin-bottom:5px}
+        .sec{font-size:12px;font-weight:800;text-transform:uppercase;color:#64748b;letter-spacing:.04em;margin:20px 0 10px}
+        .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:13px 16px;margin-bottom:10px;page-break-inside:avoid}
+        .cardhd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cardhd b{font-size:14px;color:#050A1F}
+        .badge{font-size:9px;font-weight:800;padding:2px 8px;border-radius:20px}
+        .muted{font-size:11px;color:#94a3b8}
+        .hl{font-size:12.5px;color:#334155;font-weight:600;margin-top:4px}
+        ul{margin:8px 0 0;padding-left:18px}li{font-size:12.5px;color:#475569;margin:3px 0}
+        .rec{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:8px 12px;font-size:12px;color:#166534;margin-top:8px}
+        .pos{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 15px;font-size:12.5px;color:#166534}
+        .foot{color:#94a3b8;font-size:10px;margin-top:24px;border-top:1px solid #e2e8f0;padding-top:12px}
+        @page{margin:14mm}
+      </style></head><body>
+      <div class="head"><div class="logo">Q</div><div><h1>AI Attendance Overview</h1><div class="sub">Qtonix HRMS · ${esc(ov.from)} – ${esc(ov.to)} · ${ov.hasBiometric ? 'HRMS + biometric' : 'HRMS only'}${ov.rows ? ` · ${ov.rows.length} employees` : ''}</div></div></div>
+      <div class="wrap">
+        ${d.summary ? `<div class="summary"><div class="lbl">Executive summary</div>${esc(d.summary)}</div>` : ''}
+        ${attn ? `<div class="sec">Needs attention (${(d.attention || []).length})</div>${attn}` : ''}
+        ${Array.isArray(d.positives) && d.positives.length ? `<div class="sec">Doing well</div><div class="pos">${esc(d.positives.join(' '))}</div>` : ''}
+        <div class="foot">Generated ${new Date().toLocaleString('en-IN')} · AI-generated guidance from attendance data. Numbers are exact; interpretation is advisory — verify before acting. © Qtonix Software Pvt. Ltd.</div>
+      </div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},350);};</script>
+      </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { toast('Allow pop-ups to download the PDF.'); return; }
+    w.document.write(html); w.document.close();
+  };
   const runAiOverview = async () => {
     setAiOvBusy(true);
     try { const r = await hrApi('/attendance/ai-overview', { method: 'POST', body: JSON.stringify({ branch: branch || undefined }) }); setAiOv(r); }
@@ -4558,64 +4607,79 @@ function AttendanceModule({ user, isAdmin, onOpenEmployee }) {
         </div>
       </div>
       {aiOv && (
-        <div className="mb-4">
-          {/* Hero summary */}
-          <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: 'linear-gradient(120deg,#4f46e5,#7c3aed)' }}>
-            <button onClick={() => setAiOv(null)} className="absolute top-3 right-3 text-white/70 hover:text-white text-xl leading-none">×</button>
-            <div className="text-[16px] font-extrabold flex items-center gap-2">🔎 AI Attendance Overview</div>
-            {aiOv.digest && aiOv.digest.summary
-              ? <div className="text-[13px] opacity-90 mt-1.5 leading-relaxed pr-6">{aiOv.digest.summary}</div>
-              : <div className="text-[12.5px] opacity-90 mt-1.5">{aiOv.reason === 'no_key' ? 'Add an Anthropic API key in Admin → Settings to enable AI analysis.' : <>{aiOv.note || 'AI analysis unavailable.'} <button onClick={runAiOverview} className="underline font-bold ml-1">Retry</button></>}</div>}
-            <div className="flex gap-2 mt-3 flex-wrap">
-              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">📅 {aiOv.from} – {aiOv.to}</span>
-              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">{aiOv.hasBiometric ? '📟 HRMS + biometric' : '💻 HRMS only'}</span>
-              {aiOv.rows && <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold">👥 {aiOv.rows.length} analyzed</span>}
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[150] p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col" style={{ height: '88vh' }}>
+            {/* Branded header (Qtonix navy + orange) — close only via × */}
+            <div className="px-6 py-4 flex items-center justify-between shrink-0 rounded-t-2xl" style={{ background: '#050A1F' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-extrabold text-lg" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Q</div>
+                <div>
+                  <div className="text-white font-extrabold text-[15px]">AI Attendance Overview</div>
+                  <div className="text-slate-400 text-[11px]">{aiOv.from} – {aiOv.to} · {aiOv.hasBiometric ? 'HRMS + biometric' : 'HRMS only'}{aiOv.rows ? ` · ${aiOv.rows.length} employees` : ''}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {aiOv.digest && <button onClick={() => downloadAiOverviewPdf(aiOv)} className="rounded-lg text-white font-bold text-[12px] px-3 py-1.5 flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>⬇ Download PDF</button>}
+                <button onClick={() => setAiOv(null)} className="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center">×</button>
+              </div>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-auto p-5" style={{ background: '#f8fafc' }}>
+              {/* Summary */}
+              <div className="rounded-2xl p-5 text-white relative overflow-hidden mb-4" style={{ background: 'linear-gradient(120deg,#050A1F,#1e293b)' }}>
+                <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full opacity-20" style={{ background: 'radial-gradient(circle,#FF6A00,transparent)' }} />
+                <div className="text-[13px] font-extrabold flex items-center gap-2 mb-1" style={{ color: '#FF8C42' }}>Executive summary</div>
+                {aiOv.digest && aiOv.digest.summary
+                  ? <div className="text-[13px] opacity-95 leading-relaxed relative">{aiOv.digest.summary}</div>
+                  : <div className="text-[12.5px] opacity-90">{aiOv.reason === 'no_key' ? 'Add an Anthropic API key in Admin → Settings to enable AI analysis.' : <>{aiOv.note || 'AI analysis unavailable.'} <button onClick={runAiOverview} className="underline font-bold ml-1">Retry</button></>}</div>}
+              </div>
+
+              {/* Needs attention */}
+              {aiOv.digest && Array.isArray(aiOv.digest.attention) && aiOv.digest.attention.length > 0 && (
+                <>
+                  <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mb-2.5 flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full" style={{ background: '#FF4500' }} />Needs attention ({aiOv.digest.attention.length})</div>
+                  <div className="space-y-2.5">
+                    {aiOv.digest.attention.map((a, i) => {
+                      const sev = (a.severity || 'low').toLowerCase();
+                      const bar = sev === 'high' ? '#ef4444' : sev === 'medium' ? '#f59e0b' : '#94a3b8';
+                      const badgeBg = sev === 'high' ? '#fee2e2' : sev === 'medium' ? '#fef3c7' : '#f1f5f9';
+                      const badgeFg = sev === 'high' ? '#b91c1c' : sev === 'medium' ? '#b45309' : '#64748b';
+                      return (
+                        <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3.5">
+                          <div className="w-1 rounded shrink-0" style={{ background: bar }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <b className="text-[14px] text-[#050A1F]">{titleCase(a.name)}</b>
+                              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full" style={{ background: badgeBg, color: badgeFg }}>{sev}</span>
+                              <span className="text-[11px] text-slate-400">{[a.department, a.manager && `reports to ${a.manager}`].filter(Boolean).join(' · ')}</span>
+                            </div>
+                            {a.headline && <div className="text-[12.5px] text-slate-700 font-semibold mt-1">{a.headline}</div>}
+                            {Array.isArray(a.reasons) && a.reasons.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {a.reasons.map((r, j) => <div key={j} className="text-[12.5px] text-slate-500 pl-4 relative"><span className="absolute left-1 font-black" style={{ color: '#FF6A00' }}>•</span>{r}</div>)}
+                              </div>
+                            )}
+                            {a.recommendation && <div className="mt-2 rounded-lg bg-green-50 border border-green-100 px-3 py-2 text-[12px] text-green-800">✅ {a.recommendation}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Positives */}
+              {aiOv.digest && Array.isArray(aiOv.digest.positives) && aiOv.digest.positives.length > 0 && (
+                <>
+                  <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mt-5 mb-2.5">🌟 Doing well</div>
+                  <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3 text-[12.5px] text-green-800">{aiOv.digest.positives.join(' ')}</div>
+                </>
+              )}
+
+              <div className="text-[10px] text-slate-400 mt-4">AI-generated guidance from HRMS{aiOv.hasBiometric ? ' + biometric' : ''} attendance over the analysis window. Numbers are exact; interpretation is advisory — verify before acting.</div>
             </div>
           </div>
-
-          {/* Needs attention */}
-          {aiOv.digest && Array.isArray(aiOv.digest.attention) && aiOv.digest.attention.length > 0 && (
-            <>
-              <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mt-4 mb-2.5">⚠ Needs attention ({aiOv.digest.attention.length})</div>
-              <div className="space-y-2.5">
-                {aiOv.digest.attention.map((a, i) => {
-                  const sev = (a.severity || 'low').toLowerCase();
-                  const bar = sev === 'high' ? '#ef4444' : sev === 'medium' ? '#f59e0b' : '#94a3b8';
-                  const badgeBg = sev === 'high' ? '#fee2e2' : sev === 'medium' ? '#fef3c7' : '#f1f5f9';
-                  const badgeFg = sev === 'high' ? '#b91c1c' : sev === 'medium' ? '#b45309' : '#64748b';
-                  return (
-                    <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3.5">
-                      <div className="w-1 rounded shrink-0" style={{ background: bar }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <b className="text-[14px] text-[#050A1F]">{titleCase(a.name)}</b>
-                          <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full" style={{ background: badgeBg, color: badgeFg }}>{sev}</span>
-                          <span className="text-[11px] text-slate-400">{[a.department, a.manager && `reports to ${a.manager}`].filter(Boolean).join(' · ')}</span>
-                        </div>
-                        {a.headline && <div className="text-[12.5px] text-slate-700 font-semibold mt-1">{a.headline}</div>}
-                        {Array.isArray(a.reasons) && a.reasons.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {a.reasons.map((r, j) => <div key={j} className="text-[12.5px] text-slate-500 pl-4 relative"><span className="absolute left-1 text-indigo-300 font-black">•</span>{r}</div>)}
-                          </div>
-                        )}
-                        {a.recommendation && <div className="mt-2 rounded-lg bg-green-50 border border-green-100 px-3 py-2 text-[12px] text-green-800">✅ {a.recommendation}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-
-          {/* Positives */}
-          {aiOv.digest && Array.isArray(aiOv.digest.positives) && aiOv.digest.positives.length > 0 && (
-            <>
-              <div className="text-[12px] font-extrabold text-slate-500 uppercase tracking-wide mt-4 mb-2.5">🌟 Doing well</div>
-              <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3 text-[12.5px] text-green-800">{aiOv.digest.positives.join(' ')}</div>
-            </>
-          )}
-
-          <div className="text-[10px] text-slate-400 mt-3">AI-generated guidance from HRMS{aiOv.hasBiometric ? ' + biometric' : ''} attendance over the analysis window. Numbers are exact; interpretation is advisory — verify before acting.</div>
         </div>
       )}
       {bioOpen && <BiometricModal onClose={() => setBioOpen(false)} onOpenEmployee={onOpenEmployee} />}
