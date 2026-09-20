@@ -561,14 +561,15 @@ function AddCredModal({ id, onClose, onAdded }) {
 
 // ===================== ADMIN: DAILY TASK FLOW =====================
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
 function TaskFlowAdmin() {
   const [flows, setFlows] = useState(null);
   const [editing, setEditing] = useState(null);
   const [running, setRunning] = useState(false);
-  const load = () => hrApi('/task-flows').then((r) => setFlows(r.flows || [])).catch(() => setFlows([]));
+  const load = () => hrApi('/tasks/task-flows').then((r) => setFlows(r.flows || [])).catch(() => setFlows([]));
   useEffect(() => { load(); }, []);
-  const toggle = async (f) => { try { await hrApi(`/task-flows/${f.id}`, { method: 'PUT', body: JSON.stringify({ active: !f.active }) }); load(); } catch (e) { toast(e.message); } };
-  const runNow = async () => { setRunning(true); try { const r = await hrApi('/task-flows/run', { method: 'POST', body: '{}' }); toast(`Created ${r.created} task(s) for today ✓`); } catch (e) { toast(e.message); } setRunning(false); };
+  const toggle = async (f) => { try { await hrApi(`/tasks/task-flows/${f.id}`, { method: 'PUT', body: JSON.stringify({ active: !f.active }) }); load(); } catch (e) { toast(e.message); } };
+  const runNow = async () => { setRunning(true); try { const r = await hrApi('/tasks/task-flows/run', { method: 'POST', body: '{}' }); toast(`Created ${r.created} task(s) for today ✓`); } catch (e) { toast(e.message); } setRunning(false); };
   if (editing) return <TaskFlowEditor flow={editing.id ? editing : null} onBack={() => { setEditing(null); load(); }} />;
   if (!flows) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
   const targetLabel = (f) => ({ employee: 'Employees', designation: 'Designation', team: 'Team', group: 'Group' }[f.targetType] || f.targetType);
@@ -609,6 +610,7 @@ function TaskFlowEditor({ flow, onBack }) {
   const [targetValues, setTargetValues] = useState(flow ? (flow.targetValues || []) : []);
   const [items, setItems] = useState(flow ? (flow.items || []) : [{ id: `it${Date.now()}`, title: '', priority: 'medium', cadence: 'daily', weekdays: [], dayOfMonth: 1 }]);
   const [busy, setBusy] = useState(false);
+  const [empSearch, setEmpSearch] = useState('');
   const [dir, setDir] = useState({ employees: [], designations: [], teams: [] });
   useEffect(() => {
     hrApi('/users?scope=directory').then((r) => {
@@ -627,10 +629,10 @@ function TaskFlowEditor({ flow, onBack }) {
     if (!items.some((it) => it.title.trim())) { toast('Add at least one task.'); return; }
     setBusy(true);
     const body = JSON.stringify({ name, targetType, targetValues, items: items.filter((it) => it.title.trim()) });
-    try { if (flow && flow.id) await hrApi(`/task-flows/${flow.id}`, { method: 'PUT', body }); else await hrApi('/task-flows', { method: 'POST', body }); toast('Task flow saved ✓'); onBack(); }
+    try { if (flow && flow.id) await hrApi(`/tasks/task-flows/${flow.id}`, { method: 'PUT', body }); else await hrApi('/tasks/task-flows', { method: 'POST', body }); toast('Task flow saved ✓'); onBack(); }
     catch (e) { toast(e.message); setBusy(false); }
   };
-  const del = async () => { if (!(await confirmDialog({ title: 'Delete this flow?', message: 'It will stop creating tasks. Existing tasks stay.', danger: true, confirmText: 'Delete' }))) return; try { await hrApi(`/task-flows/${flow.id}`, { method: 'DELETE' }); onBack(); } catch (e) { toast(e.message); } };
+  const del = async () => { if (!(await confirmDialog({ title: 'Delete this flow?', message: 'It will stop creating tasks. Existing tasks stay.', danger: true, confirmText: 'Delete' }))) return; try { await hrApi(`/tasks/tasks/task-flows/${flow.id}`, { method: 'DELETE' }); onBack(); } catch (e) { toast(e.message); } };
   const TT = [['employee', 'Employees'], ['designation', 'Designation'], ['team', 'Team'], ['group', 'Group']];
   const multiEmp = targetType === 'employee' || targetType === 'group';
   const opts = targetType === 'designation' ? dir.designations : targetType === 'team' ? dir.teams : [];
@@ -643,38 +645,70 @@ function TaskFlowEditor({ flow, onBack }) {
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SEO Executive — Daily Ops" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] mb-4" />
 
         <label className="text-[10.5px] font-bold text-slate-500 uppercase block mb-1.5">Assign to</label>
-        <div className="flex gap-1.5 mb-2">{TT.map(([v, l]) => <button key={v} onClick={() => { setTargetType(v); setTargetValues([]); }} className={`flex-1 rounded-lg py-2 text-[12px] font-bold border ${targetType === v ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 bg-white'}`} style={targetType === v ? { background: '#050A1F' } : {}}>{l}</button>)}</div>
+        {/* One target type per flow: once a selection exists, other tabs are disabled until you clear it. */}
+        <div className="flex gap-1.5 mb-2">{TT.map(([v, l]) => { const locked = targetValues.length > 0 && targetType !== v; return (
+          <button key={v} disabled={locked} onClick={() => { if (locked) return; setTargetType(v); setTargetValues([]); setEmpSearch(''); }} className={`flex-1 rounded-lg py-2 text-[12px] font-bold border ${targetType === v ? 'text-white border-transparent' : locked ? 'text-slate-300 border-slate-100 bg-slate-50 cursor-not-allowed' : 'text-slate-500 border-slate-200 bg-white'}`} style={targetType === v ? { background: '#050A1F' } : {}}>{l}</button>
+        ); })}</div>
+        {targetValues.length > 0 && <div className="text-[10.5px] text-slate-400 mb-2">Uncheck / clear the selection to switch to a different target type.</div>}
         {multiEmp ? (
-          <div className="border border-slate-200 rounded-lg p-2 max-h-44 overflow-auto">
-            {dir.employees.map((e) => <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] cursor-pointer"><input type="checkbox" checked={targetValues.includes(e.id)} onChange={() => setTargetValues((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /><span className="font-semibold text-slate-700">{titleCase(e.name)}</span><span className="text-slate-400 text-[11px]">{[e.designation, e.department].filter(Boolean).join(' · ')}</span></label>)}
-            {dir.employees.length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">Loading employees…</div>}
+          <div>
+            {/* selected chips */}
+            {targetValues.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{targetValues.map((eid) => { const e = dir.employees.find((x) => x.id === eid); return <span key={eid} className="inline-flex items-center gap-1 text-[11.5px] font-semibold bg-slate-100 text-slate-700 rounded-full pl-2.5 pr-1.5 py-1">{e ? titleCase(e.name) : eid}<button onClick={() => setTargetValues((s) => s.filter((x) => x !== eid))} className="text-slate-400 hover:text-red-500 text-[13px] leading-none">×</button></span>; })}</div>}
+            <div className="relative mb-1.5"><span className="absolute left-2.5 top-2 text-slate-400 text-[13px]">🔍</span><input value={empSearch} onChange={(e) => setEmpSearch(e.target.value)} placeholder="Search people…" className="w-full border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-[13px]" /></div>
+            <div className="border border-slate-200 rounded-lg p-2 max-h-44 overflow-auto">
+              {dir.employees.filter((e) => !empSearch || `${e.name} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(empSearch.toLowerCase())).map((e) => <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] cursor-pointer"><input type="checkbox" checked={targetValues.includes(e.id)} onChange={() => setTargetValues((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /><span className="font-semibold text-slate-700">{titleCase(e.name)}</span><span className="text-slate-400 text-[11px]">{[e.designation, e.department].filter(Boolean).join(' · ')}</span></label>)}
+              {dir.employees.length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">Loading employees…</div>}
+            </div>
           </div>
         ) : (
-          <select value={targetValues[0] || ''} onChange={(e) => setTargetValues(e.target.value ? [e.target.value] : [])} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px]">
-            <option value="">Select {targetType}…</option>
-            {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <SearchSelect value={targetValues[0] || ''} onChange={(v) => setTargetValues(v ? [v] : [])} options={opts.map((o) => ({ value: o, label: o }))} placeholder={`Search ${targetType}…`} />
         )}
         {targetType === 'designation' && <div className="text-[11px] text-slate-400 mt-1.5">Applies to everyone with this designation — including future hires.</div>}
         {targetType === 'team' && <div className="text-[11px] text-slate-400 mt-1.5">Applies to all current members of this team.</div>}
 
         <div className="text-[11px] font-extrabold text-slate-400 uppercase mt-6 mb-2.5">Tasks in this flow</div>
         <div className="space-y-2.5">
-          {items.map((it, i) => (
+          {items.map((it, i) => {
+            const subs = it.subtasks || [];
+            const setSub = (k, obj) => setItem(i, { subtasks: subs.map((x, idx) => idx === k ? { ...x, ...obj } : x) });
+            const addSub = () => setItem(i, { subtasks: [...subs, { id: `sub${Date.now()}`, title: '', priority: 'medium' }] });
+            const delSub = (k) => setItem(i, { subtasks: subs.filter((_, idx) => idx !== k) });
+            const hasDesc = it.description != null && (it._showDesc || it.description);
+            return (
             <div key={it.id || i} className="border border-slate-200 rounded-xl p-3.5">
               <div className="flex gap-2 items-center">
                 <input value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} placeholder="Task title" className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-[13px] font-semibold" />
                 <select value={it.priority} onChange={(e) => setItem(i, { priority: e.target.value })} className="border border-slate-200 rounded-lg px-2 py-2 text-[12px] w-24">{['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{titleCase(p)}</option>)}</select>
                 <button onClick={() => delItem(i)} className="text-slate-300 hover:text-red-500 px-1"><Icon.Trash size={16} /></button>
               </div>
+              {/* Optional description — only shows when opened */}
+              {hasDesc ? (
+                <textarea value={it.description || ''} onChange={(e) => setItem(i, { description: e.target.value })} placeholder="Task description…" rows={2} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12.5px] mt-2" />
+              ) : (
+                <button onClick={() => setItem(i, { _showDesc: true, description: it.description || '' })} className="text-[11.5px] font-bold text-slate-400 hover:text-slate-600 mt-2">+ Add description</button>
+              )}
               <div className="flex gap-2 items-center mt-2.5 flex-wrap">
                 <span className="text-[11px] font-bold text-slate-400">Repeats:</span>
                 {['daily', 'weekly', 'monthly'].map((c) => <button key={c} onClick={() => setItem(i, { cadence: c })} className={`rounded-lg px-3 py-1.5 text-[11.5px] font-bold border ${it.cadence === c ? 'border-orange-400 text-orange-700' : 'border-slate-200 text-slate-500'}`} style={it.cadence === c ? { background: '#fff7ed' } : {}}>{titleCase(c)}</button>)}
                 {it.cadence === 'weekly' && <div className="flex gap-1 ml-1">{WEEKDAYS.map((d, wd) => <button key={wd} onClick={() => toggleWeekday(i, wd)} className={`w-7 h-7 rounded-lg text-[11px] font-bold border ${(it.weekdays || []).includes(wd) ? 'text-white border-transparent' : 'text-slate-400 border-slate-200'}`} style={(it.weekdays || []).includes(wd) ? { background: ORANGE } : {}}>{d}</button>)}</div>}
                 {it.cadence === 'monthly' && <select value={it.dayOfMonth} onChange={(e) => setItem(i, { dayOfMonth: e.target.value === 'last' ? 'last' : Number(e.target.value) })} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] ml-1">{Array.from({ length: 31 }, (_, k) => k + 1).map((d) => <option key={d} value={d}>On the {d}{['th', 'st', 'nd', 'rd'][(d % 10 > 3 || (d >= 11 && d <= 13)) ? 0 : d % 10]}</option>)}<option value="last">Last day</option></select>}
               </div>
+              {/* Subtasks — child rows, like the workspace */}
+              {subs.length > 0 && (
+                <div className="mt-3 pl-3 border-l-2 border-slate-100 space-y-1.5">
+                  {subs.map((s, k) => (
+                    <div key={s.id || k} className="flex gap-2 items-center">
+                      <span className="text-slate-300 text-[13px]">↳</span>
+                      <input value={s.title} onChange={(e) => setSub(k, { title: e.target.value })} placeholder="Subtask title" className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                      <select value={s.priority} onChange={(e) => setSub(k, { priority: e.target.value })} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[11.5px] w-20">{['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{titleCase(p)}</option>)}</select>
+                      <button onClick={() => delSub(k)} className="text-slate-300 hover:text-red-500 px-0.5"><Icon.Trash size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={addSub} className="text-[11.5px] font-bold text-slate-400 hover:text-orange-600 mt-2.5 ml-1">+ Add subtask</button>
             </div>
-          ))}
+          ); })}
         </div>
         <button onClick={addItem} className="w-full mt-2.5 rounded-lg border border-dashed border-orange-300 text-orange-600 font-bold text-[12.5px] py-2.5">+ Add task</button>
 

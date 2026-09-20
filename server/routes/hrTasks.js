@@ -1339,6 +1339,20 @@ router.post('/shortcut/remind', guard, async (req, res, next) => {
 
 // ===== DAILY TASK FLOW (recurring task automation) =====
 const { TaskFlow } = require('../models');
+const PRIOS = ['urgent', 'high', 'medium', 'low'];
+function normalizeFlowItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map((it, i) => ({
+    id: it.id || `it${Date.now()}${i}`,
+    title: String(it.title || '').slice(0, 280),
+    description: String(it.description || '').slice(0, 4000),
+    priority: PRIOS.includes(it.priority) ? it.priority : 'medium',
+    cadence: ['daily', 'weekly', 'monthly'].includes(it.cadence) ? it.cadence : 'daily',
+    weekdays: Array.isArray(it.weekdays) ? it.weekdays.filter((w) => w >= 0 && w <= 6) : [],
+    dayOfMonth: it.dayOfMonth === 'last' ? 'last' : (Number(it.dayOfMonth) || 1),
+    subtasks: Array.isArray(it.subtasks) ? it.subtasks.filter((s) => s && String(s.title || '').trim()).map((s, k) => ({ id: s.id || `sub${Date.now()}${i}${k}`, title: String(s.title).slice(0, 280), priority: PRIOS.includes(s.priority) ? s.priority : 'medium' })) : [],
+  }));
+}
 router.get('/task-flows', requireHrAccess, requireHrAdmin, async (req, res, next) => {
   try {
     const flows = await TaskFlow.findAll({ order: [['id', 'DESC']] });
@@ -1357,7 +1371,7 @@ router.post('/task-flows', requireHrAccess, requireHrAdmin, async (req, res, nex
       name: String(b.name || 'Task flow').slice(0, 160),
       targetType: ['employee', 'designation', 'team', 'group'].includes(b.targetType) ? b.targetType : 'employee',
       targetValues: Array.isArray(b.targetValues) ? b.targetValues : [],
-      items: Array.isArray(b.items) ? b.items.map((it, i) => ({ id: it.id || `it${Date.now()}${i}`, title: String(it.title || '').slice(0, 280), description: it.description || '', priority: it.priority || 'medium', cadence: it.cadence || 'daily', weekdays: it.weekdays || [], dayOfMonth: it.dayOfMonth || 1 })) : [],
+      items: normalizeFlowItems(b.items),
       active: b.active !== false,
       createdById: req.hrActor.id, createdByName: req.hrActor.name,
     });
@@ -1372,7 +1386,7 @@ router.put('/task-flows/:id', requireHrAccess, requireHrAdmin, async (req, res, 
     if (b.name !== undefined) flow.name = String(b.name).slice(0, 160);
     if (b.targetType !== undefined && ['employee', 'designation', 'team', 'group'].includes(b.targetType)) flow.targetType = b.targetType;
     if (b.targetValues !== undefined) { flow.targetValues = Array.isArray(b.targetValues) ? b.targetValues : []; flow.changed('targetValues', true); }
-    if (b.items !== undefined) { flow.items = (b.items || []).map((it, i) => ({ id: it.id || `it${Date.now()}${i}`, title: String(it.title || '').slice(0, 280), description: it.description || '', priority: it.priority || 'medium', cadence: it.cadence || 'daily', weekdays: it.weekdays || [], dayOfMonth: it.dayOfMonth || 1 })); flow.changed('items', true); }
+    if (b.items !== undefined) { flow.items = normalizeFlowItems(b.items); flow.changed('items', true); }
     if (b.active !== undefined) flow.active = !!b.active;
     await flow.save();
     res.json(flow.toJSON());

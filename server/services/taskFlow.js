@@ -54,17 +54,19 @@ async function resolveEmployees(models, flow) {
   return [];
 }
 
-// Create one board task for an employee from a flow item.
+// Create one board task (+ its subtasks) for an employee from a flow item.
+// Subtasks are child Task rows (parentTaskId), exactly like the workspace.
 async function createTaskForItem(models, flow, item, emp, dateStr) {
   const { Task } = models;
-  return Task.create({
+  const prio = (p) => (['urgent', 'high', 'medium', 'low'].includes(p) ? p : 'medium');
+  const parent = await Task.create({
     boardOwnerId: emp.id,
     bucket: 'today',
     title: String(item.title || 'Task').slice(0, 280),
     description: item.description || '',
     assigneeId: emp.id,
     assigneeIds: [emp.id],
-    priority: ['urgent', 'high', 'medium', 'low'].includes(item.priority) ? item.priority : 'medium',
+    priority: prio(item.priority),
     stage: 'not_started',
     dueDate: dateStr,
     assignedById: flow.createdById || null,
@@ -74,6 +76,29 @@ async function createTaskForItem(models, flow, item, emp, dateStr) {
     flowId: flow.id,
     flowItemId: String(item.id || ''),
   });
+  // Subtasks → child rows under the parent (same board, same day, parent bucket).
+  const subs = Array.isArray(item.subtasks) ? item.subtasks.filter((s) => s && String(s.title || '').trim()) : [];
+  for (const s of subs) {
+    await Task.create({
+      boardOwnerId: emp.id,
+      bucket: parent.bucket,
+      parentTaskId: parent.id,
+      title: String(s.title).slice(0, 280),
+      description: '',
+      assigneeId: emp.id,
+      assigneeIds: [emp.id],
+      priority: prio(s.priority),
+      stage: 'not_started',
+      dueDate: dateStr,
+      assignedById: flow.createdById || null,
+      origAssignedById: flow.createdById || null,
+      origAssignedByName: flow.createdByName || 'Task Flow',
+      autoFlow: true,
+      flowId: flow.id,
+      flowItemId: String(item.id || ''),
+    });
+  }
+  return parent;
 }
 
 // Prefix a previous day's still-open flow task so it's visibly "carried over".
