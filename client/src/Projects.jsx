@@ -611,6 +611,9 @@ function TaskFlowEditor({ flow, onBack }) {
   const [items, setItems] = useState(flow ? (flow.items || []) : [{ id: `it${Date.now()}`, title: '', priority: 'medium', cadence: 'daily', weekdays: [], dayOfMonth: 1 }]);
   const [busy, setBusy] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
+  const [empOpen, setEmpOpen] = useState(false);
+  const empBoxRef = React.useRef(null);
+  useEffect(() => { const h = (e) => { if (empBoxRef.current && !empBoxRef.current.contains(e.target)) { setEmpOpen(false); setEmpSearch(''); } }; document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h); }, []);
   const [dir, setDir] = useState({ employees: [], designations: [], teams: [] });
   useEffect(() => {
     hrApi('/users?scope=directory').then((r) => {
@@ -651,14 +654,24 @@ function TaskFlowEditor({ flow, onBack }) {
         ); })}</div>
         {targetValues.length > 0 && <div className="text-[10.5px] text-slate-400 mb-2">Uncheck / clear the selection to switch to a different target type.</div>}
         {multiEmp ? (
-          <div>
+          <div className="relative" ref={empBoxRef}>
             {/* selected chips */}
             {targetValues.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{targetValues.map((eid) => { const e = dir.employees.find((x) => x.id === eid); return <span key={eid} className="inline-flex items-center gap-1 text-[11.5px] font-semibold bg-slate-100 text-slate-700 rounded-full pl-2.5 pr-1.5 py-1">{e ? titleCase(e.name) : eid}<button onClick={() => setTargetValues((s) => s.filter((x) => x !== eid))} className="text-slate-400 hover:text-red-500 text-[13px] leading-none">×</button></span>; })}</div>}
-            <div className="relative mb-1.5"><span className="absolute left-2.5 top-2 text-slate-400 text-[13px]">🔍</span><input value={empSearch} onChange={(e) => setEmpSearch(e.target.value)} placeholder="Search people…" className="w-full border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-[13px]" /></div>
-            <div className="border border-slate-200 rounded-lg p-2 max-h-44 overflow-auto">
-              {dir.employees.filter((e) => !empSearch || `${e.name} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(empSearch.toLowerCase())).map((e) => <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] cursor-pointer"><input type="checkbox" checked={targetValues.includes(e.id)} onChange={() => setTargetValues((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /><span className="font-semibold text-slate-700">{titleCase(e.name)}</span><span className="text-slate-400 text-[11px]">{[e.designation, e.department].filter(Boolean).join(' · ')}</span></label>)}
-              {dir.employees.length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">Loading employees…</div>}
-            </div>
+            {/* click-to-open trigger */}
+            <button onClick={() => setEmpOpen((o) => !o)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-left flex items-center justify-between">
+              <span className="text-slate-400">{targetValues.length ? `${targetValues.length} selected — add more…` : 'Select people…'}</span>
+              <span className="text-slate-400 text-[11px]">▾</span>
+            </button>
+            {empOpen && (
+              <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg">
+                <div className="relative p-1.5 border-b border-slate-100"><span className="absolute left-3 top-3 text-slate-400 text-[12px]">🔍</span><input autoFocus value={empSearch} onChange={(e) => setEmpSearch(e.target.value)} placeholder="Search people…" className="w-full text-[13px] pl-7 pr-2 py-1.5 focus:outline-none" /></div>
+                <div className="max-h-48 overflow-auto p-1">
+                  {dir.employees.filter((e) => !empSearch || `${e.name} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(empSearch.toLowerCase())).map((e) => <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] cursor-pointer"><input type="checkbox" checked={targetValues.includes(e.id)} onChange={() => { setTargetValues((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id]); setEmpSearch(''); }} /><span className="font-semibold text-slate-700">{titleCase(e.name)}</span><span className="text-slate-400 text-[11px]">{[e.designation, e.department].filter(Boolean).join(' · ')}</span></label>)}
+                  {dir.employees.length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">Loading employees…</div>}
+                  {dir.employees.length > 0 && dir.employees.filter((e) => !empSearch || `${e.name} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(empSearch.toLowerCase())).length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">No matches.</div>}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <SearchSelect value={targetValues[0] || ''} onChange={(v) => setTargetValues(v ? [v] : [])} options={opts.map((o) => ({ value: o, label: o }))} placeholder={`Search ${targetType}…`} />
