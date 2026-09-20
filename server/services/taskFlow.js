@@ -24,6 +24,52 @@ function isDue(item, date) {
   return false;
 }
 
+// Which occurrence of this weekday within the month (1st Sat, 2nd Sat, ...).
+function nthWeekdayOfMonth(dateStr) { const d = new Date(dateStr + 'T00:00:00'); return Math.floor((d.getDate() - 1) / 7) + 1; }
+
+// Branch weekend rules — mirrors the attendance system:
+//  - All branches: every Sunday off.
+//  - Kolkata: every Saturday off.
+//  - Bhubaneswar: 2nd & 4th Saturday off.
+function branchWeekendOff(dateStr, branch) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const dow = d.getDay();
+  if (dow === 0) return true;
+  const b = String(branch || '').toLowerCase();
+  if (dow === 6) {
+    if (b === 'kolkata') return true;
+    if (b === 'bhubaneswar') { const nth = nthWeekdayOfMonth(dateStr); return nth === 2 || nth === 4; }
+  }
+  return false;
+}
+
+// Is `dateStr` a working day for this employee? Considers branch weekend rules,
+// branch holidays, and whether the employee is on approved leave that day.
+async function isWorkingDayFor(models, emp, dateStr, cache) {
+  // Weekend (branch-specific).
+  if (branchWeekendOff(dateStr, emp.branch)) return false;
+  // Holiday for the branch (branch '' = company-wide).
+  const holSet = cache.holidays;
+  if (holSet && (holSet.has(`${dateStr}|`) || holSet.has(`${dateStr}|${String(emp.branch || '').toLowerCase()}`))) return false;
+  // Approved leave that day (full or half — any leave means the recurring task is skipped).
+  try {
+    const lv = await models.HrLeave.findOne({ where: { employeeId: emp.id, date: dateStr, status: { [models.Op.in]: ['approved', 'pending'] } } });
+    if (lv) return false;
+  } catch {}
+  return true;
+}
+
+// Preload the month's holidays into a Set for fast lookup.
+async function loadHolidaySet(models, dateStr) {
+  const set = new Set();
+  try {
+    const month = dateStr.slice(0, 7);
+    const hols = await models.HrHoliday.findAll();
+    for (const h of hols) { const hd = String(h.date).slice(0, 10); if (hd.slice(0, 7) === month) set.add(`${hd}|${String(h.branch || '').toLowerCase()}`); }
+  } catch {}
+  return set;
+}
+
 // Resolve a flow's target to a list of active HrUser rows.
 async function resolveEmployees(models, flow) {
   const { HrUser, ChatTeamMember } = models;
@@ -126,13 +172,17 @@ async function runFlows(models, opts = {}) {
   const date = opts.date ? new Date(opts.date + 'T00:00:00') : istNow();
   const dateStr = isoDay(date);
   const flows = await TaskFlow.findAll({ where: { active: true } });
-  let created = 0;
+  const cache = { holidays: await loadHolidaySet(models, dateStr) };
+  let created = 0, skippedNonWorking = 0;
   for (const flow of flows) {
     const items = Array.isArray(flow.items) ? flow.items : [];
     const dueItems = items.filter((it) => isDue(it, date));
     if (!dueItems.length) continue;
     const emps = await resolveEmployees(models, flow);
     for (const emp of emps) {
+      // Skip weekends/holidays for this employee's branch, and days they're on leave.
+      const working = await isWorkingDayFor(models, emp, dateStr, cache);
+      if (!working) { skippedNonWorking++; continue; }
       for (const item of dueItems) {
         const runKey = `${flow.id}:${item.id}:${emp.id}:${dateStr}`;
         const exists = await TaskFlowRun.findOne({ where: { runKey } });
@@ -147,7 +197,7 @@ async function runFlows(models, opts = {}) {
       }
     }
   }
-  return { created, date: dateStr };
+  return { created, skippedNonWorking, date: dateStr };
 }
 
 let timer = null; let lastRunDay = null; let running = false;

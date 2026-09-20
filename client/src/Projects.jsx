@@ -726,7 +726,7 @@ function TaskFlowEditor({ flow, onBack }) {
         <button onClick={addItem} className="w-full mt-2.5 rounded-lg border border-dashed border-orange-300 text-orange-600 font-bold text-[12.5px] py-2.5">+ Add task</button>
 
         <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-100">
-          <div className="text-[11.5px] text-slate-400 flex-1">Tasks auto-post each morning to assignees’ boards.</div>
+          <div className="text-[11.5px] text-slate-400 flex-1">Tasks auto-post each morning to assignees’ boards — skipping weekends, branch holidays and any day the person is on leave.</div>
           {flow && flow.id && <button onClick={del} className="rounded-lg px-4 py-2 text-[13px] font-bold text-red-500 border border-red-100">Delete</button>}
           <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save flow'}</button>
         </div>
