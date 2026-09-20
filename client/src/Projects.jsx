@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { hrApi } from './HrApp.jsx';
 import { toast, confirmDialog } from './toast';
+import { Icon, titleCase } from './HrParts.jsx';
 
 const ORANGE = 'linear-gradient(135deg,#FF6A00,#FF4500)';
 const TYPE_STYLE = {
@@ -558,6 +559,135 @@ function AddCredModal({ id, onClose, onAdded }) {
   );
 }
 
+// ===================== ADMIN: DAILY TASK FLOW =====================
+const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+function TaskFlowAdmin() {
+  const [flows, setFlows] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [running, setRunning] = useState(false);
+  const load = () => hrApi('/task-flows').then((r) => setFlows(r.flows || [])).catch(() => setFlows([]));
+  useEffect(() => { load(); }, []);
+  const toggle = async (f) => { try { await hrApi(`/task-flows/${f.id}`, { method: 'PUT', body: JSON.stringify({ active: !f.active }) }); load(); } catch (e) { toast(e.message); } };
+  const runNow = async () => { setRunning(true); try { const r = await hrApi('/task-flows/run', { method: 'POST', body: '{}' }); toast(`Created ${r.created} task(s) for today ✓`); } catch (e) { toast(e.message); } setRunning(false); };
+  if (editing) return <TaskFlowEditor flow={editing.id ? editing : null} onBack={() => { setEditing(null); load(); }} />;
+  if (!flows) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const targetLabel = (f) => ({ employee: 'Employees', designation: 'Designation', team: 'Team', group: 'Group' }[f.targetType] || f.targetType);
+  const targetTag = (f) => ({ designation: { bg: '#ede9fe', c: '#6d28d9' }, team: { bg: '#dbeafe', c: '#1d4ed8' }, employee: { bg: '#dcfce7', c: '#15803d' }, group: { bg: '#fef3c7', c: '#b45309' } }[f.targetType] || { bg: '#f1f5f9', c: '#64748b' });
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div><div className="text-[15px] font-extrabold text-[#050A1F]">Daily Task Flow</div><div className="text-[12.5px] text-slate-400">Auto-assign recurring tasks (daily / weekly / monthly) to people, designations, teams or groups.</div></div>
+        <div className="flex gap-2">
+          <button onClick={runNow} disabled={running} className="rounded-lg px-3 py-2 text-[12.5px] font-bold text-slate-600 border border-slate-200">{running ? 'Running…' : '▶ Run now'}</button>
+          <button onClick={() => setEditing({})} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white" style={{ background: ORANGE }}>+ New task flow</button>
+        </div>
+      </div>
+      <div className="mt-4 space-y-2.5">
+        {flows.length === 0 && <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-[13px] text-slate-400">No task flows yet. Create one to auto-assign recurring tasks.</div>}
+        {flows.map((f) => { const tg = targetTag(f); const tasks = (f.items || []).length; return (
+          <div key={f.id} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3.5 items-center">
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[21px] shrink-0" style={{ background: '#fff7ed' }}>🔁</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[15px] font-extrabold text-[#050A1F]">{f.name}</div>
+              <div className="text-[12px] text-slate-500 mt-0.5 flex gap-2 items-center flex-wrap">
+                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: tg.bg, color: tg.c }}>{targetLabel(f)}: {(f.targetValues || []).join(', ')}</span>
+                <span className="text-slate-400">· {tasks} task{tasks !== 1 ? 's' : ''}{f.peopleCount != null ? ` · ${f.peopleCount} people` : ''}</span>
+              </div>
+            </div>
+            <button onClick={() => setEditing(f)} className="text-[12px] font-bold text-slate-600 border border-slate-200 rounded-lg px-3 py-1.5">Edit</button>
+            <button onClick={() => toggle(f)} title={f.active ? 'Active' : 'Paused'} className="w-10 h-6 rounded-full relative transition shrink-0" style={{ background: f.active ? '#22c55e' : '#cbd5e1' }}><span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all" style={{ left: f.active ? '20px' : '4px' }} /></button>
+          </div>
+        ); })}
+      </div>
+    </div>
+  );
+}
+
+function TaskFlowEditor({ flow, onBack }) {
+  const [name, setName] = useState(flow ? flow.name : '');
+  const [targetType, setTargetType] = useState(flow ? flow.targetType : 'employee');
+  const [targetValues, setTargetValues] = useState(flow ? (flow.targetValues || []) : []);
+  const [items, setItems] = useState(flow ? (flow.items || []) : [{ id: `it${Date.now()}`, title: '', priority: 'medium', cadence: 'daily', weekdays: [], dayOfMonth: 1 }]);
+  const [busy, setBusy] = useState(false);
+  const [dir, setDir] = useState({ employees: [], designations: [], teams: [] });
+  useEffect(() => {
+    hrApi('/users?scope=directory').then((r) => {
+      const emps = (r.employees || r.users || r || []).filter((u) => u.active !== false);
+      setDir({ employees: emps, designations: [...new Set(emps.map((e) => e.designation).filter(Boolean))].sort(), teams: [...new Set(emps.map((e) => e.department).filter(Boolean))].sort() });
+    }).catch(() => {});
+    hrApi('/chat/teams').then((r) => { const ts = (r.teams || []).map((t) => t.name); if (ts.length) setDir((d) => ({ ...d, teams: [...new Set([...(d.teams || []), ...ts])].sort() })); }).catch(() => {});
+  }, []);
+  const setItem = (i, obj) => setItems((s) => s.map((x, idx) => idx === i ? { ...x, ...obj } : x));
+  const addItem = () => setItems((s) => [...s, { id: `it${Date.now()}`, title: '', priority: 'medium', cadence: 'daily', weekdays: [], dayOfMonth: 1 }]);
+  const delItem = (i) => setItems((s) => s.filter((_, idx) => idx !== i));
+  const toggleWeekday = (i, wd) => setItem(i, { weekdays: (items[i].weekdays || []).includes(wd) ? items[i].weekdays.filter((x) => x !== wd) : [...(items[i].weekdays || []), wd] });
+  const save = async () => {
+    if (!name.trim()) { toast('Give the flow a name.'); return; }
+    if (!targetValues.length) { toast('Pick at least one target.'); return; }
+    if (!items.some((it) => it.title.trim())) { toast('Add at least one task.'); return; }
+    setBusy(true);
+    const body = JSON.stringify({ name, targetType, targetValues, items: items.filter((it) => it.title.trim()) });
+    try { if (flow && flow.id) await hrApi(`/task-flows/${flow.id}`, { method: 'PUT', body }); else await hrApi('/task-flows', { method: 'POST', body }); toast('Task flow saved ✓'); onBack(); }
+    catch (e) { toast(e.message); setBusy(false); }
+  };
+  const del = async () => { if (!(await confirmDialog({ title: 'Delete this flow?', message: 'It will stop creating tasks. Existing tasks stay.', danger: true, confirmText: 'Delete' }))) return; try { await hrApi(`/task-flows/${flow.id}`, { method: 'DELETE' }); onBack(); } catch (e) { toast(e.message); } };
+  const TT = [['employee', 'Employees'], ['designation', 'Designation'], ['team', 'Team'], ['group', 'Group']];
+  const multiEmp = targetType === 'employee' || targetType === 'group';
+  const opts = targetType === 'designation' ? dir.designations : targetType === 'team' ? dir.teams : [];
+
+  return (
+    <div className="max-w-3xl">
+      <button onClick={onBack} className="text-[13px] font-bold text-slate-500 mb-4">← Back to task flows</button>
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <label className="text-[10.5px] font-bold text-slate-500 uppercase block mb-1.5">Flow name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SEO Executive — Daily Ops" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] mb-4" />
+
+        <label className="text-[10.5px] font-bold text-slate-500 uppercase block mb-1.5">Assign to</label>
+        <div className="flex gap-1.5 mb-2">{TT.map(([v, l]) => <button key={v} onClick={() => { setTargetType(v); setTargetValues([]); }} className={`flex-1 rounded-lg py-2 text-[12px] font-bold border ${targetType === v ? 'text-white border-transparent' : 'text-slate-500 border-slate-200 bg-white'}`} style={targetType === v ? { background: '#050A1F' } : {}}>{l}</button>)}</div>
+        {multiEmp ? (
+          <div className="border border-slate-200 rounded-lg p-2 max-h-44 overflow-auto">
+            {dir.employees.map((e) => <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] cursor-pointer"><input type="checkbox" checked={targetValues.includes(e.id)} onChange={() => setTargetValues((s) => s.includes(e.id) ? s.filter((x) => x !== e.id) : [...s, e.id])} /><span className="font-semibold text-slate-700">{titleCase(e.name)}</span><span className="text-slate-400 text-[11px]">{[e.designation, e.department].filter(Boolean).join(' · ')}</span></label>)}
+            {dir.employees.length === 0 && <div className="text-[12px] text-slate-400 px-2 py-2">Loading employees…</div>}
+          </div>
+        ) : (
+          <select value={targetValues[0] || ''} onChange={(e) => setTargetValues(e.target.value ? [e.target.value] : [])} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px]">
+            <option value="">Select {targetType}…</option>
+            {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        )}
+        {targetType === 'designation' && <div className="text-[11px] text-slate-400 mt-1.5">Applies to everyone with this designation — including future hires.</div>}
+        {targetType === 'team' && <div className="text-[11px] text-slate-400 mt-1.5">Applies to all current members of this team.</div>}
+
+        <div className="text-[11px] font-extrabold text-slate-400 uppercase mt-6 mb-2.5">Tasks in this flow</div>
+        <div className="space-y-2.5">
+          {items.map((it, i) => (
+            <div key={it.id || i} className="border border-slate-200 rounded-xl p-3.5">
+              <div className="flex gap-2 items-center">
+                <input value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} placeholder="Task title" className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-[13px] font-semibold" />
+                <select value={it.priority} onChange={(e) => setItem(i, { priority: e.target.value })} className="border border-slate-200 rounded-lg px-2 py-2 text-[12px] w-24">{['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{titleCase(p)}</option>)}</select>
+                <button onClick={() => delItem(i)} className="text-slate-300 hover:text-red-500 px-1"><Icon.Trash size={16} /></button>
+              </div>
+              <div className="flex gap-2 items-center mt-2.5 flex-wrap">
+                <span className="text-[11px] font-bold text-slate-400">Repeats:</span>
+                {['daily', 'weekly', 'monthly'].map((c) => <button key={c} onClick={() => setItem(i, { cadence: c })} className={`rounded-lg px-3 py-1.5 text-[11.5px] font-bold border ${it.cadence === c ? 'border-orange-400 text-orange-700' : 'border-slate-200 text-slate-500'}`} style={it.cadence === c ? { background: '#fff7ed' } : {}}>{titleCase(c)}</button>)}
+                {it.cadence === 'weekly' && <div className="flex gap-1 ml-1">{WEEKDAYS.map((d, wd) => <button key={wd} onClick={() => toggleWeekday(i, wd)} className={`w-7 h-7 rounded-lg text-[11px] font-bold border ${(it.weekdays || []).includes(wd) ? 'text-white border-transparent' : 'text-slate-400 border-slate-200'}`} style={(it.weekdays || []).includes(wd) ? { background: ORANGE } : {}}>{d}</button>)}</div>}
+                {it.cadence === 'monthly' && <select value={it.dayOfMonth} onChange={(e) => setItem(i, { dayOfMonth: e.target.value === 'last' ? 'last' : Number(e.target.value) })} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] ml-1">{Array.from({ length: 31 }, (_, k) => k + 1).map((d) => <option key={d} value={d}>On the {d}{['th', 'st', 'nd', 'rd'][(d % 10 > 3 || (d >= 11 && d <= 13)) ? 0 : d % 10]}</option>)}<option value="last">Last day</option></select>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={addItem} className="w-full mt-2.5 rounded-lg border border-dashed border-orange-300 text-orange-600 font-bold text-[12.5px] py-2.5">+ Add task</button>
+
+        <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-100">
+          <div className="text-[11.5px] text-slate-400 flex-1">Tasks auto-post each morning to assignees’ boards.</div>
+          {flow && flow.id && <button onClick={del} className="rounded-lg px-4 py-2 text-[13px] font-bold text-red-500 border border-red-100">Delete</button>}
+          <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{busy ? 'Saving…' : 'Save flow'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ===================== ADMIN: PROJECT FLOW (Templates + Plans) =====================
 export function ProjectFlowAdmin() {
   const [tab, setTab] = useState('templates');
@@ -566,8 +696,9 @@ export function ProjectFlowAdmin() {
       <div className="flex gap-2 mb-4">
         <button onClick={() => setTab('templates')} className={`px-4 py-2 rounded-lg text-[13px] font-bold ${tab === 'templates' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={tab === 'templates' ? { background: ORANGE } : {}}>Flow Templates</button>
         <button onClick={() => setTab('plans')} className={`px-4 py-2 rounded-lg text-[13px] font-bold ${tab === 'plans' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={tab === 'plans' ? { background: ORANGE } : {}}>Service Plans</button>
+        <button onClick={() => setTab('taskflow')} className={`px-4 py-2 rounded-lg text-[13px] font-bold ${tab === 'taskflow' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={tab === 'taskflow' ? { background: ORANGE } : {}}>Daily Task Flow</button>
       </div>
-      {tab === 'templates' ? <FlowTemplatesAdmin /> : <PlansAdmin />}
+      {tab === 'templates' ? <FlowTemplatesAdmin /> : tab === 'plans' ? <PlansAdmin /> : <TaskFlowAdmin />}
     </div>
   );
 }

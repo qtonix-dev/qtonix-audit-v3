@@ -1337,6 +1337,55 @@ router.post('/shortcut/remind', guard, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== DAILY TASK FLOW (recurring task automation) =====
+const { TaskFlow } = require('../models');
+router.get('/task-flows', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const flows = await TaskFlow.findAll({ order: [['id', 'DESC']] });
+    // annotate with resolved people count
+    const models = require('../models');
+    const tf = require('../services/taskFlow');
+    const out = [];
+    for (const f of flows) { let count = 0; try { count = (await tf.resolveEmployees(models, f)).length; } catch {} out.push({ ...f.toJSON(), peopleCount: count }); }
+    res.json({ flows: out });
+  } catch (e) { next(e); }
+});
+router.post('/task-flows', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const flow = await TaskFlow.create({
+      name: String(b.name || 'Task flow').slice(0, 160),
+      targetType: ['employee', 'designation', 'team', 'group'].includes(b.targetType) ? b.targetType : 'employee',
+      targetValues: Array.isArray(b.targetValues) ? b.targetValues : [],
+      items: Array.isArray(b.items) ? b.items.map((it, i) => ({ id: it.id || `it${Date.now()}${i}`, title: String(it.title || '').slice(0, 280), description: it.description || '', priority: it.priority || 'medium', cadence: it.cadence || 'daily', weekdays: it.weekdays || [], dayOfMonth: it.dayOfMonth || 1 })) : [],
+      active: b.active !== false,
+      createdById: req.hrActor.id, createdByName: req.hrActor.name,
+    });
+    res.status(201).json(flow.toJSON());
+  } catch (e) { next(e); }
+});
+router.put('/task-flows/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try {
+    const flow = await TaskFlow.findByPk(Number(req.params.id));
+    if (!flow) return res.status(404).json({ error: 'Flow not found.' });
+    const b = req.body || {};
+    if (b.name !== undefined) flow.name = String(b.name).slice(0, 160);
+    if (b.targetType !== undefined && ['employee', 'designation', 'team', 'group'].includes(b.targetType)) flow.targetType = b.targetType;
+    if (b.targetValues !== undefined) { flow.targetValues = Array.isArray(b.targetValues) ? b.targetValues : []; flow.changed('targetValues', true); }
+    if (b.items !== undefined) { flow.items = (b.items || []).map((it, i) => ({ id: it.id || `it${Date.now()}${i}`, title: String(it.title || '').slice(0, 280), description: it.description || '', priority: it.priority || 'medium', cadence: it.cadence || 'daily', weekdays: it.weekdays || [], dayOfMonth: it.dayOfMonth || 1 })); flow.changed('items', true); }
+    if (b.active !== undefined) flow.active = !!b.active;
+    await flow.save();
+    res.json(flow.toJSON());
+  } catch (e) { next(e); }
+});
+router.delete('/task-flows/:id', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try { const flow = await TaskFlow.findByPk(Number(req.params.id)); if (flow) await flow.destroy(); res.json({ ok: true }); } catch (e) { next(e); }
+});
+// Run the flows now (today) — for testing / catching up.
+router.post('/task-flows/run', requireHrAccess, requireHrAdmin, async (req, res, next) => {
+  try { const r = await require('../services/taskFlow').runFlows(require('../models')); res.json({ ok: true, ...r }); } catch (e) { next(e); }
+});
+
 module.exports = router;
 module.exports.BUCKETS = BUCKETS;
 module.exports.BUCKET_LABELS = BUCKET_LABELS;

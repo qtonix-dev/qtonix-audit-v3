@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v549';
+const APP_VERSION = 'v550';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -987,6 +987,8 @@ connectWithRetry()
       // Company celebrations → posts birthdays/anniversaries/joinees to #the-hub.
       try { require('./jobs/hubCelebrations').start(require('./models')); }
       catch (e) { console.error('[hub-celebrations] not started:', e.message); }
+      try { require('./services/taskFlow').start(require('./models')); }
+      catch (e) { console.error('[task-flow] not started:', e.message); }
       // Project monthly recurring cycles.
       try { require('./jobs/projectCycles').start(require('./models')); }
       catch (e) { console.error('[project-cycles] not started:', e.message); }
