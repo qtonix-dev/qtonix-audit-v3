@@ -345,6 +345,7 @@ export function ProfilePage({ me, targetId }) {
   const [ikReady, setIkReady] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
+  const [eduEdit, setEduEdit] = useState(false);
   const [editEmp, setEditEmp] = useState(false);
   const [editRefs, setEditRefs] = useState({ branches: [], departments: [], shifts: [], reportingOptions: [] });
   useEffect(() => {
@@ -773,31 +774,52 @@ export function ProfilePage({ me, targetId }) {
               </div>
             )}
 
-            {/* EDUCATION (employee-editable) */}
+            {/* PROFESSIONAL & EDUCATION — read-only view by default, Edit toggles forms */}
             {tab === 'education' && (() => {
               const workRecords = (p.employment && p.employment.records) || [];
+              const eduRecords = p.eduRecords || [];
+              const skills = p.skills || [];
               const setWork = (i, obj) => setP((s) => { const recs = ((s.employment && s.employment.records) || []).map((x, idx) => idx === i ? { ...x, ...obj } : x); return { ...s, employment: { ...(s.employment || {}), fresher: false, records: recs } }; });
               const addWork = () => setP((s) => ({ ...s, employment: { ...(s.employment || {}), fresher: false, records: [...((s.employment && s.employment.records) || []), { employer: '', designation: '', from: '', to: '', current: false }] } }));
               const delWork = (i) => setP((s) => ({ ...s, employment: { ...(s.employment || {}), records: ((s.employment && s.employment.records) || []).filter((_, idx) => idx !== i) } }));
+              const setEdu = (i, obj) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
+              const addEdu = () => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }));
+              const delEdu = (i) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).filter((_, idx) => idx !== i) }));
+              const empty = !workRecords.length && !eduRecords.length && !skills.length;
               return (
               <div className="space-y-7">
-                {row && row.fromCandidateId && (
-                  <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-2.5 flex items-center gap-2 text-[12.5px]">
-                    <span className="text-violet-700 flex-1">This employee was hired through recruitment. You can re-import their work experience, education, skills and salary from the candidate record.</span>
-                    <button onClick={() => backfillOnboarding(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white shrink-0" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>↻ Re-import from hiring</button>
-                  </div>
-                )}
-                {/* WORK EXPERIENCE */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide flex items-center gap-2">💼 Work experience</div>
-                    <button onClick={addWork} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add work experience</button>
-                  </div>
-                  {workRecords.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-[13px] text-slate-400">
-                      No work experience added. {row && row.fromCandidateId && <button onClick={backfillOnboarding} className="font-bold text-orange-600 underline ml-1">↻ Pull from hiring</button>}
+                {/* Header with Edit / Save toggle */}
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-extrabold text-[#050A1F]">Professional & Education</div>
+                  {eduEdit ? (
+                    <div className="flex gap-2">
+                      <button onClick={() => setEduEdit(false)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-500 border border-slate-200">Cancel</button>
+                      <button onClick={async () => { await save(); setEduEdit(false); }} disabled={saving} className="rounded-lg px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button>
                     </div>
                   ) : (
+                    <button onClick={() => setEduEdit(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-600 border border-slate-200 inline-flex items-center gap-1.5"><Icon.Pencil size={13} /> Edit</button>
+                  )}
+                </div>
+
+                {row && row.fromCandidateId && (
+                  <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-2.5 flex items-center gap-2 text-[12.5px]">
+                    <span className="text-violet-700 flex-1">Hired through recruitment — you can re-import work experience, education, skills and salary from the candidate record.</span>
+                    <button onClick={() => backfillOnboarding(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white shrink-0" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>↻ Re-import</button>
+                  </div>
+                )}
+
+                {empty && !eduEdit ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-[13px] text-slate-400">No professional or education details yet. Click <b>Edit</b> to add them.</div>
+                ) : null}
+
+                {/* WORK EXPERIENCE */}
+                {(workRecords.length > 0 || eduEdit) && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">💼 Work experience</div>
+                    {eduEdit && <button onClick={addWork} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add work experience</button>}
+                  </div>
+                  {eduEdit ? (
                     <div className="space-y-2.5">
                       {workRecords.map((w, i) => (
                         <div key={i} className="border border-slate-100 rounded-xl p-4">
@@ -811,50 +833,76 @@ export function ProfilePage({ me, targetId }) {
                           </div>
                         </div>
                       ))}
+                      {workRecords.length === 0 && <div className="text-[12px] text-slate-400">No work experience — click “Add work experience”.</div>}
                     </div>
-                  )}
-                </div>
-
-                {/* EDUCATION */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide flex items-center gap-2">🎓 Education</div>
-                    <button onClick={() => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>
-                  </div>
-                  {(p.eduRecords || []).length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-[13px] text-slate-400">No qualifications added yet.</div>
                   ) : (
-                    <div className="space-y-2.5">
-                      {(p.eduRecords || []).map((r, i) => {
-                        const setEdu = (obj) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
-                        const delEdu = () => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).filter((_, idx) => idx !== i) }));
-                        return (
-                          <div key={r.id || i} className="border border-slate-100 rounded-xl p-4">
-                            <div className="grid grid-cols-12 gap-3 items-end">
-                              <div className="col-span-3"><Field label="Level"><select className={inputCls} value={r.level} onChange={(e) => setEdu({ level: e.target.value })}>{['10th', 'Matriculation', '+2 / Diploma', 'Higher Secondary', 'Graduation', 'Post-graduation', 'Certification', 'Other'].map((l) => <option key={l}>{l}</option>)}</select></Field></div>
-                              <div className="col-span-4"><Field label="Course / stream"><input className={inputCls} value={r.course || ''} onChange={(e) => setEdu({ course: e.target.value })} /></Field></div>
-                              <div className="col-span-5"><Field label="Institution / board"><input className={inputCls} value={r.institution || ''} onChange={(e) => setEdu({ institution: e.target.value })} /></Field></div>
-                              <div className="col-span-3"><Field label="Year"><input className={inputCls} value={r.year || ''} onChange={(e) => setEdu({ year: e.target.value })} /></Field></div>
-                              <div className="col-span-3"><Field label="% / CGPA"><input className={inputCls} value={r.percent || ''} onChange={(e) => setEdu({ percent: e.target.value })} /></Field></div>
-                              <div className="col-span-4 flex items-end gap-2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2.5">View certificate ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload certificate<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setEdu({ url }))} /></label>}</div>
-                              <div className="col-span-2 flex items-end justify-end"><button onClick={delEdu} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                    <div className="relative pl-6" style={{ borderLeft: '2px solid #eef0f4', marginLeft: '5px' }}>
+                      {workRecords.map((w, i) => (
+                        <div key={i} className="relative mb-4 last:mb-0">
+                          <span className="absolute rounded-full bg-white" style={{ left: '-30px', top: '4px', width: '11px', height: '11px', border: `2.5px solid ${w.current ? '#FF6A00' : '#cbd5e1'}` }} />
+                          <div className="text-[14px] font-bold text-[#050A1F]">{w.designation || 'Role'}{w.current && <span className="ml-2 text-[9px] font-bold text-green-700 bg-green-100 rounded-full px-2 py-0.5 align-middle">Current</span>}</div>
+                          <div className="text-[13px] text-slate-600">{w.employer}</div>
+                          {(w.from || w.to) && <div className="text-[11.5px] text-slate-400 mt-0.5">{[w.from, w.to].filter(Boolean).join(' – ')}</div>}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-
-                {/* SKILLS (read-only chips from recruitment) */}
-                {(p.skills || []).length > 0 && (
-                  <div>
-                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide mb-2.5">🛠 Skills</div>
-                    <div className="flex flex-wrap gap-1.5">{(p.skills || []).map((s, i) => <span key={i} className="text-[12px] font-semibold text-slate-600 bg-slate-100 rounded-full px-3 py-1">{s}</span>)}</div>
-                  </div>
                 )}
 
-                <div className="flex justify-end"><button onClick={() => save()} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+                {/* EDUCATION */}
+                {(eduRecords.length > 0 || eduEdit) && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">🎓 Education</div>
+                    {eduEdit && <button onClick={addEdu} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>}
+                  </div>
+                  {eduEdit ? (
+                    <div className="space-y-2.5">
+                      {eduRecords.map((r, i) => (
+                        <div key={r.id || i} className="border border-slate-100 rounded-xl p-4">
+                          <div className="grid grid-cols-12 gap-3 items-end">
+                            <div className="col-span-3"><Field label="Level"><select className={inputCls} value={r.level} onChange={(e) => setEdu(i, { level: e.target.value })}>{['10th', 'Matriculation', '+2 / Diploma', 'Higher Secondary', 'Graduation', 'Post-graduation', 'Certification', 'Other'].map((l) => <option key={l}>{l}</option>)}</select></Field></div>
+                            <div className="col-span-4"><Field label="Course / stream"><input className={inputCls} value={r.course || ''} onChange={(e) => setEdu(i, { course: e.target.value })} /></Field></div>
+                            <div className="col-span-5"><Field label="Institution / board"><input className={inputCls} value={r.institution || ''} onChange={(e) => setEdu(i, { institution: e.target.value })} /></Field></div>
+                            <div className="col-span-3"><Field label="Year"><input className={inputCls} value={r.year || ''} onChange={(e) => setEdu(i, { year: e.target.value })} /></Field></div>
+                            <div className="col-span-3"><Field label="% / CGPA"><input className={inputCls} value={r.percent || ''} onChange={(e) => setEdu(i, { percent: e.target.value })} /></Field></div>
+                            <div className="col-span-4 flex items-end gap-2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2.5">View certificate ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload certificate<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setEdu(i, { url }))} /></label>}</div>
+                            <div className="col-span-2 flex items-end justify-end"><button onClick={() => delEdu(i)} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
+                          </div>
+                        </div>
+                      ))}
+                      {eduRecords.length === 0 && <div className="text-[12px] text-slate-400">No qualifications — click “Add qualification”.</div>}
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {eduRecords.map((r, i) => (
+                        <div key={r.id || i} className="border border-slate-100 rounded-xl p-4 flex gap-3.5 items-start">
+                          <span className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-[18px]" style={{ background: '#faf5ff' }}>{/matric|10th|second/i.test(r.level || '') ? '🏫' : '🎓'}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[14px] font-bold text-[#050A1F]">{r.course || r.level}</div>
+                            {r.institution && <div className="text-[12.5px] text-slate-600 mt-0.5">{r.institution}</div>}
+                            <div className="flex gap-4 mt-1.5 text-[11.5px] text-slate-400 flex-wrap">
+                              {r.level && <span>Level: <b className="text-slate-500 font-semibold">{r.level}</b></span>}
+                              {r.year && <span>Year: <b className="text-slate-500 font-semibold">{r.year}</b></span>}
+                              {r.percent && <span>Score: <b className="text-slate-500 font-semibold">{r.percent}</b></span>}
+                            </div>
+                          </div>
+                          {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-[11.5px] font-bold text-blue-600 border border-blue-100 bg-blue-50 rounded-lg px-2.5 py-1.5 shrink-0 whitespace-nowrap">View certificate ↗</a>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                )}
+
+                {/* SKILLS */}
+                {skills.length > 0 && (
+                  <div>
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide mb-2.5">🛠 Skills</div>
+                    <div className="flex flex-wrap gap-1.5">{skills.map((s, i) => <span key={i} className="text-[12px] font-semibold text-slate-600 bg-slate-100 rounded-full px-3 py-1">{s}</span>)}</div>
+                  </div>
+                )}
               </div>
               );
             })()}
