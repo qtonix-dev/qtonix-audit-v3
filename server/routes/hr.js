@@ -7275,33 +7275,58 @@ router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (r
 // onboarding documents are carried over and linked to the new employee.
 // Build an employee profile (eduRecords, employment, hiringDocs, personal) from
 // a candidate's onboarding submission. Shared by create-employee + backfill.
-function buildProfileFromOnboarding(onb) {
+// `candidate` (optional) is the full HrCandidate — when present we pull the rich
+// recruitment resume data (work history, multi-level education, skills, salary).
+function buildProfileFromOnboarding(onb, candidate) {
   const f = (onb && onb.fields) || {};
   const docs = (onb && onb.docs) || {};
+  const a = (candidate && candidate.answers) || {};
+  const offer = (candidate && candidate.offer) || {};
   const linked = [];
-  const add = (u, kind) => { if (u && u.url) linked.push({ name: u.name, url: u.url, kind, at: u.at || new Date().toISOString() }); };
+  const add = (u, kind, label) => { if (u && u.url) linked.push({ name: u.name, url: u.url, kind, label: label || '', at: u.at || new Date().toISOString() }); };
   add(docs.photo, 'photo'); add(docs.panCard, 'pan'); add(docs.aadhaarCard, 'aadhaar');
   add(docs.addressProof, 'address_proof'); add(docs.degreeCertificate, 'degree');
   (docs.marksheets || []).forEach((u) => add(u, 'marksheet'));
-  (onb.prevCompanies || []).forEach((c) => { (c.expLetters || []).forEach((u) => add(u, 'experience_letter')); (c.salarySlips || []).forEach((u) => add(u, 'salary_slip')); });
+  (onb.prevCompanies || []).forEach((c) => { (c.expLetters || []).forEach((u) => add(u, 'experience_letter', c.name)); (c.salarySlips || []).forEach((u) => add(u, 'salary_slip', c.name)); });
 
-  const qualLabel = f.qualificationOther || f.qualification || '';
-  const employmentRecords = (onb.prevCompanies || []).map((c) => ({ employer: c.name || '', from: c.from || '', to: c.to || '', designation: c.designation || '', salary: c.salary || '' })).filter((r) => r.employer);
+  // WORK EXPERIENCE — prefer the recruitment resume data (fuller), else onboarding.
+  let employmentRecords = [];
+  if (Array.isArray(a.work) && a.work.length) {
+    employmentRecords = a.work.map((w) => ({ employer: w.company || '', from: w.start || '', to: w.current ? 'Present' : (w.end || ''), designation: w.title || '', salary: '', current: !!w.current })).filter((r) => r.employer || r.designation);
+  } else {
+    employmentRecords = (onb.prevCompanies || []).map((c) => ({ employer: c.name || '', from: c.from || '', to: c.to || '', designation: c.designation || '', salary: c.salary || '' })).filter((r) => r.employer);
+  }
 
+  // EDUCATION — prefer the recruitment resume data (multi-level w/ institutions).
   const eduRecords = [];
-  if (qualLabel) eduRecords.push({ id: `edu${Date.now()}`, level: 'Graduation', course: qualLabel, institution: '', year: '', percent: '', url: (docs.degreeCertificate && docs.degreeCertificate.url) || '' });
-  (docs.marksheets || []).forEach((u, i) => { if (u && u.url) eduRecords.push({ id: `edu${Date.now()}m${i}`, level: 'Other', course: 'Marksheet', institution: '', year: '', percent: '', url: u.url }); });
+  const degreeUrl = (docs.degreeCertificate && docs.degreeCertificate.url) || '';
+  const marksheetUrls = (docs.marksheets || []).map((u) => u && u.url).filter(Boolean);
+  if (Array.isArray(a.education) && a.education.length) {
+    a.education.forEach((e, i) => {
+      const yr = [e.start, e.end].filter(Boolean).join(' – ');
+      eduRecords.push({ id: `edu${Date.now()}${i}`, level: e.type || (i === 0 ? 'Graduation' : 'Other'), course: [e.course, e.specialization].filter(Boolean).join(' · ') || e.course || '', institution: e.institute || '', year: yr, percent: e.percent || '', url: i === 0 ? degreeUrl : (marksheetUrls[i - 1] || '') });
+    });
+  } else {
+    const qualLabel = f.qualificationOther || f.qualification || '';
+    if (qualLabel) eduRecords.push({ id: `edu${Date.now()}`, level: 'Graduation', course: qualLabel, institution: '', year: '', percent: '', url: degreeUrl });
+    (docs.marksheets || []).forEach((u, i) => { if (u && u.url) eduRecords.push({ id: `edu${Date.now()}m${i}`, level: 'Other', course: 'Marksheet', institution: '', year: '', percent: '', url: u.url }); });
+  }
 
   const hiringTypeFor = (kind) => ({ aadhaar: 'ID proof', pan: 'ID proof', address_proof: 'Address proof', degree: 'Education certificate', marksheet: 'Education certificate', experience_letter: 'Experience letter', salary_slip: 'Salary slip', photo: 'Photograph' }[kind] || 'Other');
   const hiringNameFor = (kind) => ({ aadhaar: 'Aadhaar Card', pan: 'PAN Card', address_proof: 'Address Proof', degree: 'Degree Certificate', marksheet: 'Marksheet', experience_letter: 'Experience Letter', salary_slip: 'Salary Slip', photo: 'Photograph' }[kind] || 'Document');
-  const hiringDocs = linked.map((d, i) => ({ id: `doc${Date.now()}${i}`, name: hiringNameFor(d.kind), type: hiringTypeFor(d.kind), url: d.url }));
+  const hiringDocs = linked.map((d, i) => ({ id: `doc${Date.now()}${i}`, name: hiringNameFor(d.kind), type: hiringTypeFor(d.kind), url: d.url, from: d.label || '' }));
 
+  // SKILLS + SALARY from recruitment.
+  const skills = Array.isArray(a.skills) ? a.skills.map((s) => (typeof s === 'string' ? s : (s && s.name) || '')).filter(Boolean) : [];
+  const offeredCtc = offer.acceptedAmount || offer.finalCtc || '';
+
+  const qualLabel = (eduRecords[0] && eduRecords[0].course) || f.qualificationOther || f.qualification || '';
   return {
     eduRecords,
     employment: { fresher: !(employmentRecords.length), records: employmentRecords },
-    hiringDocs,
+    hiringDocs, skills,
     personal: { fatherName: f.fatherName || '', dob: f.dob || '', bloodGroup: f.bloodGroup || '', presentAddress: f.presentAddress || '', permanentAddress: f.permanentAddress || '', pan: f.pan || '', aadhaar: f.aadhaar || '', maritalStatus: f.maritalStatus || '' },
-    _education: qualLabel, _linkedDocs: linked,
+    _education: qualLabel, _linkedDocs: linked, _offeredCtc: offeredCtc, _joiningDate: offer.joiningDate || '',
   };
 }
 
@@ -7334,10 +7359,16 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
     const passwordHash = await bcrypt.hash(String(b.password), 10);
     const marital = /married/i.test(f.maritalStatus || '') ? 'married' : (f.maritalStatus ? 'single' : null);
 
-    // Build the rich profile from onboarding (shared with the backfill endpoint).
-    const built = buildProfileFromOnboarding(onb);
+    // Build the rich profile — now also pulls recruitment resume data (work,
+    // education, skills) + the accepted salary from the candidate record.
+    const built = buildProfileFromOnboarding(onb, row);
     const qualLabel = built._education || '';
-    const builtProfile = { eduRecords: built.eduRecords, employment: built.employment, hiringDocs: built.hiringDocs, personal: built.personal };
+    // Seed salary history with the accepted offer amount (basic pay), effective
+    // from the joining date. HR can edit later.
+    const joinDate = (row.offer && row.offer.joiningDate) || built._joiningDate || null;
+    const ctc = Number(built._offeredCtc) || 0;
+    const payrollHistory = ctc > 0 ? [{ id: `sal${Date.now()}`, ctc, effectiveDate: joinDate || new Date().toISOString().slice(0, 10), note: 'Initial salary (from accepted offer)' }] : [];
+    const builtProfile = { eduRecords: built.eduRecords, employment: built.employment, hiringDocs: built.hiringDocs, personal: built.personal, skills: built.skills || [], payrollHistory, payroll: ctc > 0 ? { basic: ctc } : {} };
 
     const emp = await HrUser.create({
       name: f.name || row.name, email, passwordHash, type: b.type,
@@ -7346,7 +7377,7 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
       designation: b.designation || (row.offer && row.offer.offeredDesignation) || '',
       branch: b.branch || '',
       department: b.department || '',
-      joiningDate: (row.offer && row.offer.joiningDate) || null,
+      joiningDate: joinDate || null,
       shiftId: b.shiftId ? Number(b.shiftId) : null,
       reportsToId: b.reportsToId ? Number(b.reportsToId) : null,
       reportsToAdminId: b.reportsToAdminId ? Number(b.reportsToAdminId) : null,
@@ -9652,7 +9683,7 @@ router.get('/employees/:id/backfill-onboarding', requireHrAccess, requireHrManag
     if (!emp.fromCandidateId) return res.json({ available: false, reason: 'This employee was not created from onboarding.' });
     const cand = await HrCandidate.findByPk(emp.fromCandidateId);
     if (!cand || !cand.onboarding) return res.json({ available: false, reason: 'Source onboarding not found.' });
-    const built = buildProfileFromOnboarding(cand.onboarding);
+    const built = buildProfileFromOnboarding(cand.onboarding, cand);
     const prof = emp.profile || {};
     const changes = {
       eduRecords: (prof.eduRecords || []).length === 0 && built.eduRecords.length ? built.eduRecords.length : 0,
@@ -9668,7 +9699,7 @@ router.post('/employees/:id/backfill-onboarding', requireHrAccess, requireHrMana
     if (!emp || !emp.fromCandidateId) return res.status(404).json({ error: 'Not applicable.' });
     const cand = await HrCandidate.findByPk(emp.fromCandidateId);
     if (!cand || !cand.onboarding) return res.status(404).json({ error: 'Source onboarding not found.' });
-    const built = buildProfileFromOnboarding(cand.onboarding);
+    const built = buildProfileFromOnboarding(cand.onboarding, cand);
     const prof = { ...(emp.profile || {}) };
     // Only fill empty sections — never overwrite data HR already entered.
     if ((prof.eduRecords || []).length === 0 && built.eduRecords.length) prof.eduRecords = built.eduRecords;

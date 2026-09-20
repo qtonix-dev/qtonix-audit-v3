@@ -294,6 +294,18 @@ export function ImageKitSection() {
 // ---------------------------------------------------------------------------
 const DOC_TYPES = ['PAN Card', 'Aadhaar Card', 'Voter ID Card', 'Driving License', 'Utility Bill'];
 const HIRING_DOC_TYPES = ['Offer letter', 'Appointment letter', 'ID proof', 'Address proof', 'Education certificate', 'Experience letter', 'Relieving letter', 'Salary slip', 'Bank details', 'Photograph', 'Other'];
+// Icon + tint per hiring-document type (for the clean document cards).
+function docVisual(type) {
+  const t = String(type || '').toLowerCase();
+  if (t.includes('photo')) return { icon: '🖼️', bg: '#eff6ff' };
+  if (t.includes('id')) return { icon: '🪪', bg: '#f0fdf4' };
+  if (t.includes('address')) return { icon: '🏠', bg: '#fef3c7' };
+  if (t.includes('education') || t.includes('certificate')) return { icon: '🎓', bg: '#faf5ff' };
+  if (t.includes('experience') || t.includes('relieving')) return { icon: '💼', bg: '#fce7f3' };
+  if (t.includes('salary') || t.includes('bank')) return { icon: '💰', bg: '#ecfdf5' };
+  if (t.includes('offer') || t.includes('appointment')) return { icon: '📄', bg: '#eef2ff' };
+  return { icon: '📎', bg: '#f1f5f9' };
+}
 // Types HR collects at onboarding, uploaded one by one into the employee's
 // ImageKit folder. "Other" lets HR type a custom document name.
 const ONBOARD_DOC_TYPES = ['Aadhar Card', 'Voter ID Card', 'Offer Letter', 'Experience Letter', 'Education Certificates', 'Other'];
@@ -761,41 +773,84 @@ export function ProfilePage({ me, targetId }) {
             )}
 
             {/* EDUCATION (employee-editable) */}
-            {tab === 'education' && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-sm font-extrabold text-[#050A1F]">Professional & education</div>
-                  <button onClick={() => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>
-                </div>
-                {(p.eduRecords || []).length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-                    No qualifications added yet.
-                    {row && row.fromCandidateId && <div className="mt-3"><button onClick={backfillOnboarding} className="rounded-lg px-4 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>↻ Pull from onboarding</button><div className="text-[11px] text-slate-400 mt-1.5">Import the education, work history and documents this employee submitted during onboarding.</div></div>}
+            {tab === 'education' && (() => {
+              const workRecords = (p.employment && p.employment.records) || [];
+              const setWork = (i, obj) => setP((s) => { const recs = ((s.employment && s.employment.records) || []).map((x, idx) => idx === i ? { ...x, ...obj } : x); return { ...s, employment: { ...(s.employment || {}), fresher: false, records: recs } }; });
+              const addWork = () => setP((s) => ({ ...s, employment: { ...(s.employment || {}), fresher: false, records: [...((s.employment && s.employment.records) || []), { employer: '', designation: '', from: '', to: '', current: false }] } }));
+              const delWork = (i) => setP((s) => ({ ...s, employment: { ...(s.employment || {}), records: ((s.employment && s.employment.records) || []).filter((_, idx) => idx !== i) } }));
+              return (
+              <div className="space-y-7">
+                {/* WORK EXPERIENCE */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide flex items-center gap-2">💼 Work experience</div>
+                    <button onClick={addWork} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add work experience</button>
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    {(p.eduRecords || []).map((r, i) => {
-                      const setEdu = (obj) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
-                      const delEdu = () => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).filter((_, idx) => idx !== i) }));
-                      return (
-                        <div key={r.id || i} className="border border-slate-100 rounded-xl p-4">
+                  {workRecords.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-[13px] text-slate-400">
+                      No work experience added. {row && row.fromCandidateId && <button onClick={backfillOnboarding} className="font-bold text-orange-600 underline ml-1">↻ Pull from hiring</button>}
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {workRecords.map((w, i) => (
+                        <div key={i} className="border border-slate-100 rounded-xl p-4">
                           <div className="grid grid-cols-12 gap-3 items-end">
-                            <div className="col-span-3"><Field label="Level"><select className={inputCls} value={r.level} onChange={(e) => setEdu({ level: e.target.value })}>{['10th', '+2 / Diploma', 'Graduation', 'Post-graduation', 'Certification', 'Other'].map((l) => <option key={l}>{l}</option>)}</select></Field></div>
-                            <div className="col-span-4"><Field label="Course / stream"><input className={inputCls} value={r.course || ''} onChange={(e) => setEdu({ course: e.target.value })} /></Field></div>
-                            <div className="col-span-5"><Field label="Institution / board"><input className={inputCls} value={r.institution || ''} onChange={(e) => setEdu({ institution: e.target.value })} /></Field></div>
-                            <div className="col-span-3"><Field label="Year"><input className={inputCls} value={r.year || ''} onChange={(e) => setEdu({ year: e.target.value })} /></Field></div>
-                            <div className="col-span-3"><Field label="% / CGPA"><input className={inputCls} value={r.percent || ''} onChange={(e) => setEdu({ percent: e.target.value })} /></Field></div>
-                            <div className="col-span-4 flex items-end gap-2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2.5">View certificate ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload certificate<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setEdu({ url }))} /></label>}</div>
-                            <div className="col-span-2 flex items-end justify-end"><button onClick={delEdu} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
+                            <div className="col-span-5"><Field label="Designation"><input className={inputCls} value={w.designation || ''} onChange={(e) => setWork(i, { designation: e.target.value })} /></Field></div>
+                            <div className="col-span-5"><Field label="Company"><input className={inputCls} value={w.employer || ''} onChange={(e) => setWork(i, { employer: e.target.value })} /></Field></div>
+                            <div className="col-span-2 flex items-end justify-end"><button onClick={() => delWork(i)} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
+                            <div className="col-span-4"><Field label="From"><input className={inputCls} value={w.from || ''} onChange={(e) => setWork(i, { from: e.target.value })} placeholder="e.g. Feb 2026" /></Field></div>
+                            <div className="col-span-4"><Field label="To"><input className={inputCls} value={w.to || ''} onChange={(e) => setWork(i, { to: e.target.value })} placeholder="Present" disabled={w.current} /></Field></div>
+                            <div className="col-span-4 flex items-end pb-2"><label className="flex items-center gap-1.5 text-[12px] text-slate-600 font-semibold"><input type="checkbox" checked={!!w.current} onChange={(e) => setWork(i, { current: e.target.checked, to: e.target.checked ? 'Present' : '' })} /> Current job</label></div>
                           </div>
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* EDUCATION */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide flex items-center gap-2">🎓 Education</div>
+                    <button onClick={() => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>
+                  </div>
+                  {(p.eduRecords || []).length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-[13px] text-slate-400">No qualifications added yet.</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {(p.eduRecords || []).map((r, i) => {
+                        const setEdu = (obj) => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
+                        const delEdu = () => setP((s) => ({ ...s, eduRecords: (s.eduRecords || []).filter((_, idx) => idx !== i) }));
+                        return (
+                          <div key={r.id || i} className="border border-slate-100 rounded-xl p-4">
+                            <div className="grid grid-cols-12 gap-3 items-end">
+                              <div className="col-span-3"><Field label="Level"><select className={inputCls} value={r.level} onChange={(e) => setEdu({ level: e.target.value })}>{['10th', 'Matriculation', '+2 / Diploma', 'Higher Secondary', 'Graduation', 'Post-graduation', 'Certification', 'Other'].map((l) => <option key={l}>{l}</option>)}</select></Field></div>
+                              <div className="col-span-4"><Field label="Course / stream"><input className={inputCls} value={r.course || ''} onChange={(e) => setEdu({ course: e.target.value })} /></Field></div>
+                              <div className="col-span-5"><Field label="Institution / board"><input className={inputCls} value={r.institution || ''} onChange={(e) => setEdu({ institution: e.target.value })} /></Field></div>
+                              <div className="col-span-3"><Field label="Year"><input className={inputCls} value={r.year || ''} onChange={(e) => setEdu({ year: e.target.value })} /></Field></div>
+                              <div className="col-span-3"><Field label="% / CGPA"><input className={inputCls} value={r.percent || ''} onChange={(e) => setEdu({ percent: e.target.value })} /></Field></div>
+                              <div className="col-span-4 flex items-end gap-2">{r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 pb-2.5">View certificate ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload certificate<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setEdu({ url }))} /></label>}</div>
+                              <div className="col-span-2 flex items-end justify-end"><button onClick={delEdu} className="text-slate-300 hover:text-red-500 pb-2.5"><Icon.Trash size={16} /></button></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* SKILLS (read-only chips from recruitment) */}
+                {(p.skills || []).length > 0 && (
+                  <div>
+                    <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide mb-2.5">🛠 Skills</div>
+                    <div className="flex flex-wrap gap-1.5">{(p.skills || []).map((s, i) => <span key={i} className="text-[12px] font-semibold text-slate-600 bg-slate-100 rounded-full px-3 py-1">{s}</span>)}</div>
                   </div>
                 )}
-                <div className="flex justify-end mt-4"><button onClick={() => save()} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+
+                <div className="flex justify-end"><button onClick={() => save()} disabled={saving} className="rounded-lg px-6 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{saving ? 'Saving…' : 'Save changes'}</button></div>
               </div>
-            )}
+              );
+            })()}
 
             {/* DOCUMENTS (hiring documents uploaded at joining) */}
             {tab === 'documents' && (
@@ -812,19 +867,33 @@ export function ProfilePage({ me, targetId }) {
                     {(p.hiringDocs || []).map((d, i) => {
                       const setD = (obj) => setP((s) => ({ ...s, hiringDocs: (s.hiringDocs || []).map((x, idx) => idx === i ? { ...x, ...obj } : x) }));
                       const delD = () => setP((s) => ({ ...s, hiringDocs: (s.hiringDocs || []).filter((_, idx) => idx !== i) }));
+                      const editing = !!d._edit || !d.url;
+                      const dt = docVisual(d.type);
                       return (
-                        <div key={d.id || i} className="border border-slate-100 rounded-xl p-3">
-                          <div className="flex items-start gap-3">
-                            <span className="shrink-0 w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400"><Icon.Doc size={18} /></span>
+                        <div key={d.id || i} className="border border-slate-100 rounded-xl p-3.5 flex gap-3 items-center hover:border-slate-200 transition">
+                          <span className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-[19px]" style={{ background: dt.bg }}>{dt.icon}</span>
+                          {editing ? (
                             <div className="flex-1 min-w-0 space-y-2">
                               <select className={inputCls + ' py-1.5'} value={d.type} onChange={(e) => setD({ type: e.target.value })}>{HIRING_DOC_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
-                              <input className={inputCls + ' py-1.5'} value={d.name || ''} onChange={(e) => setD({ name: e.target.value })} placeholder="Label (optional)" />
+                              <input className={inputCls + ' py-1.5'} value={d.name || ''} onChange={(e) => setD({ name: e.target.value })} placeholder="Document name (e.g. PAN Card)" />
                               <div className="flex items-center gap-2">
-                                {d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View ↗</a> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload file<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setD({ url }))} /></label>}
+                                {d.url ? <><a href={d.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500">View ↗</a><button onClick={() => setD({ _edit: false })} className="text-xs font-bold text-green-600">Done</button></> : <label className="inline-block rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-slate-50">Upload file<input type="file" className="hidden" onChange={(e) => e.target.files[0] && uploadDoc(e.target.files[0], (url) => setD({ url }))} /></label>}
                                 <button onClick={delD} className="text-slate-300 hover:text-red-500 ml-auto"><Icon.Trash size={15} /></button>
                               </div>
                             </div>
-                          </div>
+                          ) : (
+                            <>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[14px] font-bold text-[#050A1F] truncate">{d.name || d.type}</div>
+                                <div className="text-[11.5px] text-slate-400 truncate">{d.type}{d.from ? ` · ${d.from}` : ''}</div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <a href={d.url} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-blue-600 border border-blue-100 bg-blue-50 rounded-lg px-2.5 py-1.5">View ↗</a>
+                                <button onClick={() => setD({ _edit: true })} className="text-slate-300 hover:text-slate-500 p-1"><Icon.Pencil size={14} /></button>
+                                <button onClick={delD} className="text-slate-300 hover:text-red-500 p-1"><Icon.Trash size={14} /></button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       );
                     })}
