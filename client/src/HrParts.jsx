@@ -411,6 +411,10 @@ export function ProfilePage({ me, targetId }) {
     try { const r = await hrApi(`/profile/${id}`, { method: 'PUT', body: JSON.stringify({ profile: profileToSave, avatar }) }); setRow(r); setP(r.profile || {}); setMsg(`Saved — ${r.completion}% complete.`); }
     catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
+  const backfillOnboarding = async () => {
+    try { await hrApi(`/employees/${id}/backfill-onboarding`, { method: 'POST', body: JSON.stringify({ confirm: true }) }); reload(); }
+    catch (e) { setErr(e.message); }
+  };
   const addNote = async () => {
     if (!noteText.trim()) return;
     try { await hrApi(`/profile/${id}/timeline`, { method: 'POST', body: JSON.stringify({ text: noteText.trim() }) }); setNoteText(''); reload(); }
@@ -764,7 +768,10 @@ export function ProfilePage({ me, targetId }) {
                   <button onClick={() => setP((s) => ({ ...s, eduRecords: [...(s.eduRecords || []), { id: `edu${Date.now()}`, level: 'Graduation', course: '', institution: '', year: '', percent: '', url: '' }] }))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: ORANGE }}><Icon.Plus size={13} /> Add qualification</button>
                 </div>
                 {(p.eduRecords || []).length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No qualifications added yet.</div>
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+                    No qualifications added yet.
+                    {row && row.fromCandidateId && <div className="mt-3"><button onClick={backfillOnboarding} className="rounded-lg px-4 py-2 text-xs font-bold text-white" style={{ background: ORANGE }}>↻ Pull from onboarding</button><div className="text-[11px] text-slate-400 mt-1.5">Import the education, work history and documents this employee submitted during onboarding.</div></div>}
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     {(p.eduRecords || []).map((r, i) => {

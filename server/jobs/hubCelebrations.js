@@ -44,24 +44,35 @@ async function runCelebrations(models) {
           });
         }
       }
-      // New joinee — their first working day (joined today), never "0 years".
-      const daysSince = Math.round((now - jd) / 86400000);
-      if (daysSince === 0) {
-        await postCompanyCard({
-          kindTag: 'celebration_joinee',
-          body: `👋 Please welcome ${u.name} to the Qtonix family${u.department ? `, joining ${u.department}` : ''}! Say hi. 🎉`,
-          meta: { userId: u.id }, dedupeKey: `joinee-${u.id}-${dateStr}`,
-        });
-      }
+    // New joinee — post on/after their first working day, once. Catches cases
+    // where the celebration job didn't run on the exact join date (server
+    // restart, onboarding completed a day or two later). Window: joined within
+    // the last 3 days and not before today.
+    const daysSince = Math.round((now - jd) / 86400000);
+    if (daysSince >= 0 && daysSince <= 3) {
+      await postCompanyCard({
+        kindTag: 'celebration_joinee',
+        body: `👋 Please welcome ${u.name} to the Qtonix family${u.department ? `, joining ${u.department}` : ''}! Say hi. 🎉`,
+        meta: { userId: u.id }, dedupeKey: `joinee-${u.id}-${u.joiningDate}`,
+      });
+    }
     }
   }
 }
 
+let lastRunDay = null;
 async function tick(models) {
   if (running) return; running = true;
   try {
     const now = istNow();
-    if (now.getHours() === POST_HOUR) await runCelebrations(models);
+    const day = now.toISOString().slice(0, 10);
+    // Run once per day, as soon as the job ticks at or after POST_HOUR — not only
+    // in the exact 9 AM window. This survives restarts and odd tick timing;
+    // dedupeKeys still prevent any double-posting.
+    if (now.getHours() >= POST_HOUR && lastRunDay !== day) {
+      await runCelebrations(models);
+      lastRunDay = day;
+    }
   } catch (e) { console.error('[hub-celebrations] tick failed:', e.message); }
   running = false;
 }
@@ -69,7 +80,14 @@ async function tick(models) {
 function start(models) {
   if (timer) return;
   timer = setInterval(() => tick(models), INTERVAL_MS);
+  // A one-time catch-up shortly after boot, so today's birthdays / new joiners
+  // post promptly after a deploy or restart (still guarded by dedupeKeys and the
+  // POST_HOUR check inside tick).
+  setTimeout(() => { tick(models).catch(() => {}); }, 20000);
   console.log('[hub-celebrations] scheduler started (posts ~' + POST_HOUR + ':00 IST to #the-hub)');
 }
 
 module.exports = { start, tick, runCelebrations };
+// Force a run now (ignores the POST_HOUR gate) — used by the admin "post today's
+// celebrations" endpoint so missed birthdays / joiners can be posted on demand.
+module.exports.runNow = async (models) => { await runCelebrations(models); };

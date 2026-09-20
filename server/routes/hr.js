@@ -7273,6 +7273,38 @@ router.post('/candidates/:id/onboarding/send-welcome', requireHrAccess, async (r
 // Create an employee (HrUser) from a submitted onboarding candidate. HR supplies
 // the org-specific fields (Employee ID, branch, reporting manager/TL). All
 // onboarding documents are carried over and linked to the new employee.
+// Build an employee profile (eduRecords, employment, hiringDocs, personal) from
+// a candidate's onboarding submission. Shared by create-employee + backfill.
+function buildProfileFromOnboarding(onb) {
+  const f = (onb && onb.fields) || {};
+  const docs = (onb && onb.docs) || {};
+  const linked = [];
+  const add = (u, kind) => { if (u && u.url) linked.push({ name: u.name, url: u.url, kind, at: u.at || new Date().toISOString() }); };
+  add(docs.photo, 'photo'); add(docs.panCard, 'pan'); add(docs.aadhaarCard, 'aadhaar');
+  add(docs.addressProof, 'address_proof'); add(docs.degreeCertificate, 'degree');
+  (docs.marksheets || []).forEach((u) => add(u, 'marksheet'));
+  (onb.prevCompanies || []).forEach((c) => { (c.expLetters || []).forEach((u) => add(u, 'experience_letter')); (c.salarySlips || []).forEach((u) => add(u, 'salary_slip')); });
+
+  const qualLabel = f.qualificationOther || f.qualification || '';
+  const employmentRecords = (onb.prevCompanies || []).map((c) => ({ employer: c.name || '', from: c.from || '', to: c.to || '', designation: c.designation || '', salary: c.salary || '' })).filter((r) => r.employer);
+
+  const eduRecords = [];
+  if (qualLabel) eduRecords.push({ id: `edu${Date.now()}`, level: 'Graduation', course: qualLabel, institution: '', year: '', percent: '', url: (docs.degreeCertificate && docs.degreeCertificate.url) || '' });
+  (docs.marksheets || []).forEach((u, i) => { if (u && u.url) eduRecords.push({ id: `edu${Date.now()}m${i}`, level: 'Other', course: 'Marksheet', institution: '', year: '', percent: '', url: u.url }); });
+
+  const hiringTypeFor = (kind) => ({ aadhaar: 'ID proof', pan: 'ID proof', address_proof: 'Address proof', degree: 'Education certificate', marksheet: 'Education certificate', experience_letter: 'Experience letter', salary_slip: 'Salary slip', photo: 'Photograph' }[kind] || 'Other');
+  const hiringNameFor = (kind) => ({ aadhaar: 'Aadhaar Card', pan: 'PAN Card', address_proof: 'Address Proof', degree: 'Degree Certificate', marksheet: 'Marksheet', experience_letter: 'Experience Letter', salary_slip: 'Salary Slip', photo: 'Photograph' }[kind] || 'Document');
+  const hiringDocs = linked.map((d, i) => ({ id: `doc${Date.now()}${i}`, name: hiringNameFor(d.kind), type: hiringTypeFor(d.kind), url: d.url }));
+
+  return {
+    eduRecords,
+    employment: { fresher: !(employmentRecords.length), records: employmentRecords },
+    hiringDocs,
+    personal: { fatherName: f.fatherName || '', dob: f.dob || '', bloodGroup: f.bloodGroup || '', presentAddress: f.presentAddress || '', permanentAddress: f.permanentAddress || '', pan: f.pan || '', aadhaar: f.aadhaar || '', maritalStatus: f.maritalStatus || '' },
+    _education: qualLabel, _linkedDocs: linked,
+  };
+}
+
 router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async (req, res, next) => {
   try {
     if (!(req.isHrAdmin || req.isHrManager || (req.hrUser && HR_STAFF_TYPES.includes(req.hrUser.type)))) {
@@ -7301,6 +7333,12 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
 
     const passwordHash = await bcrypt.hash(String(b.password), 10);
     const marital = /married/i.test(f.maritalStatus || '') ? 'married' : (f.maritalStatus ? 'single' : null);
+
+    // Build the rich profile from onboarding (shared with the backfill endpoint).
+    const built = buildProfileFromOnboarding(onb);
+    const qualLabel = built._education || '';
+    const builtProfile = { eduRecords: built.eduRecords, employment: built.employment, hiringDocs: built.hiringDocs, personal: built.personal };
+
     const emp = await HrUser.create({
       name: f.name || row.name, email, passwordHash, type: b.type,
       employeeId: b.employeeId || null,
@@ -7323,6 +7361,7 @@ router.post('/candidates/:id/onboarding/create-employee', requireHrAccess, async
       presentAddress: f.presentAddress || '',
       permanentAddress: f.permanentAddress || '',
       onboardingDocs: linkedDocs,
+      profile: builtProfile,
       fromCandidateId: row.id,
       active: true,
     });
@@ -9600,6 +9639,56 @@ router.post('/payroll/:id/email', requireHrAccess, async (req, res, next) => {
     row.set('emailedAt', new Date(), { raw: false });
     try { await row.save(); } catch {}
     res.json({ ok: true, emailedTo: emp.email });
+  } catch (e) { next(e); }
+});
+
+// Backfill professional/education/employment/documents from the source
+// candidate's onboarding for an employee created before that data was mapped.
+// GET = dry-run (what would change); POST {confirm:true} = apply.
+router.get('/employees/:id/backfill-onboarding', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+    if (!emp.fromCandidateId) return res.json({ available: false, reason: 'This employee was not created from onboarding.' });
+    const cand = await HrCandidate.findByPk(emp.fromCandidateId);
+    if (!cand || !cand.onboarding) return res.json({ available: false, reason: 'Source onboarding not found.' });
+    const built = buildProfileFromOnboarding(cand.onboarding);
+    const prof = emp.profile || {};
+    const changes = {
+      eduRecords: (prof.eduRecords || []).length === 0 && built.eduRecords.length ? built.eduRecords.length : 0,
+      employment: (!(prof.employment && prof.employment.records && prof.employment.records.length)) && built.employment.records.length ? built.employment.records.length : 0,
+      hiringDocs: (prof.hiringDocs || []).length === 0 && built.hiringDocs.length ? built.hiringDocs.length : 0,
+    };
+    res.json({ available: true, changes, preview: built });
+  } catch (e) { next(e); }
+});
+router.post('/employees/:id/backfill-onboarding', requireHrAccess, requireHrManager, async (req, res, next) => {
+  try {
+    const emp = await HrUser.findByPk(Number(req.params.id));
+    if (!emp || !emp.fromCandidateId) return res.status(404).json({ error: 'Not applicable.' });
+    const cand = await HrCandidate.findByPk(emp.fromCandidateId);
+    if (!cand || !cand.onboarding) return res.status(404).json({ error: 'Source onboarding not found.' });
+    const built = buildProfileFromOnboarding(cand.onboarding);
+    const prof = { ...(emp.profile || {}) };
+    // Only fill empty sections — never overwrite data HR already entered.
+    if ((prof.eduRecords || []).length === 0 && built.eduRecords.length) prof.eduRecords = built.eduRecords;
+    if (!(prof.employment && prof.employment.records && prof.employment.records.length) && built.employment.records.length) prof.employment = built.employment;
+    if ((prof.hiringDocs || []).length === 0 && built.hiringDocs.length) prof.hiringDocs = built.hiringDocs;
+    if (!prof.personal || !Object.keys(prof.personal).length) prof.personal = built.personal;
+    emp.profile = prof; emp.changed('profile', true);
+    await emp.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Post today's #the-hub celebrations (birthdays / anniversaries / new joiners)
+// on demand — for when a restart or timing caused the morning post to be missed.
+// Idempotent (dedupeKeys prevent double-posting).
+router.post('/admin/celebrations/run', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!canManagePeople(req)) return res.status(403).json({ error: 'No access.' });
+    await require('../jobs/hubCelebrations').runNow(require('../models'));
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
