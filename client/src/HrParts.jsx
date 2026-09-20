@@ -423,8 +423,9 @@ export function ProfilePage({ me, targetId }) {
     try { const r = await hrApi(`/profile/${id}`, { method: 'PUT', body: JSON.stringify({ profile: profileToSave, avatar }) }); setRow(r); setP(r.profile || {}); setMsg(`Saved — ${r.completion}% complete.`); }
     catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
-  const backfillOnboarding = async () => {
-    try { await hrApi(`/employees/${id}/backfill-onboarding`, { method: 'POST', body: JSON.stringify({ confirm: true }) }); reload(); }
+  const backfillOnboarding = async (force = false) => {
+    if (force && !(await confirmDialog({ title: 'Re-import from hiring?', message: 'This replaces the work experience, education, skills and salary on this profile with the data from the candidate’s recruitment record. Any manual edits to those sections will be overwritten.', confirmText: 'Re-import' }))) return;
+    try { await hrApi(`/employees/${id}/backfill-onboarding`, { method: 'POST', body: JSON.stringify({ confirm: true, force }) }); reload(); toast(force ? 'Re-imported from hiring ✓' : 'Pulled from hiring ✓'); }
     catch (e) { setErr(e.message); }
   };
   const addNote = async () => {
@@ -780,6 +781,12 @@ export function ProfilePage({ me, targetId }) {
               const delWork = (i) => setP((s) => ({ ...s, employment: { ...(s.employment || {}), records: ((s.employment && s.employment.records) || []).filter((_, idx) => idx !== i) } }));
               return (
               <div className="space-y-7">
+                {row && row.fromCandidateId && (
+                  <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-2.5 flex items-center gap-2 text-[12.5px]">
+                    <span className="text-violet-700 flex-1">This employee was hired through recruitment. You can re-import their work experience, education, skills and salary from the candidate record.</span>
+                    <button onClick={() => backfillOnboarding(true)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white shrink-0" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)' }}>↻ Re-import from hiring</button>
+                  </div>
+                )}
                 {/* WORK EXPERIENCE */}
                 <div>
                   <div className="flex items-center justify-between mb-3">

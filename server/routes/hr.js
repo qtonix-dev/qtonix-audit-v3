@@ -9699,16 +9699,30 @@ router.post('/employees/:id/backfill-onboarding', requireHrAccess, requireHrMana
     if (!emp || !emp.fromCandidateId) return res.status(404).json({ error: 'Not applicable.' });
     const cand = await HrCandidate.findByPk(emp.fromCandidateId);
     if (!cand || !cand.onboarding) return res.status(404).json({ error: 'Source onboarding not found.' });
+    const force = !!(req.body && req.body.force);
     const built = buildProfileFromOnboarding(cand.onboarding, cand);
     const prof = { ...(emp.profile || {}) };
-    // Only fill empty sections — never overwrite data HR already entered.
-    if ((prof.eduRecords || []).length === 0 && built.eduRecords.length) prof.eduRecords = built.eduRecords;
-    if (!(prof.employment && prof.employment.records && prof.employment.records.length) && built.employment.records.length) prof.employment = built.employment;
-    if ((prof.hiringDocs || []).length === 0 && built.hiringDocs.length) prof.hiringDocs = built.hiringDocs;
+    // In force mode, overwrite the recruitment-sourced sections (education, work,
+    // skills, documents) with the fuller data. Otherwise only fill empty ones.
+    if (built.eduRecords.length && (force || (prof.eduRecords || []).length === 0)) prof.eduRecords = built.eduRecords;
+    if (built.employment.records.length && (force || !(prof.employment && prof.employment.records && prof.employment.records.length))) prof.employment = built.employment;
+    if (built.hiringDocs.length && (force || (prof.hiringDocs || []).length === 0)) prof.hiringDocs = built.hiringDocs;
     if (!prof.personal || !Object.keys(prof.personal).length) prof.personal = built.personal;
+    if ((built.skills || []).length && (force || !(prof.skills || []).length)) prof.skills = built.skills;
+    // Salary → basic pay + salary history (only if not already set, or force).
+    const ctc = Number(built._offeredCtc) || 0;
+    if (ctc > 0 && (force || !(prof.payrollHistory || []).length)) {
+      const joinDate = (cand.offer && cand.offer.joiningDate) || built._joiningDate || (emp.joiningDate ? String(emp.joiningDate).slice(0, 10) : new Date().toISOString().slice(0, 10));
+      if (!(prof.payrollHistory || []).length || force) {
+        prof.payrollHistory = [{ id: `sal${Date.now()}`, ctc, effectiveDate: joinDate, note: 'Initial salary (from accepted offer)' }, ...((prof.payrollHistory || []).filter(() => false))];
+        prof.payroll = { ...(prof.payroll || {}), basic: ctc };
+      }
+      // also set joining date if missing
+      if (!emp.joiningDate && joinDate) emp.joiningDate = joinDate;
+    }
     emp.profile = prof; emp.changed('profile', true);
     await emp.save();
-    res.json({ ok: true });
+    res.json({ ok: true, forced: force });
   } catch (e) { next(e); }
 });
 
