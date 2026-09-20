@@ -1360,7 +1360,15 @@ router.get('/task-flows', requireHrAccess, requireHrAdmin, async (req, res, next
     const models = require('../models');
     const tf = require('../services/taskFlow');
     const out = [];
-    for (const f of flows) { let count = 0; try { count = (await tf.resolveEmployees(models, f)).length; } catch {} out.push({ ...f.toJSON(), peopleCount: count }); }
+    for (const f of flows) {
+      let count = 0, targetDisplay = [];
+      try { count = (await tf.resolveEmployees(models, f)).length; } catch {}
+      // For employee/group targets, show names instead of raw ids.
+      if ((f.targetType === 'employee' || f.targetType === 'group') && (f.targetValues || []).length) {
+        try { const us = await models.HrUser.findAll({ where: { id: { [models.Op.in]: f.targetValues.map(Number) } }, attributes: ['id', 'name'] }); const byId = Object.fromEntries(us.map((u) => [u.id, u.name])); targetDisplay = f.targetValues.map((v) => byId[v] || `#${v}`); } catch {}
+      } else { targetDisplay = f.targetValues || []; }
+      out.push({ ...f.toJSON(), peopleCount: count, targetDisplay });
+    }
     res.json({ flows: out });
   } catch (e) { next(e); }
 });

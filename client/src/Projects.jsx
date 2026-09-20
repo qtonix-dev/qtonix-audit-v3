@@ -591,7 +591,7 @@ function TaskFlowAdmin() {
             <div className="flex-1 min-w-0">
               <div className="text-[15px] font-extrabold text-[#050A1F]">{f.name}</div>
               <div className="text-[12px] text-slate-500 mt-0.5 flex gap-2 items-center flex-wrap">
-                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: tg.bg, color: tg.c }}>{targetLabel(f)}: {(f.targetValues || []).join(', ')}</span>
+                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: tg.bg, color: tg.c }}>{targetLabel(f)}: {(f.targetDisplay || f.targetValues || []).join(', ')}</span>
                 <span className="text-slate-400">· {tasks} task{tasks !== 1 ? 's' : ''}{f.peopleCount != null ? ` · ${f.peopleCount} people` : ''}</span>
               </div>
             </div>

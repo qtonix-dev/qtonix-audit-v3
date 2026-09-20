@@ -27,6 +27,34 @@ function isDue(item, date) {
 // Which occurrence of this weekday within the month (1st Sat, 2nd Sat, ...).
 function nthWeekdayOfMonth(dateStr) { const d = new Date(dateStr + 'T00:00:00'); return Math.floor((d.getDate() - 1) / 7) + 1; }
 
+// Decide, for one employee, whether a WEEKLY/MONTHLY item should be created
+// today — including roll-forward: if its scheduled day fell on a non-working day
+// (weekend/holiday/leave) for this employee, it rolls to the first working day
+// at/after it. Returns { create: bool, scheduledDate } where scheduledDate is the
+// original due date (used so we don't re-roll and to label correctly).
+async function weeklyMonthlyDueForEmployee(models, emp, item, today, todayStr, cache) {
+  // How far back could a scheduled day roll? Up to ~10 days is plenty.
+  for (let back = 0; back <= 10; back++) {
+    const d = new Date(today); d.setDate(d.getDate() - back);
+    const ds = isoDay(d);
+    if (!isDue(item, d)) continue; // not the scheduled day
+    // Found the scheduled occurrence at `ds` (back days ago). Now: is TODAY the
+    // first working day at/after that scheduled day for this employee?
+    let firstWorking = null;
+    for (let fwd = 0; fwd <= 12; fwd++) {
+      const wd = new Date(d); wd.setDate(wd.getDate() + fwd);
+      const wds = isoDay(wd);
+      // eslint-disable-next-line no-await-in-loop
+      if (await isWorkingDayFor(models, emp, wds, cache)) { firstWorking = wds; break; }
+    }
+    if (firstWorking === todayStr) return { create: true, scheduledDate: ds };
+    // If the nearest scheduled occurrence's first-working-day isn't today, stop
+    // (an earlier occurrence would already have been handled on its own day).
+    return { create: false, scheduledDate: ds };
+  }
+  return { create: false, scheduledDate: null };
+}
+
 // Branch weekend rules — mirrors the attendance system:
 //  - All branches: every Sunday off.
 //  - Kolkata: every Saturday off.
@@ -176,23 +204,32 @@ async function runFlows(models, opts = {}) {
   let created = 0, skippedNonWorking = 0;
   for (const flow of flows) {
     const items = Array.isArray(flow.items) ? flow.items : [];
-    const dueItems = items.filter((it) => isDue(it, date));
-    if (!dueItems.length) continue;
+    if (!items.length) continue;
     const emps = await resolveEmployees(models, flow);
     for (const emp of emps) {
-      // Skip weekends/holidays for this employee's branch, and days they're on leave.
-      const working = await isWorkingDayFor(models, emp, dateStr, cache);
-      if (!working) { skippedNonWorking++; continue; }
-      for (const item of dueItems) {
+      const workingToday = await isWorkingDayFor(models, emp, dateStr, cache);
+      for (const item of items) {
+        const cadence = item.cadence || 'daily';
+        let create = false;
+        if (cadence === 'daily') {
+          // Daily: create only on working days; no roll-forward (missed days ignored).
+          create = workingToday;
+          if (!create) { skippedNonWorking++; continue; }
+        } else {
+          // Weekly/monthly are mandatory: create on the scheduled day, or roll to
+          // the first working day after if the scheduled day was off/holiday/leave.
+          if (!workingToday) continue; // can't post on a non-working day either
+          const r = await weeklyMonthlyDueForEmployee(models, emp, item, date, dateStr, cache);
+          create = r.create;
+        }
+        if (!create) continue;
         const runKey = `${flow.id}:${item.id}:${emp.id}:${dateStr}`;
         const exists = await TaskFlowRun.findOne({ where: { runKey } });
         if (exists) continue;
-        // Label yesterday's leftover first (so the new one is clean).
         await labelCarriedOver(models, flow, item, emp, dateStr);
         const task = await createTaskForItem(models, flow, item, emp, dateStr);
         await TaskFlowRun.create({ runKey, flowId: flow.id, itemId: String(item.id || ''), employeeId: emp.id, date: dateStr, taskId: task.id });
         created++;
-        // Notify the assignee (best-effort).
         try { await require('./chatTask').postTaskAlert(emp.id, { kindTag: 'task_assigned', taskId: task.id, body: `🔁 New recurring task: ${item.title}` }); } catch {}
       }
     }
