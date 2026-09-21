@@ -82,4 +82,32 @@ function matchToBooking(booking, extracted) {
   return { travelers, oco, hasMismatch };
 }
 
-module.exports = { extractTickets, matchToBooking };
+// Bulk match: given all tickets (from many PDFs) and all candidate bookings,
+// assign each ticket to a booking+traveler by name + date + time. Returns
+// { matched:[{ticket, bookingId, travelerIndex}], review:[{ticket, reason, candidates:[bookingId]}] }.
+function bulkMatch(allTickets, bookings) {
+  const matched = []; const review = [];
+  // Build an index of unticketed traveler slots per booking.
+  const slots = []; // { bookingId, travelerIndex, first, last, full, date, time }
+  for (const b of bookings) {
+    (b.travelers || []).forEach((t, idx) => {
+      slots.push({ bookingId: b.id, travelerIndex: idx, full: norm(`${t.firstName}${t.lastName}`), rev: norm(`${t.lastName}${t.firstName}`), lastN: norm(t.lastName), firstN: norm(t.firstName), date: b.travelDate, time: b.bookedTime, taken: false });
+    });
+  }
+  for (const tk of allTickets) {
+    const tn = norm(tk.name);
+    if (!tn) { review.push({ ticket: tk, reason: 'Could not read the name on this ticket.', candidates: [] }); continue; }
+    // exact name matches (first+last, ignoring order), optionally constrained by date+time
+    let cands = slots.filter((s) => !s.taken && (s.full === tn || s.rev === tn));
+    if (!cands.length) cands = slots.filter((s) => !s.taken && s.lastN && tn.includes(s.lastN) && tn.includes(s.firstN.slice(0, 3)));
+    // Prefer those whose date+time also match the ticket.
+    const withDT = cands.filter((s) => (!tk.dateIso || !s.date || s.date === tk.dateIso) && (!tk.time || !s.time || s.time === tk.time));
+    const pool = withDT.length ? withDT : cands;
+    if (pool.length === 1) { pool[0].taken = true; matched.push({ ticket: tk, bookingId: pool[0].bookingId, travelerIndex: pool[0].travelerIndex, dtMatch: withDT.length > 0 }); }
+    else if (pool.length === 0) { review.push({ ticket: tk, reason: 'No booking found for this traveler.', candidates: [] }); }
+    else { review.push({ ticket: tk, reason: `${pool.length} bookings match this name/time.`, candidates: [...new Set(pool.map((s) => s.bookingId))] }); }
+  }
+  return { matched, review };
+}
+
+module.exports = { extractTickets, matchToBooking, bulkMatch };

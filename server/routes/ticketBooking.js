@@ -170,4 +170,70 @@ router.post('/upload-group', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Bulk read many ticket PDFs, extract every ticket, and auto-match to pending
+// bookings. Does NOT save — returns matched + needs-review for confirmation.
+// Stores the uploaded PDFs (isolated folder) and returns their refs so the
+// subsequent link step can attach the right PDF to each booking.
+router.post('/bulk/read', async (req, res, next) => {
+  try {
+    const files = Array.isArray(req.body && req.body.files) ? req.body.files : []; // [{ name, base64 }]
+    if (!files.length) return res.status(400).json({ error: 'No PDFs provided.' });
+    // Pending bookings (optionally scoped by date).
+    const where = { status: { [Op.in]: ['new', 'ticketed'] } };
+    const bookings = (await TicketBooking.findAll({ where })).map((r) => r.toJSON());
+    // Read each PDF; keep a per-page provenance (which stored PDF + page).
+    const stored = []; const allTickets = [];
+    for (const f of files) {
+      const buffer = Buffer.from(String(f.base64 || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
+      const ex = await ticketPdf.extractTickets(buffer);
+      let url = null, fileId = null;
+      try { const up = await imagekit.uploadFile({ base64: buffer.toString('base64'), fileName: `${ex.oco || f.name || 'ticket'}.pdf`, folder: `TicketBooking/bulk` }); url = up.url; fileId = up.fileId; } catch {}
+      const fileRef = { name: f.name || (ex.oco + '.pdf'), oco: ex.oco, url, fileId };
+      stored.push(fileRef);
+      ex.tickets.forEach((tk) => allTickets.push({ ...tk, oco: ex.oco, pdfUrl: url, pdfFileId: fileId, fileName: fileRef.name }));
+    }
+    const { matched, review } = ticketPdf.bulkMatch(allTickets, bookings);
+    // Enrich matched with booking summary for display.
+    const bById = Object.fromEntries(bookings.map((b) => [b.id, b]));
+    const matchedOut = matched.map((m) => { const b = bById[m.bookingId]; const t = b && b.travelers[m.travelerIndex]; return { ticket: m.ticket, bookingId: m.bookingId, reference: b && b.reference, travelerIndex: m.travelerIndex, travelerName: t ? `${t.firstName} ${t.lastName}` : '', travelerLabel: t ? `${t.type}-${m.travelerIndex + 1}` : '' }; });
+    const reviewOut = review.map((r) => ({ ticket: r.ticket, reason: r.reason, candidates: (r.candidates || []).map((id) => ({ id, reference: bById[id] && bById[id].reference, lead: bById[id] && bById[id].leadTraveler })) }));
+    res.json({ matched: matchedOut, review: reviewOut, files: stored, bookings: bookings.map((b) => ({ id: b.id, reference: b.reference, leadTraveler: b.leadTraveler, travelDate: b.travelDate, bookedTime: b.bookedTime, travelers: b.travelers.map((t) => `${t.firstName} ${t.lastName}`) })) });
+  } catch (e) { next(e); }
+});
+
+// Apply the confirmed links: [{ bookingId, travelerIndex, ticket:{code,time,dateIso,page,oco,pdfUrl,pdfFileId} }].
+// Groups by booking, writes each traveler's ticket info, marks ticketed, flags mismatches.
+router.post('/bulk/link', async (req, res, next) => {
+  try {
+    const links = Array.isArray(req.body && req.body.links) ? req.body.links : [];
+    if (!links.length) return res.status(400).json({ error: 'Nothing to link.' });
+    const byBooking = {};
+    for (const l of links) { (byBooking[l.bookingId] = byBooking[l.bookingId] || []).push(l); }
+    const results = [];
+    for (const [bid, ls] of Object.entries(byBooking)) {
+      const row = await TicketBooking.findByPk(Number(bid)); if (!row) continue;
+      const travelers = (row.travelers || []).map((t) => ({ ...t }));
+      let anyPdfUrl = row.pdfUrl, anyPdfFileId = row.pdfFileId, oco = row.ocoNumber;
+      for (const l of ls) {
+        const ti = l.travelerIndex; const tk = l.ticket || {};
+        if (ti == null || !travelers[ti]) continue;
+        let match = 'ok';
+        if (tk.time && row.bookedTime && tk.time !== row.bookedTime) match = 'time';
+        else if (tk.dateIso && row.travelDate && tk.dateIso !== row.travelDate) match = 'date';
+        travelers[ti] = { ...travelers[ti], ticketCode: tk.code || null, ticketTime: tk.time || null, ocoNumber: tk.oco || null, pdfPage: tk.page || null, pdfUrl: tk.pdfUrl || null, match };
+        oco = tk.oco || oco; anyPdfUrl = tk.pdfUrl || anyPdfUrl; anyPdfFileId = tk.pdfFileId || anyPdfFileId;
+      }
+      // Any traveler still without a ticket => missing.
+      travelers.forEach((t) => { if (!t.ticketCode && !t.match) t.match = 'missing'; });
+      const hasMismatch = travelers.some((t) => t.match && t.match !== 'ok');
+      row.travelers = travelers; row.changed('travelers', true);
+      row.ocoNumber = oco; row.pdfUrl = anyPdfUrl; row.pdfFileId = anyPdfFileId;
+      row.status = 'ticketed'; row.hasMismatch = hasMismatch;
+      await row.save();
+      results.push({ bookingId: Number(bid), hasMismatch });
+    }
+    res.json({ ok: true, results });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
