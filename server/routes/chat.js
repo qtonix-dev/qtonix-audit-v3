@@ -330,9 +330,31 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
     if (!me) return res.json({ totalUnread: 0, messages: [] });
     const mems = await ChatMembership.findAll({ where: { userId: me, hidden: false } });
     let totalUnread = 0;
+    // Collect recent unread incoming messages for desktop notifications. The
+    // client tracks which message ids it has already notified, so we can safely
+    // return a small window each poll.
+    let notifs = [];
     for (const m of mems) {
-      const n = await ChatMessage.count({ where: { conversationId: m.conversationId, deleted: false, senderId: { [Op.ne]: me }, ...(m.lastReadAt ? { createdAt: { [Op.gt]: m.lastReadAt } } : {}) } });
+      const where = { conversationId: m.conversationId, deleted: false, senderId: { [Op.ne]: me }, ...(m.lastReadAt ? { createdAt: { [Op.gt]: m.lastReadAt } } : {}) };
+      const n = await ChatMessage.count({ where });
       totalUnread += n;
+      if (n > 0) {
+        const recent = await ChatMessage.findAll({ where, order: [['id', 'DESC']], limit: 5 });
+        for (const r of recent) notifs.push({ id: r.id, conversationId: m.conversationId, senderId: r.senderId, body: r.body || '', isImage: !!r.isImage, fileName: r.fileName || '', createdAt: r.createdAt });
+      }
+    }
+    // Enrich with sender names + conversation labels (dm vs channel).
+    if (notifs.length) {
+      notifs = notifs.sort((a, b) => b.id - a.id).slice(0, 15);
+      const senderIds = [...new Set(notifs.map((x) => x.senderId))];
+      const convIds = [...new Set(notifs.map((x) => x.conversationId))];
+      const senders = await HrUser.findAll({ where: { id: { [Op.in]: senderIds } }, attributes: ['id', 'name', 'avatar'] });
+      const sName = Object.fromEntries(senders.map((s) => [s.id, s.name]));
+      const sAvatar = Object.fromEntries(senders.map((s) => [s.id, s.avatar]));
+      const convs = await ChatConversation.findAll({ where: { id: { [Op.in]: convIds } } });
+      const cLabel = {};
+      for (const c of convs) { cLabel[c.id] = c.kind === 'channel' ? `#${c.title || 'group'}` : null; }
+      notifs = notifs.map((x) => ({ ...x, senderName: sName[x.senderId] || 'Someone', senderAvatar: sAvatar[x.senderId] || '', channelLabel: cLabel[x.conversationId] || null }));
     }
     let messages = [];
     let typing = [];
@@ -354,7 +376,7 @@ router.get('/poll', requireHrAccess, async (req, res, next) => {
         if (t.length) { const us = await HrUser.findAll({ where: { id: { [Op.in]: t } }, attributes: ['name'] }); typing = us.map((u) => u.name); }
       }
     }
-    res.json({ totalUnread, messages, typing, reactions });
+    res.json({ totalUnread, messages, typing, reactions, notifs });
   } catch (e) { next(e); }
 });
 

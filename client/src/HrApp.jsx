@@ -3,6 +3,7 @@ import { toast, confirmDialog, promptDialog } from './toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from './config.js';
 import { AddUserModal, ImageKitSection, ProfilePage, EmployeeDirectory, Field as SharedField, Avatar, ROLE_LABELS, ROLE_OPTIONS, ROLE_LEVEL, Icon, titleCase, uploadToImageKit } from './HrParts.jsx';
+import * as dn from './desktopNotify.js';
 import HrExpenses from './HrExpenses.jsx';
 import { Pagination, MailEditor } from './Leads.jsx';
 import HrJobBuilder from './HrJobBuilder.jsx';
@@ -1973,8 +1974,26 @@ function WorkspaceView({ user, isAdmin }) {
   useEffect(() => { __wsInitialTaskId = null; }, []);
   const [hasReports, setHasReports] = useState(false);
   useEffect(() => {
-    let alive = true;
-    const tick = () => hrApi('/chat/poll').then((r) => { if (alive) setChatUnread(r.totalUnread || 0); }).catch(() => {});
+    let alive = true; let first = true;
+    const tick = () => hrApi('/chat/poll').then((r) => {
+      if (!alive) return;
+      setChatUnread(r.totalUnread || 0);
+      dn.flashTitle(r.totalUnread || 0);
+      // Desktop notification for new incoming messages (skip the very first tick
+      // so we don't re-announce a backlog on page load).
+      if (!first) {
+        (r.notifs || []).forEach((m) => {
+          if (dn.alreadyNotified('msg' + m.id)) return;
+          dn.markNotified('msg' + m.id);
+          const preview = m.isImage ? '📷 Photo' : (m.fileName ? `📎 ${m.fileName}` : (m.body || '').replace(/<[^>]*>/g, ''));
+          const isTaskAlert = m.channelLabel === '#task' || /^(🔁|📥|📋|✅|📤)/.test(m.body || '');
+          const title = isTaskAlert ? '📋 Task update' : (m.channelLabel ? `${titleCase(m.senderName)} in ${m.channelLabel}` : titleCase(m.senderName));
+          dn.showDesktopNotification({ title, body: preview, tag: 'chat-' + m.conversationId, onClick: () => { setPane('chat'); } });
+          dn.playDing();
+        });
+      } else { (r.notifs || []).forEach((m) => dn.markNotified('msg' + m.id)); }
+      first = false;
+    }).catch(() => {});
     tick(); const iv = setInterval(tick, 8000);
     hrApi('/tasks/team-report/dates?days=1').then((r) => { if (alive) setHasReports(!!(r && r.hasTeam)); }).catch(() => {});
     return () => { alive = false; clearInterval(iv); };
@@ -2023,6 +2042,24 @@ function WorkspaceView({ user, isAdmin }) {
 
 // ===== CHAT (Phase 1: direct messages + files) =====
 function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
+  const [alertsOn, setAlertsOn] = useState(dn.notifyEnabled() && dn.notifyPermission() === 'granted');
+  const [showAlertPrompt, setShowAlertPrompt] = useState(false);
+  useEffect(() => {
+    // One-time gentle prompt: show if never enabled and not dismissed and the
+    // browser supports notifications and permission hasn't been decided.
+    const dismissed = localStorage.getItem('qtx_notify_dismissed') === '1';
+    if (!dn.notifyEnabled() && !dismissed && dn.notifyPermission() === 'default') setShowAlertPrompt(true);
+  }, []);
+  const enableAlerts = async () => {
+    const p = await dn.requestNotifyPermission();
+    if (p === 'granted') { dn.setNotifyEnabled(true); setAlertsOn(true); dn.playDing(); toast('Desktop alerts enabled ✓'); }
+    else if (p === 'denied') toast('Notifications are blocked in your browser settings.');
+    setShowAlertPrompt(false);
+  };
+  const toggleDesktopAlerts = async () => {
+    if (alertsOn) { dn.setNotifyEnabled(false); setAlertsOn(false); toast('Desktop alerts turned off'); return; }
+    await enableAlerts();
+  };
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [taskChannel, setTaskChannel] = useState(null);
@@ -2387,10 +2424,21 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <div className="text-xl font-extrabold">Chat</div>
           <div className="flex items-center gap-2">
+            <button onClick={toggleDesktopAlerts} title={alertsOn ? 'Desktop alerts on — click to turn off' : 'Enable desktop alerts'} className="w-8 h-8 rounded-lg flex items-center justify-center text-sm border" style={{ borderColor: alertsOn ? '#bbf7d0' : '#e2e8f0', color: alertsOn ? '#16a34a' : '#94a3b8', background: alertsOn ? '#f0fdf4' : '#fff' }}>{alertsOn ? '🔔' : '🔕'}</button>
             <button onClick={() => { setSearchQ(''); setSearchResults({ people: [], teams: [], results: [] }); setTimeout(() => { const el = document.getElementById('chatMainSearch'); if (el) el.focus(); }, 0); }} title="Search messages" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 text-sm border border-slate-200">🔍</button>
             <button onClick={() => setShowNew((v) => !v)} title="New message" className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>✏️</button>
           </div>
         </div>
+        {showAlertPrompt && (
+          <div className="mx-3 mb-2 rounded-xl bg-orange-50 border border-orange-100 p-3">
+            <div className="text-[12.5px] font-bold text-orange-800">🔔 Turn on desktop alerts?</div>
+            <div className="text-[11.5px] text-orange-600 mt-0.5 mb-2">Get notified about new Buzz messages and task updates even when you’re on another tab or app.</div>
+            <div className="flex gap-2">
+              <button onClick={enableAlerts} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>Enable alerts</button>
+              <button onClick={() => { localStorage.setItem('qtx_notify_dismissed', '1'); setShowAlertPrompt(false); }} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-slate-500">Not now</button>
+            </div>
+          </div>
+        )}
         {/* Unified search: people, teams & messages */}
         <div className="px-3 mb-2">
           <input id="chatMainSearch" value={searchQ} onChange={(e) => runSearch(e.target.value)} placeholder="🔍 Search people, teams & messages…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
