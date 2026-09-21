@@ -17,6 +17,21 @@ const titleCase = (s) => String(s || '').replace(/\b\w/g, (c) => c.toUpperCase()
 const SRC = { viator: { l: 'Viator', bg: '#dbeafe', c: '#1d4ed8' }, gyg: { l: 'GYG', bg: '#fef3c7', c: '#b45309' }, direct: { l: 'Direct', bg: '#dcfce7', c: '#15803d' }, other: { l: 'Other', bg: '#f1f5f9', c: '#64748b' } };
 const fmtDate = (iso, label) => label || (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—');
 
+// A name cell with a click-to-copy button (no need for Ctrl+C).
+function CopyName({ text, id, copied, onCopy }) {
+  if (!text) return <span className="text-slate-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 group">
+      <span>{text}</span>
+      <button onClick={() => onCopy(text, id)} title="Copy" className="opacity-0 group-hover:opacity-100 transition text-slate-400 hover:text-violet-600">
+        {copied === id
+          ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+          : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>}
+      </button>
+    </span>
+  );
+}
+
 export default function TicketBookingAdmin() {
   const [page, setPage] = useState('list'); // list | tobook | add | detail
   const [detailId, setDetailId] = useState(null);
@@ -142,6 +157,8 @@ function Fld({ label, v, on, disabled }) { return <div><label className="text-[1
 function BookingDetail({ id, onBack }) {
   const [b, setB] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [copied, setCopied] = useState('');
+  const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
   const load = () => api(`/${id}`).then(setB).catch((e) => toast(e.message));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
   const upload = async (file) => {
@@ -180,8 +197,8 @@ function BookingDetail({ id, onBack }) {
               <tr key={i} className="border-t border-slate-50" style={{ background: bad ? '#fef2f2' : undefined }}>
                 <td className="px-4 py-2.5 text-slate-500">{i + 1}</td>
                 <td className="px-2 py-2.5 text-slate-600">{t.type} - {t.index || i + 1}</td>
-                <td className="px-2 py-2.5 font-semibold">{t.firstName}</td>
-                <td className="px-2 py-2.5 font-semibold">{t.lastName}</td>
+                <td className="px-2 py-2.5 font-semibold"><CopyName text={t.firstName} id={`d${i}f`} copied={copied} onCopy={copy} /></td>
+                <td className="px-2 py-2.5 font-semibold"><CopyName text={t.lastName} id={`d${i}l`} copied={copied} onCopy={copy} /></td>
                 <td className="px-2 py-2.5 text-slate-500">{t.type}</td>
                 <td className="px-2 py-2.5 text-slate-600">{b.bookedTime || '—'}</td>
                 <td className="px-2 py-2.5" style={{ color: t.match === 'time' ? '#dc2626' : undefined, fontWeight: t.match === 'time' ? 700 : 400 }}>{t.ticketTime || (b.status === 'ticketed' ? '—' : '')}{t.match === 'time' ? ' ⚠' : ''}</td>
@@ -209,6 +226,15 @@ function TicketsToBook({ onOpen }) {
   const load = () => { const p = new URLSearchParams(); if (activeDate) p.set('date', activeDate); api(`/plan/tobook?${p}`).then(setData).catch((e) => toast(e.message)); };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateFilter, customDate]);
   const [uploadFor, setUploadFor] = useState(null); // { ids, date, time }
+  // Merged bookings per ticket: { [ticketKey]: [bookingId, ...] } — extra bookings
+  // combined onto a ticket. A merged booking is removed from its own ticket.
+  const [merges, setMerges] = useState({});
+  const [copied, setCopied] = useState('');
+  const copy = (text, id) => { try { navigator.clipboard.writeText(text); setCopied(id); setTimeout(() => setCopied(''), 1200); } catch {} };
+  const toggleMerge = (ticketKey, bookingId) => setMerges((m) => { const cur = m[ticketKey] || []; return { ...m, [ticketKey]: cur.includes(bookingId) ? cur.filter((x) => x !== bookingId) : [...cur, bookingId] }; });
+  // All booking ids that have been merged onto SOME ticket (so we hide them from
+  // their own ticket and from other suggestion lists).
+  const mergedElsewhere = new Set(Object.values(merges).flat());
   const doUpload = async (file) => {
     try { const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
       const r = await api('/upload-group', { method: 'POST', body: JSON.stringify({ ids: uploadFor.ids, base64: b64 }) });
@@ -238,18 +264,58 @@ function TicketsToBook({ onOpen }) {
                       <td className="px-5 py-2.5">{fmtDate(slot.date)}</td><td className="px-2 font-bold">{slot.time}</td><td className="px-2 text-slate-500">{slot.bookings.length} booking{slot.bookings.length !== 1 ? 's' : ''}</td><td className="px-2 text-right font-extrabold text-violet-700">{slot.ticketCount}</td><td className="px-2 text-right font-bold">{slot.pax}</td><td className="px-2 text-right text-[11px] text-violet-700">{open ? '▲ hide plan' : '▼ show plan'}</td>
                     </tr>
                     {open && <tr className="border-t border-slate-100"><td colSpan={6} className="p-4" style={{ background: '#faf5ff' }}>
-                      {slot.tickets.map((tk, bi) => { const free = 8 - tk.pax; const members = tk.items;
+                      {slot.tickets.map((tk, bi) => {
+                        const ticketKey = `${key}#${bi}`;
+                        const baseIds = tk.items.map((m) => m.id);
+                        // base members minus any that got merged onto ANOTHER ticket
+                        const baseMembers = tk.items.filter((m) => !mergedElsewhere.has(m.id) || (merges[ticketKey] || []).includes(m.id));
+                        // extra bookings merged onto THIS ticket (found across the whole tour)
+                        const extraIds = merges[ticketKey] || [];
+                        const allTourBookings = tour.slots.flatMap((s) => s.bookings);
+                        const extras = allTourBookings.filter((b) => extraIds.includes(b.id) && !baseIds.includes(b.id));
+                        const members = [...baseMembers, ...extras];
+                        const usedPax = members.reduce((s, m) => s + m.pax, 0);
+                        const free = 8 - usedPax;
+                        // Suggestions: other pending bookings in the SAME tour (any time)
+                        // not already on this ticket, not merged elsewhere, that fit.
+                        const candidates = allTourBookings.filter((b) =>
+                          !members.some((m) => m.id === b.id) &&
+                          !mergedElsewhere.has(b.id) &&
+                          b.pax <= free && b.pax > 0);
                         return (
                           <div key={bi} className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3 last:mb-0">
                             <div className="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2 border-b border-slate-100" style={{ background: '#faf5ff' }}>
-                              <div className="text-[13px]"><b className="text-violet-800">Ticket {bi + 1} of {slot.tickets.length}</b><span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: tk.pax === 8 ? '#dcfce7' : '#fef3c7', color: tk.pax === 8 ? '#15803d' : '#b45309' }}>{tk.pax}/8 pax{free > 0 ? ` · ${free} free` : ' · full'}</span></div>
+                              <div className="text-[13px]"><b className="text-violet-800">Ticket {bi + 1} of {slot.tickets.length}</b><span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: usedPax === 8 ? '#dcfce7' : '#fef3c7', color: usedPax === 8 ? '#15803d' : '#b45309' }}>{usedPax}/8 pax{free > 0 ? ` · ${free} free` : ' · full'}</span>{extras.length > 0 && <span className="ml-2 text-[10px] font-bold text-amber-700">🔗 {extras.length} merged</span>}</div>
                               <button onClick={(e) => { e.stopPropagation(); setUploadFor({ ids: members.map((m) => m.id), date: slot.date, time: slot.time }); }} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>🎟 Ticket booked — upload & mark as booked</button>
                             </div>
                             <table className="w-full text-[12px]"><thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-4 py-2">Sl.No.</th><th className="px-2">Booking ID</th><th className="px-2">Trav.</th><th className="px-2">First name</th><th className="px-2">Last name</th><th className="px-2">Type</th></tr></thead>
-                              <tbody>{members.flatMap((bk) => (bk.travelers && bk.travelers.length ? bk.travelers : []).map((t, ti) => ({ bk, t, ti }))).map(({ bk, t, ti }, gi) => (
-                                <tr key={`${bk.id}-${ti}`} className="border-b border-slate-50 last:border-0"><td className="px-4 py-1.5 text-slate-500">{gi + 1}</td><td className="px-2 py-1.5"><button onClick={() => onOpen(bk.id)} className="font-mono text-[11px] text-violet-700 underline">{bk.reference}</button></td><td className="px-2 py-1.5 text-slate-500">{ti + 1}</td><td className="px-2 py-1.5">{t.firstName}</td><td className="px-2 py-1.5">{t.lastName}</td><td className="px-2 py-1.5 text-slate-500">{t.type}</td></tr>
-                              ))}</tbody>
+                              <tbody>{members.flatMap((bk) => (bk.travelers && bk.travelers.length ? bk.travelers : []).map((t, ti) => ({ bk, t, ti }))).map(({ bk, t, ti }, gi) => { const isExtra = extraIds.includes(bk.id); return (
+                                <tr key={`${bk.id}-${ti}`} className="border-b border-slate-50 last:border-0" style={{ background: isExtra ? '#fffbeb' : undefined }}>
+                                  <td className="px-4 py-1.5 text-slate-500">{gi + 1}</td>
+                                  <td className="px-2 py-1.5"><button onClick={() => onOpen(bk.id)} className="font-mono text-[11px] text-violet-700 underline">{bk.reference}</button>{isExtra ? <span className="text-[9px] text-amber-600 ml-1">{bk.bookedTime} ↩</span> : ''}</td>
+                                  <td className="px-2 py-1.5 text-slate-500">{ti + 1}</td>
+                                  <td className="px-2 py-1.5"><CopyName text={t.firstName} id={`${bk.id}-${ti}-f`} copied={copied} onCopy={copy} /></td>
+                                  <td className="px-2 py-1.5"><CopyName text={t.lastName} id={`${bk.id}-${ti}-l`} copied={copied} onCopy={copy} /></td>
+                                  <td className="px-2 py-1.5 text-slate-500">{t.type}</td>
+                                </tr>
+                              ); })}</tbody>
                             </table>
+                            {free > 0 && candidates.length > 0 && (
+                              <div className="px-4 py-3 border-t border-dashed border-amber-200" style={{ background: '#fffbeb99' }}>
+                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another booking to book all at once?</div>
+                                <div className="flex flex-col gap-1.5">
+                                  {candidates.map((b) => (
+                                    <label key={b.id} className="flex items-center gap-2 text-[12.5px] cursor-pointer">
+                                      <input type="checkbox" checked={extraIds.includes(b.id)} onChange={() => toggleMerge(ticketKey, b.id)} className="accent-violet-600" />
+                                      <span className="font-mono text-[11px] text-violet-700">{b.reference}</span>
+                                      <span className="font-semibold text-slate-700">{titleCase(b.leadTraveler || '')}</span>
+                                      <span className="text-[11px] text-slate-500">{b.pax} pax @ {b.bookedTime}{b.travelDate !== slot.date ? ` · ${fmtDate(b.travelDate)}` : ''}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                                <p className="text-[10.5px] text-slate-400 mt-1.5">Merged bookings ride on this ticket and are removed from their own — you book & upload once for all of them.</p>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
