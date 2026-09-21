@@ -669,6 +669,25 @@ router.get('/search', requireHrAccess, async (req, res, next) => {
 });
 
 // Members of a conversation (for @mention autocomplete) + online status.
+// Rename a group/channel. Allowed for admins, the group creator, or a team
+// owner/manager (group-manage access).
+router.put('/channels/:id/rename', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    const convId = Number(req.params.id);
+    const conv = await ChatConversation.findByPk(convId);
+    if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
+    const myIds = new Set((req.linkedIds || [me]).filter(Boolean));
+    let allowed = isChatAdmin(req) || (conv.createdById && myIds.has(conv.createdById));
+    if (!allowed && conv.teamId) { const myMem = await ChatTeamMember.findOne({ where: { teamId: conv.teamId, userId: { [Op.in]: [...myIds] } } }); if (myMem && ['owner', 'manager'].includes(myMem.role)) allowed = true; const team = await ChatTeam.findByPk(conv.teamId); if (team && myIds.has(team.createdById)) allowed = true; }
+    if (!allowed) return res.status(403).json({ error: 'You can’t rename this group.' });
+    const name = String((req.body || {}).name || '').trim().slice(0, 60);
+    if (!name) return res.status(400).json({ error: 'Enter a group name.' });
+    conv.title = name; await conv.save();
+    res.json({ ok: true, name });
+  } catch (e) { next(e); }
+});
+
 router.get('/conversations/:id/members', requireHrAccess, async (req, res, next) => {
   try {
     const me = meId(req);
@@ -679,14 +698,21 @@ router.get('/conversations/:id/members', requireHrAccess, async (req, res, next)
     const users = await HrUser.findAll({ where: { id: { [Op.in]: rows.map((m) => m.userId) } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
     // Can the viewer delete this group? (creator of the team, or an admin).
     const conv = await ChatConversation.findByPk(convId);
-    let canDelete = false; let creatorId = null;
+    let canDelete = false; let canManage = false; let creatorId = null;
     if (conv && conv.kind === 'channel') {
       const myIds = new Set((req.linkedIds || [me]).filter(Boolean));
-      if (conv.teamId) { const team = await ChatTeam.findByPk(conv.teamId); if (team) { creatorId = team.createdById; if (myIds.has(team.createdById)) canDelete = true; } }
-      if (conv.createdById && myIds.has(conv.createdById)) canDelete = true;
-      if (isChatAdmin(req)) canDelete = true;
+      if (conv.teamId) {
+        const team = await ChatTeam.findByPk(conv.teamId);
+        if (team) { creatorId = team.createdById; if (myIds.has(team.createdById)) canDelete = true;
+          // Team owner/manager (group-manage access) can manage members + rename.
+          try { const myMem = await ChatTeamMember.findOne({ where: { teamId: team.id, userId: { [Op.in]: [...myIds] } } }); if (myMem && ['owner', 'manager'].includes(myMem.role)) canManage = true; } catch {}
+        }
+      }
+      if (conv.createdById && myIds.has(conv.createdById)) { canDelete = true; canManage = true; }
+      if (isChatAdmin(req)) { canDelete = true; canManage = true; }
+      if (canDelete) canManage = true; // whoever can delete can also manage
     }
-    res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id), isCreator: u.id === creatorId })), canDelete, isChannel: !!(conv && conv.kind === 'channel'), creatorId });
+    res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id), isCreator: u.id === creatorId })), canDelete, canManage, isChannel: !!(conv && conv.kind === 'channel'), creatorId });
   } catch (e) { next(e); }
 });
 

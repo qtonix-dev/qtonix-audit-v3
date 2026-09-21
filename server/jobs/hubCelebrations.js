@@ -15,7 +15,15 @@ const POST_HOUR = Number(process.env.HUB_CELEBRATION_HOUR || 9);              //
 let timer = null; let running = false;
 
 function istNow() { return new Date(Date.now() + 330 * 60000); }
-function isSameMonthDay(d, ref) { const x = new Date(d); return x.getMonth() === ref.getMonth() && x.getDate() === ref.getDate(); }
+// Compare month/day using the IST wall-clock. `ref` is istNow() (a UTC-shifted
+// timestamp whose UTC parts are the IST date). The stored date (YYYY-MM-DD) is
+// parsed at UTC midnight so its UTC month/day are the intended calendar values —
+// this avoids server-timezone drift that hid anniversaries.
+function isSameMonthDay(d, ref) {
+  const ds = String(d).slice(0, 10);
+  const x = new Date(ds + 'T00:00:00Z');
+  return x.getUTCMonth() === ref.getUTCMonth() && x.getUTCDate() === ref.getUTCDate();
+}
 
 async function runCelebrations(models) {
   const now = istNow();
@@ -33,8 +41,8 @@ async function runCelebrations(models) {
     }
     // Work anniversary today (≥ 1 year) OR new joinee (joined today, this year).
     if (u.joiningDate) {
-      const jd = new Date(u.joiningDate);
-      const years = now.getFullYear() - jd.getFullYear();
+      const jd = new Date(String(u.joiningDate).slice(0, 10) + 'T00:00:00Z');
+      const years = now.getUTCFullYear() - jd.getUTCFullYear();
       if (isSameMonthDay(u.joiningDate, now)) {
         if (years >= 1) {
           await postCompanyCard({
@@ -48,7 +56,7 @@ async function runCelebrations(models) {
     // where the celebration job didn't run on the exact join date (server
     // restart, onboarding completed a day or two later). Window: joined within
     // the last 3 days and not before today.
-    const daysSince = Math.round((now - jd) / 86400000);
+    const daysSince = Math.round((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - jd.getTime()) / 86400000);
     if (daysSince >= 0 && daysSince <= 3) {
       await postCompanyCard({
         kindTag: 'celebration_joinee',

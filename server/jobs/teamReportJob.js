@@ -121,14 +121,18 @@ async function runLogoutReminders(models) {
       continue;
     }
 
-    // DAY SHIFT: only remind once we're past today's shift end + grace.
-    if (nowMin < endMin + GRACE) continue;
+    // DAY SHIFT: remind once the employee has completed 8 working hours from
+    // their OWN clock-in time (dynamic per person), not at a fixed shift-end.
     const att = await HrAttendance.findOne({ where: { employeeId: emp.id, date } });
     if (!att || !att.loginTime) continue;
     if (['absent', 'leave', 'week_off', 'holiday'].includes(att.status)) continue;
     if (att.logoutTime) continue;
     if (att.logoutReminderAt) continue;
     if (!emp.email) continue;
+    const WORK_MIN = Number(process.env.WORK_HOURS_MIN || 480); // 8 hours
+    const loginMin = toMin(att.loginTime);
+    const triggerMin = loginMin + WORK_MIN + GRACE; // clock-in + 8h (+ small grace)
+    if (nowMin < triggerMin) continue; // not yet completed 8 hours
     const html = logoutReminderHtml(hrEmail.shell, emp, shift.end);
     const sent = await sendHrEmailTo(models, emp.email, html, 'Action required: please log out');
     if (sent) { att.logoutReminderAt = new Date(); await att.save(); }

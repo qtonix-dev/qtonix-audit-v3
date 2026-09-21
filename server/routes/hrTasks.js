@@ -430,8 +430,30 @@ router.get('/my-summary', guard, async (req, res, next) => {
       if (due && due < today) overdue++;
     }
     const pct = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : (pending === 0 ? 100 : 0);
+    // Deficit vs 8 working hours (for the day-end popup warning). Based on the
+    // employee's own clock-in + worked time so far today, minus breaks.
+    let deficitMin = null;
+    try {
+      const models = require('../models');
+      const empId = (req.hrActor && req.hrActor.kind === 'hr') ? req.hrActor.id : null;
+      if (empId) {
+        const att = await models.HrAttendance.findOne({ where: { employeeId: empId, date: today } });
+        if (att && att.loginTime) {
+          const toMin = (t) => { const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
+          const nowIst = new Date(Date.now() + 330 * 60000);
+          const nowMin = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
+          let endMin = att.logoutTime ? toMin(att.logoutTime) : nowMin;
+          let worked = endMin - toMin(att.loginTime);
+          // subtract breaks
+          const breaks = Array.isArray(att.breaks) ? att.breaks : [];
+          for (const br of breaks) { if (br.start && br.end) worked -= (toMin(br.end) - toMin(br.start)); }
+          const WORK_MIN = Number(process.env.WORK_HOURS_MIN || 480);
+          deficitMin = Math.max(0, WORK_MIN - worked);
+        }
+      }
+    } catch {}
     res.json({ dueToday, highPriority, pending, overdue, completedToday, totalToday, pct,
-      taskCompletedToday, subtaskCompletedToday, taskPending, subtaskPending });
+      taskCompletedToday, subtaskCompletedToday, taskPending, subtaskPending, deficitMin });
   } catch (e) { next(e); }
 });
 
@@ -1199,7 +1221,7 @@ router.post('/tasks/:id/attachments', guard, async (req, res, next) => {
 // common docs/images/pdf/zip, 10 MB cap, executables blocked.
 const ALLOWED_MIME = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
-  'application/pdf', 'text/plain', 'text/csv',
+  'application/pdf', 'text/plain', 'text/csv', 'text/html', 'application/json', 'application/xml', 'text/xml',
   'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',

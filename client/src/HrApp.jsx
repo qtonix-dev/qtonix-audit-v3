@@ -2555,7 +2555,7 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
               <button onClick={() => { setInChatSearch((v) => !v); setInChatQ(''); setInChatHits([]); }} title="Search this chat" className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 border border-slate-200">🔍</button>
             </div>
           </div>
-          {membersModal && <GroupMembersModal data={membersModal} directory={directory} canManage={!!(me && (me.isAdmin || me.type === 'hr' || me.isHrManager))} onChanged={() => { loadConversations(); loadTeams(); }} onClose={() => setMembersModal(null)} onDeleted={() => { setMembersModal(null); setActive(null); loadConversations(); toast('Group deleted'); }} />}
+          {membersModal && <GroupMembersModal data={membersModal} directory={directory} canManage={!!(membersModal.canManage || (me && (me.isAdmin || me.type === 'hr' || me.isHrManager)))} onChanged={() => { loadConversations(); loadTeams(); }} onRenamed={(nm) => { setMembersModal((s) => ({ ...s, name: nm })); if (active && active.channel) setActive((a) => ({ ...a, channel: nm })); loadConversations(); loadTeams(); }} onClose={() => setMembersModal(null)} onDeleted={() => { setMembersModal(null); setActive(null); loadConversations(); toast('Group deleted'); }} />}
           {inChatSearch && (
             <div className="border-b border-slate-100 bg-slate-50 px-4 py-2">
               <input autoFocus value={inChatQ} onChange={(e) => runInChatSearch(e.target.value)} placeholder="Search in this conversation…" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-orange-200" />
@@ -3096,11 +3096,20 @@ function ShortcutCard({ card, onClose, onOpenTask }) {
 }
 
 // Group members list + add/delete-group actions (shown from the chat header).
-function GroupMembersModal({ data, onClose, onDeleted, onChanged, directory = [], canManage }) {
+function GroupMembersModal({ data, onClose, onDeleted, onChanged, onRenamed, directory = [], canManage }) {
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState(data.name || '');
   const [members, setMembers] = useState(data.members || []);
+  const rename = async () => {
+    const nm = newName.trim(); if (!nm || nm === data.name) { setRenaming(false); return; }
+    setBusy(true);
+    try { await hrApi(`/chat/channels/${data.convId}/rename`, { method: 'PUT', body: JSON.stringify({ name: nm }) }); toast('Group renamed ✓'); if (onRenamed) onRenamed(nm); setRenaming(false); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
   const memberIds = new Set(members.map((m) => m.id));
   const candidates = (directory || []).filter((u) => !memberIds.has(u.id) && (!q || u.name.toLowerCase().includes(q.toLowerCase())));
   const del = async () => {
@@ -3131,7 +3140,14 @@ function GroupMembersModal({ data, onClose, onDeleted, onChanged, directory = []
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div><div className="text-[15px] font-extrabold text-[#050A1F]">Group members</div><div className="text-[12px] text-slate-400">#{data.name} · {members.length}</div></div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-extrabold text-[#050A1F]">Group members</div>
+            {renaming ? (
+              <div className="flex items-center gap-1.5 mt-1"><input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && rename()} className="text-[12px] border border-slate-200 rounded px-2 py-1 flex-1" /><button onClick={rename} disabled={busy} className="text-[11px] font-bold text-green-600">Save</button><button onClick={() => { setRenaming(false); setNewName(data.name); }} className="text-[11px] text-slate-400">×</button></div>
+            ) : (
+              <div className="text-[12px] text-slate-400 flex items-center gap-1.5">#{data.name} · {members.length}{canManage && <button onClick={() => setRenaming(true)} title="Rename group" className="text-slate-300 hover:text-orange-500">✏️</button>}</div>
+            )}
+          </div>
           <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
         </div>
         {canManage && (
@@ -12659,6 +12675,12 @@ function LogoutSummary({ summary, onStay, onLogout, name, clockOnly }) {
             <div className="text-[9.5px] font-extrabold uppercase tracking-wide mt-1.5" style={{ color: pending > 0 ? '#C2410C' : '#94A3B8' }}>⏳ Pending</div>
           </div>
         </div>
+        {summary.deficitMin != null && summary.deficitMin > 0 && (
+          <div className="rounded-xl px-3.5 py-2.5 mb-3 text-left" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+            <div className="text-[12px] font-extrabold text-red-700">⏱ You’re short by {Math.floor(summary.deficitMin / 60)}h {summary.deficitMin % 60}m today</div>
+            <div className="text-[11px] text-red-500 mt-0.5">You haven’t completed 8 working hours yet. Try to cover the remaining time before you log out.</div>
+          </div>
+        )}
         <div className="text-left mb-1 text-[11.5px] font-extrabold text-slate-600">📝 What did you accomplish today? <span className="font-semibold text-slate-300">(optional)</span></div>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="e.g. Finished the payment API, started the refund flow…" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[12.5px] mb-1" />
         <p className="text-[12px] text-slate-500 mb-3 mt-1">{line}</p>
