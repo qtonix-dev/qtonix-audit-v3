@@ -2052,14 +2052,21 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
   }, []);
   const enableAlerts = async () => {
     const p = await dn.requestNotifyPermission();
-    if (p === 'granted') { dn.setNotifyEnabled(true); setAlertsOn(true); dn.playDing(); toast('Desktop alerts enabled ✓'); }
-    else if (p === 'denied') toast('Notifications are blocked in your browser settings.');
+    if (p === 'granted') {
+      dn.setNotifyEnabled(true); setAlertsOn(true); dn.playDing();
+      // Also register Web Push so alerts arrive even with no Qtonix tab open.
+      const pushed = await dn.enableWebPush(hrApi);
+      toast(pushed ? 'Desktop alerts enabled — even when Qtonix is closed ✓' : 'Desktop alerts enabled ✓');
+    } else if (p === 'denied') toast('Notifications are blocked in your browser settings.');
     setShowAlertPrompt(false);
   };
   const toggleDesktopAlerts = async () => {
-    if (alertsOn) { dn.setNotifyEnabled(false); setAlertsOn(false); toast('Desktop alerts turned off'); return; }
+    if (alertsOn) { dn.setNotifyEnabled(false); setAlertsOn(false); dn.disableWebPush(hrApi); toast('Desktop alerts turned off'); return; }
     await enableAlerts();
   };
+  // Re-subscribe on load if alerts were previously enabled (keeps the push
+  // subscription fresh across sessions).
+  useEffect(() => { if (dn.notifyEnabled() && dn.notifyPermission() === 'granted') dn.enableWebPush(hrApi).catch(() => {}); }, []);
   const [directory, setDirectory] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [taskChannel, setTaskChannel] = useState(null);

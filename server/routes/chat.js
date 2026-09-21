@@ -230,6 +230,21 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
     await ChatMembership.update({ hidden: false }, { where: { conversationId: convId } });
     // Mark my own read pointer forward (I've seen my own message).
     await ChatMembership.update({ lastReadAt: msg.createdAt }, { where: { conversationId: convId, userId: me } });
+    // Web Push to the other members of this conversation (fire-and-forget) so
+    // they're notified even with no Qtonix tab open.
+    (async () => {
+      try {
+        const pn = require('../services/pushNotify'); if (!pn.isConfigured()) return;
+        const conv = await ChatConversation.findByPk(convId);
+        const isChannel = conv && conv.kind === 'channel';
+        const channelLabel = isChannel ? `#${conv.title || 'group'}` : null;
+        const preview = b.isImage ? '📷 Photo' : (hasFile ? `📎 ${msg.fileName}` : (body || '').replace(/<[^>]*>/g, '').slice(0, 140));
+        const isTaskAlert = channelLabel === '#task';
+        const title = isTaskAlert ? '📋 Task update' : (channelLabel ? `${meName(req)} in ${channelLabel}` : meName(req));
+        const members = await ChatMembership.findAll({ where: { conversationId: convId, userId: { [Op.ne]: me } } });
+        for (const m of members) { pn.sendToUser(require('../models'), m.userId, { title, body: preview, tag: 'chat-' + convId, url: '/', data: { conversationId: convId } }).catch(() => {}); }
+      } catch {}
+    })();
     res.json({ message: { ...msg.toJSON(), mine: true } });
   } catch (e) { next(e); }
 });
@@ -863,6 +878,39 @@ router.get('/notify-feed', requireHrAccess, async (req, res, next) => {
     // marks without replaying history. After that it always passes the cursor.
     if (req.query.prime) return res.json({ messages: [], notifs: [], lastMsgId, lastNotifId, primed: true });
     res.json({ messages, notifs, lastMsgId, lastNotifId });
+  } catch (e) { next(e); }
+});
+
+// ===== WEB PUSH (Option C) — subscription management =====
+const pushNotify = require('../services/pushNotify');
+const { PushSubscription } = require('../models');
+
+// Public VAPID key + whether push is configured on this server.
+router.get('/push/key', requireHrAccess, async (req, res) => {
+  res.json({ configured: pushNotify.isConfigured(), publicKey: pushNotify.publicKey() });
+});
+
+// Register (or refresh) a browser's push subscription for the current user.
+router.post('/push/subscribe', requireHrAccess, async (req, res, next) => {
+  try {
+    const me = meId(req);
+    if (!me) return res.status(401).json({ error: 'Not signed in.' });
+    const sub = req.body && req.body.subscription;
+    if (!sub || !sub.endpoint || !sub.keys) return res.status(400).json({ error: 'Invalid subscription.' });
+    const endpointHash = pushNotify.hashEndpoint(sub.endpoint);
+    const [row] = await PushSubscription.findOrCreate({ where: { endpointHash }, defaults: { userId: me, endpoint: sub.endpoint, endpointHash, keys: sub.keys, userAgent: String((req.headers['user-agent'] || '')).slice(0, 300) } });
+    // If it already existed (maybe under another user), re-point it to this user.
+    row.userId = me; row.endpoint = sub.endpoint; row.keys = sub.keys; row.lastUsedAt = new Date(); await row.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Remove a subscription (user turned push off, or on logout).
+router.post('/push/unsubscribe', requireHrAccess, async (req, res, next) => {
+  try {
+    const endpoint = req.body && req.body.endpoint;
+    if (endpoint) { const h = pushNotify.hashEndpoint(endpoint); await PushSubscription.destroy({ where: { endpointHash: h } }); }
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

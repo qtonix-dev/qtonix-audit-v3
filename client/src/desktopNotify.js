@@ -61,3 +61,39 @@ export function showDesktopNotification({ title, body, tag, icon, onClick }) {
 const notified = new Set(JSON.parse(sessionStorage.getItem(LS_SEEN) || '[]'));
 export function alreadyNotified(id) { return notified.has(id); }
 export function markNotified(id) { notified.add(id); try { sessionStorage.setItem(LS_SEEN, JSON.stringify([...notified].slice(-300))); } catch {} }
+
+// ---- Web Push (Option C): notifications even when no Qtonix tab is open ----
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+// Register the service worker + create a push subscription. `api` is the hrApi
+// helper (path-relative). Returns true if push is active. Safe to call repeatedly.
+export async function enableWebPush(api) {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+    const cfg = await api('/chat/push/key');
+    if (!cfg.configured || !cfg.publicKey) return false;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(cfg.publicKey) });
+    await api('/chat/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON ? sub.toJSON() : sub }) });
+    return true;
+  } catch { return false; }
+}
+
+// Remove the push subscription (user turned alerts off).
+export async function disableWebPush(api) {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { try { await api('/chat/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch {} try { await sub.unsubscribe(); } catch {} }
+  } catch {}
+}

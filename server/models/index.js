@@ -1948,6 +1948,18 @@ HrAttendance.prototype.toJSON = function () { const o = Object.assign({}, this.g
 
 // A processed payslip for one employee for one month. Phase 1: HR enters/edits
 // the figures (auto-fetched from attendance where available). One per emp+month.
+// Web Push subscriptions — one per browser/device a user enabled notifications
+// on. `endpoint` is unique per subscription; `keys` holds p256dh + auth.
+const PushSubscription = sequelize.define('PushSubscription', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId: { type: DataTypes.INTEGER, allowNull: false },       // HrUser.id
+  endpoint: { type: DataTypes.TEXT, allowNull: false },
+  endpointHash: { type: DataTypes.STRING(64), allowNull: false, unique: true },
+  keys: { type: DataTypes.JSON, allowNull: false },            // { p256dh, auth }
+  userAgent: { type: DataTypes.STRING(300), allowNull: true },
+  lastUsedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'push_subscriptions', indexes: [{ fields: ['userId'] }] });
+
 // Cached AI attendance-overview reports. One row per (month + branch + scope).
 // Generated in the background; HR reuses the cache until they Regenerate.
 const AiOverviewReport = sequelize.define('AiOverviewReport', {
@@ -2965,7 +2977,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
