@@ -52,6 +52,33 @@ async function extractTickets(buffer) {
 }
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+// Tokenize a name into lowercased word tokens (accent-insensitive).
+const tokens = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+
+// Robust name match that tolerates DROPPED MIDDLE NAMES and word-order swaps
+// (common on official tickets, e.g. booking "Paula Andrea Robayo Sanchez" vs
+// ticket "Paula Robayo Sanchez"). Returns a score: 1 exact-set, 0.9 subset with
+// first+last present, 0.7 last name + first initial, 0 no match.
+function nameScore(bookingName, ticketName) {
+  const B = new Set(tokens(bookingName));
+  const T = tokens(ticketName);
+  if (!T.length || !B.size) return 0;
+  const Bt = tokens(bookingName);
+  // Every ticket token appears in the booking name (ticket is a subset — i.e.
+  // ticket dropped some middle tokens). Requires ticket's first & last present.
+  const allInBooking = T.every((t) => B.has(t));
+  const firstOk = Bt[0] && T.includes(Bt[0]);
+  const lastOk = Bt.length > 1 && T.includes(Bt[Bt.length - 1]);
+  if (allInBooking && firstOk && lastOk) return T.length === Bt.length ? 1 : 0.9;
+  // Reverse: booking is a subset of ticket (booking dropped middle names).
+  const allInTicket = Bt.every((t) => T.includes(t));
+  if (allInTicket && firstOk && lastOk) return 0.9;
+  // Loose: last name present + first initial.
+  const lastName = Bt[Bt.length - 1];
+  const firstInit = (Bt[0] || '').slice(0, 3);
+  if (lastName && T.includes(lastName) && T.some((t) => t.startsWith(firstInit))) return 0.7;
+  return 0;
+}
 
 // Match tickets to a booking's travelers by name; annotate each traveler with
 // the matched ticket + a match verdict. Returns { travelers, oco, hasMismatch }.
@@ -60,18 +87,11 @@ function matchToBooking(booking, extracted) {
   const oco = extracted.oco || null;
   const usedTicket = new Set();
   const travelers = (booking.travelers || []).map((t) => {
-    const full = norm(`${t.firstName}${t.lastName}`);
-    // find a ticket whose name matches this traveler (first+last in any order)
-    let ti = tickets.findIndex((tk, i) => {
-      if (usedTicket.has(i)) return false;
-      const tn = norm(tk.name);
-      return tn && (tn === full || tn === norm(`${t.lastName}${t.firstName}`));
-    });
-    if (ti < 0) {
-      // loose: last name + first initial
-      ti = tickets.findIndex((tk, i) => { if (usedTicket.has(i)) return false; const tn = norm(tk.name); return tn && tn.includes(norm(t.lastName)) && tn.includes(norm(t.firstName).slice(0, 3)); });
-    }
-    if (ti < 0) return { ...t, ticketCode: null, ticketTime: null, ocoNumber: oco, pdfPage: null, match: 'missing' };
+    const bookingName = `${t.firstName} ${t.lastName}`;
+    // Pick the best-scoring unused ticket.
+    let ti = -1, best = 0;
+    tickets.forEach((tk, i) => { if (usedTicket.has(i)) return; const sc = nameScore(bookingName, tk.name); if (sc > best) { best = sc; ti = i; } });
+    if (ti < 0 || best < 0.7) return { ...t, ticketCode: null, ticketTime: null, ocoNumber: oco, pdfPage: null, match: 'missing' };
     const tk = tickets[ti]; usedTicket.add(ti);
     let match = 'ok';
     if (tk.time && booking.bookedTime && tk.time !== booking.bookedTime) match = 'time';
@@ -88,18 +108,19 @@ function matchToBooking(booking, extracted) {
 function bulkMatch(allTickets, bookings) {
   const matched = []; const review = [];
   // Build an index of unticketed traveler slots per booking.
-  const slots = []; // { bookingId, travelerIndex, first, last, full, date, time }
+  const slots = []; // { bookingId, travelerIndex, name, date, time }
   for (const b of bookings) {
     (b.travelers || []).forEach((t, idx) => {
-      slots.push({ bookingId: b.id, travelerIndex: idx, full: norm(`${t.firstName}${t.lastName}`), rev: norm(`${t.lastName}${t.firstName}`), lastN: norm(t.lastName), firstN: norm(t.firstName), date: b.travelDate, time: b.bookedTime, taken: false });
+      // skip travelers already ticketed (have a ticketCode)
+      if (t.ticketCode) return;
+      slots.push({ bookingId: b.id, travelerIndex: idx, name: `${t.firstName} ${t.lastName}`, date: b.travelDate, time: b.bookedTime, taken: false });
     });
   }
   for (const tk of allTickets) {
-    const tn = norm(tk.name);
-    if (!tn) { review.push({ ticket: tk, reason: 'Could not read the name on this ticket.', candidates: [] }); continue; }
-    // exact name matches (first+last, ignoring order), optionally constrained by date+time
-    let cands = slots.filter((s) => !s.taken && (s.full === tn || s.rev === tn));
-    if (!cands.length) cands = slots.filter((s) => !s.taken && s.lastN && tn.includes(s.lastN) && tn.includes(s.firstN.slice(0, 3)));
+    if (!tokens(tk.name).length) { review.push({ ticket: tk, reason: 'Could not read the name on this ticket.', candidates: [] }); continue; }
+    // Score every slot; keep those above threshold.
+    const scored = slots.filter((s) => !s.taken).map((s) => ({ s, sc: nameScore(s.name, tk.name) })).filter((x) => x.sc >= 0.7);
+    let cands = scored.map((x) => x.s);
     // Prefer those whose date+time also match the ticket.
     const withDT = cands.filter((s) => (!tk.dateIso || !s.date || s.date === tk.dateIso) && (!tk.time || !s.time || s.time === tk.time));
     const pool = withDT.length ? withDT : cands;

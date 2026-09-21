@@ -56,6 +56,14 @@ function BookingsList({ onOpen }) {
   const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState('');
   const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status]);
+  const [expanded, setExpanded] = useState(null);
+  const [copied, setCopied] = useState('');
+  const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
+  const del = async (b) => {
+    if (!(await confirmDialog({ title: `Delete ${b.reference}?`, message: `This permanently deletes the booking${b.pdfUrl ? ' and its attached ticket PDF' : ''}. This cannot be undone.`, confirmText: 'Delete booking', danger: true }))) return;
+    try { await api(`/${b.id}`, { method: 'DELETE' }); toast('Booking deleted'); load(); } catch (e) { toast(e.message); }
+  };
+  const verdict = (m, ticketed) => !ticketed ? <span className="text-slate-300">—</span> : m === 'ok' ? <span className="text-green-600 font-bold">✓</span> : m === 'time' ? <span className="text-red-600 font-bold">⚠ Time</span> : m === 'date' ? <span className="text-red-600 font-bold">⚠ Date</span> : m === 'missing' ? <span className="text-red-600 font-bold">⚠ Missing</span> : m === 'name' ? <span className="text-red-600 font-bold">⚠ Name</span> : '—';
   return (
     <div>
       <div className="flex gap-2 mb-4 flex-wrap">
@@ -66,11 +74,13 @@ function BookingsList({ onOpen }) {
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
         <table className="w-full text-[12.5px]">
-          <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Status</th><th /></tr></thead>
+          <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>
           <tbody>
-            {(rows || []).map((b) => { const src = SRC[b.source] || SRC.other; const green = b.status === 'ticketed' && !b.hasMismatch; const red = b.status === 'ticketed' && b.hasMismatch;
+            {(rows || []).map((b) => { const src = SRC[b.source] || SRC.other; const green = b.status === 'ticketed' && !b.hasMismatch; const red = b.status === 'ticketed' && b.hasMismatch; const open = expanded === b.id; const ticketed = b.status === 'ticketed';
               return (
-                <tr key={b.id} className="border-t border-slate-50" style={{ background: green ? '#f0fdf4' : red ? '#fef2f2' : undefined }}>
+                <React.Fragment key={b.id}>
+                <tr className="border-t border-slate-50 cursor-pointer" style={{ background: open ? '#f8fafc' : green ? '#f0fdf4' : red ? '#fef2f2' : undefined }} onClick={() => setExpanded(open ? null : b.id)}>
+                  <td className="px-2 py-3 text-slate-400 text-center">{open ? '▲' : '▼'}</td>
                   <td className="px-3 py-3 font-bold text-[#050A1F]">{b.reference}</td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{b.bookingType === 'last_minute' ? 'Last Min' : 'Regular'}</span></td>
@@ -80,11 +90,35 @@ function BookingsList({ onOpen }) {
                   <td className="px-3 py-3 text-slate-600">{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
                   <td className="px-3 py-3 text-slate-500">{b.productName || '—'}</td>
                   <td className="px-3 py-3">{green ? <span className="text-green-600 font-bold text-[11px]">✓ {b.ocoNumber}</span> : red ? <span className="text-red-600 font-bold text-[11px]">⚠ {b.ocoNumber} · mismatch</span> : <span className="text-slate-400 text-[11px]">New — not ticketed</span>}</td>
-                  <td className="px-3 py-3"><button onClick={() => onOpen(b.id)} className="text-[12px] font-bold text-blue-600">View</button></td>
+                  <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}><div className="flex gap-2 justify-end"><button onClick={() => onOpen(b.id)} className="text-[12px] font-bold text-blue-600">View</button><button onClick={() => del(b)} className="text-[12px] font-bold text-red-400 hover:text-red-600">Delete</button></div></td>
                 </tr>
+                {open && <tr><td colSpan={11} className="p-0" style={{ background: '#f8fafc' }}>
+                  <div className="px-6 py-4">
+                    <div className="text-[10.5px] font-extrabold text-slate-400 uppercase mb-2">{b.tourName || 'Travelers & tickets'}</div>
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-[12px]"><thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-3 py-2">Sl.No.</th><th className="px-2">Traveler</th><th className="px-2">First name</th><th className="px-2">Last name</th><th className="px-2">Type</th><th className="px-2">Booked</th><th className="px-2">Ticket time</th><th className="px-2">OCO / page</th><th className="px-2">Match</th></tr></thead>
+                        <tbody>{(b.travelers || []).map((t, ti) => { const bad = ticketed && t.match && t.match !== 'ok'; return (
+                          <tr key={ti} className="border-b border-slate-50 last:border-0" style={{ background: bad ? '#fef2f2' : undefined }}>
+                            <td className="px-3 py-1.5 text-slate-500">{ti + 1}</td>
+                            <td className="px-2 py-1.5 text-slate-500">{t.type} - {t.index || ti + 1}</td>
+                            <td className="px-2 py-1.5 font-semibold"><CopyName text={t.firstName} id={`${b.id}-${ti}-f`} copied={copied} onCopy={copy} /></td>
+                            <td className="px-2 py-1.5 font-semibold"><CopyName text={t.lastName} id={`${b.id}-${ti}-l`} copied={copied} onCopy={copy} /></td>
+                            <td className="px-2 py-1.5 text-slate-500">{t.type}</td>
+                            <td className="px-2 py-1.5 text-slate-600">{b.bookedTime || '—'}</td>
+                            <td className="px-2 py-1.5" style={{ color: t.match === 'time' ? '#dc2626' : undefined, fontWeight: t.match === 'time' ? 700 : 400 }}>{t.ticketTime || (ticketed ? '—' : '')}{t.match === 'time' ? ' ⚠' : ''}</td>
+                            <td className="px-2 py-1.5">{t.ocoNumber && t.pdfPage ? <a href={(t.pdfUrl || b.pdfUrl) ? `${t.pdfUrl || b.pdfUrl}#page=${t.pdfPage}` : '#'} target="_blank" rel="noreferrer" className="text-blue-600 font-bold">{t.ocoNumber}<span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 ml-1">p.{t.pdfPage}</span></a> : (ticketed ? <span className="text-red-500">no ticket</span> : '—')}</td>
+                            <td className="px-2 py-1.5">{verdict(t.match, ticketed)}</td>
+                          </tr>
+                        ); })}</tbody>
+                      </table>
+                    </div>
+                    {!ticketed && <div className="text-[11.5px] text-slate-400 mt-2">Not ticketed yet — open the booking to upload the ticket PDF, or use Bulk upload on the Tickets-to-book page.</div>}
+                  </div>
+                </td></tr>}
+                </React.Fragment>
               );
             })}
-            {rows && rows.length === 0 && <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400 text-[13px]">No bookings match the filters.</td></tr>}
+            {rows && rows.length === 0 && <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 text-[13px]">No bookings match the filters.</td></tr>}
           </tbody>
         </table>
       </div>

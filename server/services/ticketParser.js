@@ -37,9 +37,13 @@ function productName(bookingType, bookedTime) {
   return bookingType === 'last_minute' ? `VIP ${t}`.trim() : `TICKET & AUDIOGUIDED TOUR ${t}`.trim();
 }
 function splitName(full) {
-  const parts = String(full || '').trim().split(/\s+/);
+  const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return { firstName: parts[0] || '', lastName: '' };
-  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  if (parts.length === 2) return { firstName: parts[0], lastName: parts[1] };
+  if (parts.length === 3) return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  // 4+ tokens (common Latin: 2 given + 2 surnames) → split down the middle.
+  const half = Math.floor(parts.length / 2);
+  return { firstName: parts.slice(0, half).join(' '), lastName: parts.slice(half).join(' ') };
 }
 
 // Regex fallback — handles Viator (regular/last-minute) and GYG blocks.

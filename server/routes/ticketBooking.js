@@ -87,7 +87,17 @@ router.put('/:id', async (req, res, next) => {
 });
 
 router.delete('/:id', async (req, res, next) => {
-  try { const row = await TicketBooking.findByPk(Number(req.params.id)); if (row) await row.destroy(); res.json({ ok: true }); } catch (e) { next(e); }
+  try {
+    const row = await TicketBooking.findByPk(Number(req.params.id));
+    if (!row) return res.json({ ok: true });
+    // Delete the attached ticket PDF(s) from ImageKit before removing the row.
+    const fileIds = new Set();
+    if (row.pdfFileId) fileIds.add(row.pdfFileId);
+    (row.travelers || []).forEach((t) => { if (t.pdfFileId) fileIds.add(t.pdfFileId); });
+    for (const fid of fileIds) { try { await imagekit.deleteFile(fid); } catch { /* best-effort */ } }
+    await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
 });
 
 // Tickets-to-book plan: bookings with status 'new', grouped tour -> date|time,
