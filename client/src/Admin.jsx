@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { confirmDialog, promptDialog } from './toast';
 import { API_BASE } from './config.js';
 import CrmSurveyAdmin from './CrmSurvey.jsx';
+import TicketBookingAdmin from './TicketBooking.jsx';
 import { formatPhone } from './countries.js';
 
 /**
@@ -2832,7 +2833,7 @@ export default function Admin() {
 
   if (!settings) return <div className="p-8 text-sm text-slate-400">Loading admin…</div>;
 
-  const tabs = [['users', 'Users'], ['report', 'Report settings'], ['domains', 'Domains'], ['keys', 'API keys'], ['emails', 'Emails'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
+  const tabs = [['users', 'Users'], ['ticketbooking', '🎟️ Ticket Booking'], ['report', 'Report settings'], ['domains', 'Domains'], ['keys', 'API keys'], ['emails', 'Emails'], ['crm', 'CRM Fields'], ['targets', 'Targets & Incentive'], ['survey', 'Survey'], ['tv', 'Motivator TV'], ['demo', 'Demo mode'], ['log', 'Log']];
   // Save applies to tabs backed by the settings object (not Users/CRM/TV, which save inline).
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey' && tab !== 'emails' && tab !== 'domains';
 
@@ -2864,6 +2865,7 @@ export default function Admin() {
         {tab === 'keys' && <ApiKeys settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'emails' && <EmailsTab settings={settings} setSettings={setSettings} say={say} />}
         {tab === 'users' && <Users me={me} say={say} />}
+        {tab === 'ticketbooking' && <TicketBookingAdmin say={say} />}
         {tab === 'crm' && <CrmFields say={say} />}
         {tab === 'targets' && <TargetsAndIncentive say={say} settings={settings} setSettings={setSettings} />}
         {tab === 'survey' && <CrmSurveyAdmin />}

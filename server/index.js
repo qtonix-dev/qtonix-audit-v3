@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v554';
+const APP_VERSION = 'v555';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -149,6 +149,7 @@ app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public/
 app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
+{ const { requireAuth, requireAdmin } = require('./middleware/auth'); app.use('/api/ticket-booking', requireAuth, requireAdmin, require('./routes/ticketBooking')); }
 app.use('/api/surveys', require('./routes/crmSurvey'));
 app.use('/api/demo', demo);
 // Shareable training sandbox: /api/demo-app/<token>/... — token-gated inside

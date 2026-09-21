@@ -2792,6 +2792,46 @@ TvCheer.prototype.toJSON = function () { const o = Object.assign({}, this.get())
 
 // ===== Sales-CRM survey (ported from HRMS) — run pulse surveys with the sales
 // team. Same shape as the HR survey so the shared AI service works unchanged. =====
+// Ticket Booking (CRM → Admin → Ticket Booking). A travel booking (Viator/GYG/
+// Direct/Other) for the Colosseum tour, Regular or Last Minute. Travelers are
+// stored structured; once the official ticket PDF is uploaded & matched, the
+// booking is "ticketed" with per-traveler OCO/page info.
+const TicketBooking = sequelize.define('TicketBooking', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  source: { type: DataTypes.STRING(20), defaultValue: 'viator' },   // viator | gyg | direct | other
+  bookingType: { type: DataTypes.STRING(16), defaultValue: 'regular' }, // regular | last_minute
+  reference: { type: DataTypes.STRING(80), allowNull: false },
+  bookingDate: { type: DataTypes.STRING(20), allowNull: true },       // as-provided / YYYY-MM-DD
+  travelDate: { type: DataTypes.STRING(10), allowNull: true },        // YYYY-MM-DD (normalized)
+  travelDateLabel: { type: DataTypes.STRING(40), allowNull: true },   // "Mon, Sep 21, 2026"
+  customerTime: { type: DataTypes.STRING(8), allowNull: true },       // "12:30" (24h)
+  bookedTime: { type: DataTypes.STRING(8), allowNull: true },         // "12:45" (24h, +15 default)
+  tourName: { type: DataTypes.STRING(240), allowNull: true },
+  productName: { type: DataTypes.STRING(120), allowNull: true },      // "TICKET & AUDIOGUIDED TOUR 12:45" / "VIP 12:45"
+  productCode: { type: DataTypes.STRING(40), allowNull: true },
+  tourGrade: { type: DataTypes.STRING(120), allowNull: true },
+  tourGradeCode: { type: DataTypes.STRING(60), allowNull: true },
+  leadTraveler: { type: DataTypes.STRING(160), allowNull: true },
+  adults: { type: DataTypes.INTEGER, defaultValue: 0 },
+  children: { type: DataTypes.INTEGER, defaultValue: 0 },
+  infants: { type: DataTypes.INTEGER, defaultValue: 0 },
+  pax: { type: DataTypes.INTEGER, defaultValue: 0 },
+  phone: { type: DataTypes.STRING(60), allowNull: true },
+  email: { type: DataTypes.STRING(160), allowNull: true },
+  language: { type: DataTypes.STRING(60), allowNull: true },
+  // [{ sn, type:'Adult'|'Child'|'Infant', index, firstName, lastName, dob,
+  //    ticketCode, ticketTime, ocoNumber, pdfPage, match:'ok'|'time'|'date'|'name'|'missing' }]
+  travelers: { type: DataTypes.JSON, defaultValue: [] },
+  status: { type: DataTypes.STRING(12), defaultValue: 'new' },        // new | ticketed
+  hasMismatch: { type: DataTypes.BOOLEAN, defaultValue: false },
+  ocoNumber: { type: DataTypes.STRING(40), allowNull: true },
+  pdfUrl: { type: DataTypes.STRING(500), allowNull: true },
+  pdfFileId: { type: DataTypes.STRING(120), allowNull: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(160), allowNull: true },
+}, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }] });
+TicketBooking.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
 const CrmSurvey = sequelize.define('CrmSurvey', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(160), allowNull: false },
@@ -2925,7 +2965,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,
