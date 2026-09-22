@@ -5653,6 +5653,9 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
   // Is it at/after the employee's shift end time? (Clock Out only shows then.)
   const pastShiftEnd = (() => {
     if (!clock || !clock.shift || !clock.shift.end) return true; // no shift → always allow
+    // Hybrid/split (Sales): flexible home hours across the evening/night — they
+    // can clock out (and re-clock-in) at any time, so always allow Clock Out.
+    if (clock.shift.hybridSplit) return true;
     const now = new Date(Date.now() + 330 * 60000);
     const [eh, em] = String(clock.shift.end).split(':').map(Number);
     const [sh] = String(clock.shift.start || '00:00').split(':').map(Number);
