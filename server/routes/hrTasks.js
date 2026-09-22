@@ -437,18 +437,26 @@ router.get('/my-summary', guard, async (req, res, next) => {
       const models = require('../models');
       const empId = (req.hrActor && req.hrActor.kind === 'hr') ? req.hrActor.id : null;
       if (empId) {
-        const att = await models.HrAttendance.findOne({ where: { employeeId: empId, date: today } });
+        // Anchor to the day of the currently-open session (hybrid Sales staff may
+        // be working past midnight — their open record is on yesterday's date).
+        let att = await models.HrAttendance.findOne({ where: { employeeId: empId, date: today } });
+        const nowIst = new Date(Date.now() + 330 * 60000);
+        if ((!att || !att.loginTime || (att.loginTime && att.logoutTime)) && nowIst.getUTCHours() < 6) {
+          const prevDay = new Date(nowIst.getTime() - 24 * 3600000).toISOString().slice(0, 10);
+          const prev = await models.HrAttendance.findOne({ where: { employeeId: empId, date: prevDay } });
+          if (prev && prev.loginTime && !prev.logoutTime) att = prev;
+        }
         if (att && att.loginTime) {
           const toMin = (t) => { const [h, m] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + (m || 0); };
-          const nowIst = new Date(Date.now() + 330 * 60000);
           const nowMin = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
+          const loginMin = toMin(att.loginTime);
           let endMin = att.logoutTime ? toMin(att.logoutTime) : nowMin;
-          let worked = endMin - toMin(att.loginTime);
-          // subtract breaks
+          if (endMin < loginMin) endMin += 1440; // spans midnight
+          let worked = endMin - loginMin;
           const breaks = Array.isArray(att.breaks) ? att.breaks : [];
-          for (const br of breaks) { if (br.start && br.end) worked -= (toMin(br.end) - toMin(br.start)); }
+          for (const br of breaks) { if (br.start && br.end) { let d = toMin(br.end) - toMin(br.start); if (d < 0) d += 1440; worked -= d; } }
           const WORK_MIN = Number(process.env.WORK_HOURS_MIN || 480);
-          deficitMin = Math.max(0, WORK_MIN - worked);
+          deficitMin = Math.max(0, WORK_MIN - worked); // excess (worked>8h) → deficit 0, not counted
         }
       }
     } catch {}

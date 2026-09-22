@@ -1504,6 +1504,11 @@ const HrShift = sequelize.define('HrShift', {
   breaks: { type: DataTypes.JSON, defaultValue: [] },
   maxBreakMinutes: { type: DataTypes.INTEGER, defaultValue: 60 }, // total break cap (1 hr)
   graceMinutes: { type: DataTypes.INTEGER, defaultValue: 20 },
+  // Hybrid/split shift (e.g. Sales): fixed office hours + remote hours completed
+  // from home. The employee may clock in/out MULTIPLE times a day (office once,
+  // then home in several sittings, possibly past midnight) and only needs to
+  // cover the 8h total; excess beyond 8h isn't counted.
+  hybridSplit: { type: DataTypes.BOOLEAN, defaultValue: false },
   // For shifts that cross midnight (e.g. 19:00→05:00), the attendance "day"
   // shouldn't flip at 00:00. dayCutoffHour is the hour (IST) at which a new
   // attendance day begins — default 6 (after a 5 AM shift end). A clock-in at

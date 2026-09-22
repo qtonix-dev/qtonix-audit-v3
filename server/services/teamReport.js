@@ -82,7 +82,7 @@ async function employeeShift(emp) {
     const shift = await HrShift.findByPk(emp.shiftId);
     if (shift && shift.startTime && shift.endTime) {
       const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
-      return { start: shift.startTime, end: shift.endTime, isNight: toMin(shift.endTime) <= toMin(shift.startTime) };
+      return { start: shift.startTime, end: shift.endTime, isNight: toMin(shift.endTime) <= toMin(shift.startTime), hybridSplit: !!shift.hybridSplit };
     }
   }
   return null;

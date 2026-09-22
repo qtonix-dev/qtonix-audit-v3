@@ -483,6 +483,7 @@ router.post('/shifts', requireHrAccess, requireHrAdmin, async (req, res, next) =
       breaks, maxBreakMinutes: cap,
       crossesMidnight: crosses, dayCutoffHour: Number.isFinite(Number(b.dayCutoffHour)) ? Number(b.dayCutoffHour) : 6,
       graceMinutes: Number.isFinite(Number(b.graceMinutes)) ? Number(b.graceMinutes) : 20,
+      hybridSplit: !!b.hybridSplit,
     });
     res.status(201).json(row.toJSON());
   } catch (e) { next(e); }
@@ -498,6 +499,7 @@ router.put('/shifts/:id', requireHrAccess, requireHrAdmin, async (req, res, next
     if (b.maxBreakMinutes !== undefined && Number(b.maxBreakMinutes) > 0) row.maxBreakMinutes = Number(b.maxBreakMinutes);
     if (b.breaks !== undefined) { try { row.breaks = normaliseBreaks(b.breaks, row.maxBreakMinutes || 60).breaks; } catch (e) { return res.status(400).json({ error: e.message }); } }
     if (b.dayCutoffHour !== undefined && Number.isFinite(Number(b.dayCutoffHour))) row.dayCutoffHour = Number(b.dayCutoffHour);
+    if (b.hybridSplit !== undefined) row.hybridSplit = !!b.hybridSplit;
     // Auto-detect (or accept explicit) cross-midnight when times change.
     if (b.crossesMidnight !== undefined) row.crossesMidnight = !!b.crossesMidnight;
     else if (b.startTime !== undefined || b.endTime !== undefined) row.crossesMidnight = shiftCrossesMidnight(row.startTime, row.endTime);
@@ -2692,12 +2694,26 @@ const hhmmToMin = (t) => { if (!t) return null; const [h, m] = String(t).split('
 // doesn't reset (or appear logged-out) at midnight.
 async function attendanceDayFor(emp) {
   const ist = nowIST();
-  let cutoff = 0, crosses = false;
+  let cutoff = 0, crosses = false, hybrid = false;
   try {
-    if (emp && emp.shiftId) { const sh = await HrShift.findByPk(emp.shiftId); if (sh && sh.crossesMidnight) { crosses = true; cutoff = Number(sh.dayCutoffHour) || 6; } }
+    if (emp && emp.shiftId) { const sh = await HrShift.findByPk(emp.shiftId); if (sh) { if (sh.crossesMidnight) { crosses = true; cutoff = Number(sh.dayCutoffHour) || 6; } if (sh.hybridSplit) hybrid = true; } }
   } catch {}
+  // Hybrid/split (Sales) OR any employee acting in the small hours: an action
+  // before 6 AM belongs to the PREVIOUS day if that day still has an open
+  // session (clocked in, not out). This keeps after-midnight home punches on the
+  // correct day without marking the shift cross-midnight.
+  const hourIST = ist.getUTCHours(); // nowIST() returns a UTC-shifted IST wall clock
+  if (hourIST < 6) {
+    try {
+      const prevDay = new Date(ist.getTime() - 24 * 3600000).toISOString().slice(0, 10);
+      const prev = await HrAttendance.findOne({ where: { employeeId: emp.id, date: prevDay } });
+      if (prev && prev.loginTime && !prev.logoutTime) return prevDay; // open session yesterday
+      // For hybrid employees, also anchor to yesterday if they worked yesterday
+      // (so a fresh home punch after midnight still lands on the shift day).
+      if (hybrid && prev && prev.loginTime) return prevDay;
+    } catch {}
+  }
   if (!crosses) return ist.toISOString().slice(0, 10);
-  // Shift back by the cutoff so pre-cutoff early-morning maps to the prior date.
   return new Date(ist.getTime() - cutoff * 3600000).toISOString().slice(0, 10);
 }
 
@@ -2796,15 +2812,27 @@ router.post('/me/clock', requireHrAccess, async (req, res, next) => {
     const s = await Settings.findOne({ where: { singleton: 'settings' } });
     const policy = getHrPolicy(s);
     const grace = Number(policy.lateRule.graceMinutes) || 30;
+    const shiftRow = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
+    const isHybrid = !!(shiftRow && shiftRow.hybridSplit);
     let [row] = await HrAttendance.findOrCreate({ where: { employeeId: emp.id, date }, defaults: { status: 'present', source: 'api' } });
 
     if (action === 'in') {
-      if (row.loginTime) return res.status(400).json({ error: 'Already clocked in.' });
-      row.loginTime = time; row.status = 'present'; row.source = 'api';
-      // Late = login later than shift start + grace (if a shift is set).
-      const shift = emp.shiftId ? await HrShift.findByPk(emp.shiftId) : null;
-      if (shift && shift.startTime) row.late = hhmmToMin(time) > hhmmToMin(shift.startTime) + grace;
-      row.markedById = emp.id;
+      // Hybrid (Sales): a second clock-in after a clock-out RE-OPENS the session
+      // for the remaining home hours. The clocked-out gap is recorded as a break
+      // so it isn't counted as worked time.
+      if (row.loginTime && row.logoutTime && isHybrid) {
+        const list = Array.isArray(row.breaks) ? row.breaks.slice() : [];
+        list.push({ start: row.logoutTime, end: time, gap: true });
+        row.breaks = list; row.changed('breaks', true);
+        row.logoutTime = null; // reopen
+        row.markedById = emp.id;
+      } else if (row.loginTime) {
+        return res.status(400).json({ error: 'Already clocked in.' });
+      } else {
+        row.loginTime = time; row.status = 'present'; row.source = 'api';
+        if (shiftRow && shiftRow.startTime) row.late = hhmmToMin(time) > hhmmToMin(shiftRow.startTime) + grace;
+        row.markedById = emp.id;
+      }
     } else if (action === 'break') {
       if (!row.loginTime) return res.status(400).json({ error: 'Clock in first.' });
       if (row.breakOpen) return res.status(400).json({ error: 'Already on a break.' });

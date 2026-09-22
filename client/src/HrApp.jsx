@@ -11788,7 +11788,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
 // Shifts manager (add/edit/delete with break window).
 function ShiftsManager({ shifts, reload, setErr }) {
-  const blank = { name: '', startTime: '09:00', endTime: '18:00', breaks: [], maxBreakMinutes: 60, graceMinutes: 20 };
+  const blank = { name: '', startTime: '09:00', endTime: '18:00', breaks: [], maxBreakMinutes: 60, graceMinutes: 20, hybridSplit: false };
   const [f, setF] = useState(blank);
   const [editing, setEditing] = useState(null);
   const set = (o) => setF((s) => ({ ...s, ...o }));
@@ -11810,7 +11810,7 @@ function ShiftsManager({ shifts, reload, setErr }) {
     } catch (e) { setErr(e.message); }
   };
   const del = async (s) => { if (!(await confirmDialog({ title: `Delete shift "${s.name}"?` }))) return; try { await hrApi(`/shifts/${s._id}`, { method: 'DELETE' }); reload(); } catch (e) { setErr(e.message); } };
-  const startEdit = (s) => { setEditing(s._id); setF({ name: s.name, startTime: s.startTime || '', endTime: s.endTime || '', breaks: (Array.isArray(s.breaks) && s.breaks.length) ? s.breaks : (s.breakStart ? [{ start: s.breakStart, end: s.breakEnd }] : []), maxBreakMinutes: s.maxBreakMinutes || 60, graceMinutes: s.graceMinutes ?? 20 }); };
+  const startEdit = (s) => { setEditing(s._id); setF({ name: s.name, startTime: s.startTime || '', endTime: s.endTime || '', breaks: (Array.isArray(s.breaks) && s.breaks.length) ? s.breaks : (s.breakStart ? [{ start: s.breakStart, end: s.breakEnd }] : []), maxBreakMinutes: s.maxBreakMinutes || 60, graceMinutes: s.graceMinutes ?? 20, hybridSplit: !!s.hybridSplit }); };
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="bg-white rounded-xl border border-slate-200 p-5">
@@ -11822,7 +11822,7 @@ function ShiftsManager({ shifts, reload, setErr }) {
             return (
               <div key={s._id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 group">
                 <div>
-                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{s.name}{s.crossesMidnight && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#1E293B', color: '#fff' }}>🌙 NIGHT</span>}</div>
+                  <div className="text-sm font-bold text-[#050A1F] flex items-center gap-2">{s.name}{s.crossesMidnight && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#1E293B', color: '#fff' }}>🌙 NIGHT</span>}{s.hybridSplit && <span className="text-[9px] font-extrabold rounded px-1.5 py-0.5" style={{ background: '#7c3aed', color: '#fff' }}>⚡ HYBRID</span>}</div>
                   <div className="text-[11px] text-slate-400">{s.startTime}–{s.endTime}{s.crossesMidnight ? ' (next day)' : ''}{bl.length ? ` · ${bl.length} break${bl.length > 1 ? 's' : ''} (${bt} min)` : ''}</div>
                 </div>
                 <span className="flex items-center opacity-0 group-hover:opacity-100 transition"><IconBtn title="Edit" onClick={() => startEdit(s)}><Icon.Pencil size={14} /></IconBtn><IconBtn title="Delete" danger onClick={() => del(s)}><Icon.Trash size={14} /></IconBtn></span>
@@ -11861,6 +11861,10 @@ function ShiftsManager({ shifts, reload, setErr }) {
             <SharedField label="Max break (min)"><input type="number" className={inputCls} value={f.maxBreakMinutes} onChange={(e) => set({ maxBreakMinutes: Number(e.target.value) })} /></SharedField>
             <SharedField label="Grace (min)"><input type="number" className={inputCls} value={f.graceMinutes} onChange={(e) => set({ graceMinutes: Number(e.target.value) })} /></SharedField>
           </div>
+          <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 p-3 cursor-pointer">
+            <input type="checkbox" checked={!!f.hybridSplit} onChange={(e) => set({ hybridSplit: e.target.checked })} className="mt-0.5" />
+            <span><span className="text-[13px] font-bold text-slate-700">Hybrid / split shift (Sales)</span><span className="block text-[11.5px] text-slate-400 mt-0.5">Fixed office hours + remaining hours from home. Employee can clock in/out multiple times (even past midnight) and only needs to cover 8h total — excess isn’t counted.</span></span>
+          </label>
           <div className="flex justify-end gap-2">
             {editing && <button onClick={() => { setEditing(null); setF(blank); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>}
             <button onClick={submit} disabled={overCap} className="rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>{editing ? 'Save' : 'Add shift'}</button>

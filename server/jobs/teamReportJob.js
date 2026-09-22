@@ -129,6 +129,9 @@ async function runLogoutReminders(models) {
     if (att.logoutTime) continue;
     if (att.logoutReminderAt) continue;
     if (!emp.email) continue;
+    // Hybrid/split (Sales) staff clock out/in from home across the evening; the
+    // fixed "please log out" reminder doesn't apply to them.
+    if (shift && shift.hybridSplit) continue;
     const WORK_MIN = Number(process.env.WORK_HOURS_MIN || 480); // 8 hours
     const loginMin = toMin(att.loginTime);
     const triggerMin = loginMin + WORK_MIN + GRACE; // clock-in + 8h (+ small grace)
