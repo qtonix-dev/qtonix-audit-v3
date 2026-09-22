@@ -165,7 +165,17 @@ async function loadDayCache(empIds, date) {
   ]);
   const attByEmp = Object.fromEntries(atts.map((a) => [a.employeeId, a]));
   const noteByEmp = Object.fromEntries(notes.map((n) => [n.employeeId, n.note]));
-  return { allTasks, tasksByEmp, attByEmp, noteByEmp };
+  // Completed subtasks (child tasks) per employee for `date`.
+  const subDoneByEmp = {};
+  try {
+    const subs = await Task.findAll({ where: { parentTaskId: { [Op.ne]: null }, stage: 'completed' } });
+    for (const t of subs) {
+      if (!t.completedAt || istDateStr(t.completedAt) !== date) continue;
+      const owners = new Set([t.assigneeId, ...(Array.isArray(t.assigneeIds) ? t.assigneeIds : [])].filter(Boolean));
+      for (const oid of owners) subDoneByEmp[oid] = (subDoneByEmp[oid] || 0) + 1;
+    }
+  } catch {}
+  return { allTasks, tasksByEmp, attByEmp, noteByEmp, subDoneByEmp };
 }
 
 async function buildEmployeeDay(emp, date, opts = {}) {
@@ -209,7 +219,17 @@ async function buildEmployeeDay(emp, date, opts = {}) {
   // fast list assembly). Skip it unless requested to save a query per employee.
   const baseline = opts.withBaseline === false ? null : await employeeBaseline(emp.id, date, cache);
 
-  const doneCount = tasks.filter((t) => t.stage === 'completed').length;
+  // Subtasks completed today also count as work done. Count child tasks
+  // (parentTaskId set) assigned to this employee and completed on this date.
+  let subDone = 0;
+  try {
+    const subs = cache && cache.subDoneByEmp ? (cache.subDoneByEmp[emp.id] || 0)
+      : (await Task.findAll({ where: { parentTaskId: { [Op.ne]: null }, stage: 'completed' } }))
+          .filter((t) => (t.assigneeId === emp.id || (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(emp.id))) && t.completedAt && istDateStr(t.completedAt) === date).length;
+    subDone = subs;
+  } catch {}
+
+  const doneCount = tasks.filter((t) => t.stage === 'completed').length + subDone;
   const inProg = tasks.filter((t) => t.stage === 'in_progress').length;
   const notStarted = tasks.filter((t) => t.stage === 'not_started').length;
   const highOpen = tasks.filter((t) => t.stage !== 'completed' && ['urgent', 'high'].includes(t.priority)).length;

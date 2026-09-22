@@ -1155,18 +1155,21 @@ router.post('/tasks/:id/comments', guard, async (req, res, next) => {
     const c = await TaskComment.create({ taskId: row.id, authorId: ctx.actorId || null, authorName: ctx.actorName, body: body.slice(0, 5000) });
     // @mentions in the note: notify tagged people + drop a card in their #task chat.
     try {
-      const names = [...body.matchAll(/@([A-Za-z][A-Za-z .'-]{1,60})/g)].map((m) => m[1].trim());
-      if (names.length) {
-        const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name'] });
-        const notified = new Set();
-        for (const nm of names) {
-          const cand = all.filter((u) => nm.toLowerCase().startsWith(u.name.toLowerCase()) || u.name.toLowerCase().startsWith(nm.toLowerCase()));
-          const best = cand.sort((a, b2) => b2.name.length - a.name.length)[0];
-          if (best && !notified.has(best.id) && best.id !== ctx.actorId) {
-            notified.add(best.id);
-            try { await HrNotification.create({ userId: best.id, actorKind: 'hr', type: 'task_mention', text: `\uD83D\uDCAC ${ctx.actorName} mentioned you in a task note: "${String(row.title).slice(0, 60)}"` }); } catch {}
-            try { await require('../services/chatTask').postTaskAlert(best.id, { kindTag: 'task_status', taskId: row.id, body: `${ctx.actorName} mentioned you: "${body.slice(0, 100)}"` }); } catch {}
-          }
+      const all = await HrUser.findAll({ where: { active: true }, attributes: ['id', 'name'] });
+      const lowerBody = body.toLowerCase();
+      const notified = new Set();
+      // For each active user, see if "@<their name>" (or "@<first name>") appears
+      // in the note. Matching against real names avoids the greedy-capture bug
+      // where "@Sam check this" swallowed the rest of the sentence.
+      for (const u of all) {
+        if (u.id === ctx.actorId) continue;
+        const full = u.name.toLowerCase();
+        const first = full.split(/\s+/)[0];
+        const hit = lowerBody.includes('@' + full) || new RegExp('@' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(lowerBody);
+        if (hit && !notified.has(u.id)) {
+          notified.add(u.id);
+          try { await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'task_mention', text: `\uD83D\uDCAC ${ctx.actorName} mentioned you in a task note: "${String(row.title).slice(0, 60)}"` }); } catch {}
+          try { await require('../services/chatTask').postTaskAlert(u.id, { kindTag: 'task_status', taskId: row.id, body: `${ctx.actorName} mentioned you: "${body.slice(0, 100)}"` }); } catch {}
         }
       }
     } catch {}

@@ -1966,7 +1966,7 @@ let __wsInitialPane = null;
 let __wsInitialConv = null;   // conversation id to open in Buzz
 let __wsInitialTaskId = null; // task id to open on the board
 function WorkspaceView({ user, isAdmin }) {
-  const [pane, setPane] = useState(__wsInitialPane || 'tasks'); // tasks | chat | reports
+  const [pane, setPane] = useState(() => { if (__wsInitialPane) return __wsInitialPane; try { const p = new URLSearchParams(window.location.search).get('pane'); return ['tasks', 'chat', 'reports'].includes(p) ? p : 'tasks'; } catch { return 'tasks'; } }); // tasks | chat | reports
   const [initialConv] = useState(__wsInitialConv);
   useEffect(() => { __wsInitialPane = null; __wsInitialConv = null; }, []);
   const [chatUnread, setChatUnread] = useState(0);
@@ -2389,7 +2389,10 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     setText(htmlToMarkers(el.innerHTML));
   };
   // Render **bold** / _italic_ in sent messages.
-  const fmtBody = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>');
+  const fmtBody = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/_([^_]+)_/g, '<i>$1</i>')
+    // Linkify URLs (http/https and bare www.) — opens in a new tab.
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noreferrer" style="text-decoration:underline">$1</a>')
+    .replace(/(^|[\s(])(www\.[^\s<]+)/g, '$1<a href="https://$2" target="_blank" rel="noreferrer" style="text-decoration:underline">$2</a>');
   // AI: suggest 3 replies from recent messages.
   const aiSuggestReply = async () => {
     setAiBusy('sug');
@@ -12363,7 +12366,18 @@ export default function HrApp() {
     const seg = clean.split('/')[0] || '';
     return VALID_VIEWS.includes(seg) ? seg : 'dashboard';
   };
-  const pathView = slugToView(location.pathname);
+  // Deep-link from desktop/push notifications: ?view=workspace&pane=chat|tasks.
+  // The Workspace (Task + Buzz) view id is 'tasks'; set the initial pane so it
+  // opens on Buzz (chat) or Tasks rather than the dashboard.
+  const queryView = (() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      const v = sp.get('view');
+      if (v === 'workspace') { const pane = sp.get('pane'); if (['chat', 'tasks', 'reports'].includes(pane)) __wsInitialPane = pane; return 'tasks'; }
+      return null;
+    } catch { return null; }
+  })();
+  const pathView = queryView || slugToView(location.pathname);
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [view, setViewRaw] = useState(pathView);

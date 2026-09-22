@@ -47,8 +47,10 @@ async function postCompanyCard({ kindTag, body, meta = {}, dedupeKey = null }) {
     const convId = await companyChannel();
     if (!convId) return null;
     if (dedupeKey) {
-      const since = new Date(Date.now() - 36 * 3600 * 1000); // ~1.5 days window
-      const dupe = await ChatMessage.findOne({ where: { conversationId: convId, kindTag, createdAt: { [Op.gt]: since }, dedupeKey } });
+      // A stable dedupeKey (e.g. joinee-<id>-<joinDate>) must never post twice,
+      // even across multi-day windows — check ALL history for this exact key,
+      // not just a recent window.
+      const dupe = await ChatMessage.findOne({ where: { conversationId: convId, dedupeKey } });
       if (dupe) return null;
     }
     const msg = await ChatMessage.create({

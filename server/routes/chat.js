@@ -242,7 +242,8 @@ router.post('/conversations/:id/messages', requireHrAccess, async (req, res, nex
         const isTaskAlert = channelLabel === '#task';
         const title = isTaskAlert ? '📋 Task update' : (channelLabel ? `${meName(req)} in ${channelLabel}` : meName(req));
         const members = await ChatMembership.findAll({ where: { conversationId: convId, userId: { [Op.ne]: me } } });
-        for (const m of members) { pn.sendToUser(require('../models'), m.userId, { title, body: preview, tag: 'chat-' + convId, url: '/', data: { conversationId: convId } }).catch(() => {}); }
+        const url = isTaskAlert ? '/?view=workspace&pane=tasks' : '/?view=workspace&pane=chat';
+        for (const m of members) { pn.sendToUser(require('../models'), m.userId, { title, body: preview, tag: 'chat-' + convId, url, data: { conversationId: convId } }).catch(() => {}); }
       } catch {}
     })();
     res.json({ message: { ...msg.toJSON(), mine: true } });
@@ -568,19 +569,31 @@ router.delete('/teams/:teamId', requireHrAccess, async (req, res, next) => {
 
 // Delete a group (channel) + all its messages/images. The group's CREATOR can
 // delete their own group; an admin can delete any.
+// Can the caller manage this channel (add/remove members, rename, delete)?
+// True for: chat admins, Admin/HR, the group creator, the team creator, and any
+// team owner/manager (the "group manager" privilege).
+async function canManageChannel(req, conv) {
+  if (!conv || conv.kind !== 'channel') return false;
+  if (isChatAdmin(req) || isAdminOrHr(req)) return true;
+  const myIds = new Set((req.linkedIds || [meId(req)]).filter(Boolean));
+  if (conv.createdById && myIds.has(conv.createdById)) return true;
+  if (conv.teamId) {
+    try {
+      const team = await ChatTeam.findByPk(conv.teamId);
+      if (team && myIds.has(team.createdById)) return true;
+      const myMem = await ChatTeamMember.findOne({ where: { teamId: conv.teamId, userId: { [Op.in]: [...myIds] } } });
+      if (myMem && ['owner', 'manager'].includes(myMem.role)) return true;
+    } catch {}
+  }
+  return false;
+}
+
 router.delete('/channels/:id', requireHrAccess, async (req, res, next) => {
   try {
     const convId = Number(req.params.id);
     const conv = await ChatConversation.findByPk(convId);
     if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
-    // Who created it? The channel's team carries createdById.
-    let isCreator = false;
-    try {
-      const myIds = new Set((req.linkedIds || [req.hrUser && req.hrUser.id]).filter(Boolean));
-      if (conv.teamId) { const team = await ChatTeam.findByPk(conv.teamId); if (team && myIds.has(team.createdById)) isCreator = true; }
-      if (conv.createdById && myIds.has(conv.createdById)) isCreator = true;
-    } catch {}
-    if (!isChatAdmin(req) && !isCreator) return res.status(403).json({ error: 'Only the group creator or an admin can delete this group.' });
+    if (!(await canManageChannel(req, conv))) return res.status(403).json({ error: 'You can’t delete this group.' });
     await ChatMessage.destroy({ where: { conversationId: convId } });
     await ChatMembership.destroy({ where: { conversationId: convId } });
     // If this channel is the team's only channel, remove the team too.
@@ -596,10 +609,10 @@ router.delete('/channels/:id', requireHrAccess, async (req, res, next) => {
 // HR/Admin: add / remove members of a specific group (channel).
 router.post('/channels/:id/members', requireHrAccess, async (req, res, next) => {
   try {
-    if (!isAdminOrHr(req)) return res.status(403).json({ error: 'Only Admin & HR can manage members.' });
     const convId = Number(req.params.id);
     const conv = await ChatConversation.findByPk(convId);
     if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
+    if (!(await canManageChannel(req, conv))) return res.status(403).json({ error: 'You can’t change members of this group.' });
     const b = req.body || {};
     if (Array.isArray(b.add)) { for (const uid of b.add.map(Number).filter(Boolean)) { await ChatMembership.findOrCreate({ where: { conversationId: convId, userId: uid }, defaults: { conversationId: convId, userId: uid } }); await ChatTeamMember.findOrCreate({ where: { teamId: conv.teamId, userId: uid }, defaults: { teamId: conv.teamId, userId: uid } }); } }
     if (Array.isArray(b.remove)) { for (const uid of b.remove.map(Number).filter(Boolean)) await ChatMembership.destroy({ where: { conversationId: convId, userId: uid } }); }
@@ -714,10 +727,7 @@ router.put('/channels/:id/rename', requireHrAccess, async (req, res, next) => {
     const convId = Number(req.params.id);
     const conv = await ChatConversation.findByPk(convId);
     if (!conv || conv.kind !== 'channel') return res.status(404).json({ error: 'Group not found.' });
-    const myIds = new Set((req.linkedIds || [me]).filter(Boolean));
-    let allowed = isChatAdmin(req) || (conv.createdById && myIds.has(conv.createdById));
-    if (!allowed && conv.teamId) { const myMem = await ChatTeamMember.findOne({ where: { teamId: conv.teamId, userId: { [Op.in]: [...myIds] } } }); if (myMem && ['owner', 'manager'].includes(myMem.role)) allowed = true; const team = await ChatTeam.findByPk(conv.teamId); if (team && myIds.has(team.createdById)) allowed = true; }
-    if (!allowed) return res.status(403).json({ error: 'You can’t rename this group.' });
+    if (!(await canManageChannel(req, conv))) return res.status(403).json({ error: 'You can’t rename this group.' });
     const name = String((req.body || {}).name || '').trim().slice(0, 60);
     if (!name) return res.status(400).json({ error: 'Enter a group name.' });
     conv.title = name; await conv.save();
@@ -735,20 +745,10 @@ router.get('/conversations/:id/members', requireHrAccess, async (req, res, next)
     const users = await HrUser.findAll({ where: { id: { [Op.in]: rows.map((m) => m.userId) } }, attributes: ['id', 'name', 'avatar', 'department', 'designation'] });
     // Can the viewer delete this group? (creator of the team, or an admin).
     const conv = await ChatConversation.findByPk(convId);
-    let canDelete = false; let canManage = false; let creatorId = null;
-    if (conv && conv.kind === 'channel') {
-      const myIds = new Set((req.linkedIds || [me]).filter(Boolean));
-      if (conv.teamId) {
-        const team = await ChatTeam.findByPk(conv.teamId);
-        if (team) { creatorId = team.createdById; if (myIds.has(team.createdById)) canDelete = true;
-          // Team owner/manager (group-manage access) can manage members + rename.
-          try { const myMem = await ChatTeamMember.findOne({ where: { teamId: team.id, userId: { [Op.in]: [...myIds] } } }); if (myMem && ['owner', 'manager'].includes(myMem.role)) canManage = true; } catch {}
-        }
-      }
-      if (conv.createdById && myIds.has(conv.createdById)) { canDelete = true; canManage = true; }
-      if (isChatAdmin(req)) { canDelete = true; canManage = true; }
-      if (canDelete) canManage = true; // whoever can delete can also manage
-    }
+    let creatorId = null;
+    if (conv && conv.teamId) { try { const team = await ChatTeam.findByPk(conv.teamId); if (team) creatorId = team.createdById; } catch {} }
+    const canManage = await canManageChannel(req, conv);
+    const canDelete = canManage; // same privilege set
     res.json({ members: users.map((u) => ({ ...pubUser(u), online: isOnline(u.id), isCreator: u.id === creatorId })), canDelete, canManage, isChannel: !!(conv && conv.kind === 'channel'), creatorId });
   } catch (e) { next(e); }
 });
