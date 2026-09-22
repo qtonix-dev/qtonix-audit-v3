@@ -52,6 +52,21 @@ async function extractTickets(buffer) {
 }
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+const timeToMin = (t) => { if (!t) return null; const m = String(t).match(/(\d{1,2}):(\d{2})/); return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null; };
+
+// Verdict for a matched ticket vs the booking's CUSTOMER time (bookedTime column
+// now holds the customer time). A ticket entry time is fine if it's at or after
+// the customer time and within +45 min (covers the +15 default and moderate
+// rush). Earlier, or more than +45, is a time mismatch. Date must also match.
+// Returns 'ok' | 'time' | 'date'.
+function matchVerdict(customerTime, travelDate, ticketTime, ticketDate) {
+  if (ticketDate && travelDate && ticketDate !== travelDate) return 'date';
+  const c = timeToMin(customerTime); const t = timeToMin(ticketTime);
+  if (c == null || t == null) return 'ok';
+  const diff = t - c;
+  if (diff < 0 || diff > 45) return 'time';
+  return 'ok';
+}
 // Tokenize a name into lowercased word tokens (accent-insensitive).
 const tokens = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
 
@@ -93,9 +108,8 @@ function matchToBooking(booking, extracted) {
     tickets.forEach((tk, i) => { if (usedTicket.has(i)) return; const sc = nameScore(bookingName, tk.name); if (sc > best) { best = sc; ti = i; } });
     if (ti < 0 || best < 0.7) return { ...t, ticketCode: null, ticketTime: null, ocoNumber: oco, pdfPage: null, match: 'missing' };
     const tk = tickets[ti]; usedTicket.add(ti);
-    let match = 'ok';
-    if (tk.time && booking.bookedTime && tk.time !== booking.bookedTime) match = 'time';
-    else if (tk.dateIso && booking.travelDate && tk.dateIso !== booking.travelDate) match = 'date';
+    // bookedTime column now holds the customer time.
+    const match = matchVerdict(booking.bookedTime, booking.travelDate, tk.time, tk.dateIso);
     return { ...t, ticketCode: tk.code || null, ticketTime: tk.time || null, ocoNumber: oco, pdfPage: tk.page, match };
   });
   const hasMismatch = travelers.some((t) => t.match !== 'ok');
@@ -131,4 +145,4 @@ function bulkMatch(allTickets, bookings) {
   return { matched, review };
 }
 
-module.exports = { extractTickets, matchToBooking, bulkMatch };
+module.exports = { extractTickets, matchToBooking, bulkMatch, matchVerdict };

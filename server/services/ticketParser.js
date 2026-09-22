@@ -32,12 +32,22 @@ function normDate(str) {
   if (m) { const mm = MONTHS[m[1].toLowerCase().slice(0, 3)]; if (mm) { const iso = `${m[3]}-${mm}-${String(m[2]).padStart(2, '0')}`; const label = new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); return { iso, label }; } }
   return { iso: null, label: String(str).trim() };
 }
-function productName(bookingType, bookedTime) {
-  const t = bookedTime || '';
+// Product name uses the CUSTOMER time (what the customer booked for).
+function productName(bookingType, customerTime) {
+  const t = customerTime || '';
   return bookingType === 'last_minute' ? `VIP ${t}`.trim() : `TICKET & AUDIOGUIDED TOUR ${t}`.trim();
 }
+// Source is decided by the booking reference prefix: BR… = Viator, GYG… = GYG.
+function sourceFromRef(ref) {
+  const r = String(ref || '').toUpperCase();
+  if (r.startsWith('BR')) return 'viator';
+  if (r.startsWith('GYG')) return 'gyg';
+  return null;
+}
 function splitName(full) {
-  const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+  // Strip trailing age annotations like "(17)" or "(0-17)".
+  const cleaned = String(full || '').replace(/\s*\([^)]*\)\s*$/,'').trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return { firstName: parts[0] || '', lastName: '' };
   if (parts.length === 2) return { firstName: parts[0], lastName: parts[1] };
   if (parts.length === 3) return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
@@ -89,15 +99,17 @@ function parseViator(block) {
   children = parseInt((travelersRaw.match(/(\d+)\s*Child/i) || [])[1] || 0, 10);
   infants = parseInt((travelersRaw.match(/(\d+)\s*Infant/i) || [])[1] || 0, 10);
   const names = namesRaw ? namesRaw.split(',').map((s) => s.trim()).filter(Boolean) : (lead ? [lead] : []);
-  const customerTime = to24h((tourGrade.match(/(\d{1,2}:\d{2})/) || [])[1]);
-  const bookedTime = plus15(customerTime);
+  // Time from the tour grade — accept HH:MM (24h) or H:MM AM/PM.
+  const customerTime = to24h((tourGrade.match(/(\d{1,2}:\d{2}\s*[AP]M)/i) || tourGrade.match(/(\d{1,2}:\d{2})/) || [])[1]);
+  const bookedTime = customerTime;                 // shown "Booked" = customer time
+  const suggestedTicketTime = plus15(customerTime); // default entry time (customer +15)
   const d = normDate(travelRaw);
   const travelers = names.map((n, i) => { const { firstName, lastName } = splitName(n); return { sn: i + 1, type: i < adults ? 'Adult' : (i < adults + children ? 'Child' : 'Infant'), index: i + 1, firstName, lastName, dob: '' }; });
   if (!travelers.length && (adults + children + infants) > 0) { for (let i = 0; i < adults + children + infants; i++) travelers.push({ sn: i + 1, type: i < adults ? 'Adult' : 'Child', index: i + 1, firstName: i === 0 ? splitName(lead).firstName : '', lastName: i === 0 ? splitName(lead).lastName : '', dob: '' }); }
   return {
-    source: 'viator', bookingType, reference, tourName, travelDate: d.iso, travelDateLabel: d.label,
+    source: sourceFromRef(reference) || 'viator', bookingType, reference, tourName, travelDate: d.iso, travelDateLabel: d.label,
     leadTraveler: lead, adults, children, infants, pax: adults + children + infants || travelers.length,
-    productCode, tourGrade, tourGradeCode, customerTime, bookedTime, productName: productName(bookingType, bookedTime),
+    productCode, tourGrade, tourGradeCode, customerTime, bookedTime, suggestedTicketTime, productName: productName(bookingType, customerTime),
     travelers,
   };
 }
@@ -113,7 +125,8 @@ function parseGyg(block) {
   const dtMatch = block.match(/([A-Za-z]{3}\.?\s+\d{1,2},?\s+\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
   const d = normDate(dtMatch ? dtMatch[1] : '');
   const customerTime = to24h(dtMatch ? dtMatch[2] : '');
-  const bookedTime = plus15(customerTime);
+  const bookedTime = customerTime;
+  const suggestedTicketTime = plus15(customerTime);
   // lead traveler: the line after "Lead traveler"
   let lead = '';
   const li = lines.findIndex((l) => /^Lead traveler/i.test(l));
@@ -137,9 +150,9 @@ function parseGyg(block) {
   const phone = (block.match(/(\+\d[\d\s]{7,})/) || [])[1] || '';
   const email = (block.match(/([\w.+-]+@[\w.-]+\.\w+)/) || [])[1] || '';
   return {
-    source: 'gyg', bookingType, reference, tourName: tourName.trim(), travelDate: d.iso, travelDateLabel: d.label,
+    source: sourceFromRef(reference) || 'gyg', bookingType, reference, tourName: tourName.trim(), travelDate: d.iso, travelDateLabel: d.label,
     leadTraveler: lead, adults: adults || travelers.filter((t) => t.type === 'Adult').length, children: children || travelers.filter((t) => t.type === 'Child').length, infants: 0,
-    pax: (adults + children) || travelers.length, customerTime, bookedTime, productName: productName(bookingType, bookedTime),
+    pax: (adults + children) || travelers.length, customerTime, bookedTime, suggestedTicketTime, productName: productName(bookingType, customerTime),
     phone: phone.trim(), email, language: (language || '').trim(), travelers,
   };
 }
@@ -163,17 +176,18 @@ async function parseBookings(text, keys) {
 function normalizeAiRow(r) {
   const bookingType = r.bookingType === 'last_minute' ? 'last_minute' : 'regular';
   const customerTime = to24h(r.customerTime) || r.customerTime || null;
-  const bookedTime = plus15(customerTime);
+  const bookedTime = customerTime;
+  const suggestedTicketTime = plus15(customerTime);
   const d = r.travelDateLabel ? normDate(r.travelDateLabel) : { iso: r.travelDate || null, label: r.travelDateLabel || null };
   const adults = Number(r.adults) || 0, children = Number(r.children) || 0, infants = Number(r.infants) || 0;
-  const travelers = (Array.isArray(r.travelers) ? r.travelers : []).map((t, i) => ({ sn: i + 1, type: t.type || 'Adult', index: i + 1, firstName: t.firstName || '', lastName: t.lastName || '', dob: t.dob || '' }));
+  const travelers = (Array.isArray(r.travelers) ? r.travelers : []).map((t, i) => { const { firstName, lastName } = t.lastName ? { firstName: t.firstName || '', lastName: String(t.lastName).replace(/\s*\([^)]*\)\s*$/, '') } : splitName(`${t.firstName || ''}`); return { sn: i + 1, type: t.type || 'Adult', index: i + 1, firstName: firstName || t.firstName || '', lastName, dob: t.dob || '' }; });
   return {
-    source: ['viator', 'gyg', 'direct', 'other'].includes(r.source) ? r.source : 'other',
+    source: sourceFromRef(r.reference) || (['viator', 'gyg', 'direct', 'other'].includes(r.source) ? r.source : 'other'),
     bookingType, reference: r.reference, tourName: r.tourName || '', travelDate: d.iso, travelDateLabel: d.label,
     leadTraveler: r.leadTraveler || (travelers[0] ? `${travelers[0].firstName} ${travelers[0].lastName}`.trim() : ''),
     adults, children, infants, pax: (adults + children + infants) || travelers.length,
     phone: r.phone || '', email: r.email || '', language: r.language || '',
-    customerTime, bookedTime, productName: productName(bookingType, bookedTime), travelers,
+    customerTime, bookedTime, suggestedTicketTime, productName: productName(bookingType, customerTime), travelers,
   };
 }
 

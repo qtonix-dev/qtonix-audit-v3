@@ -68,6 +68,26 @@ function BookingsList({ onOpen }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status, date]);
   const dlAll = (b) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const dlPage = (b, page) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
+  // Group bookings by travel date. After 7PM IST, today's group auto-collapses
+  // and tomorrow expands. Past dates go under a collapsed "Old bookings" section.
+  const istNow = new Date(Date.now() + 330 * 60000);
+  const istToday = istNow.toISOString().slice(0, 10);
+  const istTomorrow = new Date(istNow.getTime() + 864e5).toISOString().slice(0, 10);
+  const after7pm = istNow.getUTCHours() >= (19 - 5) + (istNow.getUTCMinutes() >= 30 ? 0 : 0); // 19:00 IST = 13:30 UTC
+  const isAfter7 = (istNow.getUTCHours() * 60 + istNow.getUTCMinutes()) >= (13 * 60 + 30);
+  const [collapsed, setCollapsed] = useState({}); // { dateKey: bool } user overrides
+  const grouped = React.useMemo(() => {
+    const g = {}; const old = [];
+    (rows || []).forEach((b) => { const d = b.travelDate || 'no-date'; if (d !== 'no-date' && d < istToday) old.push(b); else (g[d] = g[d] || []).push(b); });
+    const dates = Object.keys(g).sort();
+    return { dates, g, old };
+  }, [rows, istToday]);
+  const autoCollapsed = (d) => { // default collapse behavior before user override
+    if (isAfter7 && d === istToday) return true; // today collapses after 7pm
+    return false;
+  };
+  const isCollapsed = (d) => (collapsed[d] !== undefined ? collapsed[d] : autoCollapsed(d));
+  const dateHeading = (d) => { if (d === istToday) return `Today · ${fmtDate(d)}`; if (d === istTomorrow) return `Tomorrow · ${fmtDate(d)}`; if (d === 'no-date') return 'No travel date'; return fmtDate(d); };
   const [expanded, setExpanded] = useState(null);
   const [copied, setCopied] = useState('');
   const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
@@ -87,11 +107,9 @@ function BookingsList({ onOpen }) {
         <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">VIP</option></select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All status</option><option value="new">New</option><option value="ticketed">Ticketed</option></select>
       </div>
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-        <table className="w-full text-[12.5px]">
-          <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>
-          <tbody>
-            {(rows || []).map((b) => { const src = SRC[b.source] || SRC.other; const green = b.status === 'ticketed' && !b.hasMismatch; const red = b.status === 'ticketed' && b.hasMismatch; const open = expanded === b.id; const ticketed = b.status === 'ticketed';
+      {(() => {
+      const TH = () => <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>;
+      const renderRow = (b) => { const src = SRC[b.source] || SRC.other; const green = b.status === 'ticketed' && !b.hasMismatch; const red = b.status === 'ticketed' && b.hasMismatch; const open = expanded === b.id; const ticketed = b.status === 'ticketed';
               return (
                 <React.Fragment key={b.id}>
                 <tr className="border-t border-slate-50 cursor-pointer" style={{ background: open ? '#f8fafc' : green ? '#f0fdf4' : red ? '#fef2f2' : undefined }} onClick={() => setExpanded(open ? null : b.id)}>
@@ -138,11 +156,28 @@ function BookingsList({ onOpen }) {
                 </td></tr>}
                 </React.Fragment>
               );
-            })}
-            {rows && rows.length === 0 && <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400 text-[13px]">No bookings match the filters.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+            };
+      const Section = ({ label, list, dkey, defaultOpen }) => {
+        const col = collapsed[dkey] !== undefined ? collapsed[dkey] : !defaultOpen;
+        return (
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
+            <button onClick={() => setCollapsed((s) => ({ ...s, [dkey]: !col }))} className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-100">
+              <span className="text-[13px] font-extrabold text-[#050A1F]">{label} <span className="text-slate-400 font-semibold">· {list.length}</span></span>
+              <span className="text-slate-400 text-[12px]">{col ? '▼ show' : '▲ hide'}</span>
+            </button>
+            {!col && <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><TH /><tbody>{list.map((b) => <React.Fragment key={b.id}>{renderRow(b)}</React.Fragment>)}</tbody></table></div>}
+          </div>
+        );
+      };
+      if (!rows) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+      if (rows.length === 0) return <div className="bg-white border border-slate-200 rounded-2xl px-4 py-10 text-center text-slate-400 text-[13px]">No bookings match the filters.</div>;
+      return (
+        <div>
+          {grouped.dates.map((d) => <Section key={d} dkey={d} label={dateHeading(d)} list={grouped.g[d]} defaultOpen={!isCollapsed(d)} />)}
+          {grouped.old.length > 0 && <Section dkey="__old" label="🗂 Old bookings" list={grouped.old} defaultOpen={false} />}
+        </div>
+      );
+      })()}
     </div>
   );
 }
@@ -183,10 +218,9 @@ function AddBookings({ onBack }) {
               <Fld label="Total pax" v={r.pax} on={() => {}} disabled />
             </div>
             <div className="rounded-lg bg-orange-50 border border-orange-100 p-3 mt-3 flex items-center gap-3 flex-wrap">
-              <span className="text-[12px] text-orange-800">Customer time: <b>{r.customerTime || '—'}</b></span>
-              <span className="text-orange-700 text-[12px]">→ Booked:</span>
+              <span className="text-orange-700 text-[12px] font-semibold">Booked time (customer time):</span>
               <input value={r.bookedTime || ''} onChange={(e) => setRow(i, { bookedTime: e.target.value })} className="border border-orange-200 rounded-lg px-2.5 py-1.5 text-[13px] w-24 font-bold" />
-              <span className="text-[11px] text-orange-500">+15 min (adjust for availability)</span>
+              <span className="text-[11px] text-orange-500">Book the entry ticket at ~{r.suggestedTicketTime || '+15 min'} (customer + 15; later is fine in high rush)</span>
               <span className="text-[12px] text-slate-600 ml-auto">Product: <b className="text-[#050A1F]">{recomputeProduct(r)}</b></span>
             </div>
             <div className="mt-3 border-t border-slate-100 pt-3">

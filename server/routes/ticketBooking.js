@@ -180,6 +180,35 @@ router.post('/upload-group', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// One-time migration: correct Booked time + Product to the CUSTOMER time, and
+// re-evaluate ticket matches with the new tolerance. Idempotent.
+router.post('/migrate/times', async (req, res, next) => {
+  try {
+    const minus15 = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})/); if (!m) return t; let tot = (parseInt(m[1], 10) * 60 + parseInt(m[2], 10) - 15 + 1440) % 1440; return `${String(Math.floor(tot / 60)).padStart(2, '0')}:${String(tot % 60).padStart(2, '0')}`; };
+    const rows = await TicketBooking.findAll();
+    let fixed = 0;
+    for (const row of rows) {
+      // Determine the customer time. If we captured it, use it. Otherwise the old
+      // bookedTime was customer+15, so derive customer = bookedTime − 15.
+      const customer = row.customerTime || minus15(row.bookedTime);
+      if (!customer) continue;
+      const newBooked = customer;
+      const newProduct = parser.productName(row.bookingType, customer);
+      // Re-evaluate each traveler's match against the customer time.
+      let travelers = row.travelers || [];
+      travelers = travelers.map((t) => t.ticketTime ? { ...t, match: ticketPdf.matchVerdict(customer, row.travelDate, t.ticketTime, null) } : t);
+      const hasMismatch = travelers.some((t) => t.ticketCode && t.match && t.match !== 'ok');
+      const changed = row.bookedTime !== newBooked || row.productName !== newProduct || row.customerTime !== customer;
+      if (changed || true) {
+        row.customerTime = customer; row.bookedTime = newBooked; row.productName = newProduct;
+        row.travelers = travelers; row.changed('travelers', true); row.hasMismatch = hasMismatch;
+        await row.save(); fixed++;
+      }
+    }
+    res.json({ ok: true, fixed, total: rows.length });
+  } catch (e) { next(e); }
+});
+
 // Download a single merged PDF containing ONLY this booking's traveler pages.
 async function downloadPdf(req, res, next) {
   try {
@@ -283,9 +312,7 @@ router.post('/bulk/link', async (req, res, next) => {
       for (const l of ls) {
         const ti = l.travelerIndex; const tk = l.ticket || {};
         if (ti == null || !travelers[ti]) continue;
-        let match = 'ok';
-        if (tk.time && row.bookedTime && tk.time !== row.bookedTime) match = 'time';
-        else if (tk.dateIso && row.travelDate && tk.dateIso !== row.travelDate) match = 'date';
+        const match = ticketPdf.matchVerdict(row.bookedTime, row.travelDate, tk.time, tk.dateIso);
         travelers[ti] = { ...travelers[ti], ticketCode: tk.code || null, ticketTime: tk.time || null, ocoNumber: tk.oco || null, pdfPage: tk.page || null, pdfUrl: tk.pdfUrl || null, match };
         oco = tk.oco || oco; anyPdfUrl = tk.pdfUrl || anyPdfUrl; anyPdfFileId = tk.pdfFileId || anyPdfFileId;
       }
