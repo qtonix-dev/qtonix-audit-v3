@@ -5774,8 +5774,19 @@ function EmployeeDashboard({ user, onOpenCandidate, onNav, onOpenExpense }) {
               </>
             ) : (
               <>
-                <div className="mt-4"><button onClick={() => setCalOpen(true)} className="w-full rounded-xl py-2.5 font-extrabold text-sm text-white" style={{ background: 'rgba(255,255,255,.18)' }}>View attendance</button></div>
-                <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In <b>{t12(clock.loginTime)}</b> · Out <b>{t12(clock.logoutTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
+                {/* Hybrid/split (Sales): after the office clock-out they can clock
+                    in again for their home hours. Others just view attendance. */}
+                {clock && clock.shift && clock.shift.hybridSplit ? (
+                  <>
+                    <div className="mt-4"><button disabled={busy} onClick={() => clockAction('in')} className="w-full rounded-xl py-2.5 font-extrabold text-sm bg-white disabled:opacity-60" style={{ color: '#FF4500' }}>Web Clock-In (home hours)</button></div>
+                    <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In <b>{t12(clock.loginTime)}</b> · Out <b>{t12(clock.logoutTime)}</b> · clock in again to log home hours</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-4"><button onClick={() => setCalOpen(true)} className="w-full rounded-xl py-2.5 font-extrabold text-sm text-white" style={{ background: 'rgba(255,255,255,.18)' }}>View attendance</button></div>
+                    <div className="mt-3.5 pt-3 text-xs border-t" style={{ borderColor: 'rgba(255,255,255,.22)' }}>In <b>{t12(clock.loginTime)}</b> · Out <b>{t12(clock.logoutTime)}</b>{breakMin ? <> · Break <b>{Math.floor(breakMin / 60)}h {pad(breakMin % 60)}m</b></> : null}</div>
+                  </>
+                )}
               </>
             )}
           </div>

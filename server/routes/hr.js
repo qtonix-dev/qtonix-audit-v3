@@ -2791,7 +2791,7 @@ router.get('/me/clock', requireHrAccess, async (req, res, next) => {
       loginTime: row ? row.loginTime : null, logoutTime: row ? row.logoutTime : null,
       breakOpen: row ? row.breakOpen : null, breaks, breakMin, late: row ? row.late : false,
       onLeave: !!leave, leaveType: leave ? leave.type : null,
-      shift: shiftRow ? { name: shiftRow.name, start: shiftRow.startTime, end: shiftRow.endTime } : null,
+      shift: shiftRow ? { name: shiftRow.name, start: shiftRow.startTime, end: shiftRow.endTime, hybridSplit: !!shiftRow.hybridSplit } : null,
     });
   } catch (e) { next(e); }
 });
