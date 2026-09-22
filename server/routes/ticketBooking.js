@@ -136,7 +136,20 @@ router.get('/plan/tobook', async (req, res, next) => {
     });
     const grandTickets = out.reduce((s, t) => s + t.ticketCount, 0);
     const grandPax = out.reduce((s, t) => s + t.pax, 0);
-    res.json({ tours: out, grandTickets, grandPax, pendingCount: rows.length });
+
+    // Cross-date merge candidates: when a specific date is in view, also fetch
+    // still-New bookings within the forward window (VIP: +2 days, Regular: +3
+    // days) so a lone booking can be merged with an upcoming same-type one. Any
+    // time on those days qualifies. Grouped by normalized tour.
+    let mergeCandidates = {};
+    if (req.query.date) {
+      const base = String(req.query.date);
+      const addDays = (n) => { const d = new Date(base + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+      const maxDate = addDays(3); // widest window (Regular +3)
+      const future = (await TicketBooking.findAll({ where: { status: 'new', travelDate: { [Op.gt]: base, [Op.lte]: maxDate } }, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC']] })).map((r) => r.toJSON());
+      for (const b of future) { const tour = normalizeTour(b.tourName); (mergeCandidates[tour] = mergeCandidates[tour] || []).push({ id: b.id, reference: b.reference, leadTraveler: b.leadTraveler, travelDate: b.travelDate, bookedTime: b.bookedTime, pax: b.pax, bookingType: b.bookingType, adults: b.adults, children: b.children, travelers: b.travelers }); }
+    }
+    res.json({ tours: out, grandTickets, grandPax, pendingCount: rows.length, mergeCandidates, baseDate: req.query.date || null });
   } catch (e) { next(e); }
 });
 
@@ -154,17 +167,38 @@ router.post('/:id/upload-pdf', async (req, res, next) => {
     const extracted = await ticketPdf.extractTickets(buffer);
     const { travelers, oco, hasMismatch } = ticketPdf.matchToBooking(row.toJSON(), extracted);
 
-    // Store the PDF in the ISOLATED TicketBooking folder (separate from CRM/HRMS).
+    // Re-upload: remember the OLD file(s) so we can clean them up after linking
+    // the new one — but only if no OTHER booking still references the same file.
+    const oldFileIds = new Set();
+    if (row.pdfFileId) oldFileIds.add(row.pdfFileId);
+    (row.travelers || []).forEach((t) => { if (t.pdfFileId) oldFileIds.add(t.pdfFileId); });
+
+    // Store the new PDF in the ISOLATED TicketBooking folder.
     let pdfUrl = row.pdfUrl, pdfFileId = row.pdfFileId;
     try {
       const up = await imagekit.uploadFile({ base64: buffer.toString('base64'), fileName: `${oco || 'ticket'}-${row.reference}.pdf`, folder: `TicketBooking/${row.travelDate || 'undated'}` });
       pdfUrl = up.url; pdfFileId = up.fileId;
     } catch (e) { /* imagekit optional — matching still applies */ }
+    // Point every matched traveler at the NEW file (replaces old per-traveler links).
+    const newTravelers = travelers.map((t) => (t.ticketCode ? { ...t, pdfUrl, pdfFileId } : t));
 
-    row.travelers = travelers; row.changed('travelers', true);
+    row.travelers = newTravelers; row.changed('travelers', true);
     row.ocoNumber = oco; row.pdfUrl = pdfUrl; row.pdfFileId = pdfFileId;
     row.status = 'ticketed'; row.hasMismatch = hasMismatch;
     await row.save();
+
+    // Delete each OLD file — but ONLY if no other booking still references it
+    // (guard against losing a shared OCO file), and never the new file.
+    for (const fid of oldFileIds) {
+      if (!fid || fid === pdfFileId) continue;
+      try {
+        const others = await TicketBooking.count({ where: { id: { [Op.ne]: row.id }, [Op.or]: [{ pdfFileId: fid }] } });
+        // also check per-traveler references in other bookings
+        let refByTraveler = 0;
+        if (others === 0) { const all = await TicketBooking.findAll({ where: { id: { [Op.ne]: row.id } }, attributes: ['travelers'] }); refByTraveler = all.filter((b) => (b.travelers || []).some((t) => t.pdfFileId === fid)).length; }
+        if (others === 0 && refByTraveler === 0) { try { await imagekit.deleteFile(fid); } catch {} }
+      } catch {}
+    }
     res.json({ ok: true, booking: row.toJSON(), matched: travelers.length, oco, hasMismatch });
   } catch (e) { next(e); }
 });

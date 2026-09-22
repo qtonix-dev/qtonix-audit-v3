@@ -388,18 +388,33 @@ function TicketsToBook({ onOpen }) {
                         // extra bookings merged onto THIS ticket (found across the whole tour)
                         const extraIds = merges[ticketKey] || [];
                         const allTourBookings = tour.slots.flatMap((s) => s.bookings);
-                        const extras = allTourBookings.filter((b) => extraIds.includes(b.id) && !baseIds.includes(b.id));
+                        const tourCrossDate = ((data.mergeCandidates && data.mergeCandidates[tour.tour]) || []);
+                        const lookupPool = [...allTourBookings, ...tourCrossDate];
+                        const extras = lookupPool.filter((b) => extraIds.includes(b.id) && !baseIds.includes(b.id));
                         const members = [...baseMembers, ...extras];
                         const usedPax = members.reduce((s, m) => s + m.pax, 0);
                         const free = 8 - usedPax;
                         // Ticket type of this ticket (from its base booking).
                         const ticketType = (members[0] && members[0].bookingType) || (tk.items[0] && tk.items[0].bookingType) || 'regular';
-                        // Suggestions: SAME TOUR, SAME TYPE (general+general / lastmin+lastmin),
-                        // not on this ticket, not merged elsewhere, that fit the free seats.
-                        const candidates = allTourBookings.filter((b) =>
+                        // Merge candidates: SAME TOUR + SAME TYPE, fitting the free
+                        // seats. Same-day bookings first, then a forward date window
+                        // — VIP: next 2 days, Regular: next 3 days (any time).
+                        const windowDays = ticketType === 'last_minute' ? 2 : 3;
+                        const withinWindow = (dateStr) => {
+                          if (!dateStr || !slot.date) return true;
+                          const a = new Date(slot.date + 'T00:00:00Z'), b2 = new Date(dateStr + 'T00:00:00Z');
+                          const diff = Math.round((b2 - a) / 86400000);
+                          return diff >= 0 && diff <= windowDays;
+                        };
+                        // Same-tour bookings already in the plan (same date) + cross-date
+                        // candidates from the backend, de-duped by id.
+                        const crossDate = ((data.mergeCandidates && data.mergeCandidates[tour.tour]) || []);
+                        const pool = [...allTourBookings, ...crossDate.filter((c) => !allTourBookings.some((b) => b.id === c.id))];
+                        const candidates = pool.filter((b) =>
                           !members.some((m) => m.id === b.id) &&
                           !mergedElsewhere.has(b.id) &&
                           b.bookingType === ticketType &&
+                          withinWindow(b.travelDate) &&
                           b.pax <= free && b.pax > 0);
                         // Group members by their booked time (for the sub-table headings).
                         const byTime = {};
@@ -434,7 +449,7 @@ function TicketsToBook({ onOpen }) {
                             })}
                             {free > 0 && candidates.length > 0 && (
                               <div className="px-4 py-3 border-t border-dashed border-amber-200" style={{ background: '#fffbeb99' }}>
-                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {ticketType === 'last_minute' ? 'Last Minute' : 'Regular'} booking (same type only)</div>
+                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {ticketType === 'last_minute' ? 'VIP' : 'Regular'} booking <span className="text-amber-500 normal-case font-semibold">(same type · within {windowDays} day{windowDays !== 1 ? 's' : ''})</span></div>
                                 <div className="flex flex-col gap-1.5">
                                   {candidates.map((b) => (
                                     <label key={b.id} className="flex items-center gap-2 text-[12.5px] cursor-pointer">
