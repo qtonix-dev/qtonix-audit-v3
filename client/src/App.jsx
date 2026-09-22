@@ -2046,7 +2046,7 @@ export default function App() {
             <div className="flex items-center gap-3"><div className="text-lg font-extrabold">Qtonix<span className="text-[#FF6A00]">.</span></div><span className="text-slate-400 text-sm font-semibold">🎟️ Ticket Booking</span></div>
             <button onClick={() => setShowTicketBooking(false)} className="text-slate-300 hover:text-white text-sm font-bold flex items-center gap-1.5">✕ Close</button>
           </div>
-          <div className="max-w-6xl mx-auto px-6 py-6"><TicketBookingAdmin /></div>
+          <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><TicketBookingAdmin /></div>
         </div>
       )}
 

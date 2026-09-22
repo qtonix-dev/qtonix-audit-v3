@@ -45,14 +45,14 @@ export default function TicketBookingAdmin() {
   if (page === 'detail') return <BookingDetail id={detailId} onBack={() => setPage('list')} />;
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
         <div className="flex gap-2">
-          <button onClick={() => setPage('list')} className={`px-3.5 py-2 rounded-lg text-[13px] font-bold ${page === 'list' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'list' ? { background: '#050A1F' } : {}}>All bookings</button>
-          <button onClick={() => setPage('tobook')} className={`px-3.5 py-2 rounded-lg text-[13px] font-bold ${page === 'tobook' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'tobook' ? { background: '#050A1F' } : {}}>🎫 Tickets to book</button>
+          <button onClick={() => setPage('list')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'list' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'list' ? { background: '#050A1F' } : {}}>All bookings</button>
+          <button onClick={() => setPage('tobook')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'tobook' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'tobook' ? { background: '#050A1F' } : {}}>🎫 To book</button>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShareOpen(true)} className="rounded-lg px-3.5 py-2 text-[13px] font-bold text-slate-600 border border-slate-200">🔗 Share link</button>
-          <button onClick={() => setPage('add')} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>+ Add new booking</button>
+          <button onClick={() => setShareOpen(true)} className="flex-1 sm:flex-none rounded-lg px-3 py-2 text-[12.5px] sm:text-[13px] font-bold text-slate-600 border border-slate-200 whitespace-nowrap">🔗 Share</button>
+          <button onClick={() => setPage('add')} className="flex-1 sm:flex-none rounded-lg px-3 sm:px-4 py-2 text-[12.5px] sm:text-[13px] font-bold text-white whitespace-nowrap" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>+ Add booking</button>
         </div>
       </div>
       {shareOpen && <ShareLinkModal onClose={() => setShareOpen(false)} />}
@@ -67,6 +67,7 @@ function BookingsList({ onOpen }) {
   const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); if (date) p.set('date', date); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status, date]);
   const dlAll = (b) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
+  const dlPage = (b, page) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const [expanded, setExpanded] = useState(null);
   const [copied, setCopied] = useState('');
   const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
@@ -126,7 +127,7 @@ function BookingsList({ onOpen }) {
                             <td className="px-2 py-1.5 text-slate-500">{t.type}</td>
                             <td className="px-2 py-1.5 text-slate-600">{b.bookedTime || '—'}</td>
                             <td className="px-2 py-1.5" style={{ color: t.match === 'time' ? '#dc2626' : undefined, fontWeight: t.match === 'time' ? 700 : 400 }}>{t.ticketTime || (ticketed ? '—' : '')}{t.match === 'time' ? ' ⚠' : ''}</td>
-                            <td className="px-2 py-1.5">{t.ocoNumber && t.pdfPage ? <a href={(t.pdfUrl || b.pdfUrl) ? `${t.pdfUrl || b.pdfUrl}#page=${t.pdfPage}` : '#'} target="_blank" rel="noreferrer" className="text-blue-600 font-bold">{t.ocoNumber}<span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 ml-1">p.{t.pdfPage}</span></a> : (ticketed ? <span className="text-red-500">no ticket</span> : '—')}</td>
+                            <td className="px-2 py-1.5">{t.ocoNumber && t.pdfPage ? <button onClick={() => dlPage(b, t.pdfPage)} title="Download this ticket page" className="text-blue-600 font-bold inline-flex items-center gap-1">{t.ocoNumber}<span className="text-[9px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">p.{t.pdfPage}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg></button> : (ticketed ? <span className="text-red-500">no ticket</span> : '—')}</td>
                             <td className="px-2 py-1.5">{verdict(t.match, ticketed)}</td>
                           </tr>
                         ); })}</tbody>
@@ -213,6 +214,8 @@ function BookingDetail({ id, onBack }) {
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState('');
   const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
+  const dlPage = (bk, page) => window.open(`${API_BASE}/api/ticket-booking/${bk.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
+  const dlAll = (bk) => window.open(`${API_BASE}/api/ticket-booking/${bk.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const load = () => api(`/${id}`).then(setB).catch((e) => toast(e.message));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
   const upload = async (file) => {
@@ -256,7 +259,7 @@ function BookingDetail({ id, onBack }) {
                 <td className="px-2 py-2.5 text-slate-500">{t.type}</td>
                 <td className="px-2 py-2.5 text-slate-600">{b.bookedTime || '—'}</td>
                 <td className="px-2 py-2.5" style={{ color: t.match === 'time' ? '#dc2626' : undefined, fontWeight: t.match === 'time' ? 700 : 400 }}>{t.ticketTime || (b.status === 'ticketed' ? '—' : '')}{t.match === 'time' ? ' ⚠' : ''}</td>
-                <td className="px-2 py-2.5">{t.ocoNumber && t.pdfPage ? <a href={b.pdfUrl ? `${b.pdfUrl}#page=${t.pdfPage}` : '#'} target="_blank" rel="noreferrer" className="text-blue-600 font-bold">{t.ocoNumber}<span className="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 ml-1">p.{t.pdfPage}</span></a> : (b.status === 'ticketed' ? <span className="text-red-500">no ticket</span> : '—')}</td>
+                <td className="px-2 py-2.5">{t.ocoNumber && t.pdfPage ? <button onClick={() => dlPage(b, t.pdfPage)} title="Download this ticket page" className="text-blue-600 font-bold inline-flex items-center gap-1">{t.ocoNumber}<span className="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">p.{t.pdfPage}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg></button> : (b.status === 'ticketed' ? <span className="text-red-500">no ticket</span> : '—')}</td>
                 <td className="px-2 py-2.5">{b.status === 'ticketed' ? verdict(t.match) : <span className="text-slate-300">—</span>}</td>
               </tr>
             ); })}

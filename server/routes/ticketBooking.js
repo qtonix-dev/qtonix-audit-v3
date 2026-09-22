@@ -185,8 +185,15 @@ async function downloadPdf(req, res, next) {
   try {
     const row = await TicketBooking.findByPk(Number(req.params.id));
     if (!row) return res.status(404).send('Not found');
-    const travelers = (row.travelers || []).filter((t) => t.pdfPage);
+    let travelers = (row.travelers || []).filter((t) => t.pdfPage);
     if (!travelers.length) return res.status(400).send('No tickets uploaded for this booking yet.');
+    // Optional single-traveler download: ?page=N (that traveler's page only).
+    const onePage = req.query.page ? Number(req.query.page) : null;
+    let fileName = `tickets-${row.reference}.pdf`;
+    if (onePage) {
+      const t = travelers.find((x) => Number(x.pdfPage) === onePage);
+      if (t) { travelers = [t]; fileName = `ticket-${(t.firstName || '') + '-' + (t.lastName || '')}.pdf`.replace(/\s+/g, '-'); }
+    }
     const { PDFDocument } = require('pdf-lib');
     const bySource = {};
     travelers.forEach((t) => { const url = t.pdfUrl || row.pdfUrl; if (!url) return; (bySource[url] = bySource[url] || []).push(t.pdfPage); });
@@ -203,7 +210,7 @@ async function downloadPdf(req, res, next) {
     if (out.getPageCount() === 0) return res.status(400).send('Could not assemble the ticket pages.');
     const bytes = await out.save();
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="tickets-${row.reference}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.send(Buffer.from(bytes));
   } catch (e) { next(e); }
 }
@@ -333,23 +340,7 @@ pub.get('/plan/tobook', async (req, res, next) => {
     res.json({ tours: out, grandTickets: out.reduce((s, t) => s + t.ticketCount, 0), grandPax: out.reduce((s, t) => s + t.pax, 0), pendingCount: rows.length });
   } catch (e) { next(e); }
 });
-// Read-only download of a booking's ticket pages.
-pub.get('/:id/tickets.pdf', async (req, res, next) => {
-  try {
-    const row = await TicketBooking.findByPk(Number(req.params.id));
-    if (!row) return res.status(404).send('Not found');
-    const travelers = (row.travelers || []).filter((t) => t.pdfPage);
-    if (!travelers.length) return res.status(400).send('No tickets yet.');
-    const { PDFDocument } = require('pdf-lib');
-    const bySource = {};
-    travelers.forEach((t) => { const url = t.pdfUrl || row.pdfUrl; if (!url) return; (bySource[url] = bySource[url] || []).push(t.pdfPage); });
-    const outDoc = await PDFDocument.create();
-    for (const [url, pages] of Object.entries(bySource)) { try { const resp = await fetch(url); const buf = Buffer.from(await resp.arrayBuffer()); const src = await PDFDocument.load(buf); const uniq = [...new Set(pages)].sort((a, b) => a - b).filter((p) => p >= 1 && p <= src.getPageCount()); const copied = await outDoc.copyPages(src, uniq.map((p) => p - 1)); copied.forEach((pg) => outDoc.addPage(pg)); } catch {} }
-    if (outDoc.getPageCount() === 0) return res.status(400).send('Could not assemble.');
-    const bytes = await outDoc.save();
-    res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', `attachment; filename="tickets-${row.reference}.pdf"`);
-    res.send(Buffer.from(bytes));
-  } catch (e) { next(e); }
-});
+// Read-only download of a booking's ticket pages (whole booking or ?page=N).
+pub.get('/:id/tickets.pdf', (req, res, next) => downloadPdf(req, res, next));
 module.exports.pub = pub;
 module.exports.downloadPdf = downloadPdf;

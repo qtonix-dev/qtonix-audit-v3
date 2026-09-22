@@ -16,6 +16,7 @@ export default function TicketSharePublic() {
   const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (date) p.set('date', date); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => setErr(e.message)); };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, date]);
   const dl = (b) => window.open(`${API_BASE}/api/ticket-share/${b.id}/tickets.pdf?token=${encodeURIComponent(token)}`, '_blank');
+  const dlPage = (b, page) => window.open(`${API_BASE}/api/ticket-share/${b.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(token)}`, '_blank');
 
   if (err) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui' }}><div style={{ textAlign: 'center', color: '#64748b' }}><div style={{ fontSize: 40 }}>🔗</div><div style={{ fontSize: 16, fontWeight: 700, marginTop: 8 }}>{err}</div></div></div>;
 
@@ -63,7 +64,7 @@ export default function TicketSharePublic() {
                             <tbody>{(b.travelers || []).map((t, ti) => (
                               <tr key={ti} style={{ borderBottom: '1px solid #f6f7f9' }}>
                                 <td style={td2}>{ti + 1}</td><td style={{ ...td2, fontWeight: 600 }}>{t.firstName}</td><td style={{ ...td2, fontWeight: 600 }}>{t.lastName}</td><td style={{ ...td2, color: '#64748b' }}>{t.type}</td><td style={td2}>{t.ticketTime || '—'}</td>
-                                <td style={td2}>{t.ocoNumber && t.pdfPage ? <a href={(t.pdfUrl || b.pdfUrl) ? `${t.pdfUrl || b.pdfUrl}#page=${t.pdfPage}` : '#'} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 700 }}>{t.ocoNumber} p.{t.pdfPage}</a> : '—'}</td>
+                                <td style={td2}>{t.ocoNumber && t.pdfPage ? <button onClick={() => dlPage(b, t.pdfPage)} style={{ color: '#2563eb', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>{t.ocoNumber} p.{t.pdfPage} ⬇</button> : '—'}</td>
                               </tr>
                             ))}</tbody>
                           </table>
