@@ -347,7 +347,19 @@ function TicketsToBook({ onOpen }) {
       {data && data.tours.length === 0 && <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-[13px] text-slate-400">No bookings waiting for tickets with these filters.</div>}
       {data && data.tours.map((tour) => (
         <div key={tour.tour} className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-5">
-          <div className="px-5 py-3 flex items-center justify-between" style={{ background: '#050A1F' }}><h3 className="text-[15px] font-extrabold text-white">{tour.tour}</h3><span className="text-[11.5px] text-slate-400">{tour.ticketCount} ticket{tour.ticketCount !== 1 ? 's' : ''} to book · {tour.pax} travellers</span></div>
+          <div className="px-5 py-3.5 flex items-center justify-between gap-3 flex-wrap" style={{ background: '#050A1F' }}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-[18px] leading-none">🎟️</span>
+              <div className="min-w-0">
+                <h3 className="text-[15px] font-extrabold text-white truncate">{tour.tour}</h3>
+                <div className="text-[11px] text-slate-400">{[...new Set(tour.slots.map((s) => fmtDate(s.date)))].join(', ')}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(139,92,246,.22)', color: '#c4b5fd' }}>{tour.ticketCount} ticket{tour.ticketCount !== 1 ? 's' : ''} to book</span>
+              <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(255,255,255,.1)', color: '#cbd5e1' }}>{tour.pax} traveller{tour.pax !== 1 ? 's' : ''}</span>
+            </div>
+          </div>
           <table className="w-full text-[12.5px]">
             <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-5 py-2.5">Date</th><th className="text-left px-2">Time</th><th className="text-left px-2">Bookings</th><th className="text-right px-2">Tickets</th><th className="text-right px-2">Travellers</th><th className="px-2" /></tr></thead>
             <tbody>

@@ -13,7 +13,9 @@ function actor(req) { return { id: req.user && req.user.id, name: (req.user && r
 // bookings all map to one canonical tour so they can share a ticket.
 function normalizeTour(name) {
   const n = String(name || '').toLowerCase();
-  if (n.includes('colosseum') || n.includes('colosseo') || n.includes('palatine') || n.includes('roman forum')) return 'Colosseum, Roman Forum & Palatine Hill';
+  // All Colosseum / Roman Forum / Palatine / Ancient Rome variants are the same
+  // physical entry, however each source words it — group them as one tour.
+  if (n.includes('colosseum') || n.includes('colosseo') || n.includes('palatine') || n.includes('roman forum') || n.includes('ancient rome')) return 'Colosseum, Roman Forum & Palatine Hill';
   return String(name || '').trim() || 'Unassigned tour';
 }
 
