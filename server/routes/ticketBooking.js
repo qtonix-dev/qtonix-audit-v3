@@ -8,6 +8,15 @@ const imagekit = require('../services/imagekit');
 // Admin-only guard (CRM admin). requireAuth + admin role are applied at mount.
 function actor(req) { return { id: req.user && req.user.id, name: (req.user && req.user.name) || 'Admin' }; }
 
+// Normalize a tour name so the same physical tour groups together regardless of
+// how each source (Viator, GYG, …) words it. Colosseum + Roman Forum + Palatine
+// bookings all map to one canonical tour so they can share a ticket.
+function normalizeTour(name) {
+  const n = String(name || '').toLowerCase();
+  if (n.includes('colosseum') || n.includes('colosseo') || n.includes('palatine') || n.includes('roman forum')) return 'Colosseum, Roman Forum & Palatine Hill';
+  return String(name || '').trim() || 'Unassigned tour';
+}
+
 async function aiKeys() {
   try { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return { anthropic: s && s.getKey ? s.getKey('anthropic') : null, openai: s && s.getKey ? s.getKey('openai') : null }; } catch { return {}; }
 }
@@ -107,10 +116,12 @@ router.get('/plan/tobook', async (req, res, next) => {
     const where = { status: 'new' };
     if (req.query.date) where.travelDate = String(req.query.date);
     const rows = (await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC']] })).map((r) => r.toJSON());
-    // group tour -> date|time
+    // group tour -> date|time. Normalize the tour name so the SAME physical tour
+    // from different sources (Viator vs GYG name it differently) groups together
+    // and can be merged onto one ticket.
     const tours = {};
     for (const b of rows) {
-      const tour = b.tourName || 'Unassigned tour';
+      const tour = normalizeTour(b.tourName);
       const key = `${b.travelDate || '—'}|${b.bookedTime || '—'}`;
       (tours[tour] = tours[tour] || {})[key] = (tours[tour][key] || []);
       tours[tour][key].push(b);
@@ -361,7 +372,7 @@ pub.get('/plan/tobook', async (req, res, next) => {
     if (req.query.date) where.travelDate = String(req.query.date);
     const rows = (await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC']] })).map((r) => r.toJSON());
     const tours = {};
-    for (const b of rows) { const tour = b.tourName || 'Unassigned tour'; const key = `${b.travelDate || '—'}|${b.bookedTime || '—'}`; (tours[tour] = tours[tour] || {})[key] = (tours[tour][key] || []); tours[tour][key].push(b); }
+    for (const b of rows) { const tour = normalizeTour(b.tourName); const key = `${b.travelDate || '—'}|${b.bookedTime || '—'}`; (tours[tour] = tours[tour] || {})[key] = (tours[tour][key] || []); tours[tour][key].push(b); }
     const pack = (list, cap = 8) => { const sorted = [...list].sort((a, b) => b.pax - a.pax); const bins = []; for (const bk of sorted) { const bin = bins.find((x) => x.pax + bk.pax <= cap); if (bin) { bin.items.push(bk); bin.pax += bk.pax; } else bins.push({ items: [bk], pax: bk.pax }); } return bins; };
     const out = Object.entries(tours).map(([tour, slots]) => { const slotList = Object.entries(slots).map(([key, list]) => { const [date, time] = key.split('|'); const bins = pack(list); return { date, time, bookings: list, tickets: bins.map((bn) => ({ pax: bn.pax, items: bn.items })), ticketCount: bins.length, pax: list.reduce((s, x) => s + x.pax, 0) }; }).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)); return { tour, slots: slotList, ticketCount: slotList.reduce((s, x) => s + x.ticketCount, 0), pax: slotList.reduce((s, x) => s + x.pax, 0) }; });
     res.json({ tours: out, grandTickets: out.reduce((s, t) => s + t.ticketCount, 0), grandPax: out.reduce((s, t) => s + t.pax, 0), pendingCount: rows.length });
