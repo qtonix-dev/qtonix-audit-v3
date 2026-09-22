@@ -3960,6 +3960,23 @@ async function uploadTaskFile(taskId, file, onDone, onErr) {
   reader.readAsDataURL(file);
 }
 
+// Render a task note: escape HTML, highlight @mentions that match a real person,
+// and linkify URLs — same feel as Buzz chat.
+function fmtNoteBody(body, people = []) {
+  let html = String(body || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Highlight @Name (longest matching real name first) and @all.
+  const names = [...people.map((u) => u.name)].sort((a, b) => b.length - a.length);
+  html = html.replace(/@([A-Za-z][A-Za-z]*(?:\s+[A-Za-z]+)?)/g, (full, cap) => {
+    const capL = cap.toLowerCase();
+    if (capL === 'all' || capL === 'everyone') return `<span style="color:#c2410c;font-weight:600">@${cap}</span>`;
+    const hit = names.find((nm) => capL === nm.toLowerCase() || nm.toLowerCase().startsWith(capL) || capL.startsWith(nm.toLowerCase().split(' ')[0]));
+    return hit ? `<span style="color:#c2410c;font-weight:600;background:#fff7ed;border-radius:4px;padding:0 3px">@${cap}</span>` : full;
+  });
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noreferrer" style="text-decoration:underline;color:#2563eb">$1</a>')
+    .replace(/(^|[\s(])(www\.[^\s<]+)/g, '$1<a href="https://$2" target="_blank" rel="noreferrer" style="text-decoration:underline;color:#2563eb">$2</a>');
+  return html;
+}
+
 function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle }) {
   const [data, setData] = useState(null);
   const [note, setNote] = useState('');
@@ -3972,6 +3989,33 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
   const [uploading, setUploading] = useState(false);
   const [upErr, setUpErr] = useState('');
   const fileRef = useRef(null);
+  // @mention autocomplete (same behaviour as Buzz chat).
+  const [people, setPeople] = useState([]);
+  const [mention, setMention] = useState(null); // { q, idx } while typing @
+  const noteRef = useRef(null);
+  useEffect(() => { hrApi('/chat/directory').then((r) => setPeople(r.users || [])).catch(() => {}); }, []);
+  const mentionCands = () => {
+    if (!mention) return [];
+    const q = String(mention.q || '').toLowerCase();
+    const starts = people.filter((u) => u.name.toLowerCase().startsWith(q));
+    const contains = people.filter((u) => !u.name.toLowerCase().startsWith(q) && u.name.toLowerCase().includes(q));
+    return [...starts, ...contains].slice(0, 6);
+  };
+  const onNoteChange = (v) => {
+    setNote(v);
+    // Detect a trailing "@query" (letters/space, no trailing space) to open the picker.
+    const mm = v.match(/@([A-Za-z][A-Za-z]*)$/);
+    if (mm) setMention((prev) => ({ q: mm[1], idx: prev && prev.q === mm[1] ? (prev.idx || 0) : 0 }));
+    else if (/@$/.test(v)) setMention({ q: '', idx: 0 });
+    else setMention(null);
+  };
+  const pickNoteMention = (u) => {
+    if (!u) return;
+    const base = note.replace(/@([A-Za-z]*)$/, '');
+    setNote(`${base}@${u.name} `);
+    setMention(null);
+    setTimeout(() => { if (noteRef.current) noteRef.current.focus(); }, 0);
+  };
   const load = () => hrApi(`/tasks/tasks/${taskId}/detail`).then(setData).catch(() => {});
   useEffect(() => { load(); }, [taskId]);
   const patch = async (p) => { await hrApi(`/tasks/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(p) }); load(); onChange && onChange(); };
@@ -4146,13 +4190,39 @@ function TaskDetailDrawer({ taskId, onClose, onChange, isSubtask, parentTitle })
                         </div>
                       )}
                     </div>
-                    <div className="text-sm text-slate-700 whitespace-pre-wrap">{c.body}</div>
+                    <div className="text-sm text-slate-700 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: fmtNoteBody(c.body, people) }} />
                   </div>
                 );
               })}
             </div>
-            <div className="flex items-stretch gap-2">
-              <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote()} placeholder="Add a note… (type @name to tag someone)" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <div className="flex items-stretch gap-2 relative">
+              {/* @mention autocomplete dropdown */}
+              {mention && (() => {
+                const cands = mentionCands();
+                if (!cands.length) return null;
+                const idx = mention.idx || 0;
+                return (
+                  <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-30">
+                    {cands.map((u, i) => (
+                      <button key={u.id} onClick={() => pickNoteMention(u)} className={`w-full flex items-center gap-2.5 px-3 py-2 text-left ${i === idx ? 'bg-orange-50' : 'hover:bg-orange-50'}`}>
+                        <Avatar user={u} size={24} />
+                        <span className="text-[13px] font-semibold text-slate-700">{titleCase(u.name)}</span>
+                        {u.designation && <span className="text-[11px] text-slate-400 ml-auto">{u.designation}</span>}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+              <input ref={noteRef} value={note} onChange={(e) => onNoteChange(e.target.value)} onKeyDown={(e) => {
+                const cands = mentionCands();
+                if (mention && cands.length) {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setMention((m) => ({ ...m, idx: ((m.idx || 0) + 1) % cands.length })); return; }
+                  if (e.key === 'ArrowUp') { e.preventDefault(); setMention((m) => ({ ...m, idx: ((m.idx || 0) - 1 + cands.length) % cands.length })); return; }
+                  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickNoteMention(cands[mention.idx || 0]); return; }
+                  if (e.key === 'Escape') { setMention(null); return; }
+                }
+                if (e.key === 'Enter') addNote();
+              }} placeholder="Add a note… (type @name to tag someone)" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
               <button onClick={suggestNotes} disabled={!!noteAiBusy} title="Suggest a comment" className="shrink-0 w-9 rounded-lg flex items-center justify-center text-white text-[15px] disabled:opacity-60" style={{ background: 'linear-gradient(135deg,#8B5CF6,#EC4899)', boxShadow: '0 2px 8px rgba(139,92,246,.3)' }}>{noteAiBusy === 'suggest' ? '…' : '✨'}</button>
               <button onClick={addNote} className="shrink-0 rounded-lg px-3 text-xs font-bold text-white" style={{ background: ORANGE }}>Post</button>
             </div>
