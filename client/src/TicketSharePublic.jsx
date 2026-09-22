@@ -5,6 +5,7 @@ import { API_BASE } from './config.js';
 const titleCase = (s) => String(s || '').replace(/\b\w/g, (c) => c.toUpperCase());
 const fmtDate = (iso, label) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (label ? String(label).replace(/^[A-Za-z]{3},\s*/, '') : '—');
 const typeLabel = (t) => (t === 'last_minute' ? 'VIP' : 'Regular');
+const displayTime = (b) => { if (b && b.status === 'ticketed') { const t = (b.travelers || []).find((x) => x.ticketTime); if (t && t.ticketTime) return t.ticketTime; } return (b && b.bookedTime) || '—'; };
 
 export default function TicketSharePublic() {
   const token = window.location.pathname.split('/').pop();
@@ -46,7 +47,7 @@ export default function TicketSharePublic() {
                       <td style={{ ...td, fontWeight: 700, color: '#050A1F' }}>{b.reference}</td>
                       <td style={td}><span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: b.bookingType === 'last_minute' ? '#ede9fe' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#6d28d9' : '#64748b' }}>{typeLabel(b.bookingType)}</span></td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDate(b.travelDate, b.travelDateLabel)}</td>
-                      <td style={td}>{b.bookedTime || '—'}</td>
+                      <td style={td}>{displayTime(b)}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{titleCase(b.leadTraveler || '')}</td>
                       <td style={td}>{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
                       <td style={{ ...td, color: '#64748b' }}>{b.productName || '—'}</td>

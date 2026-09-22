@@ -21,6 +21,16 @@ const fmtDate = (iso, label) => {
   return '—';
 };
 const typeLabel = (t) => (t === 'last_minute' ? 'VIP' : 'Regular');
+// Time to show in the listing: once ticketed & linked to an OCO, show the ACTUAL
+// booked ticket time (all travelers in a booking share one time — one group);
+// otherwise show the customer/booked time.
+const displayTime = (b) => {
+  if (b && b.status === 'ticketed') {
+    const t = (b.travelers || []).find((x) => x.ticketTime);
+    if (t && t.ticketTime) return t.ticketTime;
+  }
+  return (b && b.bookedTime) || '—';
+};
 
 // A name cell with a click-to-copy button (no need for Ctrl+C).
 function CopyName({ text, id, copied, onCopy }) {
@@ -118,7 +128,7 @@ function BookingsList({ onOpen }) {
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#ede9fe' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#6d28d9' : '#64748b' }}>{typeLabel(b.bookingType)}</span></td>
                   <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
-                  <td className="px-3 py-3 text-slate-600">{b.bookedTime || '—'}</td>
+                  <td className="px-3 py-3 text-slate-600">{displayTime(b)}{b.status === 'ticketed' && displayTime(b) !== b.bookedTime ? <span className="text-[9px] text-slate-400 ml-1" title={`Customer: ${b.bookedTime}`}>●</span> : ''}</td>
                   <td className="px-3 py-3 text-slate-700 font-semibold">{titleCase(b.leadTraveler || '')}</td>
                   <td className="px-3 py-3 text-slate-600">{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
                   <td className="px-3 py-3 text-slate-500">{b.productName || '—'}</td>
