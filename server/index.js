@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v563';
+const APP_VERSION = 'v564';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -149,7 +149,13 @@ app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public/
 app.use('/api/auth', auth);
 app.use('/api/reports', reports);
 app.use('/api/admin', admin);
-{ const { requireAuth, requireAdmin } = require('./middleware/auth'); app.use('/api/ticket-booking', requireAuth, requireAdmin, require('./routes/ticketBooking')); }
+{ const { requireAuth, requireAdmin } = require('./middleware/auth'); const tb = require('./routes/ticketBooking');
+  // Admin PDF download via ?token= (window.open can't send a Bearer header).
+  app.get('/api/ticket-booking/:id/tickets.pdf', (req, res, next) => {
+    try { const jwt = require('jsonwebtoken'); const t = req.query.token; const dec = jwt.verify(t, process.env.JWT_SECRET); if (!dec || dec.role !== 'admin') return res.status(403).send('Forbidden'); req.user = dec; next(); }
+    catch { return res.status(401).send('Unauthorized'); }
+  }, tb.downloadPdf);
+  app.use('/api/ticket-share', tb.pub); app.use('/api/ticket-booking', requireAuth, requireAdmin, tb); }
 app.use('/api/surveys', require('./routes/crmSurvey'));
 app.use('/api/demo', demo);
 // Shareable training sandbox: /api/demo-app/<token>/... — token-gated inside

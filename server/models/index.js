@@ -451,6 +451,7 @@ const Settings = sequelize.define(
     },
     fontFamily: { type: DataTypes.STRING(80), defaultValue: 'Plus Jakarta Sans' },
 
+    ticketShareToken: { type: DataTypes.STRING(80), allowNull: true },
     apiKeys: {
       type: DataTypes.JSON,
       defaultValue: { seranking: '', anthropic: '', openai: '', pagespeed: '', googlePlaces: '', imagekitPublic: '', imagekitPrivate: '', imagekitEndpoint: '', gmailClientId: '', gmailClientSecret: '', hrMailboxToken: '' },

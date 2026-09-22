@@ -180,6 +180,55 @@ router.post('/upload-group', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Download a single merged PDF containing ONLY this booking's traveler pages.
+async function downloadPdf(req, res, next) {
+  try {
+    const row = await TicketBooking.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).send('Not found');
+    const travelers = (row.travelers || []).filter((t) => t.pdfPage);
+    if (!travelers.length) return res.status(400).send('No tickets uploaded for this booking yet.');
+    const { PDFDocument } = require('pdf-lib');
+    const bySource = {};
+    travelers.forEach((t) => { const url = t.pdfUrl || row.pdfUrl; if (!url) return; (bySource[url] = bySource[url] || []).push(t.pdfPage); });
+    const out = await PDFDocument.create();
+    for (const [url, pages] of Object.entries(bySource)) {
+      try {
+        const resp = await fetch(url); const buf = Buffer.from(await resp.arrayBuffer());
+        const src = await PDFDocument.load(buf);
+        const uniq = [...new Set(pages)].sort((a, b) => a - b).filter((p) => p >= 1 && p <= src.getPageCount());
+        const copied = await out.copyPages(src, uniq.map((p) => p - 1));
+        copied.forEach((pg) => out.addPage(pg));
+      } catch {}
+    }
+    if (out.getPageCount() === 0) return res.status(400).send('Could not assemble the ticket pages.');
+    const bytes = await out.save();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tickets-${row.reference}.pdf"`);
+    res.send(Buffer.from(bytes));
+  } catch (e) { next(e); }
+}
+router.get('/:id/tickets.pdf', downloadPdf);
+
+// ---- Public shareable link (read-only whole module) ----
+async function shareSettings() { const s = await Settings.findOne({ where: { singleton: 'settings' } }); return s; }
+// GET current share status (admin).
+router.get('/share/status', async (req, res, next) => {
+  try { const s = await shareSettings(); const tok = s && s.ticketShareToken; res.json({ enabled: !!tok, token: tok || null }); } catch (e) { next(e); }
+});
+// Enable / regenerate the public link (admin).
+router.post('/share/enable', async (req, res, next) => {
+  try {
+    const s = await shareSettings(); if (!s) return res.status(500).json({ error: 'Settings missing.' });
+    const token = require('crypto').randomBytes(18).toString('hex');
+    s.ticketShareToken = token; await s.save();
+    res.json({ ok: true, token });
+  } catch (e) { next(e); }
+});
+// Disable the public link (admin).
+router.post('/share/disable', async (req, res, next) => {
+  try { const s = await shareSettings(); if (s) { s.ticketShareToken = null; await s.save(); } res.json({ ok: true }); } catch (e) { next(e); }
+});
+
 // Bulk read many ticket PDFs, extract every ticket, and auto-match to pending
 // bookings. Does NOT save — returns matched + needs-review for confirmation.
 // Stores the uploaded PDFs (isolated folder) and returns their refs so the
@@ -247,3 +296,60 @@ router.post('/bulk/link', async (req, res, next) => {
 });
 
 module.exports = router;
+
+// ---- PUBLIC read-only router (token-gated, no login) ----
+const pub = express.Router();
+async function checkShareToken(req, res, next) {
+  try {
+    const token = req.query.token || req.headers['x-ticket-share'];
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const good = s && s.ticketShareToken;
+    if (!good || token !== good) return res.status(403).json({ error: 'This shared link is invalid or has been turned off.' });
+    next();
+  } catch (e) { next(e); }
+}
+pub.use(checkShareToken);
+// Read-only list.
+pub.get('/list', async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.date) where.travelDate = String(req.query.date);
+    let rows = await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC'], ['id', 'DESC']] });
+    const q = req.query.q ? String(req.query.q).toLowerCase() : '';
+    if (q) rows = rows.filter((r) => `${r.reference} ${r.leadTraveler || ''} ${(r.travelers || []).map((t) => t.firstName + ' ' + t.lastName).join(' ')}`.toLowerCase().includes(q));
+    res.json({ bookings: rows.map((r) => r.toJSON()), readOnly: true });
+  } catch (e) { next(e); }
+});
+// Read-only tickets-to-book plan (reuses the same packing logic inline).
+pub.get('/plan/tobook', async (req, res, next) => {
+  try {
+    const where = { status: 'new' };
+    if (req.query.date) where.travelDate = String(req.query.date);
+    const rows = (await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC']] })).map((r) => r.toJSON());
+    const tours = {};
+    for (const b of rows) { const tour = b.tourName || 'Unassigned tour'; const key = `${b.travelDate || '—'}|${b.bookedTime || '—'}`; (tours[tour] = tours[tour] || {})[key] = (tours[tour][key] || []); tours[tour][key].push(b); }
+    const pack = (list, cap = 8) => { const sorted = [...list].sort((a, b) => b.pax - a.pax); const bins = []; for (const bk of sorted) { const bin = bins.find((x) => x.pax + bk.pax <= cap); if (bin) { bin.items.push(bk); bin.pax += bk.pax; } else bins.push({ items: [bk], pax: bk.pax }); } return bins; };
+    const out = Object.entries(tours).map(([tour, slots]) => { const slotList = Object.entries(slots).map(([key, list]) => { const [date, time] = key.split('|'); const bins = pack(list); return { date, time, bookings: list, tickets: bins.map((bn) => ({ pax: bn.pax, items: bn.items })), ticketCount: bins.length, pax: list.reduce((s, x) => s + x.pax, 0) }; }).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)); return { tour, slots: slotList, ticketCount: slotList.reduce((s, x) => s + x.ticketCount, 0), pax: slotList.reduce((s, x) => s + x.pax, 0) }; });
+    res.json({ tours: out, grandTickets: out.reduce((s, t) => s + t.ticketCount, 0), grandPax: out.reduce((s, t) => s + t.pax, 0), pendingCount: rows.length });
+  } catch (e) { next(e); }
+});
+// Read-only download of a booking's ticket pages.
+pub.get('/:id/tickets.pdf', async (req, res, next) => {
+  try {
+    const row = await TicketBooking.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).send('Not found');
+    const travelers = (row.travelers || []).filter((t) => t.pdfPage);
+    if (!travelers.length) return res.status(400).send('No tickets yet.');
+    const { PDFDocument } = require('pdf-lib');
+    const bySource = {};
+    travelers.forEach((t) => { const url = t.pdfUrl || row.pdfUrl; if (!url) return; (bySource[url] = bySource[url] || []).push(t.pdfPage); });
+    const outDoc = await PDFDocument.create();
+    for (const [url, pages] of Object.entries(bySource)) { try { const resp = await fetch(url); const buf = Buffer.from(await resp.arrayBuffer()); const src = await PDFDocument.load(buf); const uniq = [...new Set(pages)].sort((a, b) => a - b).filter((p) => p >= 1 && p <= src.getPageCount()); const copied = await outDoc.copyPages(src, uniq.map((p) => p - 1)); copied.forEach((pg) => outDoc.addPage(pg)); } catch {} }
+    if (outDoc.getPageCount() === 0) return res.status(400).send('Could not assemble.');
+    const bytes = await outDoc.save();
+    res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', `attachment; filename="tickets-${row.reference}.pdf"`);
+    res.send(Buffer.from(bytes));
+  } catch (e) { next(e); }
+});
+module.exports.pub = pub;
+module.exports.downloadPdf = downloadPdf;

@@ -15,7 +15,12 @@ const api = async (path, opts = {}) => {
 };
 const titleCase = (s) => String(s || '').replace(/\b\w/g, (c) => c.toUpperCase());
 const SRC = { viator: { l: 'Viator', bg: '#dbeafe', c: '#1d4ed8' }, gyg: { l: 'GYG', bg: '#fef3c7', c: '#b45309' }, direct: { l: 'Direct', bg: '#dcfce7', c: '#15803d' }, other: { l: 'Other', bg: '#f1f5f9', c: '#64748b' } };
-const fmtDate = (iso, label) => label || (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—');
+const fmtDate = (iso, label) => {
+  if (iso) return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  if (label) return String(label).replace(/^[A-Za-z]{3},\s*/, '');
+  return '—';
+};
+const typeLabel = (t) => (t === 'last_minute' ? 'VIP' : 'Regular');
 
 // A name cell with a click-to-copy button (no need for Ctrl+C).
 function CopyName({ text, id, copied, onCopy }) {
@@ -35,6 +40,7 @@ function CopyName({ text, id, copied, onCopy }) {
 export default function TicketBookingAdmin() {
   const [page, setPage] = useState('list'); // list | tobook | add | detail
   const [detailId, setDetailId] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
   if (page === 'add') return <AddBookings onBack={() => setPage('list')} />;
   if (page === 'detail') return <BookingDetail id={detailId} onBack={() => setPage('list')} />;
   return (
@@ -44,8 +50,12 @@ export default function TicketBookingAdmin() {
           <button onClick={() => setPage('list')} className={`px-3.5 py-2 rounded-lg text-[13px] font-bold ${page === 'list' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'list' ? { background: '#050A1F' } : {}}>All bookings</button>
           <button onClick={() => setPage('tobook')} className={`px-3.5 py-2 rounded-lg text-[13px] font-bold ${page === 'tobook' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'tobook' ? { background: '#050A1F' } : {}}>🎫 Tickets to book</button>
         </div>
-        <button onClick={() => setPage('add')} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>+ Add new booking</button>
+        <div className="flex gap-2">
+          <button onClick={() => setShareOpen(true)} className="rounded-lg px-3.5 py-2 text-[13px] font-bold text-slate-600 border border-slate-200">🔗 Share link</button>
+          <button onClick={() => setPage('add')} className="rounded-lg px-4 py-2 text-[13px] font-bold text-white" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>+ Add new booking</button>
+        </div>
       </div>
+      {shareOpen && <ShareLinkModal onClose={() => setShareOpen(false)} />}
       {page === 'list' ? <BookingsList onOpen={(id) => { setDetailId(id); setPage('detail'); }} /> : <TicketsToBook onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
     </div>
   );
@@ -53,9 +63,10 @@ export default function TicketBookingAdmin() {
 
 function BookingsList({ onOpen }) {
   const [rows, setRows] = useState(null);
-  const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState('');
-  const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status]);
+  const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [date, setDate] = useState('');
+  const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); if (date) p.set('date', date); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status, date]);
+  const dlAll = (b) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const [expanded, setExpanded] = useState(null);
   const [copied, setCopied] = useState('');
   const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
@@ -66,10 +77,13 @@ function BookingsList({ onOpen }) {
   const verdict = (m, ticketed) => !ticketed ? <span className="text-slate-300">—</span> : m === 'ok' ? <span className="text-green-600 font-bold">✓</span> : m === 'time' ? <span className="text-red-600 font-bold">⚠ Time</span> : m === 'date' ? <span className="text-red-600 font-bold">⚠ Date</span> : m === 'missing' ? <span className="text-red-600 font-bold">⚠ Missing</span> : m === 'name' ? <span className="text-red-600 font-bold">⚠ Name</span> : '—';
   return (
     <div>
-      <div className="flex gap-2 mb-4 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]"><span className="absolute left-3 top-2.5 text-slate-400 text-sm">🔍</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search reference, traveler…" className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-[13px]" /></div>
+      <div className="flex gap-2 mb-4 flex-wrap items-center">
+        <div className="relative flex-1 min-w-[180px]"><span className="absolute left-3 top-2.5 text-slate-400 text-sm">🔍</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search reference, traveler…" className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-[13px]" /></div>
+        <label className="text-[12px] text-slate-500 font-semibold">Travel date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+        {date && <button onClick={() => setDate('')} className="text-[11.5px] text-slate-400 font-bold">clear</button>}
         <select value={source} onChange={(e) => setSource(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All sources</option><option value="viator">Viator</option><option value="gyg">Get Your Guide</option><option value="direct">Direct</option><option value="other">Other</option></select>
-        <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">Last Minute</option></select>
+        <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">VIP</option></select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All status</option><option value="new">New</option><option value="ticketed">Ticketed</option></select>
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
@@ -83,18 +97,24 @@ function BookingsList({ onOpen }) {
                   <td className="px-2 py-3 text-slate-400 text-center">{open ? '▲' : '▼'}</td>
                   <td className="px-3 py-3 font-bold text-[#050A1F]">{b.reference}</td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
-                  <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{b.bookingType === 'last_minute' ? 'Last Min' : 'Regular'}</span></td>
-                  <td className="px-3 py-3 text-slate-600">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
+                  <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#ede9fe' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#6d28d9' : '#64748b' }}>{typeLabel(b.bookingType)}</span></td>
+                  <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
                   <td className="px-3 py-3 text-slate-600">{b.bookedTime || '—'}</td>
                   <td className="px-3 py-3 text-slate-700 font-semibold">{titleCase(b.leadTraveler || '')}</td>
                   <td className="px-3 py-3 text-slate-600">{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
                   <td className="px-3 py-3 text-slate-500">{b.productName || '—'}</td>
-                  <td className="px-3 py-3">{green ? <span className="text-green-600 font-bold text-[11px]">✓ {b.ocoNumber}</span> : red ? <span className="text-red-600 font-bold text-[11px]">⚠ {b.ocoNumber} · mismatch</span> : <span className="text-slate-400 text-[11px]">New — not ticketed</span>}</td>
-                  <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}><div className="flex gap-2 justify-end"><button onClick={() => onOpen(b.id)} className="text-[12px] font-bold text-blue-600">View</button><button onClick={() => del(b)} className="text-[12px] font-bold text-red-400 hover:text-red-600">Delete</button></div></td>
+                  <td className="px-3 py-3 whitespace-nowrap">{green ? <span className="text-green-600 font-bold text-[11px]">✓ {b.ocoNumber}</span> : red ? <span className="text-red-600 font-bold text-[11px]">⚠ {b.ocoNumber}</span> : <span className="text-slate-400 text-[11px]">New</span>}</td>
+                  <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}><div className="flex gap-1 justify-end">
+                    <button onClick={() => onOpen(b.id)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-orange-500 hover:bg-orange-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg></button>
+                    <button onClick={() => del(b)} title="Delete" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg></button>
+                  </div></td>
                 </tr>
                 {open && <tr><td colSpan={11} className="p-0" style={{ background: '#f8fafc' }}>
                   <div className="px-6 py-4">
-                    <div className="text-[10.5px] font-extrabold text-slate-400 uppercase mb-2">{b.tourName || 'Travelers & tickets'}</div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10.5px] font-extrabold text-slate-400 uppercase">{b.tourName || 'Travelers & tickets'}</div>
+                      {ticketed && (b.travelers || []).some((t) => t.pdfPage) && <button onClick={() => dlAll(b)} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>⬇ Download all tickets</button>}
+                    </div>
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                       <table className="w-full text-[12px]"><thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-3 py-2">Sl.No.</th><th className="px-2">Traveler</th><th className="px-2">First name</th><th className="px-2">Last name</th><th className="px-2">Type</th><th className="px-2">Booked</th><th className="px-2">Ticket time</th><th className="px-2">OCO / page</th><th className="px-2">Match</th></tr></thead>
                         <tbody>{(b.travelers || []).map((t, ti) => { const bad = ticketed && t.match && t.match !== 'ok'; return (
@@ -465,6 +485,49 @@ function BulkUpload({ onClose, onDone }) {
                 <button onClick={() => { setResult(null); setFiles([]); }} className="text-[12.5px] font-bold text-slate-500">← Upload different files</button>
                 <button onClick={linkAll} disabled={busy} className="rounded-lg px-6 py-2.5 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : `Save all linked (${result.matched.length + Object.values(assign).filter(Boolean).length})`}</button>
               </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Public shareable read-only link management.
+function ShareLinkModal({ onClose }) {
+  const [status, setStatus] = useState(null); // { enabled, token }
+  const [busy, setBusy] = useState(false);
+  const load = () => api('/share/status').then(setStatus).catch((e) => toast(e.message));
+  useEffect(() => { load(); }, []);
+  const shareUrl = status && status.token ? `${window.location.origin}/tickets/share/${status.token}` : '';
+  const enable = async () => { setBusy(true); try { await api('/share/enable', { method: 'POST', body: '{}' }); await load(); toast('Public link ready'); } catch (e) { toast(e.message); } setBusy(false); };
+  const disable = async () => { if (!(await confirmDialog({ title: 'Turn off the public link?', message: 'The current link will stop working immediately.', confirmText: 'Turn off', danger: true }))) return; setBusy(true); try { await api('/share/disable', { method: 'POST', body: '{}' }); await load(); toast('Public link disabled'); } catch (e) { toast(e.message); } setBusy(false); };
+  const copy = () => { try { navigator.clipboard.writeText(shareUrl); toast('Link copied ✓'); } catch {} };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-[15px] font-extrabold text-[#050A1F]">🔗 Public shareable link</div><div className="text-[12px] text-slate-400">Read-only access to the whole Ticket Booking module.</div></div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5">
+          {!status ? <div className="text-slate-400 text-sm py-4">Loading…</div> : status.enabled ? (
+            <>
+              <label className="text-[10.5px] font-bold text-slate-500 uppercase block mb-1.5">Anyone with this link can view (no login)</label>
+              <div className="flex gap-2">
+                <input readOnly value={shareUrl} className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-[12px] font-mono bg-slate-50" onFocus={(e) => e.target.select()} />
+                <button onClick={copy} className="rounded-lg px-3 py-2 text-[12px] font-bold text-white" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>Copy</button>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 p-2.5 text-[11.5px] text-amber-700 mt-3">⚠ Anyone with this link can see all bookings, travelers and ticket PDFs. Share carefully.</div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={enable} disabled={busy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-slate-600 border border-slate-200">↻ Regenerate link</button>
+                <button onClick={disable} disabled={busy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-red-500 border border-red-100">Turn off link</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-[13px] text-slate-600 mb-3">Create a read-only public link so people without a login can view bookings, travelers and download tickets.</div>
+              <button onClick={enable} disabled={busy} className="rounded-lg px-4 py-2.5 text-[13px] font-bold text-white w-full" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>{busy ? 'Creating…' : 'Create public link'}</button>
             </>
           )}
         </div>
