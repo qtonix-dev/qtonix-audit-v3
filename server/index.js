@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v576';
+const APP_VERSION = 'v578';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -156,6 +156,24 @@ app.use('/api/admin', admin);
     catch { return res.status(401).send('Unauthorized'); }
   }, tb.downloadPdf);
   app.use('/api/ticket-share', tb.pub); app.use('/api/ticket-booking', requireAuth, requireAdmin, tb); }
+// Sticky Notes — CRM surface (role-based visibility via User.managerId).
+{
+  const { requireAuth } = require('./middleware/auth');
+  const { makeRouter } = require('./routes/stickyNotes');
+  const { User } = require('./models');
+  const crmNoteCtx = async (req, res, next) => {
+    try {
+      const u = req.user; const role = u.role;
+      const isAdmin = role === 'admin';
+      const isManager = role === 'manager' || role === 'leadmanager';
+      let reportIds = [];
+      if (isManager) { const reps = await User.findAll({ where: { managerId: u.id }, attributes: ['id'] }); reportIds = reps.map((r) => r.id); }
+      req.noteCtx = { surface: 'crm', meId: u.id, role, name: u.name, isAdmin, isManager, reportIds };
+      next();
+    } catch (e) { next(e); }
+  };
+  app.use('/api/sticky-notes', requireAuth, crmNoteCtx, makeRouter());
+}
 app.use('/api/surveys', require('./routes/crmSurvey'));
 app.use('/api/demo', demo);
 // Shareable training sandbox: /api/demo-app/<token>/... — token-gated inside
@@ -168,6 +186,25 @@ app.use('/api/tv', tv);
 app.use('/api/hr', hr);
 app.use('/api/hr', require('./routes/hrMail'));
 app.use('/api/hr/attendance', require('./routes/hrAttendance'));
+// Sticky Notes — HRMS surface (visibility via HrUser.reportsToId).
+{
+  const { requireHrAccess } = require('./middleware/hrAuth');
+  const { makeRouter } = require('./routes/stickyNotes');
+  const { HrUser } = require('./models');
+  const hrNoteCtx = async (req, res, next) => {
+    try {
+      const isAdmin = !!req.isHrAdmin;
+      const meId = req.isHrAdmin ? (req.hrActor && req.hrActor.id) : (req.hrUser && req.hrUser.id);
+      const name = (req.hrActor && req.hrActor.name) || (req.hrUser && req.hrUser.name) || 'User';
+      const isManager = !!req.isHrManager || (req.hrUser && (req.hrUser.type === 'manager' || req.hrUser.type === 'tl'));
+      let reportIds = [];
+      if (isManager && meId) { const reps = await HrUser.findAll({ where: { reportsToId: meId }, attributes: ['id'] }); reportIds = reps.map((r) => r.id); }
+      req.noteCtx = { surface: 'hrms', meId, role: isAdmin ? 'admin' : (isManager ? 'manager' : 'agent'), name, isAdmin, isManager, reportIds };
+      next();
+    } catch (e) { next(e); }
+  };
+  app.use('/api/hr/sticky-notes', requireHrAccess, hrNoteCtx, makeRouter());
+}
 app.use('/api/hr/tasks', require('./routes/hrTasks'));
 app.use('/api/hr/projects', require('./routes/projects'));
 app.use('/api/hr/tasks', require('./routes/tasks'));

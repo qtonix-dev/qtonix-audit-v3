@@ -2850,6 +2850,24 @@ const TicketBooking = sequelize.define('TicketBooking', {
 }, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }] });
 TicketBooking.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Sticky Notes — per-user colorful notes (Sales CRM + HRMS). Rich text stored as
+// HTML. Deletes are soft (archived) so an admin can restore or purge.
+const StickyNote = sequelize.define('StickyNote', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  surface: { type: DataTypes.STRING(8), defaultValue: 'crm' },   // crm | hrms
+  ownerId: { type: DataTypes.INTEGER, allowNull: false },         // CRM User.id or HrUser.id
+  ownerName: { type: DataTypes.STRING(160), allowNull: true },
+  title: { type: DataTypes.STRING(200), defaultValue: '' },
+  body: { type: DataTypes.TEXT, defaultValue: '' },              // HTML
+  color: { type: DataTypes.STRING(20), defaultValue: 'yellow' }, // palette key
+  fontSize: { type: DataTypes.STRING(8), defaultValue: 'medium' },
+  pinned: { type: DataTypes.BOOLEAN, defaultValue: false },
+  editCount: { type: DataTypes.INTEGER, defaultValue: 0 },       // owner edit sessions
+  lastEditAt: { type: DataTypes.DATE, allowNull: true },          // for session throttling
+  archived: { type: DataTypes.BOOLEAN, defaultValue: false },
+  archivedAt: { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'sticky_notes', indexes: [{ fields: ['surface', 'ownerId'] }, { fields: ['archived'] }] });
+
 const CrmSurvey = sequelize.define('CrmSurvey', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   name: { type: DataTypes.STRING(160), allowNull: false },
@@ -2983,7 +3001,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, StickyNote,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

@@ -9,6 +9,7 @@ import { CountryCombobox, PhoneField, Pagination, Icon, MailEditor } from './Lea
 import { formatPhone } from './countries.js';
 import Dashboard, { EmailDraftsPage } from './Dashboard.jsx';
 import TicketBookingAdmin from './TicketBooking.jsx';
+import StickyNotes from './StickyNotes.jsx';
 import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
 import SaleCelebration from './SaleCelebration.jsx';
@@ -1656,6 +1657,7 @@ export default function App() {
   const [showEmailSettings, setShowEmailSettings] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showTicketBooking, setShowTicketBooking] = useState(false);
+  const [showStickyNotes, setShowStickyNotes] = useState(false);
   const [view, setView] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -2040,6 +2042,13 @@ export default function App() {
       {showProfile && <EditProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => setUser((prev) => ({ ...prev, ...u }))} />}
       {showEmailSettings && <EmailSettingsModal user={user} onClose={() => setShowEmailSettings(false)} />}
       {showTemplates && <TemplatesModal user={user} onClose={() => setShowTemplates(false)} />}
+      {/* Fixed left-side Sticky Notes button (all CRM users) */}
+      {user && !showStickyNotes && (
+        <button onClick={() => setShowStickyNotes(true)} title="Sticky Notes" className="fixed left-0 top-1/2 -translate-y-1/2 z-[90] rounded-r-xl py-3 px-2 shadow-lg" style={{ background: 'linear-gradient(135deg,#FDE68A,#FBBF24)', writingMode: 'vertical-rl' }}>
+          <span className="text-[16px]" style={{ writingMode: 'horizontal-tb', display: 'inline-block' }}>🗒️</span>
+        </button>
+      )}
+      {showStickyNotes && <StickyNotes base="/sticky-notes" tokenKey="qtx_token" onClose={() => setShowStickyNotes(false)} />}
       {showTicketBooking && (
         <div className="fixed inset-0 bg-slate-50 z-[120] overflow-auto">
           <div className="bg-[#050A1F] text-white px-6 h-14 flex items-center justify-between sticky top-0 z-10">
