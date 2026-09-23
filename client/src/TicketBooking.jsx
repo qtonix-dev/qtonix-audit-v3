@@ -118,7 +118,7 @@ function BookingsList({ onOpen }) {
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All status</option><option value="new">New</option><option value="ticketed">Ticketed</option></select>
       </div>
       {(() => {
-      const TH = () => <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>;
+      const TH = () => <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>;
       const renderRow = (b) => { const src = SRC[b.source] || SRC.other; const green = b.status === 'ticketed' && !b.hasMismatch; const red = b.status === 'ticketed' && b.hasMismatch; const open = expanded === b.id; const ticketed = b.status === 'ticketed';
               return (
                 <React.Fragment key={b.id}>
@@ -128,10 +128,10 @@ function BookingsList({ onOpen }) {
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#ede9fe' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#6d28d9' : '#64748b' }}>{typeLabel(b.bookingType)}</span></td>
                   <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
-                  <td className="px-3 py-3 text-slate-600">{displayTime(b)}{b.status === 'ticketed' && displayTime(b) !== b.bookedTime ? <span className="text-[9px] text-slate-400 ml-1" title={`Customer: ${b.bookedTime}`}>●</span> : ''}</td>
                   <td className="px-3 py-3 text-slate-700 font-semibold">{titleCase(b.leadTraveler || '')}</td>
                   <td className="px-3 py-3 text-slate-600">{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
                   <td className="px-3 py-3 text-slate-500">{b.productName || '—'}</td>
+                  <td className="px-3 py-3 text-slate-600">{displayTime(b)}{b.status === 'ticketed' && displayTime(b) !== b.bookedTime ? <span className="text-[9px] text-slate-400 ml-1" title={`Customer: ${b.bookedTime}`}>●</span> : ''}</td>
                   <td className="px-3 py-3 whitespace-nowrap">{green ? <span className="text-green-600 font-bold text-[11px]">✓ {b.ocoNumber}</span> : red ? <span className="text-red-600 font-bold text-[11px]">⚠ {b.ocoNumber}</span> : <span className="text-slate-400 text-[11px]">New</span>}</td>
                   <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}><div className="flex gap-1 justify-end">
                     <button onClick={() => onOpen(b.id)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-orange-500 hover:bg-orange-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg></button>
@@ -355,7 +355,11 @@ function TicketsToBook({ onOpen }) {
         <button onClick={() => setBulkOpen(true)} className="ml-auto rounded-lg px-3.5 py-1.5 text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>⬆ Bulk upload booked tickets</button>
       </div>
       {data && data.tours.length === 0 && <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-[13px] text-slate-400">No bookings waiting for tickets with these filters.</div>}
-      {data && data.tours.map((tour) => (
+      {data && data.tours.map((tour) => {
+        const allB = tour.slots.flatMap((s) => s.bookings);
+        const vipPax = allB.filter((b) => b.bookingType === 'last_minute').reduce((s, b) => s + b.pax, 0);
+        const regPax = allB.filter((b) => b.bookingType !== 'last_minute').reduce((s, b) => s + b.pax, 0);
+        return (
         <div key={tour.tour} className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-5">
           <div className="px-5 py-3.5 flex items-center justify-between gap-3 flex-wrap" style={{ background: '#050A1F' }}>
             <div className="flex items-center gap-2.5 min-w-0">
@@ -365,9 +369,11 @@ function TicketsToBook({ onOpen }) {
                 <div className="text-[11px] text-slate-400">{[...new Set(tour.slots.map((s) => fmtDate(s.date)))].join(', ')}</div>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(139,92,246,.22)', color: '#c4b5fd' }}>{tour.ticketCount} ticket{tour.ticketCount !== 1 ? 's' : ''} to book</span>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(139,92,246,.22)', color: '#c4b5fd' }}>{tour.ticketCount} ticket{tour.ticketCount !== 1 ? 's' : ''}</span>
               <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(255,255,255,.1)', color: '#cbd5e1' }}>{tour.pax} traveller{tour.pax !== 1 ? 's' : ''}</span>
+              {regPax > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(148,163,184,.2)', color: '#cbd5e1' }}>Regular: {regPax}</span>}
+              {vipPax > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(196,181,253,.2)', color: '#ddd6fe' }}>VIP: {vipPax}</span>}
             </div>
           </div>
           <table className="w-full text-[12.5px]">
@@ -473,7 +479,7 @@ function TicketsToBook({ onOpen }) {
             </tbody>
           </table>
         </div>
-      ))}
+      ); })}
       {data && data.tours.length > 0 && <div className="rounded-xl px-5 py-3.5 flex items-center justify-between text-white text-[13px] font-bold" style={{ background: '#050A1F' }}><span>Grand total — {activeDate ? fmtDate(activeDate) : 'all dates'}</span><span>{data.grandTickets} tickets to book · {data.grandPax} travellers</span></div>}
 
       {bulkOpen && <BulkUpload onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); load(); }} />}
