@@ -64,9 +64,10 @@ router.post('/save', async (req, res, next) => {
       const children = travelers.filter((t) => t.type === 'Child').length || Number(b.children) || 0;
       const infants = travelers.filter((t) => t.type === 'Infant').length || Number(b.infants) || 0;
       const bookedTime = b.bookedTime || null;
-      const productName = b.productName || parser.productName(b.bookingType === 'last_minute' ? 'last_minute' : 'regular', bookedTime || '');
+      const bType = ['last_minute', 'arena', 'regular'].includes(b.bookingType) ? b.bookingType : 'regular';
+      const productName = b.productName || parser.productName(bType, bookedTime || '');
       const row = await TicketBooking.create({
-        source: b.source || 'other', bookingType: b.bookingType === 'last_minute' ? 'last_minute' : 'regular',
+        source: b.source || 'other', bookingType: bType,
         reference: String(b.reference || '').slice(0, 80), bookingDate: b.bookingDate || null,
         travelDate: b.travelDate || null, travelDateLabel: b.travelDateLabel || null,
         customerTime: b.customerTime || null, bookedTime, tourName: b.tourName || null,
@@ -271,12 +272,12 @@ router.get('/report/booked', async (req, res, next) => {
     for (const r of rows) {
       const d = r.bookedOnDate || 'undated';
       const trav = (Array.isArray(r.travelers) ? r.travelers.length : 0) || r.pax || 0;
-      if (!byDate[d]) byDate[d] = { date: d, bookings: 0, travellers: 0, viator: 0, gyg: 0, regular: 0, vip: 0, items: [] };
+      if (!byDate[d]) byDate[d] = { date: d, bookings: 0, travellers: 0, viator: 0, gyg: 0, regular: 0, vip: 0, arena: 0, items: [] };
       byDate[d].bookings += 1;
       byDate[d].travellers += trav;
       if (r.source === 'viator') byDate[d].viator += 1;
       if (r.source === 'gyg') byDate[d].gyg += 1;
-      if (r.bookingType === 'last_minute') byDate[d].vip += 1; else byDate[d].regular += 1;
+      if (r.bookingType === 'last_minute') byDate[d].vip += 1; else if (r.bookingType === 'arena') byDate[d].arena += 1; else byDate[d].regular += 1;
       byDate[d].items.push({ id: r.id, reference: r.reference, leadTraveler: r.leadTraveler, travellers: trav, source: r.source, bookingType: r.bookingType, travelDate: r.travelDate, ocoNumber: r.ocoNumber, bookedByEmail: r.bookedByEmail });
       grandBookings += 1; grandTravellers += trav;
     }

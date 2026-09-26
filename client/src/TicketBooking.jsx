@@ -20,7 +20,16 @@ const fmtDate = (iso, label) => {
   if (label) return String(label).replace(/^[A-Za-z]{3},\s*/, '');
   return '—';
 };
-const typeLabel = (t) => (t === 'last_minute' ? 'VIP' : 'Regular');
+const typeLabel = (t) => (t === 'last_minute' ? 'VIP' : t === 'arena' ? 'Arena AudioGuided' : 'Regular');
+// Pill styling per booking type (chip background + text color).
+const TYPE_STYLE = {
+  last_minute: { bg: '#ede9fe', c: '#6d28d9', softBg: '#fee2e2', softC: '#b91c1c' },
+  arena: { bg: '#dcfce7', c: '#15803d', softBg: '#dcfce7', softC: '#15803d' },
+  regular: { bg: '#f1f5f9', c: '#64748b', softBg: '#f1f5f9', softC: '#64748b' },
+};
+const typeStyle = (t) => TYPE_STYLE[t] || TYPE_STYLE.regular;
+// Product name preview for the review/edit screens (mirrors server productName).
+const productFor = (bookingType, time) => bookingType === 'last_minute' ? `VIP ${time || ''}`.trim() : bookingType === 'arena' ? `ARENA AUDIOGUIDED ${time || ''}`.trim() : `TICKET & AUDIOGUIDED TOUR ${time || ''}`.trim();
 // Time to show in the listing: once ticketed & linked to an OCO, show the ACTUAL
 // booked ticket time (all travelers in a booking share one time — one group);
 // otherwise show the customer/booked time.
@@ -118,7 +127,7 @@ function BookingsList({ onOpen, onEdit }) {
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
         {date && <button onClick={() => setDate('')} className="text-[11.5px] text-slate-400 font-bold">clear</button>}
         <select value={source} onChange={(e) => setSource(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All sources</option><option value="viator">Viator</option><option value="gyg">Get Your Guide</option><option value="direct">Direct</option><option value="other">Other</option></select>
-        <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">VIP</option></select>
+        <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">VIP</option><option value="arena">Arena AudioGuided</option></select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All status</option><option value="new">New</option><option value="ticketed">Ticketed</option></select>
       </div>
       {(() => {
@@ -130,7 +139,7 @@ function BookingsList({ onOpen, onEdit }) {
                   <td className="px-2 py-3 text-slate-400 text-center">{open ? '▲' : '▼'}</td>
                   <td className="px-3 py-3 font-bold text-[#050A1F]">{b.reference}</td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
-                  <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#ede9fe' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#6d28d9' : '#64748b' }}>{typeLabel(b.bookingType)}</span></td>
+                  <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: typeStyle(b.bookingType).bg, color: typeStyle(b.bookingType).c }}>{typeLabel(b.bookingType)}</span></td>
                   <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
                   <td className="px-3 py-3 text-slate-700 font-semibold">{titleCase(b.leadTraveler || '')}</td>
                   <td className="px-3 py-3 text-slate-600">{b.adults}A{b.children ? ` · ${b.children}C` : ''}</td>
@@ -205,7 +214,7 @@ function AddBookings({ onBack }) {
   const parse = async () => { if (!text.trim()) return; setParsing(true); try { const r = await api('/parse', { method: 'POST', body: JSON.stringify({ text }) }); setRows(r.rows || []); if (!(r.rows || []).length) toast('No bookings could be parsed from that text.'); } catch (e) { toast(e.message); } setParsing(false); };
   const setRow = (i, obj) => setRows((s) => s.map((x, idx) => idx === i ? { ...x, ...obj } : x));
   const setTrav = (i, ti, obj) => setRows((s) => s.map((x, idx) => idx === i ? { ...x, travelers: x.travelers.map((t, k) => k === ti ? { ...t, ...obj } : t) } : x));
-  const recomputeProduct = (row) => (row.bookingType === 'last_minute' ? `VIP ${row.bookedTime || ''}`.trim() : `TICKET & AUDIOGUIDED TOUR ${row.bookedTime || ''}`.trim());
+  const recomputeProduct = (row) => productFor(row.bookingType, row.bookedTime);
   const saveAll = async () => {
     setBusy(true);
     try {
@@ -238,7 +247,11 @@ function AddBookings({ onBack }) {
         <div className="text-[11px] font-extrabold text-slate-400 uppercase mt-6 mb-3">Parsed — review ({rows.length})</div>
         {rows.map((r, i) => { const src = SRC[r.source] || SRC.other; return (
           <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4 mb-3">
-            <div className="flex items-center gap-2 mb-3"><b className="text-[14px] text-[#050A1F]">{r.reference}</b><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: r.bookingType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: r.bookingType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{r.bookingType === 'last_minute' ? 'Last Minute' : 'Regular'}</span></div>
+            <div className="flex items-center gap-2 mb-3 flex-wrap"><b className="text-[14px] text-[#050A1F]">{r.reference}</b><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: typeStyle(r.bookingType).softBg, color: typeStyle(r.bookingType).softC }}>{typeLabel(r.bookingType)}</span>
+              <label className="ml-auto text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">Type
+                <select value={r.bookingType || 'regular'} onChange={(e) => setRow(i, { bookingType: e.target.value })} className="border border-slate-200 rounded-lg px-2 py-1 text-[12px] bg-white font-semibold normal-case text-slate-700"><option value="regular">Regular</option><option value="last_minute">VIP (Last minute)</option><option value="arena">Arena AudioGuided</option></select>
+              </label>
+            </div>
             <div className="grid grid-cols-3 gap-2.5">
               <Fld label="Booking reference" v={r.reference} on={(v) => setRow(i, { reference: v })} />
               <Fld label="Travel date" v={r.travelDateLabel || r.travelDate || ''} on={(v) => setRow(i, { travelDateLabel: v })} />
@@ -326,7 +339,7 @@ function BookingDetail({ id, onBack }) {
       <button onClick={onBack} className="text-[13px] font-bold text-slate-500 mb-3">← Back to bookings</button>
       <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
         <div className="flex items-start justify-between">
-          <div><div className="text-[19px] font-extrabold text-[#050A1F]">{b.reference}</div><div className="text-[13px] text-slate-500 mt-0.5">{b.tourName || ''}</div><div className="flex gap-1.5 mt-2"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: b.bookingType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: b.bookingType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{b.bookingType === 'last_minute' ? 'Last Minute' : 'Regular'}</span></div></div>
+          <div><div className="text-[19px] font-extrabold text-[#050A1F]">{b.reference}</div><div className="text-[13px] text-slate-500 mt-0.5">{b.tourName || ''}</div><div className="flex gap-1.5 mt-2"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: typeStyle(b.bookingType).softBg, color: typeStyle(b.bookingType).softC }}>{typeLabel(b.bookingType)}</span></div></div>
           {b.status === 'ticketed' && <div className="rounded-xl px-4 py-2 text-right border" style={{ background: b.hasMismatch ? '#fef2f2' : '#f0fdf4', borderColor: b.hasMismatch ? '#fecaca' : '#bbf7d0' }}><div className="text-[10px] font-bold uppercase" style={{ color: b.hasMismatch ? '#b91c1c' : '#15803d' }}>{b.hasMismatch ? '⚠ Ticketed · mismatch' : '✓ Ticketed · OCO'}</div><div className="text-[15px] font-extrabold" style={{ color: b.hasMismatch ? '#dc2626' : '#16a34a' }}>{b.ocoNumber}</div></div>}
         </div>
         <div className="grid grid-cols-5 gap-3 mt-4">
@@ -405,7 +418,7 @@ function EditBooking({ id, onBack }) {
         <div className="grid grid-cols-3 gap-2.5">
           <Fld label="Booking reference" v={b.reference} on={(v) => set({ reference: v })} />
           <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Source</label><select value={b.source || 'other'} onChange={(e) => set({ source: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"><option value="viator">Viator</option><option value="gyg">Get Your Guide</option><option value="direct">Direct</option><option value="other">Other</option></select></div>
-          <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Type</label><select value={b.bookingType || 'regular'} onChange={(e) => set({ bookingType: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"><option value="regular">Regular</option><option value="last_minute">VIP (Last minute)</option></select></div>
+          <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Type</label><select value={b.bookingType || 'regular'} onChange={(e) => set({ bookingType: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"><option value="regular">Regular</option><option value="last_minute">VIP (Last minute)</option><option value="arena">Arena AudioGuided</option></select></div>
         </div>
         <div className="grid grid-cols-3 gap-2.5 mt-2.5">
           <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Travel date</label><input type="date" value={b.travelDate || ''} onChange={(e) => set({ travelDate: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" /></div>
@@ -474,7 +487,7 @@ function Reporting({ onOpen }) {
           </div>
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
             <table className="w-full text-[12.5px]">
-              <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-4 py-3">Booked date</th><th className="text-right px-3 py-3">Bookings</th><th className="text-right px-3 py-3">Travellers</th><th className="text-right px-3 py-3">Regular</th><th className="text-right px-3 py-3">VIP</th><th className="text-right px-4 py-3">Viator / GYG</th></tr></thead>
+              <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-4 py-3">Booked date</th><th className="text-right px-3 py-3">Bookings</th><th className="text-right px-3 py-3">Travellers</th><th className="text-right px-3 py-3">Regular</th><th className="text-right px-3 py-3">VIP</th><th className="text-right px-3 py-3">Arena</th><th className="text-right px-4 py-3">Viator / GYG</th></tr></thead>
               <tbody>
                 {data.days.map((d) => { const isOpen = open === d.date; return (
                   <React.Fragment key={d.date}>
@@ -485,9 +498,10 @@ function Reporting({ onOpen }) {
                       <td className="px-3 py-3 text-right font-bold">{d.travellers}</td>
                       <td className="px-3 py-3 text-right text-slate-600">{d.regular}</td>
                       <td className="px-3 py-3 text-right text-slate-600">{d.vip}</td>
+                      <td className="px-3 py-3 text-right text-slate-600">{d.arena || 0}</td>
                       <td className="px-4 py-3 text-right text-slate-500">{d.viator} / {d.gyg}</td>
                     </tr>
-                    {isOpen && <tr><td colSpan={7} className="p-0" style={{ background: '#f8fafc' }}>
+                    {isOpen && <tr><td colSpan={8} className="p-0" style={{ background: '#f8fafc' }}>
                       <div className="px-6 py-3">
                         <table className="w-full text-[12px] bg-white border border-slate-200 rounded-xl overflow-hidden">
                           <thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-3 py-2">Reference</th><th className="px-2">Lead traveler</th><th className="px-2">Travellers</th><th className="px-2">Type</th><th className="px-2">Travel date</th><th className="px-2">OCO</th><th className="px-2">Booked from</th></tr></thead>
@@ -562,7 +576,8 @@ function TicketsToBook({ onOpen }) {
       {data && data.tours.map((tour) => {
         const allB = tour.slots.flatMap((s) => s.bookings);
         const vipPax = allB.filter((b) => b.bookingType === 'last_minute').reduce((s, b) => s + b.pax, 0);
-        const regPax = allB.filter((b) => b.bookingType !== 'last_minute').reduce((s, b) => s + b.pax, 0);
+        const arenaPax = allB.filter((b) => b.bookingType === 'arena').reduce((s, b) => s + b.pax, 0);
+        const regPax = allB.filter((b) => b.bookingType !== 'last_minute' && b.bookingType !== 'arena').reduce((s, b) => s + b.pax, 0);
         return (
         <div key={tour.tour} className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-5">
           <div className="px-5 py-3.5 flex items-center justify-between gap-3 flex-wrap" style={{ background: '#050A1F' }}>
@@ -578,6 +593,7 @@ function TicketsToBook({ onOpen }) {
               <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(255,255,255,.1)', color: '#cbd5e1' }}>{tour.pax} traveller{tour.pax !== 1 ? 's' : ''}</span>
               {regPax > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(148,163,184,.2)', color: '#cbd5e1' }}>Regular: {regPax}</span>}
               {vipPax > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(196,181,253,.2)', color: '#ddd6fe' }}>VIP: {vipPax}</span>}
+              {arenaPax > 0 && <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ background: 'rgba(134,239,172,.2)', color: '#bbf7d0' }}>Arena: {arenaPax}</span>}
             </div>
           </div>
           <table className="w-full text-[12.5px]">
@@ -609,7 +625,7 @@ function TicketsToBook({ onOpen }) {
                         // Merge candidates: SAME TOUR + SAME TYPE, fitting the free
                         // seats. Same-day bookings first, then a forward date window
                         // — VIP: next 2 days, Regular: next 3 days (any time).
-                        const windowDays = ticketType === 'last_minute' ? 2 : 3;
+                        const windowDays = (ticketType === 'last_minute' || ticketType === 'arena') ? 2 : 3;
                         const withinWindow = (dateStr) => {
                           if (!dateStr || !slot.date) return true;
                           const a = new Date(slot.date + 'T00:00:00Z'), b2 = new Date(dateStr + 'T00:00:00Z');
@@ -636,7 +652,7 @@ function TicketsToBook({ onOpen }) {
                         return (
                           <div key={bi} className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3 last:mb-0">
                             <div className="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2 border-b border-slate-100" style={{ background: '#faf5ff' }}>
-                              <div className="text-[13px]"><b className="text-violet-800">Ticket {bi + 1}{extras.length > 0 ? ' — merged' : ` of ${slot.tickets.length}`}</b><span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: usedPax === 8 ? '#dcfce7' : '#fef3c7', color: usedPax === 8 ? '#15803d' : '#b45309' }}>{usedPax}/8 pax{free > 0 ? ` · ${free} free` : ' · full'}</span><span className="ml-2 text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: ticketType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: ticketType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{ticketType === 'last_minute' ? 'Last Minute' : 'Regular'}</span></div>
+                              <div className="text-[13px]"><b className="text-violet-800">Ticket {bi + 1}{extras.length > 0 ? ' — merged' : ` of ${slot.tickets.length}`}</b><span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: usedPax === 8 ? '#dcfce7' : '#fef3c7', color: usedPax === 8 ? '#15803d' : '#b45309' }}>{usedPax}/8 pax{free > 0 ? ` · ${free} free` : ' · full'}</span><span className="ml-2 text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: typeStyle(ticketType).softBg, color: typeStyle(ticketType).softC }}>{typeLabel(ticketType)}</span></div>
                               <button onClick={(e) => { e.stopPropagation(); setUploadFor({ ids: members.map((m) => m.id), date: slot.date, time: slot.time }); }} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>🎟 Ticket booked — upload & mark as booked</button>
                             </div>
                             {timeGroups.map(([gkey, gmembers], gj) => { const [gdate, gtime] = gkey.split('|'); const ad = gmembers.reduce((s, m) => s + (m.adults || 0), 0); const ch = gmembers.reduce((s, m) => s + (m.children || 0), 0); const isMergedGroup = gmembers.every((m) => extraIds.includes(m.id));
@@ -668,7 +684,7 @@ function TicketsToBook({ onOpen }) {
                               const atLimit = currentTimes.size >= MAX_TIMES;
                               return (
                               <div className="px-4 py-3 border-t border-dashed border-amber-200" style={{ background: '#fffbeb99' }}>
-                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {ticketType === 'last_minute' ? 'VIP' : 'Regular'} booking <span className="text-amber-500 normal-case font-semibold">(same type · within {windowDays} day{windowDays !== 1 ? 's' : ''} · max {MAX_TIMES} times)</span></div>
+                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {typeLabel(ticketType)} booking <span className="text-amber-500 normal-case font-semibold">(same type · within {windowDays} day{windowDays !== 1 ? 's' : ''} · max {MAX_TIMES} times)</span></div>
                                 {atLimit && <div className="text-[10.5px] font-bold text-red-600 mb-2">⚠ This ticket already has {MAX_TIMES} different times ({[...currentTimes].sort().join(', ')}). Remove one before adding a booking with a new time.</div>}
                                 <div className="flex flex-col gap-1.5">
                                   {candidates.map((b) => {

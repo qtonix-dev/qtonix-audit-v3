@@ -33,9 +33,12 @@ function normDate(str) {
   return { iso: null, label: String(str).trim() };
 }
 // Product name uses the CUSTOMER time (what the customer booked for).
+// Types: last_minute -> VIP, arena -> Arena AudioGuided, else regular.
 function productName(bookingType, customerTime) {
   const t = customerTime || '';
-  return bookingType === 'last_minute' ? `VIP ${t}`.trim() : `TICKET & AUDIOGUIDED TOUR ${t}`.trim();
+  if (bookingType === 'last_minute') return `VIP ${t}`.trim();
+  if (bookingType === 'arena') return `ARENA AUDIOGUIDED ${t}`.trim();
+  return `TICKET & AUDIOGUIDED TOUR ${t}`.trim();
 }
 // Source is decided by the booking reference prefix: BR… = Viator, GYG… = GYG.
 function sourceFromRef(ref) {
@@ -92,7 +95,7 @@ function parseViator(block) {
   const productCode = g(/Product Code:\s*(.+)/i);
   const tourGrade = g(/Tour Grade:\s*(.+)/i);
   const tourGradeCode = g(/Tour Grade Code:\s*(.+)/i);
-  const bookingType = /LATE BOOKING|LAST MINUTE|VIP/i.test(tourGrade) ? 'last_minute' : 'regular';
+  const bookingType = /ARENA/i.test(tourGrade) ? 'arena' : /LATE BOOKING|LAST MINUTE|VIP/i.test(tourGrade) ? 'last_minute' : 'regular';
   // pax counts from "2 Adults" / "2 Adults, 1 Child"
   let adults = 0, children = 0, infants = 0;
   (travelersRaw.match(/(\d+)\s*Adult/i) || []).forEach && (adults = parseInt((travelersRaw.match(/(\d+)\s*Adult/i) || [])[1] || 0, 10));
@@ -120,7 +123,7 @@ function parseGyg(block) {
   const lines = block.split('\n').map((l) => l.trim());
   // Tour name = the line after "Booking: XXX" that isn't a label.
   const tourName = (block.match(/Booking:\s*[A-Z0-9]+\s*\n(.+)/i) || [])[1] || '';
-  const bookingType = /Last Minute|VIP/i.test(block) ? 'last_minute' : 'regular';
+  const bookingType = /Arena/i.test(block) ? 'arena' : /Last Minute|VIP/i.test(block) ? 'last_minute' : 'regular';
   // date/time "Sep 22, 2026 9:30 AM"
   const dtMatch = block.match(/([A-Za-z]{3}\.?\s+\d{1,2},?\s+\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
   const d = normDate(dtMatch ? dtMatch[1] : '');
@@ -162,7 +165,7 @@ async function parseBookings(text, keys) {
   let rows = [];
   if (keys && (keys.openai || keys.anthropic)) {
     try {
-      const system = 'You extract travel ticket bookings from pasted Viator or GetYourGuide confirmation text. There may be MULTIPLE bookings. Return ONLY a JSON array; each item: {"source":"viator|gyg|direct|other","bookingType":"regular|last_minute","reference":"","tourName":"","travelDateLabel":"e.g. Mon, Sep 21, 2026","customerTime":"HH:MM 24h","leadTraveler":"","adults":n,"children":n,"infants":n,"phone":"","email":"","language":"","travelers":[{"type":"Adult|Child|Infant","firstName":"","lastName":"","dob":"YYYY-MM-DD or empty"}]}. bookingType is last_minute if the text says LATE BOOKING / LAST MINUTE / VIP, else regular. Use DOB to decide Child (<18) vs Adult when present. Do not invent data.';
+      const system = 'You extract travel ticket bookings from pasted Viator or GetYourGuide confirmation text. There may be MULTIPLE bookings. Return ONLY a JSON array; each item: {"source":"viator|gyg|direct|other","bookingType":"regular|last_minute|arena","reference":"","tourName":"","travelDateLabel":"e.g. Mon, Sep 21, 2026","customerTime":"HH:MM 24h","leadTraveler":"","adults":n,"children":n,"infants":n,"phone":"","email":"","language":"","travelers":[{"type":"Adult|Child|Infant","firstName":"","lastName":"","dob":"YYYY-MM-DD or empty"}]}. bookingType is arena if the text mentions ARENA (Arena AudioGuided); else last_minute if the text says LATE BOOKING / LAST MINUTE / VIP; else regular. Use DOB to decide Child (<18) vs Adult when present. Do not invent data.';
       const out = await require('./aiVisibility').callAI({ anthropicKey: keys.anthropic, openaiKey: keys.openai, preferOpenai: true, system, messages: [{ role: 'user', content: String(text).slice(0, 12000) }], maxTokens: 3000 });
       const m = String(out || '').match(/\[[\s\S]*\]/);
       const arr = m ? JSON.parse(m[0]) : null;
@@ -174,7 +177,7 @@ async function parseBookings(text, keys) {
 }
 
 function normalizeAiRow(r) {
-  const bookingType = r.bookingType === 'last_minute' ? 'last_minute' : 'regular';
+  const bookingType = r.bookingType === 'last_minute' ? 'last_minute' : r.bookingType === 'arena' ? 'arena' : 'regular';
   const customerTime = to24h(r.customerTime) || r.customerTime || null;
   const bookedTime = customerTime;
   const suggestedTicketTime = plus15(customerTime);
