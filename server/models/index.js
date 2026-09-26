@@ -2845,9 +2845,12 @@ const TicketBooking = sequelize.define('TicketBooking', {
   ocoNumber: { type: DataTypes.STRING(40), allowNull: true },
   pdfUrl: { type: DataTypes.STRING(500), allowNull: true },
   pdfFileId: { type: DataTypes.STRING(120), allowNull: true },
+  // Which email the ticket was booked from + the date it was booked (captured at PDF upload).
+  bookedByEmail: { type: DataTypes.STRING(160), allowNull: true },
+  bookedOnDate: { type: DataTypes.STRING(10), allowNull: true },     // YYYY-MM-DD the ticket was booked
   createdById: { type: DataTypes.INTEGER, allowNull: true },
   createdByName: { type: DataTypes.STRING(160), allowNull: true },
-}, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }] });
+}, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }, { fields: ['bookedOnDate'] }] });
 TicketBooking.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
 // Sticky Notes — per-user colorful notes (Sales CRM + HRMS). Rich text stored as

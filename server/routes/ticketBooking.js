@@ -40,7 +40,25 @@ router.post('/save', async (req, res, next) => {
     if (!items.length) return res.status(400).json({ error: 'No bookings to save.' });
     const a = actor(req);
     const saved = [];
+    const skipped = []; // references that already exist in the DB (duplicate booking numbers)
+
+    // Pre-load existing references for the batch so we can skip duplicates. Compared
+    // case-insensitively and trimmed, so "BR-123 " and "br-123" count as the same.
+    const norm = (r) => String(r || '').trim().toLowerCase();
+    const batchRefs = items.map((b) => norm(b.reference)).filter(Boolean);
+    const existingRows = batchRefs.length
+      ? await TicketBooking.findAll({ attributes: ['reference'], where: { reference: { [Op.in]: items.map((b) => String(b.reference || '').trim()).filter(Boolean) } } })
+      : [];
+    const existingRefs = new Set(existingRows.map((r) => norm(r.reference)));
+    const seenInBatch = new Set(); // also guard against the same ref appearing twice in one paste
+
     for (const b of items) {
+      const ref = norm(b.reference);
+      if (ref && (existingRefs.has(ref) || seenInBatch.has(ref))) {
+        skipped.push({ reference: String(b.reference || '').trim(), leadTraveler: b.leadTraveler || null, reason: existingRefs.has(ref) ? 'already_exists' : 'duplicate_in_paste' });
+        continue;
+      }
+      if (ref) seenInBatch.add(ref);
       const travelers = (Array.isArray(b.travelers) ? b.travelers : []).map((t, i) => ({ sn: i + 1, type: t.type || 'Adult', index: i + 1, firstName: t.firstName || '', lastName: t.lastName || '', dob: t.dob || '' }));
       const adults = travelers.filter((t) => t.type === 'Adult').length || Number(b.adults) || 0;
       const children = travelers.filter((t) => t.type === 'Child').length || Number(b.children) || 0;
@@ -60,7 +78,7 @@ router.post('/save', async (req, res, next) => {
       });
       saved.push(row.toJSON());
     }
-    res.json({ ok: true, saved });
+    res.json({ ok: true, saved, skipped });
   } catch (e) { next(e); }
 });
 
@@ -185,6 +203,11 @@ router.post('/:id/upload-pdf', async (req, res, next) => {
     row.travelers = newTravelers; row.changed('travelers', true);
     row.ocoNumber = oco; row.pdfUrl = pdfUrl; row.pdfFileId = pdfFileId;
     row.status = 'ticketed'; row.hasMismatch = hasMismatch;
+    // Capture which email the ticket was booked from + the date it was booked, so a
+    // copy can be retrieved later. Free-text email; date defaults to today if omitted.
+    if (req.body && req.body.bookedByEmail !== undefined) row.bookedByEmail = String(req.body.bookedByEmail || '').trim() || null;
+    if (req.body && req.body.bookedOnDate !== undefined) row.bookedOnDate = String(req.body.bookedOnDate || '').trim() || null;
+    if (!row.bookedOnDate) row.bookedOnDate = new Date().toISOString().slice(0, 10);
     await row.save();
 
     // Delete each OLD file — but ONLY if no other booking still references it
@@ -214,16 +237,51 @@ router.post('/upload-group', async (req, res, next) => {
     // store once
     let pdfUrl = null, pdfFileId = null;
     try { const first = await TicketBooking.findByPk(ids[0]); const up = await imagekit.uploadFile({ base64: buffer.toString('base64'), fileName: `${extracted.oco || 'group'}.pdf`, folder: `TicketBooking/${(first && first.travelDate) || 'undated'}` }); pdfUrl = up.url; pdfFileId = up.fileId; } catch {}
+    const bookedByEmail = (req.body && req.body.bookedByEmail !== undefined) ? (String(req.body.bookedByEmail || '').trim() || null) : undefined;
+    const bookedOnDate = (req.body && String(req.body.bookedOnDate || '').trim()) || new Date().toISOString().slice(0, 10);
     const results = [];
     for (const id of ids) {
       const row = await TicketBooking.findByPk(id); if (!row) continue;
       const { travelers, oco, hasMismatch } = ticketPdf.matchToBooking(row.toJSON(), extracted);
       row.travelers = travelers; row.changed('travelers', true);
       row.ocoNumber = oco; row.pdfUrl = pdfUrl; row.pdfFileId = pdfFileId; row.status = 'ticketed'; row.hasMismatch = hasMismatch;
+      if (bookedByEmail !== undefined) row.bookedByEmail = bookedByEmail;
+      row.bookedOnDate = bookedOnDate;
       await row.save();
       results.push({ id, hasMismatch });
     }
     res.json({ ok: true, oco: extracted.oco, results });
+  } catch (e) { next(e); }
+});
+
+// Reporting: how many bookings were TICKETED, grouped by the date the ticket was
+// actually booked (bookedOnDate), plus how many travellers on each date.
+// Optional ?from=YYYY-MM-DD&to=YYYY-MM-DD to bound the range.
+router.get('/report/booked', async (req, res, next) => {
+  try {
+    const where = { status: 'ticketed' };
+    const from = req.query.from ? String(req.query.from) : null;
+    const to = req.query.to ? String(req.query.to) : null;
+    if (from && to) where.bookedOnDate = { [Op.gte]: from, [Op.lte]: to };
+    else if (from) where.bookedOnDate = { [Op.gte]: from };
+    else if (to) where.bookedOnDate = { [Op.lte]: to };
+    const rows = await TicketBooking.findAll({ where, order: [['bookedOnDate', 'DESC']] });
+    const byDate = {};
+    let grandBookings = 0, grandTravellers = 0;
+    for (const r of rows) {
+      const d = r.bookedOnDate || 'undated';
+      const trav = (Array.isArray(r.travelers) ? r.travelers.length : 0) || r.pax || 0;
+      if (!byDate[d]) byDate[d] = { date: d, bookings: 0, travellers: 0, viator: 0, gyg: 0, regular: 0, vip: 0, items: [] };
+      byDate[d].bookings += 1;
+      byDate[d].travellers += trav;
+      if (r.source === 'viator') byDate[d].viator += 1;
+      if (r.source === 'gyg') byDate[d].gyg += 1;
+      if (r.bookingType === 'last_minute') byDate[d].vip += 1; else byDate[d].regular += 1;
+      byDate[d].items.push({ id: r.id, reference: r.reference, leadTraveler: r.leadTraveler, travellers: trav, source: r.source, bookingType: r.bookingType, travelDate: r.travelDate, ocoNumber: r.ocoNumber, bookedByEmail: r.bookedByEmail });
+      grandBookings += 1; grandTravellers += trav;
+    }
+    const days = Object.values(byDate).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    res.json({ days, grandBookings, grandTravellers });
   } catch (e) { next(e); }
 });
 
@@ -349,6 +407,8 @@ router.post('/bulk/link', async (req, res, next) => {
   try {
     const links = Array.isArray(req.body && req.body.links) ? req.body.links : [];
     if (!links.length) return res.status(400).json({ error: 'Nothing to link.' });
+    const bookedByEmail = (req.body && req.body.bookedByEmail !== undefined) ? (String(req.body.bookedByEmail || '').trim() || null) : undefined;
+    const bookedOnDate = (req.body && String(req.body.bookedOnDate || '').trim()) || new Date().toISOString().slice(0, 10);
     const byBooking = {};
     for (const l of links) { (byBooking[l.bookingId] = byBooking[l.bookingId] || []).push(l); }
     const results = [];
@@ -369,6 +429,8 @@ router.post('/bulk/link', async (req, res, next) => {
       row.travelers = travelers; row.changed('travelers', true);
       row.ocoNumber = oco; row.pdfUrl = anyPdfUrl; row.pdfFileId = anyPdfFileId;
       row.status = 'ticketed'; row.hasMismatch = hasMismatch;
+      if (bookedByEmail !== undefined) row.bookedByEmail = bookedByEmail;
+      row.bookedOnDate = bookedOnDate;
       await row.save();
       results.push({ bookingId: Number(bid), hasMismatch });
     }

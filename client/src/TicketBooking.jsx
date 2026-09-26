@@ -48,17 +48,19 @@ function CopyName({ text, id, copied, onCopy }) {
 }
 
 export default function TicketBookingAdmin() {
-  const [page, setPage] = useState('list'); // list | tobook | add | detail
+  const [page, setPage] = useState('list'); // list | tobook | reporting | add | detail | edit
   const [detailId, setDetailId] = useState(null);
   const [shareOpen, setShareOpen] = useState(false);
   if (page === 'add') return <AddBookings onBack={() => setPage('list')} />;
   if (page === 'detail') return <BookingDetail id={detailId} onBack={() => setPage('list')} />;
+  if (page === 'edit') return <EditBooking id={detailId} onBack={() => setPage('list')} />;
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
         <div className="flex gap-2">
           <button onClick={() => setPage('list')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'list' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'list' ? { background: '#050A1F' } : {}}>All bookings</button>
           <button onClick={() => setPage('tobook')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'tobook' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'tobook' ? { background: '#050A1F' } : {}}>🎫 To book</button>
+          <button onClick={() => setPage('reporting')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'reporting' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'reporting' ? { background: '#050A1F' } : {}}>📊 Reporting</button>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShareOpen(true)} className="flex-1 sm:flex-none rounded-lg px-3 py-2 text-[12.5px] sm:text-[13px] font-bold text-slate-600 border border-slate-200 whitespace-nowrap">🔗 Share</button>
@@ -66,12 +68,14 @@ export default function TicketBookingAdmin() {
         </div>
       </div>
       {shareOpen && <ShareLinkModal onClose={() => setShareOpen(false)} />}
-      {page === 'list' ? <BookingsList onOpen={(id) => { setDetailId(id); setPage('detail'); }} /> : <TicketsToBook onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
+      {page === 'list' && <BookingsList onOpen={(id) => { setDetailId(id); setPage('detail'); }} onEdit={(id) => { setDetailId(id); setPage('edit'); }} />}
+      {page === 'tobook' && <TicketsToBook onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
+      {page === 'reporting' && <Reporting onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
     </div>
   );
 }
 
-function BookingsList({ onOpen }) {
+function BookingsList({ onOpen, onEdit }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [date, setDate] = useState('');
   const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); if (date) p.set('date', date); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
@@ -134,7 +138,8 @@ function BookingsList({ onOpen }) {
                   <td className="px-3 py-3 text-slate-600">{displayTime(b)}{b.status === 'ticketed' && displayTime(b) !== b.bookedTime ? <span className="text-[9px] text-slate-400 ml-1" title={`Customer: ${b.bookedTime}`}>●</span> : ''}</td>
                   <td className="px-3 py-3 whitespace-nowrap">{green ? <span className="text-green-600 font-bold text-[11px]">✓ {b.ocoNumber}</span> : red ? <span className="text-red-600 font-bold text-[11px]">⚠ {b.ocoNumber}</span> : <span className="text-slate-400 text-[11px]">New</span>}</td>
                   <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}><div className="flex gap-1 justify-end">
-                    <button onClick={() => onOpen(b.id)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-orange-500 hover:bg-orange-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg></button>
+                    <button onClick={() => onOpen(b.id)} title="View / upload ticket" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-violet-500 hover:bg-violet-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></button>
+                    <button onClick={() => onEdit(b.id)} title="Edit booking details" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-orange-500 hover:bg-orange-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="M15 6l3 3" /></svg></button>
                     <button onClick={() => del(b)} title="Delete" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg></button>
                   </div></td>
                 </tr>
@@ -201,7 +206,25 @@ function AddBookings({ onBack }) {
   const setRow = (i, obj) => setRows((s) => s.map((x, idx) => idx === i ? { ...x, ...obj } : x));
   const setTrav = (i, ti, obj) => setRows((s) => s.map((x, idx) => idx === i ? { ...x, travelers: x.travelers.map((t, k) => k === ti ? { ...t, ...obj } : t) } : x));
   const recomputeProduct = (row) => (row.bookingType === 'last_minute' ? `VIP ${row.bookedTime || ''}`.trim() : `TICKET & AUDIOGUIDED TOUR ${row.bookedTime || ''}`.trim());
-  const saveAll = async () => { setBusy(true); try { const bookings = rows.map((r) => ({ ...r, productName: recomputeProduct(r) })); await api('/save', { method: 'POST', body: JSON.stringify({ bookings }) }); toast(`Saved ${rows.length} booking(s) ✓`); onBack(); } catch (e) { toast(e.message); setBusy(false); } };
+  const saveAll = async () => {
+    setBusy(true);
+    try {
+      const bookings = rows.map((r) => ({ ...r, productName: recomputeProduct(r) }));
+      const res = await api('/save', { method: 'POST', body: JSON.stringify({ bookings }) });
+      const savedN = (res.saved || []).length;
+      const skipped = res.skipped || [];
+      if (skipped.length) {
+        // Some references already existed — save the rest, keep the duplicates on
+        // screen so the user can see exactly which booking numbers were skipped.
+        const skipRefs = new Set(skipped.map((s) => String(s.reference || '').trim().toLowerCase()));
+        toast(`Saved ${savedN} · skipped ${skipped.length} duplicate${skipped.length !== 1 ? 's' : ''}: ${skipped.map((s) => s.reference).join(', ')}`);
+        if (savedN > 0) { setRows((s) => s.filter((r) => skipRefs.has(String(r.reference || '').trim().toLowerCase()))); setBusy(false); }
+        else setBusy(false);
+      } else {
+        toast(`Saved ${savedN} booking(s) ✓`); onBack();
+      }
+    } catch (e) { toast(e.message); setBusy(false); }
+  };
   return (
     <div className="max-w-4xl">
       <button onClick={onBack} className="text-[13px] font-bold text-slate-500 mb-3">← Back to bookings</button>
@@ -253,20 +276,45 @@ function AddBookings({ onBack }) {
 }
 function Fld({ label, v, on, disabled }) { return <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">{label}</label><input value={v == null ? '' : v} disabled={disabled} onChange={(e) => on(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] disabled:bg-slate-50" /></div>; }
 
+// Asks which email the ticket was booked from + the date it was booked, before
+// the PDF is uploaded. Both are stored so a copy can be retrieved later.
+function UploadMetaModal({ fileName, defaultEmail, defaultDate, busy, onCancel, onConfirm }) {
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); // IST today
+  const [email, setEmail] = useState(defaultEmail || '');
+  const [date, setDate] = useState(defaultDate || today);
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[160] p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="text-[15px] font-extrabold text-[#050A1F] mb-1">Ticket booking details</div>
+        <div className="text-[12px] text-slate-500 mb-4">Before we link <b className="text-slate-700">{fileName || 'the PDF'}</b>, tell us which email you used to book the ticket and the date it was booked — so a copy can be found later if needed.</div>
+        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Booking email <span className="text-slate-300 normal-case font-semibold">(which inbox has the ticket)</span></label>
+        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e.g. bookings@qtonix.com" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] mb-3" autoFocus />
+        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Booked on (date)</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+        <div className="flex gap-2 justify-end mt-5">
+          <button onClick={onCancel} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-slate-500 border border-slate-200">Cancel</button>
+          <button onClick={() => onConfirm({ email: email.trim(), date })} disabled={busy} className="rounded-lg px-5 py-2 text-[12.5px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>{busy ? 'Uploading…' : 'Upload & verify'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BookingDetail({ id, onBack }) {
   const [b, setB] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState('');
+  const [pendingFile, setPendingFile] = useState(null); // holds the chosen PDF while we ask for email+date
   const copy = (text, cid) => { try { navigator.clipboard.writeText(text); setCopied(cid); setTimeout(() => setCopied(''), 1200); } catch {} };
   const dlPage = (bk, page) => window.open(`${API_BASE}/api/ticket-booking/${bk.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const dlAll = (bk) => window.open(`${API_BASE}/api/ticket-booking/${bk.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const load = () => api(`/${id}`).then(setB).catch((e) => toast(e.message));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
-  const upload = async (file) => {
+  const upload = async (file, meta) => {
     setUploading(true);
     try { const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
-      const r = await api(`/${id}/upload-pdf`, { method: 'POST', body: JSON.stringify({ base64: b64 }) });
-      toast(r.hasMismatch ? '⚠ Uploaded — some travelers have a mismatch' : '✓ Uploaded & verified — all match'); load();
+      const r = await api(`/${id}/upload-pdf`, { method: 'POST', body: JSON.stringify({ base64: b64, bookedByEmail: (meta && meta.email) || '', bookedOnDate: (meta && meta.date) || '' }) });
+      toast(r.hasMismatch ? '⚠ Uploaded — some travelers have a mismatch' : '✓ Uploaded & verified — all match'); setPendingFile(null); load();
     } catch (e) { toast(e.message); }
     setUploading(false);
   };
@@ -288,8 +336,16 @@ function BookingDetail({ id, onBack }) {
         </div>
       </div>
       <div className="flex items-center justify-between mb-2.5"><div className="text-[13px] font-extrabold text-[#050A1F]">Travelers & tickets</div>
-        <label className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white cursor-pointer" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>{uploading ? 'Reading PDF…' : '⬆ Upload ticket PDF'}<input type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files[0] && upload(e.target.files[0])} /></label>
+        <label className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white cursor-pointer" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>{uploading ? 'Reading PDF…' : '⬆ Upload ticket PDF'}<input type="file" accept="application/pdf" className="hidden" onChange={(e) => { if (e.target.files[0]) { setPendingFile(e.target.files[0]); e.target.value = ''; } }} /></label>
       </div>
+      {b.status === 'ticketed' && (b.bookedByEmail || b.bookedOnDate) && (
+        <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 mb-3 flex items-center gap-5 text-[12px] flex-wrap">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Booking record</span>
+          {b.bookedByEmail && <span className="text-slate-600">📧 Booked from <b className="text-[#050A1F]">{b.bookedByEmail}</b></span>}
+          {b.bookedOnDate && <span className="text-slate-600">📅 Booked on <b className="text-[#050A1F]">{fmtDate(b.bookedOnDate)}</b></span>}
+        </div>
+      )}
+      {pendingFile && <UploadMetaModal fileName={pendingFile.name} defaultEmail={b.bookedByEmail || ''} defaultDate={b.bookedOnDate || ''} busy={uploading} onCancel={() => setPendingFile(null)} onConfirm={(meta) => upload(pendingFile, meta)} />}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
         <table className="w-full text-[12.5px]">
           <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-4 py-2.5">Sl.No.</th><th className="text-left px-2 py-2.5">Traveler</th><th className="text-left px-2 py-2.5">First name</th><th className="text-left px-2 py-2.5">Last name</th><th className="text-left px-2 py-2.5">Type</th><th className="text-left px-2 py-2.5">Booked</th><th className="text-left px-2 py-2.5">Ticket time</th><th className="text-left px-2 py-2.5">OCO / page</th><th className="text-left px-2 py-2.5">Match</th></tr></thead>
@@ -311,6 +367,151 @@ function BookingDetail({ id, onBack }) {
         </table>
       </div>
       {b.status === 'ticketed' && <div className="text-[11.5px] text-slate-400 mt-2.5">Click an OCO to open the PDF at that traveler's page to print. Mismatches (name / date / time) show in red.</div>}
+    </div>
+  );
+}
+
+// Fully editable booking form (opened by the pencil icon). Edits reference,
+// dates, times, contact and every traveler, and saves via PUT /:id.
+function EditBooking({ id, onBack }) {
+  const [b, setB] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api(`/${id}`).then(setB).catch((e) => toast(e.message)); }, [id]);
+  const set = (obj) => setB((s) => ({ ...s, ...obj }));
+  const setTrav = (ti, obj) => setB((s) => ({ ...s, travelers: (s.travelers || []).map((t, k) => k === ti ? { ...t, ...obj } : t) }));
+  const addTrav = () => setB((s) => ({ ...s, travelers: [...(s.travelers || []), { type: 'Adult', firstName: '', lastName: '', dob: '' }] }));
+  const rmTrav = (ti) => setB((s) => ({ ...s, travelers: (s.travelers || []).filter((_, k) => k !== ti) }));
+  const save = async () => {
+    setBusy(true);
+    try {
+      const payload = {
+        reference: b.reference, source: b.source, bookingType: b.bookingType,
+        travelDate: b.travelDate || null, travelDateLabel: b.travelDateLabel || null,
+        bookedTime: b.bookedTime || null, customerTime: b.customerTime || null,
+        leadTraveler: b.leadTraveler || null, tourName: b.tourName || null,
+        phone: b.phone || null, email: b.email || null, language: b.language || null,
+        travelers: (b.travelers || []).map((t) => ({ type: t.type, firstName: t.firstName, lastName: t.lastName, dob: t.dob, ticketCode: t.ticketCode, ticketTime: t.ticketTime, ocoNumber: t.ocoNumber, pdfPage: t.pdfPage, match: t.match })),
+      };
+      await api(`/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      toast('Booking updated ✓'); onBack();
+    } catch (e) { toast(e.message); setBusy(false); }
+  };
+  if (!b) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  return (
+    <div className="max-w-3xl">
+      <button onClick={onBack} className="text-[13px] font-bold text-slate-500 mb-3">← Back to bookings</button>
+      <div className="flex items-center gap-2 mb-4"><h2 className="text-[18px] font-extrabold text-[#050A1F]">Edit booking</h2>{b.status === 'ticketed' && <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Ticketed · {b.ocoNumber || 'OCO'}</span>}</div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-4">
+        <div className="grid grid-cols-3 gap-2.5">
+          <Fld label="Booking reference" v={b.reference} on={(v) => set({ reference: v })} />
+          <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Source</label><select value={b.source || 'other'} onChange={(e) => set({ source: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"><option value="viator">Viator</option><option value="gyg">Get Your Guide</option><option value="direct">Direct</option><option value="other">Other</option></select></div>
+          <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Type</label><select value={b.bookingType || 'regular'} onChange={(e) => set({ bookingType: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"><option value="regular">Regular</option><option value="last_minute">VIP (Last minute)</option></select></div>
+        </div>
+        <div className="grid grid-cols-3 gap-2.5 mt-2.5">
+          <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Travel date</label><input type="date" value={b.travelDate || ''} onChange={(e) => set({ travelDate: e.target.value })} className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" /></div>
+          <Fld label="Customer time (HH:MM)" v={b.customerTime || ''} on={(v) => set({ customerTime: v })} />
+          <Fld label="Booked time (HH:MM)" v={b.bookedTime || ''} on={(v) => set({ bookedTime: v })} />
+        </div>
+        <div className="grid grid-cols-2 gap-2.5 mt-2.5">
+          <Fld label="Lead traveler" v={b.leadTraveler || ''} on={(v) => set({ leadTraveler: v })} />
+          <Fld label="Tour name" v={b.tourName || ''} on={(v) => set({ tourName: v })} />
+        </div>
+        <div className="grid grid-cols-3 gap-2.5 mt-2.5">
+          <Fld label="Phone" v={b.phone || ''} on={(v) => set({ phone: v })} />
+          <Fld label="Email" v={b.email || ''} on={(v) => set({ email: v })} />
+          <Fld label="Language" v={b.language || ''} on={(v) => set({ language: v })} />
+        </div>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-4">
+        <div className="flex items-center justify-between mb-2"><div className="text-[10px] font-extrabold text-slate-400 uppercase">Travelers ({(b.travelers || []).length})</div><button onClick={addTrav} className="text-[11.5px] font-bold text-violet-600">+ Add traveler</button></div>
+        {(b.travelers || []).map((t, ti) => (
+          <div key={ti} className="grid grid-cols-[90px_1fr_1fr_100px_28px] gap-2 mb-1.5 items-center">
+            <select value={t.type || 'Adult'} onChange={(e) => setTrav(ti, { type: e.target.value })} className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] bg-white">{['Adult', 'Child', 'Infant'].map((x) => <option key={x}>{x}</option>)}</select>
+            <input value={t.firstName || ''} onChange={(e) => setTrav(ti, { firstName: e.target.value })} placeholder="First name" className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+            <input value={t.lastName || ''} onChange={(e) => setTrav(ti, { lastName: e.target.value })} placeholder="Last name" className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+            <input value={t.dob || ''} onChange={(e) => setTrav(ti, { dob: e.target.value })} placeholder="DOB" className="border border-slate-200 rounded-lg px-2 py-1.5 text-[12px]" />
+            <button onClick={() => rmTrav(ti)} title="Remove" className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50">×</button>
+          </div>
+        ))}
+        {b.status === 'ticketed' && <div className="text-[11px] text-amber-600 mt-2">⚠ This booking is already ticketed. Editing traveler names or times may no longer match the linked OCO — re-verify by re-uploading the PDF if needed.</div>}
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onBack} className="rounded-lg px-4 py-2.5 text-[13px] font-bold text-slate-500 border border-slate-200">Cancel</button>
+        <button onClick={save} disabled={busy} className="rounded-lg px-6 py-2.5 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>{busy ? 'Saving…' : 'Save changes'}</button>
+      </div>
+    </div>
+  );
+}
+
+// Reporting: tickets booked, grouped by the date they were booked (bookedOnDate),
+// with booking + traveller counts. Optional date-range filter.
+function Reporting({ onOpen }) {
+  const [data, setData] = useState(null);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [open, setOpen] = useState(null);
+  const load = () => { const p = new URLSearchParams(); if (from) p.set('from', from); if (to) p.set('to', to); api(`/report/booked?${p}`).then(setData).catch((e) => toast(e.message)); };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [from, to]);
+  return (
+    <div>
+      <p className="text-[12.5px] text-slate-400 mb-4">Tickets you have booked, grouped by the date the ticket was booked. Shows how many bookings and how many travellers per day.</p>
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <label className="text-[12px] text-slate-500 font-semibold">From</label>
+        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[13px]" />
+        <label className="text-[12px] text-slate-500 font-semibold">To</label>
+        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-[13px]" />
+        {(from || to) && <button onClick={() => { setFrom(''); setTo(''); }} className="text-[11.5px] text-slate-400 font-bold">clear</button>}
+      </div>
+      {!data ? <div className="text-slate-400 text-sm py-6">Loading…</div> : data.days.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-[13px] text-slate-400">No tickets booked in this range yet.</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Days</div><div className="text-[22px] font-extrabold text-[#050A1F]">{data.days.length}</div></div>
+            <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Bookings booked</div><div className="text-[22px] font-extrabold text-violet-700">{data.grandBookings}</div></div>
+            <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Travellers</div><div className="text-[22px] font-extrabold" style={{ color: ORANGE }}>{data.grandTravellers}</div></div>
+            <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Avg / booking</div><div className="text-[22px] font-extrabold text-[#050A1F]">{data.grandBookings ? (data.grandTravellers / data.grandBookings).toFixed(1) : '0'}</div></div>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-4 py-3">Booked date</th><th className="text-right px-3 py-3">Bookings</th><th className="text-right px-3 py-3">Travellers</th><th className="text-right px-3 py-3">Regular</th><th className="text-right px-3 py-3">VIP</th><th className="text-right px-4 py-3">Viator / GYG</th></tr></thead>
+              <tbody>
+                {data.days.map((d) => { const isOpen = open === d.date; return (
+                  <React.Fragment key={d.date}>
+                    <tr className="border-t border-slate-50 cursor-pointer" style={{ background: isOpen ? '#f8fafc' : undefined }} onClick={() => setOpen(isOpen ? null : d.date)}>
+                      <td className="px-2 py-3 text-slate-400 text-center">{isOpen ? '▲' : '▼'}</td>
+                      <td className="px-4 py-3 font-bold text-[#050A1F]">{d.date === 'undated' ? 'Undated' : fmtDate(d.date)}</td>
+                      <td className="px-3 py-3 text-right font-extrabold text-violet-700">{d.bookings}</td>
+                      <td className="px-3 py-3 text-right font-bold">{d.travellers}</td>
+                      <td className="px-3 py-3 text-right text-slate-600">{d.regular}</td>
+                      <td className="px-3 py-3 text-right text-slate-600">{d.vip}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{d.viator} / {d.gyg}</td>
+                    </tr>
+                    {isOpen && <tr><td colSpan={7} className="p-0" style={{ background: '#f8fafc' }}>
+                      <div className="px-6 py-3">
+                        <table className="w-full text-[12px] bg-white border border-slate-200 rounded-xl overflow-hidden">
+                          <thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-3 py-2">Reference</th><th className="px-2">Lead traveler</th><th className="px-2">Travellers</th><th className="px-2">Type</th><th className="px-2">Travel date</th><th className="px-2">OCO</th><th className="px-2">Booked from</th></tr></thead>
+                          <tbody>{d.items.map((it) => (
+                            <tr key={it.id} className="border-b border-slate-50 last:border-0">
+                              <td className="px-3 py-1.5"><button onClick={() => onOpen(it.id)} className="font-mono text-[11px] text-violet-700 underline">{it.reference}</button></td>
+                              <td className="px-2 py-1.5 font-semibold text-slate-700">{titleCase(it.leadTraveler || '')}</td>
+                              <td className="px-2 py-1.5 text-slate-600">{it.travellers}</td>
+                              <td className="px-2 py-1.5">{typeLabel(it.bookingType)}</td>
+                              <td className="px-2 py-1.5 text-slate-500">{fmtDate(it.travelDate)}</td>
+                              <td className="px-2 py-1.5 text-slate-500">{it.ocoNumber || '—'}</td>
+                              <td className="px-2 py-1.5 text-slate-500">{it.bookedByEmail || '—'}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    </td></tr>}
+                  </React.Fragment>
+                ); })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -338,11 +539,14 @@ function TicketsToBook({ onOpen }) {
   // All booking ids that have been merged onto SOME ticket (so we hide them from
   // their own ticket and from other suggestion lists).
   const mergedElsewhere = new Set(Object.values(merges).flat());
-  const doUpload = async (file) => {
+  const [groupBusy, setGroupBusy] = useState(false);
+  const doUpload = async (file, meta) => {
+    setGroupBusy(true);
     try { const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
-      const r = await api('/upload-group', { method: 'POST', body: JSON.stringify({ ids: uploadFor.ids, base64: b64 }) });
+      const r = await api('/upload-group', { method: 'POST', body: JSON.stringify({ ids: uploadFor.ids, base64: b64, bookedByEmail: (meta && meta.email) || '', bookedOnDate: (meta && meta.date) || '' }) });
       toast(r.results.some((x) => x.hasMismatch) ? '⚠ Uploaded — some mismatches' : '✓ Booked & verified'); setUploadFor(null); load();
     } catch (e) { toast(e.message); }
+    setGroupBusy(false);
   };
   const dbtn = (k, l) => <button onClick={() => { setDateFilter(k); setCustomDate(''); setExpanded(null); }} className={`px-3.5 py-1.5 rounded-lg text-[13px] font-bold border ${dateFilter === k ? 'text-white border-transparent' : 'text-slate-500 bg-white border-slate-200'}`} style={dateFilter === k ? { background: '#050A1F' } : {}}>{l}</button>;
   return (
@@ -422,10 +626,12 @@ function TicketsToBook({ onOpen }) {
                           b.bookingType === ticketType &&
                           withinWindow(b.travelDate) &&
                           b.pax <= free && b.pax > 0);
-                        // Group members by their booked time (for the sub-table headings).
-                        const byTime = {};
-                        members.forEach((m) => { (byTime[m.bookedTime || '—'] = byTime[m.bookedTime || '—'] || []).push(m); });
-                        const timeGroups = Object.entries(byTime).sort((a, b) => a[0].localeCompare(b[0]));
+                        // Group members by their DATE + booked time (for the sub-table
+                        // headings) — a merge can span dates, so date must differentiate.
+                        // Key = "YYYY-MM-DD|HH:MM"; each group carries its own date & time.
+                        const byDT = {};
+                        members.forEach((m) => { const gk = `${m.travelDate || 'no-date'}|${m.bookedTime || '—'}`; (byDT[gk] = byDT[gk] || []).push(m); });
+                        const timeGroups = Object.entries(byDT).sort((a, b) => a[0].localeCompare(b[0]));
                         let slNo = 0;
                         return (
                           <div key={bi} className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3 last:mb-0">
@@ -433,16 +639,16 @@ function TicketsToBook({ onOpen }) {
                               <div className="text-[13px]"><b className="text-violet-800">Ticket {bi + 1}{extras.length > 0 ? ' — merged' : ` of ${slot.tickets.length}`}</b><span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: usedPax === 8 ? '#dcfce7' : '#fef3c7', color: usedPax === 8 ? '#15803d' : '#b45309' }}>{usedPax}/8 pax{free > 0 ? ` · ${free} free` : ' · full'}</span><span className="ml-2 text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: ticketType === 'last_minute' ? '#fee2e2' : '#f1f5f9', color: ticketType === 'last_minute' ? '#b91c1c' : '#64748b' }}>{ticketType === 'last_minute' ? 'Last Minute' : 'Regular'}</span></div>
                               <button onClick={(e) => { e.stopPropagation(); setUploadFor({ ids: members.map((m) => m.id), date: slot.date, time: slot.time }); }} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold text-white" style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>🎟 Ticket booked — upload & mark as booked</button>
                             </div>
-                            {timeGroups.map(([gtime, gmembers], gj) => { const ad = gmembers.reduce((s, m) => s + (m.adults || 0), 0); const ch = gmembers.reduce((s, m) => s + (m.children || 0), 0); const isMergedGroup = gmembers.every((m) => extraIds.includes(m.id));
+                            {timeGroups.map(([gkey, gmembers], gj) => { const [gdate, gtime] = gkey.split('|'); const ad = gmembers.reduce((s, m) => s + (m.adults || 0), 0); const ch = gmembers.reduce((s, m) => s + (m.children || 0), 0); const isMergedGroup = gmembers.every((m) => extraIds.includes(m.id));
                               return (
-                                <div key={gtime}>
-                                  {timeGroups.length > 1 && <div className="px-4 py-1.5 flex items-center gap-3 text-[11px] font-bold border-b border-slate-100" style={{ background: '#f8fafc' }}><span className="text-violet-700">⏱ {gtime}</span><span className="text-slate-600">{ad} Adult{ad !== 1 ? 's' : ''} · {ch} Child{ch !== 1 ? 'ren' : ''}</span>{isMergedGroup && <span className="text-amber-600 text-[10px]">merged ↩</span>}</div>}
+                                <div key={gkey}>
+                                  {timeGroups.length > 1 && <div className="px-4 py-1.5 flex items-center gap-3 text-[11px] font-bold border-b border-slate-100" style={{ background: '#f8fafc' }}><span className="text-slate-700">📅 {fmtDate(gdate === 'no-date' ? '' : gdate)}</span><span className="text-violet-700">⏱ {gtime}</span><span className="text-slate-600">{ad} Adult{ad !== 1 ? 's' : ''} · {ch} Child{ch !== 1 ? 'ren' : ''}</span>{isMergedGroup && <span className="text-amber-600 text-[10px]">merged ↩</span>}</div>}
                                   <table className="w-full text-[12px]"><thead><tr className="text-left text-[9px] uppercase text-slate-400 border-b border-slate-100"><th className="px-4 py-2">Sl.No.</th><th className="px-2">Booking ID</th><th className="px-2">Time</th><th className="px-2">Trav.</th><th className="px-2">First name</th><th className="px-2">Last name</th><th className="px-2">Type</th></tr></thead>
                                     <tbody>{gmembers.flatMap((bk) => (bk.travelers && bk.travelers.length ? bk.travelers : []).map((t, ti) => ({ bk, t, ti }))).map(({ bk, t, ti }) => { slNo++; const isExtra = extraIds.includes(bk.id); return (
                                       <tr key={`${bk.id}-${ti}`} className="border-b border-slate-50 last:border-0" style={{ background: isExtra ? '#fffbeb' : undefined }}>
                                         <td className="px-4 py-1.5 text-slate-500">{slNo}</td>
                                         <td className="px-2 py-1.5"><button onClick={() => onOpen(bk.id)} className="font-mono text-[11px] text-violet-700 underline">{bk.reference}</button></td>
-                                        <td className="px-2 py-1.5 font-semibold text-slate-600">{bk.bookedTime}</td>
+                                        <td className="px-2 py-1.5 font-semibold text-slate-600 whitespace-nowrap">{bk.bookedTime}{bk.travelDate && bk.travelDate !== slot.date ? <span className="text-[10px] text-amber-600 ml-1">· {fmtDate(bk.travelDate)}</span> : ''}</td>
                                         <td className="px-2 py-1.5 text-slate-500">{ti + 1}</td>
                                         <td className="px-2 py-1.5"><CopyName text={t.firstName} id={`${bk.id}-${ti}-f`} copied={copied} onCopy={copy} /></td>
                                         <td className="px-2 py-1.5"><CopyName text={t.lastName} id={`${bk.id}-${ti}-l`} copied={copied} onCopy={copy} /></td>
@@ -453,22 +659,43 @@ function TicketsToBook({ onOpen }) {
                                 </div>
                               );
                             })}
-                            {free > 0 && candidates.length > 0 && (
+                            {free > 0 && candidates.length > 0 && (() => {
+                              // Max 3 DISTINCT times per merged ticket. Compute the times
+                              // already on this ticket; adding a candidate whose time is
+                              // NEW and would make a 4th distinct time is blocked.
+                              const MAX_TIMES = 3;
+                              const currentTimes = new Set(members.map((m) => m.bookedTime || '—'));
+                              const atLimit = currentTimes.size >= MAX_TIMES;
+                              return (
                               <div className="px-4 py-3 border-t border-dashed border-amber-200" style={{ background: '#fffbeb99' }}>
-                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {ticketType === 'last_minute' ? 'VIP' : 'Regular'} booking <span className="text-amber-500 normal-case font-semibold">(same type · within {windowDays} day{windowDays !== 1 ? 's' : ''})</span></div>
+                                <div className="text-[10.5px] font-extrabold text-amber-800 uppercase tracking-wide mb-2">💡 {free} seat{free !== 1 ? 's' : ''} free — merge another {ticketType === 'last_minute' ? 'VIP' : 'Regular'} booking <span className="text-amber-500 normal-case font-semibold">(same type · within {windowDays} day{windowDays !== 1 ? 's' : ''} · max {MAX_TIMES} times)</span></div>
+                                {atLimit && <div className="text-[10.5px] font-bold text-red-600 mb-2">⚠ This ticket already has {MAX_TIMES} different times ({[...currentTimes].sort().join(', ')}). Remove one before adding a booking with a new time.</div>}
                                 <div className="flex flex-col gap-1.5">
-                                  {candidates.map((b) => (
-                                    <label key={b.id} className="flex items-center gap-2 text-[12.5px] cursor-pointer">
-                                      <input type="checkbox" checked={extraIds.includes(b.id)} onChange={() => toggleMerge(ticketKey, b.id)} className="accent-violet-600" />
+                                  {candidates.map((b) => {
+                                    const checked = extraIds.includes(b.id);
+                                    const bt = b.bookedTime || '—';
+                                    const isNewTime = !currentTimes.has(bt);
+                                    // Block adding a NEW time when already at the 3-time limit.
+                                    const blocked = !checked && isNewTime && atLimit;
+                                    return (
+                                    <label key={b.id} className={`flex items-center gap-2 text-[12.5px] ${blocked ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}`} title={blocked ? `Can't add — would exceed ${MAX_TIMES} different times on one ticket` : ''}>
+                                      <input type="checkbox" checked={checked} disabled={blocked}
+                                        onChange={() => {
+                                          if (blocked) { toast(`Max ${MAX_TIMES} different times per merged ticket. This ticket already has ${[...currentTimes].sort().join(', ')} — remove one before adding ${bt}.`); return; }
+                                          toggleMerge(ticketKey, b.id);
+                                        }} className="accent-violet-600" />
                                       <span className="font-mono text-[11px] text-violet-700">{b.reference}</span>
                                       <span className="font-semibold text-slate-700">{titleCase(b.leadTraveler || '')}</span>
-                                      <span className="text-[11px] text-slate-500">{b.pax} pax @ {b.bookedTime}{b.travelDate !== slot.date ? ` · ${fmtDate(b.travelDate)}` : ''}</span>
+                                      <span className="text-[11px] text-slate-500">{b.pax} pax @ {bt}{b.travelDate !== slot.date ? ` · ${fmtDate(b.travelDate)}` : ''}</span>
+                                      {isNewTime && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: blocked ? '#fee2e2' : '#eef2ff', color: blocked ? '#b91c1c' : '#4f46e5' }}>new time</span>}
                                     </label>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
-                                <p className="text-[10.5px] text-slate-400 mt-1.5">Merged bookings ride on this ticket and are removed from their own — book & upload once for all.</p>
+                                <p className="text-[10.5px] text-slate-400 mt-1.5">Merged bookings ride on this ticket and are removed from their own — book & upload once for all. A single ticket can hold at most {MAX_TIMES} different times.</p>
                               </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         );
                       })}
@@ -483,14 +710,17 @@ function TicketsToBook({ onOpen }) {
       {data && data.tours.length > 0 && <div className="rounded-xl px-5 py-3.5 flex items-center justify-between text-white text-[13px] font-bold" style={{ background: '#050A1F' }}><span>Grand total — {activeDate ? fmtDate(activeDate) : 'all dates'}</span><span>{data.grandTickets} tickets to book · {data.grandPax} travellers</span></div>}
 
       {bulkOpen && <BulkUpload onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); load(); }} />}
-      {uploadFor && (
+      {uploadFor && !uploadFor.file && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[150] p-4" onClick={() => setUploadFor(null)}>
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <div className="text-[15px] font-extrabold text-[#050A1F] mb-1">Upload ticket PDF</div>
             <div className="text-[12.5px] text-slate-500 mb-4">{uploadFor.ids.length} booking(s) @ {uploadFor.time} · {fmtDate(uploadFor.date)}. Upload the official PDF to verify and mark as booked.</div>
-            <label className="block rounded-lg border-2 border-dashed border-violet-300 text-violet-700 font-bold text-[13px] py-6 text-center cursor-pointer">⬆ Choose PDF<input type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files[0] && doUpload(e.target.files[0])} /></label>
+            <label className="block rounded-lg border-2 border-dashed border-violet-300 text-violet-700 font-bold text-[13px] py-6 text-center cursor-pointer">⬆ Choose PDF<input type="file" accept="application/pdf" className="hidden" onChange={(e) => { if (e.target.files[0]) { setUploadFor((u) => ({ ...u, file: e.target.files[0] })); } e.target.value = ''; }} /></label>
           </div>
         </div>
+      )}
+      {uploadFor && uploadFor.file && (
+        <UploadMetaModal fileName={uploadFor.file.name} defaultEmail="" defaultDate="" busy={groupBusy} onCancel={() => setUploadFor(null)} onConfirm={(meta) => doUpload(uploadFor.file, meta)} />
       )}
     </div>
   );
@@ -504,6 +734,8 @@ function BulkUpload({ onClose, onDone }) {
   const [result, setResult] = useState(null); // { matched, review, files, bookings }
   const [assign, setAssign] = useState({}); // reviewIndex -> bookingId
   const [busy, setBusy] = useState(false);
+  const [bkEmail, setBkEmail] = useState('');
+  const [bkDate, setBkDate] = useState(new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10));
   const addFiles = async (list) => {
     const arr = [];
     for (const f of list) { const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); }); arr.push({ name: f.name, base64: b64 }); }
@@ -520,7 +752,7 @@ function BulkUpload({ onClose, onDone }) {
     result.matched.forEach((m) => { links.push({ bookingId: m.bookingId, travelerIndex: m.travelerIndex, ticket: { code: m.ticket.code, time: m.ticket.time, dateIso: m.ticket.dateIso, page: m.ticket.page, oco: m.ticket.oco, pdfUrl: m.ticket.pdfUrl, pdfFileId: m.ticket.pdfFileId } }); });
     // manually-assigned review rows: match by name within the chosen booking
     result.review.forEach((rv, i) => { const bid = assign[i]; if (!bid) return; const bk = result.bookings.find((b) => b.id === bid); if (!bk) return; const tn = (rv.ticket.name || '').toLowerCase().replace(/[^a-z]/g, ''); let ti = bk.travelers.findIndex((full) => full.toLowerCase().replace(/[^a-z]/g, '') === tn); if (ti < 0) ti = 0; links.push({ bookingId: bid, travelerIndex: ti, ticket: { code: rv.ticket.code, time: rv.ticket.time, dateIso: rv.ticket.dateIso, page: rv.ticket.page, oco: rv.ticket.oco, pdfUrl: rv.ticket.pdfUrl, pdfFileId: rv.ticket.pdfFileId } }); });
-    try { await api('/bulk/link', { method: 'POST', body: JSON.stringify({ links }) }); toast(`Linked ${links.length} ticket(s) ✓`); onDone(); } catch (e) { toast(e.message); setBusy(false); }
+    try { await api('/bulk/link', { method: 'POST', body: JSON.stringify({ links, bookedByEmail: bkEmail.trim(), bookedOnDate: bkDate }) }); toast(`Linked ${links.length} ticket(s) ✓`); onDone(); } catch (e) { toast(e.message); setBusy(false); }
   };
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-start justify-center z-[150] p-4 overflow-auto">
@@ -561,6 +793,13 @@ function BulkUpload({ onClose, onDone }) {
                   </table>
                 </div>
               </>}
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 mb-4">
+                <div className="text-[10px] font-extrabold uppercase text-slate-400 mb-2">Booking record — applies to all tickets in this upload</div>
+                <div className="flex gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[200px]"><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Booked from email</label><input value={bkEmail} onChange={(e) => setBkEmail(e.target.value)} placeholder="e.g. bookings@qtonix.com" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
+                  <div><label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Booked on</label><input type="date" value={bkDate} onChange={(e) => setBkDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" /></div>
+                </div>
+              </div>
               <div className="flex justify-between items-center">
                 <button onClick={() => { setResult(null); setFiles([]); }} className="text-[12.5px] font-bold text-slate-500">← Upload different files</button>
                 <button onClick={linkAll} disabled={busy} className="rounded-lg px-6 py-2.5 text-[13px] font-bold text-white disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF4500)' }}>{busy ? 'Saving…' : `Save all linked (${result.matched.length + Object.values(assign).filter(Boolean).length})`}</button>
