@@ -36,17 +36,18 @@ export default function StickyNotes({ base = '/sticky-notes', tokenKey = 'qtx_to
   }, [base, tokenKey]);
 
   const [notes, setNotes] = useState(null);
-  const [meta, setMeta] = useState({ isAdmin: false, isManager: false, showEdits: false, owners: [], meId: null });
+  const [meta, setMeta] = useState({ isAdmin: false, isManager: false, showEdits: false, owners: [], departments: [], meId: null });
   const [q, setQ] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
+  const [deptFilter, setDeptFilter] = useState(''); // HRMS admin: filter by department
   const [tab, setTab] = useState('notes'); // notes | archive
   const [open, setOpen] = useState(null); // note being edited in overlay
 
   const load = useCallback(() => {
-    const p = new URLSearchParams(); if (q) p.set('q', q); if (ownerFilter) p.set('owner', ownerFilter);
-    api(`/?${p}`).then((r) => { setNotes(r.notes || []); setMeta({ isAdmin: r.isAdmin, isManager: r.isManager, showEdits: r.showEdits, owners: r.owners || [], meId: r.meId }); }).catch((e) => toast(e.message));
-  }, [api, q, ownerFilter]);
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, ownerFilter]);
+    const p = new URLSearchParams(); if (q) p.set('q', q); if (ownerFilter) p.set('owner', ownerFilter); if (deptFilter) p.set('department', deptFilter);
+    api(`/?${p}`).then((r) => { setNotes(r.notes || []); setMeta({ isAdmin: r.isAdmin, isManager: r.isManager, showEdits: r.showEdits, owners: r.owners || [], departments: r.departments || [], meId: r.meId }); }).catch((e) => toast(e.message));
+  }, [api, q, ownerFilter, deptFilter]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, ownerFilter, deptFilter]);
 
   const createNote = async () => {
     try { const r = await api('/', { method: 'POST', body: JSON.stringify({ title: '', body: '', color: 'yellow' }) }); await load(); setOpen(r.note); } catch (e) { toast(e.message); }
@@ -58,6 +59,10 @@ export default function StickyNotes({ base = '/sticky-notes', tokenKey = 'qtx_to
   };
   const togglePin = async (n) => { await patch(n.id, { pinned: !n.pinned }); load(); };
   const setColor = async (n, color) => { await patch(n.id, { color }); load(); };
+
+  // HRMS surface is identified by its API base; department/employee dropdowns are
+  // HRMS-admin only. CRM keeps its original owner chips.
+  const isHrmsAdmin = meta.isAdmin && /\/hr\//.test(base || '');
 
   const pinned = (notes || []).filter((n) => n.pinned);
   const rest = (notes || []).filter((n) => !n.pinned);
@@ -79,8 +84,23 @@ export default function StickyNotes({ base = '/sticky-notes', tokenKey = 'qtx_to
           </div>
           {(meta.isAdmin || meta.isManager) && (
             <div className="flex gap-2 mt-3.5 flex-wrap items-center">
-              <button onClick={() => { setTab('notes'); setOwnerFilter(''); }} className={`text-[12px] font-bold px-3.5 py-1.5 rounded-full border ${tab === 'notes' && !ownerFilter ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`} style={tab === 'notes' && !ownerFilter ? { background: '#050A1F', borderColor: '#050A1F' } : {}}>All I can see</button>
-              {tab === 'notes' && meta.owners.map((o) => <button key={o.id} onClick={() => setOwnerFilter(String(o.id))} className={`text-[12px] font-bold px-3.5 py-1.5 rounded-full border ${ownerFilter === String(o.id) ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`} style={ownerFilter === String(o.id) ? { background: '#050A1F', borderColor: '#050A1F' } : {}}>{o.id === meta.meId ? 'My notes' : titleCase(o.name)} ({o.count})</button>)}
+              <button onClick={() => { setTab('notes'); setOwnerFilter(''); setDeptFilter(''); }} className={`text-[12px] font-bold px-3.5 py-1.5 rounded-full border ${tab === 'notes' && !ownerFilter && !deptFilter ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`} style={tab === 'notes' && !ownerFilter && !deptFilter ? { background: '#050A1F', borderColor: '#050A1F' } : {}}>All I can see</button>
+              {/* HRMS admin: filter by department, then by employee. */}
+              {tab === 'notes' && isHrmsAdmin && meta.departments.length > 0 && (
+                <select value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value); setOwnerFilter(''); }} className="text-[12px] font-bold px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-600">
+                  <option value="">All departments</option>
+                  {meta.departments.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.count})</option>)}
+                </select>
+              )}
+              {/* HRMS admin: employee dropdown (department-scoped). */}
+              {tab === 'notes' && isHrmsAdmin && (
+                <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} className="text-[12px] font-bold px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-600">
+                  <option value="">All employees{deptFilter ? ` in ${deptFilter}` : ''}</option>
+                  {meta.owners.map((o) => <option key={o.id} value={String(o.id)}>{o.id === meta.meId ? 'My notes' : titleCase(o.name)} ({o.count})</option>)}
+                </select>
+              )}
+              {/* CRM (or non-admin with team): keep the quick owner chips. */}
+              {tab === 'notes' && !isHrmsAdmin && meta.owners.map((o) => <button key={o.id} onClick={() => setOwnerFilter(String(o.id))} className={`text-[12px] font-bold px-3.5 py-1.5 rounded-full border ${ownerFilter === String(o.id) ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`} style={ownerFilter === String(o.id) ? { background: '#050A1F', borderColor: '#050A1F' } : {}}>{o.id === meta.meId ? 'My notes' : titleCase(o.name)} ({o.count})</button>)}
               {meta.isAdmin && <button onClick={() => setTab('archive')} className={`text-[12px] font-bold px-3.5 py-1.5 rounded-full border ml-1 ${tab === 'archive' ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`} style={tab === 'archive' ? { background: '#050A1F', borderColor: '#050A1F' } : {}}>🗑 Archive</button>}
             </div>
           )}

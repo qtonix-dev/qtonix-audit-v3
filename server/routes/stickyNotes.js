@@ -25,6 +25,22 @@ function makeRouter() {
     return { ...base, ownerId: ctx.meId };
   }
 
+  // Look up the department for a set of owner ids (HRMS uses HrUser, CRM uses User).
+  async function deptMap(ctx, ids) {
+    const out = {};
+    if (!ids.length) return out;
+    try {
+      if (ctx.surface === 'hrms') {
+        const us = await HrUser.findAll({ where: { id: { [Op.in]: ids } }, attributes: ['id', 'department'] });
+        us.forEach((u) => { out[u.id] = u.department || ''; });
+      } else {
+        const us = await User.findAll({ where: { id: { [Op.in]: ids } }, attributes: ['id'] });
+        us.forEach((u) => { out[u.id] = ''; }); // CRM has no department concept here
+      }
+    } catch { /* best-effort */ }
+    return out;
+  }
+
   // LIST (non-archived). Recently edited first.
   router.get('/', async (req, res, next) => {
     try {
@@ -33,6 +49,12 @@ function makeRouter() {
       let rows = await StickyNote.findAll({ where, order: [['pinned', 'DESC'], ['updatedAt', 'DESC']] });
       const q = req.query.q ? String(req.query.q).toLowerCase() : '';
       if (q) rows = rows.filter((r) => `${r.title} ${String(r.body).replace(/<[^>]*>/g, ' ')} ${r.ownerName || ''}`.toLowerCase().includes(q));
+      // Admin-only department filter (HRMS): map each owner to a department and
+      // keep only notes whose owner is in the chosen department.
+      const dept = req.query.department ? String(req.query.department) : '';
+      let dmap = {};
+      if (ctx.isAdmin && ctx.surface === 'hrms') dmap = await deptMap(ctx, [...new Set(rows.map((r) => r.ownerId))]);
+      if (dept && ctx.isAdmin && ctx.surface === 'hrms') rows = rows.filter((r) => (dmap[r.ownerId] || '') === dept);
       const owner = req.query.owner ? Number(req.query.owner) : null;
       if (owner) rows = rows.filter((r) => r.ownerId === owner);
       // Hide edit count from plain agents (their own view).
@@ -41,17 +63,35 @@ function makeRouter() {
         notes: rows.map((r) => { const o = pub(r); if (!showEdits) delete o.editCount; return o; }),
         canSeeTeam: ctx.isAdmin || ctx.isManager,
         isAdmin: ctx.isAdmin, isManager: ctx.isManager, meId: ctx.meId, showEdits,
-        owners: (ctx.isAdmin || ctx.isManager) ? await ownerList(ctx) : [],
+        owners: (ctx.isAdmin || ctx.isManager) ? await ownerList(ctx, dept) : [],
+        departments: (ctx.isAdmin && ctx.surface === 'hrms') ? await departmentList(ctx) : [],
       });
     } catch (e) { next(e); }
   });
 
-  async function ownerList(ctx) {
+  // Departments that actually have notes (HRMS admin), with note counts.
+  async function departmentList(ctx) {
+    const where = await visibleWhere(ctx);
+    const rows = await StickyNote.findAll({ where, attributes: ['ownerId'] });
+    const ids = [...new Set(rows.map((r) => r.ownerId))];
+    const dmap = await deptMap(ctx, ids);
+    const counts = {};
+    for (const r of rows) { const d = dmap[r.ownerId] || ''; if (!d) continue; counts[d] = (counts[d] || 0) + 1; }
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async function ownerList(ctx, dept = '') {
     // For the owner chips: distinct owners the viewer can see, with note counts.
+    // When a department is chosen (HRMS admin), restrict owners to that department.
     const where = await visibleWhere(ctx);
     const rows = await StickyNote.findAll({ where, attributes: ['ownerId', 'ownerName'] });
+    let dmap = {};
+    if (dept && ctx.isAdmin && ctx.surface === 'hrms') dmap = await deptMap(ctx, [...new Set(rows.map((r) => r.ownerId))]);
     const map = {};
-    for (const r of rows) { const k = r.ownerId; map[k] = map[k] || { id: r.ownerId, name: r.ownerName || `#${r.ownerId}`, count: 0 }; map[k].count++; }
+    for (const r of rows) {
+      if (dept && ctx.isAdmin && ctx.surface === 'hrms' && (dmap[r.ownerId] || '') !== dept) continue;
+      const k = r.ownerId; map[k] = map[k] || { id: r.ownerId, name: r.ownerName || `#${r.ownerId}`, count: 0 }; map[k].count++;
+    }
     return Object.values(map).sort((a, b) => (a.id === ctx.meId ? -1 : b.id === ctx.meId ? 1 : a.name.localeCompare(b.name)));
   }
 

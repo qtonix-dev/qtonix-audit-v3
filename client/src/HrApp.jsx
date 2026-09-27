@@ -14,6 +14,7 @@ import HrSurveyAdmin, { HrSurveyGate } from './HrSurvey.jsx';
 import ProjectsView, { ProjectFlowAdmin } from './Projects.jsx';
 import NotifToaster from './NotifToaster.jsx';
 import LeaveConsole from './HrLeaveConsole.jsx';
+import StickyNotes from './StickyNotes.jsx';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -12476,6 +12477,7 @@ export default function HrApp() {
   const [expenseIntent, setExpenseIntent] = useState(null); // expenseId to open in Expenses
   const navToExpense = (expenseId) => { setExpenseIntent(expenseId); setView('corehr_expenses'); setNavKey((k) => k + 1); };
   const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
+  const [showStickyNotes, setShowStickyNotes] = useState(false);
   // setView writes a clean URL under the base: /dashboard on the HRMS domain, or
   // /hr/dashboard elsewhere. Core HR as <base>/core-hr/<sub>.
   const setView = (v) => { setViewRaw(v); const target = `${HR_BASE}/${viewToSlug(v)}`; if (location.pathname !== target) navigate(target); };
@@ -12631,6 +12633,13 @@ export default function HrApp() {
       />
       {idleWarn && <HrIdleWarning onContinue={() => idleResetRef.current && idleResetRef.current()} onSignOut={logout} />}
       {logoutSummary && <LogoutSummary summary={logoutSummary} onStay={() => setLogoutSummary(null)} onLogout={logout} name={(user && user.name || '').split(' ')[0]} />}
+      {/* Sticky Notes — fixed left-edge tab + full-screen overlay (HRMS surface). */}
+      {user && !showStickyNotes && (
+        <button onClick={() => setShowStickyNotes(true)} title="Sticky Notes" className="fixed left-0 top-1/2 -translate-y-1/2 z-[90] rounded-r-xl py-3 px-2 shadow-lg" style={{ background: 'linear-gradient(135deg,#FDE68A,#FBBF24)', writingMode: 'vertical-rl' }}>
+          <span className="text-[16px]" style={{ writingMode: 'horizontal-tb', display: 'inline-block' }}>🗒️</span>
+        </button>
+      )}
+      {showStickyNotes && <StickyNotes base="/hr/sticky-notes" tokenKey="qtx_hr_token" onClose={() => setShowStickyNotes(false)} />}
       <header className="bg-[#050A1F] text-white">
         <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14 gap-2">
           <div className="flex items-center gap-3 md:gap-6 min-w-0">

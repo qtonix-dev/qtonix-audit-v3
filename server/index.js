@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v580';
+const APP_VERSION = 'v581';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -196,10 +196,10 @@ app.use('/api/hr/attendance', require('./routes/hrAttendance'));
       const isAdmin = !!req.isHrAdmin;
       const meId = req.isHrAdmin ? (req.hrActor && req.hrActor.id) : (req.hrUser && req.hrUser.id);
       const name = (req.hrActor && req.hrActor.name) || (req.hrUser && req.hrUser.name) || 'User';
-      const isManager = !!req.isHrManager || (req.hrUser && (req.hrUser.type === 'manager' || req.hrUser.type === 'tl'));
-      let reportIds = [];
-      if (isManager && meId) { const reps = await HrUser.findAll({ where: { reportsToId: meId }, attributes: ['id'] }); reportIds = reps.map((r) => r.id); }
-      req.noteCtx = { surface: 'hrms', meId, role: isAdmin ? 'admin' : (isManager ? 'manager' : 'agent'), name, isAdmin, isManager, reportIds };
+      // In HRMS, managers/TLs do NOT see their team's sticky notes — only their
+      // own. Only the admin can view/filter everyone's and access the archive.
+      // (Unlike the CRM, where a manager sees their reports' notes.)
+      req.noteCtx = { surface: 'hrms', meId, role: isAdmin ? 'admin' : 'agent', name, isAdmin, isManager: false, reportIds: [] };
       next();
     } catch (e) { next(e); }
   };
