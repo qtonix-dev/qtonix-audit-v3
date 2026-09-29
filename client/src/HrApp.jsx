@@ -2254,8 +2254,45 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
     return () => { alive = false; clearInterval(iv); };
   }, [active]);
 
-  // Auto-scroll to newest.
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
+  // Smart auto-scroll: jump to the newest message ONLY when the user is already
+  // at (or near) the bottom, or when they just switched conversations. If they
+  // scrolled up to read history / copy a link / grab a file, DON'T yank them
+  // back down when new messages or poll refreshes arrive.
+  const activeIdRef = useRef(null);
+  const [showJumpLatest, setShowJumpLatest] = useState(false);
+  const isNearBottom = () => {
+    const el = scrollRef.current; if (!el) return true;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 120; // px threshold
+  };
+  const scrollToBottom = (smooth) => {
+    const el = scrollRef.current; if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    setShowJumpLatest(false);
+  };
+  const primedForConv = useRef(null); // conv id we've already jumped-to-bottom for
+  useEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    const convId = active && active.id;
+    if (activeIdRef.current !== convId) { activeIdRef.current = convId; primedForConv.current = null; setShowJumpLatest(false); }
+    // First time this conversation's messages render (after the empty []), jump
+    // to the bottom. This covers switching chats and the initial open.
+    if (messages.length > 0 && primedForConv.current !== convId) {
+      primedForConv.current = convId;
+      requestAnimationFrame(() => scrollToBottom(false));
+      return;
+    }
+    if (isNearBottom()) scrollToBottom(false); // already at bottom → follow new msgs
+    else setShowJumpLatest(true);              // reading history → stay put, offer chip
+    // eslint-disable-next-line
+  }, [messages, active]);
+  // Hide the "jump to latest" chip once the user scrolls back down themselves.
+  useEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    const onScroll = () => { if (isNearBottom()) setShowJumpLatest(false); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line
+  }, [active]);
 
   // Smart @mention: candidates whose name STARTS WITH the typed text (prefix),
   // falling back to "contains" so nothing is hidden. Capped for the dropdown.
@@ -2735,6 +2772,16 @@ function ChatView({ user, isAdmin, onUnread, onOpenTask, initialConv }) {
             })}
             {messages.length === 0 && <div className="text-center text-slate-300 text-sm py-10">{active.team && active.team.isTask ? '🔒 Your private space — task alerts land here, and you can jot notes too.' : 'Say hello 👋'}</div>}
           </div>
+          {/* "Jump to latest" — appears when you've scrolled up and new messages
+              arrive, so reading history / copying a link isn't interrupted. */}
+          {showJumpLatest && (
+            <div className="relative">
+              <button onClick={() => scrollToBottom(true)} className="absolute -top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 rounded-full px-4 py-2 text-[12.5px] font-bold text-white shadow-lg" style={{ background: '#050A1F' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+                Jump to latest
+              </button>
+            </div>
+          )}
           {/* Composer: reply chip, AI suggestions ABOVE, box, tone BELOW */}
           <div className="px-3 md:px-5 py-3 md:py-4 border-t border-slate-100 bg-white shrink-0">
             {typing.length > 0 && <div className="text-[12px] text-slate-400 italic mb-1.5 ml-1">{typing.join(', ')} {typing.length === 1 ? 'is' : 'are'} typing…</div>}
