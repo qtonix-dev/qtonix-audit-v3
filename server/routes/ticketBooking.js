@@ -6,7 +6,7 @@ const ticketPdf = require('../services/ticketPdf');
 const imagekit = require('../services/imagekit');
 
 // Admin-only guard (CRM admin). requireAuth + admin role are applied at mount.
-function actor(req) { return { id: req.user && req.user.id, name: (req.user && req.user.name) || 'Admin' }; }
+function actor(req) { return { id: req.user && req.user.id, name: (req.user && req.user.name) || 'Admin', role: (req.user && req.user.role === 'admin') ? 'admin' : 'employee' }; }
 
 // Normalize a tour name so the same physical tour groups together regardless of
 // how each source (Viator, GYG, …) words it. Colosseum + Roman Forum + Palatine
@@ -76,6 +76,7 @@ router.post('/save', async (req, res, next) => {
         adults, children, infants, pax: adults + children + infants || travelers.length,
         phone: b.phone || null, email: b.email || null, language: b.language || null,
         travelers, status: 'new', createdById: a.id, createdByName: a.name,
+        createdByRole: a.role || 'employee',
       });
       saved.push(row.toJSON());
     }
@@ -91,6 +92,9 @@ router.get('/list', async (req, res, next) => {
     if (req.query.type) where.bookingType = String(req.query.type);
     if (req.query.status) where.status = String(req.query.status);
     if (req.query.date) where.travelDate = String(req.query.date);
+    // Filter by who added it: 'customer' (customer portal) vs 'us' (admin/employee).
+    if (req.query.creator === 'customer') where.createdByRole = 'customer';
+    else if (req.query.creator === 'us') where.createdByRole = { [Op.ne]: 'customer' };
     let rows = await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC'], ['id', 'DESC']] });
     const q = req.query.q ? String(req.query.q).toLowerCase() : '';
     if (q) rows = rows.filter((r) => `${r.reference} ${r.leadTraveler || ''} ${(r.travelers || []).map((t) => t.firstName + ' ' + t.lastName).join(' ')}`.toLowerCase().includes(q));
@@ -209,6 +213,7 @@ router.post('/:id/upload-pdf', async (req, res, next) => {
     if (req.body && req.body.bookedByEmail !== undefined) row.bookedByEmail = String(req.body.bookedByEmail || '').trim() || null;
     if (req.body && req.body.bookedOnDate !== undefined) row.bookedOnDate = String(req.body.bookedOnDate || '').trim() || null;
     if (!row.bookedOnDate) row.bookedOnDate = new Date().toISOString().slice(0, 10);
+    { const a = actor(req); row.ticketedByName = a.name; row.ticketedByRole = a.role || 'employee'; }
     await row.save();
 
     // Delete each OLD file — but ONLY if no other booking still references it
@@ -439,6 +444,52 @@ router.post('/bulk/link', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- ADMIN: manage ticket-portal customers (create login, list, toggle) ----
+router.get('/customers', async (req, res, next) => {
+  try {
+    const { TicketCustomer } = require('../models');
+    const rows = await TicketCustomer.findAll({ order: [['name', 'ASC']] });
+    res.json({ customers: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+router.post('/customers', async (req, res, next) => {
+  try {
+    const { TicketCustomer } = require('../models');
+    const bcrypt = require('bcryptjs');
+    const b = req.body || {};
+    const email = String(b.email || '').toLowerCase().trim();
+    if (!b.name || !email || !b.password) return res.status(400).json({ error: 'Name, email and password are required.' });
+    const exists = await TicketCustomer.findOne({ where: { email } });
+    if (exists) return res.status(400).json({ error: 'A customer with this email already exists.' });
+    const a = actor(req);
+    const row = await TicketCustomer.create({ name: String(b.name).trim(), email, company: b.company || null, passwordHash: await bcrypt.hash(String(b.password), 12), createdById: a.id });
+    res.json({ ok: true, customer: row.toJSON() });
+  } catch (e) { next(e); }
+});
+router.patch('/customers/:id', async (req, res, next) => {
+  try {
+    const { TicketCustomer } = require('../models');
+    const bcrypt = require('bcryptjs');
+    const row = await TicketCustomer.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Not found.' });
+    const b = req.body || {};
+    if (b.name !== undefined) row.name = String(b.name).trim();
+    if (b.company !== undefined) row.company = b.company || null;
+    if (b.active !== undefined) row.active = !!b.active;
+    if (b.password) row.passwordHash = await bcrypt.hash(String(b.password), 12);
+    await row.save();
+    res.json({ ok: true, customer: row.toJSON() });
+  } catch (e) { next(e); }
+});
+router.delete('/customers/:id', async (req, res, next) => {
+  try {
+    const { TicketCustomer } = require('../models');
+    const row = await TicketCustomer.findByPk(Number(req.params.id));
+    if (row) await row.destroy();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 module.exports = router;
 
 // ---- PUBLIC read-only router (token-gated, no login) ----
@@ -481,3 +532,156 @@ pub.get('/plan/tobook', async (req, res, next) => {
 pub.get('/:id/tickets.pdf', (req, res, next) => downloadPdf(req, res, next));
 module.exports.pub = pub;
 module.exports.downloadPdf = downloadPdf;
+
+// ===========================================================================
+// CUSTOMER PORTAL router — a separate login (TicketCustomer) that ONLY reaches
+// Ticket Booking: add booking, upload OCO, view/download. No CRM access.
+// Mounted at /api/ticket-portal.
+// ===========================================================================
+const cust = express.Router();
+const jwt = require('jsonwebtoken');
+const SECRET = () => process.env.JWT_SECRET || 'change-me-in-production';
+
+// Login → issues a scoped token (portal:'ticket').
+cust.post('/login', async (req, res, next) => {
+  try {
+    const { TicketCustomer } = require('../models');
+    const bcrypt = require('bcryptjs');
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    const password = String((req.body && req.body.password) || '');
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    const c = await TicketCustomer.findOne({ where: { email } });
+    if (!c || !c.active) return res.status(401).json({ error: 'Invalid login or account disabled.' });
+    const ok = await bcrypt.compare(password, c.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Incorrect email or password.' });
+    const token = jwt.sign({ portal: 'ticket', cid: c.id, name: c.name }, SECRET(), { expiresIn: '12h' });
+    res.json({ token, customer: c.toJSON() });
+  } catch (e) { next(e); }
+});
+
+// Auth guard for every route below.
+async function requireCustomer(req, res, next) {
+  try {
+    const h = req.headers.authorization || '';
+    const token = h.startsWith('Bearer ') ? h.slice(7) : (req.query && req.query.token) || null;
+    if (!token) return res.status(401).json({ error: 'Sign in to continue.' });
+    let dec; try { dec = jwt.verify(token, SECRET()); } catch { return res.status(401).json({ error: 'Your session expired. Sign in again.' }); }
+    if (!dec || dec.portal !== 'ticket') return res.status(403).json({ error: 'Not a customer session.' });
+    const { TicketCustomer } = require('../models');
+    const c = await TicketCustomer.findByPk(dec.cid);
+    if (!c || !c.active) return res.status(401).json({ error: 'This account is no longer active.' });
+    req.customer = c;
+    next();
+  } catch (e) { next(e); }
+}
+
+cust.get('/me', requireCustomer, (req, res) => res.json({ customer: req.customer.toJSON() }));
+
+// Parse pasted booking text (same AI/regex parser as admin).
+cust.post('/parse', requireCustomer, async (req, res, next) => {
+  try {
+    const text = String((req.body && req.body.text) || '');
+    if (!text.trim()) return res.json({ rows: [] });
+    const rows = await parser.parseBookings(text, await aiKeys());
+    res.json({ rows });
+  } catch (e) { next(e); }
+});
+
+// Save bookings — tagged as created by this customer. Skips duplicates.
+cust.post('/save', requireCustomer, async (req, res, next) => {
+  try {
+    const items = Array.isArray(req.body && req.body.bookings) ? req.body.bookings : [];
+    if (!items.length) return res.status(400).json({ error: 'No bookings to save.' });
+    const c = req.customer;
+    const saved = []; const skipped = [];
+    const norm = (r) => String(r || '').trim().toLowerCase();
+    const existingRows = await TicketBooking.findAll({ attributes: ['reference'], where: { reference: { [Op.in]: items.map((b) => String(b.reference || '').trim()).filter(Boolean) } } });
+    const existingRefs = new Set(existingRows.map((r) => norm(r.reference)));
+    const seen = new Set();
+    for (const b of items) {
+      const ref = norm(b.reference);
+      if (ref && (existingRefs.has(ref) || seen.has(ref))) { skipped.push({ reference: String(b.reference || '').trim(), reason: existingRefs.has(ref) ? 'already_exists' : 'duplicate_in_paste' }); continue; }
+      if (ref) seen.add(ref);
+      const travelers = (Array.isArray(b.travelers) ? b.travelers : []).map((t, i) => ({ sn: i + 1, type: t.type || 'Adult', index: i + 1, firstName: t.firstName || '', lastName: t.lastName || '', dob: t.dob || '' }));
+      const adults = travelers.filter((t) => t.type === 'Adult').length || Number(b.adults) || 0;
+      const children = travelers.filter((t) => t.type === 'Child').length || Number(b.children) || 0;
+      const infants = travelers.filter((t) => t.type === 'Infant').length || Number(b.infants) || 0;
+      const bookedTime = b.bookedTime || null;
+      const bType = ['last_minute', 'arena', 'regular'].includes(b.bookingType) ? b.bookingType : 'regular';
+      const productName = b.productName || parser.productName(bType, bookedTime || '');
+      const row = await TicketBooking.create({
+        source: b.source || 'other', bookingType: bType, reference: String(b.reference || '').slice(0, 80),
+        bookingDate: b.bookingDate || null, travelDate: b.travelDate || null, travelDateLabel: b.travelDateLabel || null,
+        customerTime: b.customerTime || null, bookedTime, tourName: b.tourName || null, productName, productCode: b.productCode || null,
+        leadTraveler: b.leadTraveler || (travelers[0] ? `${travelers[0].firstName} ${travelers[0].lastName}`.trim() : null),
+        adults, children, infants, pax: adults + children + infants || travelers.length,
+        phone: b.phone || null, email: b.email || null, language: b.language || null,
+        travelers, status: 'new',
+        createdById: c.id, createdByName: c.name, createdByRole: 'customer', createdByCustomerId: c.id,
+      });
+      saved.push(row.toJSON());
+    }
+    res.json({ ok: true, saved, skipped });
+  } catch (e) { next(e); }
+});
+
+// List bookings the customer can see (all, so they can find & ticket any).
+cust.get('/list', requireCustomer, async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.date) where.travelDate = String(req.query.date);
+    if (req.query.status) where.status = String(req.query.status);
+    let rows = await TicketBooking.findAll({ where, order: [['travelDate', 'ASC'], ['bookedTime', 'ASC'], ['id', 'DESC']] });
+    const q = req.query.q ? String(req.query.q).toLowerCase() : '';
+    if (q) rows = rows.filter((r) => `${r.reference} ${r.leadTraveler || ''} ${(r.travelers || []).map((t) => t.firstName + ' ' + t.lastName).join(' ')}`.toLowerCase().includes(q));
+    res.json({ bookings: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+// Single booking (for the upload screen).
+cust.get('/:id', requireCustomer, async (req, res, next) => {
+  try { const row = await TicketBooking.findByPk(Number(req.params.id)); if (!row) return res.status(404).json({ error: 'Not found.' }); res.json(row.toJSON()); } catch (e) { next(e); }
+});
+
+// Upload an OCO PDF — same read+match+store as admin, tagged ticketedBy=customer.
+cust.post('/:id/upload-pdf', requireCustomer, async (req, res, next) => {
+  try {
+    const row = await TicketBooking.findByPk(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'Not found.' });
+    const base64 = (req.body && req.body.base64) || '';
+    if (!base64) return res.status(400).json({ error: 'No PDF provided.' });
+    const buffer = Buffer.from(base64.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    const extracted = await ticketPdf.extractTickets(buffer);
+    const { travelers, oco, hasMismatch } = ticketPdf.matchToBooking(row.toJSON(), extracted);
+    const oldFileIds = new Set();
+    if (row.pdfFileId) oldFileIds.add(row.pdfFileId);
+    (row.travelers || []).forEach((t) => { if (t.pdfFileId) oldFileIds.add(t.pdfFileId); });
+    let pdfUrl = row.pdfUrl, pdfFileId = row.pdfFileId;
+    try { const up = await imagekit.uploadFile({ base64: buffer.toString('base64'), fileName: `${oco || 'ticket'}-${row.reference}.pdf`, folder: `TicketBooking/${row.travelDate || 'undated'}` }); pdfUrl = up.url; pdfFileId = up.fileId; } catch (e) { /* imagekit optional */ }
+    const newTravelers = travelers.map((t) => (t.ticketCode ? { ...t, pdfUrl, pdfFileId } : t));
+    row.travelers = newTravelers; row.changed('travelers', true);
+    row.ocoNumber = oco; row.pdfUrl = pdfUrl; row.pdfFileId = pdfFileId; row.status = 'ticketed'; row.hasMismatch = hasMismatch;
+    if (req.body && req.body.bookedByEmail !== undefined) row.bookedByEmail = String(req.body.bookedByEmail || '').trim() || null;
+    row.bookedOnDate = (req.body && String(req.body.bookedOnDate || '').trim()) || new Date().toISOString().slice(0, 10);
+    row.ticketedByName = req.customer.name; row.ticketedByRole = 'customer';
+    await row.save();
+    for (const fid of oldFileIds) {
+      if (!fid || fid === pdfFileId) continue;
+      try {
+        const others = await TicketBooking.count({ where: { id: { [Op.ne]: row.id }, pdfFileId: fid } });
+        let refByTraveler = 0;
+        if (others === 0) { const all = await TicketBooking.findAll({ where: { id: { [Op.ne]: row.id } }, attributes: ['travelers'] }); refByTraveler = all.filter((b) => (b.travelers || []).some((t) => t.pdfFileId === fid)).length; }
+        if (others === 0 && refByTraveler === 0) { try { await imagekit.deleteFile(fid); } catch {} }
+      } catch {}
+    }
+    res.json({ ok: true, booking: row.toJSON(), matched: travelers.length, oco, hasMismatch });
+  } catch (e) { next(e); }
+});
+
+// Customer PDF download (whole booking or ?page=N) — token in query.
+cust.get('/:id/tickets.pdf', (req, res, next) => {
+  try { const dec = jwt.verify(req.query.token, SECRET()); if (!dec || dec.portal !== 'ticket') return res.status(403).send('Forbidden'); req.user = { role: 'admin' }; next(); }
+  catch { return res.status(401).send('Unauthorized'); }
+}, (req, res, next) => downloadPdf(req, res, next));
+
+module.exports.cust = cust;

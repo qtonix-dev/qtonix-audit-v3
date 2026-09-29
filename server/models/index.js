@@ -2871,8 +2871,29 @@ const TicketBooking = sequelize.define('TicketBooking', {
   bookedOnDate: { type: DataTypes.STRING(10), allowNull: true },     // YYYY-MM-DD the ticket was booked
   createdById: { type: DataTypes.INTEGER, allowNull: true },
   createdByName: { type: DataTypes.STRING(160), allowNull: true },
-}, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }, { fields: ['bookedOnDate'] }] });
+  // WHO ADDED the booking: 'employee' | 'admin' | 'customer'. When a customer,
+  // createdByCustomerId points at the TicketCustomer.
+  createdByRole: { type: DataTypes.STRING(12), defaultValue: 'employee' },
+  createdByCustomerId: { type: DataTypes.INTEGER, allowNull: true },
+  // WHO BOOKED THE TICKET (uploaded the OCO): name + role, set at PDF upload.
+  ticketedByName: { type: DataTypes.STRING(160), allowNull: true },
+  ticketedByRole: { type: DataTypes.STRING(12), allowNull: true },   // employee | admin | customer
+}, { tableName: 'ticket_bookings', indexes: [{ fields: ['travelDate'] }, { fields: ['status'] }, { fields: ['reference'] }, { fields: ['bookedOnDate'] }, { fields: ['createdByRole'] }] });
 TicketBooking.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
+
+// Ticket Booking CUSTOMER — a separate, low-privilege login that only ever
+// reaches the customer ticket portal (add booking, upload OCO, view). Admin
+// creates these; they are NOT CRM Users and can't see anything else.
+const TicketCustomer = sequelize.define('TicketCustomer', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  name: { type: DataTypes.STRING(160), allowNull: false },
+  email: { type: DataTypes.STRING(160), allowNull: false, unique: true },
+  passwordHash: { type: DataTypes.STRING(200), allowNull: false },
+  company: { type: DataTypes.STRING(160), allowNull: true },
+  active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  createdById: { type: DataTypes.INTEGER, allowNull: true },  // admin User id
+}, { tableName: 'ticket_customers', indexes: [{ fields: ['email'] }] });
+TicketCustomer.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; delete o.passwordHash; return o; };
 
 // Sticky Notes — per-user colorful notes (Sales CRM + HRMS). Rich text stored as
 // HTML. Deletes are soft (archived) so an admin can restore or purge.
@@ -3025,7 +3046,7 @@ module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, StickyNote,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

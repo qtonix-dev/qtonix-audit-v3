@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v585';
+const APP_VERSION = 'v586';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -155,7 +155,7 @@ app.use('/api/admin', admin);
     try { const jwt = require('jsonwebtoken'); const t = req.query.token; const dec = jwt.verify(t, process.env.JWT_SECRET); if (!dec || dec.role !== 'admin') return res.status(403).send('Forbidden'); req.user = dec; next(); }
     catch { return res.status(401).send('Unauthorized'); }
   }, tb.downloadPdf);
-  app.use('/api/ticket-share', tb.pub); app.use('/api/ticket-booking', requireAuth, requireAdmin, tb); }
+  app.use('/api/ticket-share', tb.pub); app.use('/api/ticket-portal', tb.cust); app.use('/api/ticket-booking', requireAuth, requireAdmin, tb); }
 // Sticky Notes — CRM surface (role-based visibility via User.managerId).
 {
   const { requireAuth } = require('./middleware/auth');

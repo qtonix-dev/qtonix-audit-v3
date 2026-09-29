@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import App from './App.jsx';
 import Admin from './Admin.jsx';
 import TicketSharePublic from './TicketSharePublic.jsx';
+import TicketPortal from './TicketPortal.jsx';
 import HrApp from './HrApp.jsx';
 import TvDisplay from './TvDisplay.jsx';
 import './index.css';
@@ -28,12 +29,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       {HRMS_ROOT ? (
         <Routes>
           <Route path="/tickets/share/:token" element={<TicketSharePublic />} />
+          <Route path="/tickets/portal" element={<TicketPortal />} />
           <Route path="/*" element={<HrApp />} />
         </Routes>
       ) : (
         <Routes>
           <Route path="/admin" element={<Admin />} />
           <Route path="/tickets/share/:token" element={<TicketSharePublic />} />
+          <Route path="/tickets/portal" element={<TicketPortal />} />
           <Route path="/hr/*" element={<HrApp />} />
           <Route path="/hr-demo/*" element={<HrApp />} />
           <Route path="/*" element={<App />} />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_BASE } from './config.js';
-import { toast, confirmDialog } from './toast';
+import { toast, confirmDialog, promptDialog } from './toast';
 
 const ORANGE = '#FF6A00';
 const api = async (path, opts = {}) => {
@@ -60,6 +60,7 @@ export default function TicketBookingAdmin() {
   const [page, setPage] = useState('list'); // list | tobook | reporting | add | detail | edit
   const [detailId, setDetailId] = useState(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [custOpen, setCustOpen] = useState(false);
   if (page === 'add') return <AddBookings onBack={() => setPage('list')} />;
   if (page === 'detail') return <BookingDetail id={detailId} onBack={() => setPage('list')} />;
   if (page === 'edit') return <EditBooking id={detailId} onBack={() => setPage('list')} />;
@@ -72,11 +73,13 @@ export default function TicketBookingAdmin() {
           <button onClick={() => setPage('reporting')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[12.5px] sm:text-[13px] font-bold ${page === 'reporting' ? 'text-white' : 'text-slate-500 bg-slate-100'}`} style={page === 'reporting' ? { background: '#050A1F' } : {}}>📊 Reporting</button>
         </div>
         <div className="flex gap-2">
+          <button onClick={() => setCustOpen(true)} className="flex-1 sm:flex-none rounded-lg px-3 py-2 text-[12.5px] sm:text-[13px] font-bold text-slate-600 border border-slate-200 whitespace-nowrap">👤 Customers</button>
           <button onClick={() => setShareOpen(true)} className="flex-1 sm:flex-none rounded-lg px-3 py-2 text-[12.5px] sm:text-[13px] font-bold text-slate-600 border border-slate-200 whitespace-nowrap">🔗 Share</button>
           <button onClick={() => setPage('add')} className="flex-1 sm:flex-none rounded-lg px-3 sm:px-4 py-2 text-[12.5px] sm:text-[13px] font-bold text-white whitespace-nowrap" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>+ Add booking</button>
         </div>
       </div>
       {shareOpen && <ShareLinkModal onClose={() => setShareOpen(false)} />}
+      {custOpen && <CustomersModal onClose={() => setCustOpen(false)} />}
       {page === 'list' && <BookingsList onOpen={(id) => { setDetailId(id); setPage('detail'); }} onEdit={(id) => { setDetailId(id); setPage('edit'); }} />}
       {page === 'tobook' && <TicketsToBook onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
       {page === 'reporting' && <Reporting onOpen={(id) => { setDetailId(id); setPage('detail'); }} />}
@@ -86,9 +89,9 @@ export default function TicketBookingAdmin() {
 
 function BookingsList({ onOpen, onEdit }) {
   const [rows, setRows] = useState(null);
-  const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [date, setDate] = useState('');
-  const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); if (date) p.set('date', date); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status, date]);
+  const [q, setQ] = useState(''); const [source, setSource] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [date, setDate] = useState(''); const [creator, setCreator] = useState('');
+  const load = () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (source) p.set('source', source); if (type) p.set('type', type); if (status) p.set('status', status); if (date) p.set('date', date); if (creator) p.set('creator', creator); api(`/list?${p}`).then((r) => setRows(r.bookings || [])).catch((e) => toast(e.message)); };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, source, type, status, date, creator]);
   const dlAll = (b) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   const dlPage = (b, page) => window.open(`${API_BASE}/api/ticket-booking/${b.id}/tickets.pdf?page=${page}&token=${encodeURIComponent(localStorage.getItem('qtx_token') || '')}`, '_blank');
   // Group bookings by travel date. After 7PM IST, today's group auto-collapses
@@ -129,6 +132,7 @@ function BookingsList({ onOpen, onEdit }) {
         <select value={source} onChange={(e) => setSource(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All sources</option><option value="viator">Viator</option><option value="gyg">Get Your Guide</option><option value="direct">Direct</option><option value="other">Other</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All types</option><option value="regular">Regular</option><option value="last_minute">VIP</option><option value="arena">Arena AudioGuided</option></select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All status</option><option value="new">New</option><option value="ticketed">Ticketed</option></select>
+        <select value={creator} onChange={(e) => setCreator(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">Added by anyone</option><option value="us">Added by us</option><option value="customer">Added by customer</option></select>
       </div>
       {(() => {
       const TH = () => <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="px-2 py-3" /><th className="text-left px-3 py-3">Reference</th><th className="text-left px-3 py-3">Source</th><th className="text-left px-3 py-3">Type</th><th className="text-left px-3 py-3">Travel date</th><th className="text-left px-3 py-3">Lead traveler</th><th className="text-left px-3 py-3">Pax</th><th className="text-left px-3 py-3">Product</th><th className="text-left px-3 py-3">Time</th><th className="text-left px-3 py-3">Status</th><th className="text-right px-3 py-3">Actions</th></tr></thead>;
@@ -137,7 +141,7 @@ function BookingsList({ onOpen, onEdit }) {
                 <React.Fragment key={b.id}>
                 <tr className="border-t border-slate-50 cursor-pointer" style={{ background: open ? '#f8fafc' : green ? '#f0fdf4' : red ? '#fef2f2' : undefined }} onClick={() => setExpanded(open ? null : b.id)}>
                   <td className="px-2 py-3 text-slate-400 text-center">{open ? '▲' : '▼'}</td>
-                  <td className="px-3 py-3 font-bold text-[#050A1F]">{b.reference}</td>
+                  <td className="px-3 py-3 font-bold text-[#050A1F] whitespace-nowrap">{b.reference}{b.createdByRole === 'customer' && <span className="ml-1.5 text-[8px] font-bold px-1.5 py-0.5 rounded-full align-middle" style={{ background: '#fef3c7', color: '#b45309' }} title={`Added by customer${b.createdByName ? ': ' + b.createdByName : ''}`}>CUSTOMER</span>}</td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: src.bg, color: src.c }}>{src.l}</span></td>
                   <td className="px-3 py-3"><span className="text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: typeStyle(b.bookingType).bg, color: typeStyle(b.bookingType).c }}>{typeLabel(b.bookingType)}</span></td>
                   <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{fmtDate(b.travelDate, b.travelDateLabel)}</td>
@@ -829,6 +833,67 @@ function BulkUpload({ onClose, onDone }) {
 }
 
 // Public shareable read-only link management.
+// Admin: create & manage customer portal logins. Customers log in at
+// /tickets/portal and can add bookings + upload OCO (no CRM access).
+function CustomersModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+  const [form, setForm] = useState({ name: '', email: '', company: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const portalUrl = `${window.location.origin}/tickets/portal`;
+  const load = () => api('/customers').then((r) => setRows(r.customers || [])).catch((e) => toast(e.message));
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  const create = async () => {
+    if (!form.name.trim() || !form.email.trim() || !form.password) { toast('Name, email and password are required.'); return; }
+    setBusy(true);
+    try { await api('/customers', { method: 'POST', body: JSON.stringify(form) }); toast('Customer created ✓'); setForm({ name: '', email: '', company: '', password: '' }); load(); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  const toggle = async (c) => { try { await api(`/customers/${c.id}`, { method: 'PATCH', body: JSON.stringify({ active: !c.active }) }); load(); } catch (e) { toast(e.message); } };
+  const resetPw = async (c) => { const pw = await promptDialog({ title: `New password for ${c.name}`, placeholder: 'New password' }); if (pw && pw.trim()) { try { await api(`/customers/${c.id}`, { method: 'PATCH', body: JSON.stringify({ password: pw.trim() }) }); toast('Password updated ✓'); } catch (e) { toast(e.message); } } };
+  const del = async (c) => { if (!(await confirmDialog({ title: `Delete ${c.name}?`, message: 'Their login stops working. Bookings they added stay.', confirmText: 'Delete', danger: true }))) return; try { await api(`/customers/${c.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); } };
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-start justify-center z-[150] p-4 overflow-auto" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl my-6" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div><div className="text-[16px] font-extrabold text-[#050A1F]">👤 Customer portal logins</div><div className="text-[12px] text-slate-400">Customers sign in at <span className="font-mono text-slate-500">{portalUrl}</span> to add bookings & upload OCO. They see only Ticket Booking.</div></div>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5">
+          <div className="rounded-xl border border-slate-200 p-4 mb-5">
+            <div className="text-[10px] font-extrabold uppercase text-slate-400 mb-2">Add a customer</div>
+            <div className="grid grid-cols-2 gap-2.5">
+              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Name" className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+              <input value={form.company} onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))} placeholder="Company (optional)" className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+              <input value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="Login email" type="email" className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+              <input value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Password" className="border border-slate-200 rounded-lg px-3 py-2 text-[13px]" />
+            </div>
+            <div className="flex justify-end mt-3"><button onClick={create} disabled={busy} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white disabled:opacity-50" style={{ background: `linear-gradient(135deg,${ORANGE},#FF4500)` }}>{busy ? 'Creating…' : 'Create login'}</button></div>
+          </div>
+          {rows === null ? <div className="text-slate-400 text-sm">Loading…</div> : rows.length === 0 ? <div className="text-slate-400 text-sm text-center py-4">No customer logins yet.</div> : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <table className="w-full text-[12.5px]"><thead><tr className="bg-slate-50 text-[9px] uppercase text-slate-400 font-bold text-left"><th className="px-3 py-2">Name</th><th className="px-2">Email</th><th className="px-2">Status</th><th className="px-2 text-right">Actions</th></tr></thead>
+                <tbody>{rows.map((c) => (
+                  <tr key={c.id} className="border-t border-slate-50">
+                    <td className="px-3 py-2.5 font-semibold text-[#050A1F]">{c.name}{c.company ? <span className="text-slate-400 font-normal"> · {c.company}</span> : ''}</td>
+                    <td className="px-2 text-slate-500">{c.email}</td>
+                    <td className="px-2">{c.active ? <span className="text-green-600 font-bold text-[11px]">Active</span> : <span className="text-slate-400 font-bold text-[11px]">Disabled</span>}</td>
+                    <td className="px-2 py-2.5 text-right whitespace-nowrap">
+                      <button onClick={() => toggle(c)} className="text-[11.5px] font-bold text-slate-500 mr-2">{c.active ? 'Disable' : 'Enable'}</button>
+                      <button onClick={() => resetPw(c)} className="text-[11.5px] font-bold text-violet-600 mr-2">Reset PW</button>
+                      <button onClick={() => del(c)} className="text-[11.5px] font-bold text-red-500">Delete</button>
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShareLinkModal({ onClose }) {
   const [status, setStatus] = useState(null); // { enabled, token }
   const [busy, setBusy] = useState(false);
