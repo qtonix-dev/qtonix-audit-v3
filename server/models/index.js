@@ -1445,6 +1445,11 @@ const HrUser = sequelize.define('HrUser', {
   exitStatus: { type: DataTypes.STRING(20), defaultValue: '' }, // '' | notice | exited
   // Employee-record timeline: joined, profile updates, promotions, notes, etc.
   timeline: { type: DataTypes.JSON, defaultValue: [] },
+  // Per-employee Gmail (personal OAuth). Refresh token is encrypted at rest via
+  // the beforeCreate/beforeUpdate hooks below, mirroring the CRM User flow.
+  gmailRefreshToken: { type: DataTypes.TEXT, allowNull: true },
+  gmailConnectedEmail: { type: DataTypes.STRING(160), allowNull: true },
+  gmailConnectedAt: { type: DataTypes.DATE, allowNull: true },
   active: { type: DataTypes.BOOLEAN, defaultValue: true },
 }, {
   tableName: 'hr_users',
@@ -1471,8 +1476,23 @@ HrUser.prototype.toJSON = function () {
   const o = Object.assign({}, this.get());
   o._id = o.id;
   delete o.passwordHash;
+  o.gmailConnected = !!o.gmailRefreshToken;
+  delete o.gmailRefreshToken; // never expose the token
   return o;
 };
+HrUser.prototype.getGmailRefreshToken = function () {
+  const v = this.gmailRefreshToken;
+  if (!v) return '';
+  return /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(v) ? decrypt(v) : v;
+};
+function encryptHrGmailToken(instance) {
+  const v = instance.gmailRefreshToken;
+  if (v && !/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(String(v))) {
+    instance.gmailRefreshToken = encrypt(String(v));
+  }
+}
+HrUser.beforeCreate(encryptHrGmailToken);
+HrUser.beforeUpdate(encryptHrGmailToken);
 
 // Branches the admin manages (feeds the Branch dropdown).
 const HrBranch = sequelize.define('HrBranch', {

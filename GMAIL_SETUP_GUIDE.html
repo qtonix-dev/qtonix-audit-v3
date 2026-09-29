@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qtonix HRMS — Gmail Linking Setup Guide (Admin)</title>
+<style>
+  :root{
+    --ink:#050A1F; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --card:#fff;
+    --orange:#FF6A00; --orange2:#FF4500; --amber-bg:#fff7ed; --amber-line:#fed7aa; --amber-ink:#9a3412;
+    --green-bg:#f0fdf4; --green-line:#bbf7d0; --green-ink:#15803d;
+    --blue-bg:#eff6ff; --blue-line:#bfdbfe; --blue-ink:#1d4ed8;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e5e9f0; --muted:#94a3b8; --line:#1e293b; --bg:#0b1220; --card:#0f172a;
+      --amber-bg:#2a1c0e; --amber-line:#7c3f13; --amber-ink:#fdba74;
+      --green-bg:#0e2a19; --green-line:#166534; --green-ink:#86efac;
+      --blue-bg:#0e1e33; --blue-line:#1e40af; --blue-ink:#93c5fd;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#e5e9f0; --muted:#94a3b8; --line:#1e293b; --bg:#0b1220; --card:#0f172a;
+    --amber-bg:#2a1c0e; --amber-line:#7c3f13; --amber-ink:#fdba74;
+    --green-bg:#0e2a19; --green-line:#166534; --green-ink:#86efac;
+    --blue-bg:#0e1e33; --blue-line:#1e40af; --blue-ink:#93c5fd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto;padding:40px 16px 80px}
+  header.hero{background:linear-gradient(120deg,#050A1F,#0B1533);color:#fff;border-radius:18px;padding:32px 28px;margin-bottom:28px}
+  .kicker{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:#FF8A3D}
+  h1{font-size:26px;font-weight:800;margin:8px 0 6px}
+  .sub{color:#cbd5e1;font-size:14.5px;margin:0}
+  h2{font-size:19px;font-weight:800;margin:34px 0 10px;display:flex;align-items:center;gap:10px}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--orange),var(--orange2));color:#fff;font-size:14px;font-weight:800;flex:none}
+  h3{font-size:15px;font-weight:800;margin:18px 0 6px}
+  p{margin:0 0 12px}
+  ul,ol{margin:6px 0 14px;padding-left:22px}
+  li{margin:6px 0}
+  code{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:0 0 16px;box-shadow:0 6px 20px rgba(2,6,23,.05)}
+  .callout{border-radius:12px;padding:14px 16px;margin:14px 0;font-size:14px}
+  .amber{background:var(--amber-bg);border:1px solid var(--amber-line);color:var(--amber-ink)}
+  .green{background:var(--green-bg);border:1px solid var(--green-line);color:var(--green-ink)}
+  .blue{background:var(--blue-bg);border:1px solid var(--blue-line);color:var(--blue-ink)}
+  .callout b{color:inherit}
+  table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--bg);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+  .pill{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:2px 10px}
+  .pill.g{background:var(--green-bg);color:var(--green-ink);border:1px solid var(--green-line)}
+  .muted{color:var(--muted);font-size:13px}
+  hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+  .foot{color:var(--muted);font-size:12.5px;margin-top:26px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="kicker">Qtonix HRMS · Admin Setup</div>
+    <h1>Linking Employee Gmail to the HRMS</h1>
+    <p class="sub">A one-time Google setup you do as admin, plus how to add employees so they can link their personal Gmail without errors.</p>
+  </header>
+
+  <div class="callout blue">
+    <b>The big picture.</b> The employee side is already automated — each employee links their Gmail with one click in <b>My Profile → My Gmail → Connect Gmail</b>. The only manual work is <b>yours, once</b>: setting up the Google app and (for personal Gmail) adding each person as a “test user.” Google requires this — no code can skip it.
+  </div>
+
+  <h2><span class="num">1</span> Create the Google project &amp; OAuth app</h2>
+  <div class="card">
+    <ol>
+      <li>Go to <code>console.cloud.google.com</code> and sign in with the company Google account that will own this app.</li>
+      <li>Top bar → project dropdown → <b>New Project</b>. Name it e.g. <code>Qtonix HRMS Mail</code> → <b>Create</b>, then select it.</li>
+      <li>Left menu → <b>APIs &amp; Services → Library</b>. Search <b>Gmail API</b> → open it → <b>Enable</b>. (If you also want interview calendar sync later, enable <b>Google Calendar API</b> too.)</li>
+    </ol>
+  </div>
+
+  <h2><span class="num">2</span> Configure the OAuth consent screen</h2>
+  <div class="card">
+    <ol>
+      <li>Left menu → <b>APIs &amp; Services → OAuth consent screen</b>.</li>
+      <li>User type: choose <b>External</b> → <b>Create</b>.</li>
+      <li>Fill the basics: <b>App name</b> (<code>Qtonix HRMS</code>), <b>User support email</b>, <b>Developer contact email</b>. A logo is optional. Save and continue.</li>
+      <li><b>Scopes</b> step: you can leave this as-is — the app requests its scopes at sign-in. (For reference, it uses Gmail read/modify, Gmail send, and email address.) Save and continue.</li>
+      <li>Leave the app in <b>Testing</b> publishing status for now (that’s what the test-user path in Step 4 relies on).</li>
+    </ol>
+    <div class="callout amber">
+      <b>Why “Testing” is fine.</b> Because employees use personal <code>@gmail.com</code> accounts and the app needs Gmail send/read (Google calls these “restricted” scopes), leaving the app in Testing + adding people as test users is the fastest working path. Publishing to “Production” for personal Gmail would trigger Google’s full verification + a paid annual security audit — not needed for a small team.
+    </div>
+  </div>
+
+  <h2><span class="num">3</span> Create the OAuth Client ID &amp; set the redirect URI</h2>
+  <div class="card">
+    <ol>
+      <li>Left menu → <b>APIs &amp; Services → Credentials</b> → <b>+ Create Credentials → OAuth client ID</b>.</li>
+      <li>Application type: <b>Web application</b>. Name it <code>Qtonix HRMS Web</code>.</li>
+      <li>Under <b>Authorized redirect URIs</b>, click <b>+ Add URI</b> and paste exactly:
+        <div style="margin:8px 0"><code>https://YOUR-APP-URL/api/gmail/callback</code></div>
+        Replace <code>YOUR-APP-URL</code> with the HRMS server’s public address (the same value set as <code>APP_URL</code>). It must match <b>character-for-character</b>, including <code>https://</code> and no trailing slash.
+      </li>
+      <li>Click <b>Create</b>. Google shows a <b>Client ID</b> and <b>Client secret</b> — copy both.</li>
+    </ol>
+    <div class="callout blue">
+      <b>Common Qtonix URLs</b> — use whichever the HRMS actually runs on:<br>
+      • <code>https://people.qtonix.com/api/gmail/callback</code><br>
+      • <code>https://qtonix-audit-production.up.railway.app/api/gmail/callback</code>
+    </div>
+  </div>
+
+  <h2><span class="num">4</span> Add employees as test users</h2>
+  <div class="card">
+    <p>This is the step that stops employees hitting the “app not verified / access blocked” error.</p>
+    <ol>
+      <li>Left menu → <b>APIs &amp; Services → OAuth consent screen</b>.</li>
+      <li>Scroll to <b>Test users</b> → <b>+ Add users</b>.</li>
+      <li>Enter each employee’s <b>personal Gmail address</b> (the one they’ll link), one per line → <b>Save</b>.</li>
+    </ol>
+    <div class="callout amber">
+      <b>Limits to know:</b> up to <b>100</b> test users total, and you must add each address here <b>before</b> that person clicks Connect. Anyone not on this list will be blocked by Google. As new employees join, add their Gmail here first.
+    </div>
+    <div class="callout green">
+      <b>Tip:</b> Use the HRMS admin tracker (<b>HR Admin → Gmail Links</b>) to see who still needs to link, then add those addresses here and send them a reminder.
+    </div>
+  </div>
+
+  <h2><span class="num">5</span> Save the credentials in the HRMS</h2>
+  <div class="card">
+    <ol>
+      <li>Open the <b>Sales CRM</b> as admin → <b>Admin → API keys</b>.</li>
+      <li>Paste the <b>Gmail Client ID</b> and <b>Gmail Client Secret</b> from Step 3, and save.</li>
+      <li>Make sure the server’s <b>APP_URL</b> environment variable is set to the same base URL you used in the redirect URI (this is set in Railway and needs a redeploy if changed).</li>
+    </ol>
+    <p class="muted">Once these are saved, the HRMS shows “configured” and the Connect Gmail buttons become active.</p>
+  </div>
+
+  <h2><span class="num">6</span> Roll out to employees</h2>
+  <div class="card">
+    <ol>
+      <li>In the HRMS, go to <b>HR Admin → Gmail Links</b> to see every employee and whether they’ve linked <span class="pill g">✓ Linked</span> or not.</li>
+      <li>Click <b>Remind all pending</b> (or send a per-person reminder). Each employee gets an HRMS notification.</li>
+      <li>Employees who log in also see a banner prompting them to connect.</li>
+      <li>The employee clicks <b>My Profile → My Gmail → Connect Gmail</b>, signs into their Gmail, approves, and they’re linked. The admin tracker turns green.</li>
+    </ol>
+  </div>
+
+  <hr>
+
+  <h2 style="margin-top:0">Troubleshooting</h2>
+  <table>
+    <thead><tr><th>What the employee sees</th><th>Cause &amp; fix</th></tr></thead>
+    <tbody>
+      <tr><td>“Access blocked: this app hasn’t been verified” / access_denied</td><td>Their Gmail isn’t in the <b>Test users</b> list. Add it (Step 4) and retry.</td></tr>
+      <tr><td>“Gmail isn’t set up yet”</td><td>Client ID/Secret not saved in the CRM (Step 5).</td></tr>
+      <tr><td>Google rejects the sign-in / redirect mismatch</td><td>The redirect URI in Google doesn’t exactly match <code>{APP_URL}/api/gmail/callback</code>, or <code>APP_URL</code> isn’t set. Fix Step 3 / Step 5.</td></tr>
+      <tr><td>“Google did not return a refresh token”</td><td>The account previously authorized the app. Have them remove access at <code>myaccount.google.com/permissions</code>, then link again.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout blue">
+    <b>Want zero friction later?</b> Moving the team to <b>Google Workspace</b> on the company domain lets you approve this app <b>internally for everyone at once</b> — no test-user list, no 100-person cap, no verification. Worth considering as the team grows.
+  </div>
+
+  <div class="foot">
+    Qtonix HRMS · Gmail linking setup. Steps 1–5 are one-time. Step 4 (adding test users) repeats only when new employees join, until the app is either Workspace-approved or fully verified.
+  </div>
+</div>
+</body>
+</html>

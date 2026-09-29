@@ -195,6 +195,89 @@ router.post('/mailbox/disconnect', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---------------------------------------------------------------------------
+// Per-EMPLOYEE Gmail (personal account). Each HR employee links their own
+// Gmail so they can send/read from it inside the HRMS. The refresh token is
+// stored on the HrUser row (encrypted). Only actual HR employees (hrActor.kind
+// === 'hr') have a personal mailbox; the shared admin uses the recruitment box.
+async function currentHrUser(req) {
+  if (!req.hrActor || req.hrActor.kind !== 'hr') return null;
+  return HrUser.findByPk(req.hrActor.id, { bypassDemoScope: true });
+}
+
+router.get('/my-gmail/status', requireHrAccess, async (req, res, next) => {
+  try {
+    const u = await currentHrUser(req);
+    if (!u) return res.json({ available: false, reason: 'admin', connected: false });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    res.json({ available: true, configured: gmail.isConfigured(s), connected: !!u.gmailRefreshToken, email: u.gmailConnectedEmail || null, connectedAt: u.gmailConnectedAt || null });
+  } catch (e) { next(e); }
+});
+
+router.get('/my-gmail/connect', requireHrAccess, async (req, res, next) => {
+  try {
+    const u = await currentHrUser(req);
+    if (!u) return res.status(403).json({ error: 'Only employees have a personal mailbox. Admins use the recruitment mailbox.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    if (!gmail.isConfigured(s)) return res.status(400).json({ error: 'Google isn’t set up yet. Ask an admin to add the app credentials in CRM Admin → API keys.' });
+    if (!gmail.hasValidBaseUrl()) return res.status(400).json({ error: 'The server’s public URL (APP_URL) isn’t configured, so Google would reject the sign-in.' });
+    const jwt = require('jsonwebtoken');
+    // `hrEmployee` state routes the callback to store the token on this HrUser.
+    const state = jwt.sign({ hrEmployee: true, hrUserId: u.id }, process.env.JWT_SECRET || 'change-me-in-production', { expiresIn: '10m' });
+    res.json({ url: gmail.authUrl(s, state) });
+  } catch (e) { next(e); }
+});
+
+router.post('/my-gmail/disconnect', requireHrAccess, async (req, res, next) => {
+  try {
+    const u = await currentHrUser(req);
+    if (!u) return res.status(403).json({ error: 'No personal mailbox to disconnect.' });
+    u.gmailRefreshToken = null; u.gmailConnectedEmail = null; u.gmailConnectedAt = null;
+    await u.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ---- ADMIN: Gmail-link rollout dashboard -----------------------------------
+// Status of every employee's personal Gmail link, so the admin can see at a
+// glance who still needs to connect and nudge them.
+router.get('/gmail-link/status', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Admin only.' });
+    const s = await Settings.findOne({ where: { singleton: 'settings' } });
+    const rows = await HrUser.findAll({
+      where: { active: true, chatOnly: { [Op.not]: true }, isDemo: false },
+      attributes: ['id', 'name', 'email', 'department', 'branch', 'designation', 'gmailConnectedEmail', 'gmailConnectedAt', 'gmailRefreshToken'],
+      order: [['name', 'ASC']],
+    });
+    const employees = rows.map((u) => ({
+      id: u.id, name: u.name, email: u.email, department: u.department || '', branch: u.branch || '',
+      designation: u.designation || '', connected: !!u.gmailRefreshToken,
+      connectedEmail: u.gmailConnectedEmail || null, connectedAt: u.gmailConnectedAt || null,
+    }));
+    const linked = employees.filter((e) => e.connected).length;
+    res.json({ configured: gmail.isConfigured(s), total: employees.length, linked, pending: employees.length - linked, employees });
+  } catch (e) { next(e); }
+});
+
+// Send an in-app reminder to employees who haven't linked Gmail. Body: { ids }
+// (specific employees) or omit to remind ALL currently-unlinked employees.
+router.post('/gmail-link/remind', requireHrAccess, async (req, res, next) => {
+  try {
+    if (!req.isHrAdmin) return res.status(403).json({ error: 'Admin only.' });
+    const { HrNotification } = require('../models');
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number) : null;
+    const where = { active: true, chatOnly: { [Op.not]: true }, isDemo: false, gmailRefreshToken: null };
+    if (ids && ids.length) where.id = { [Op.in]: ids };
+    const rows = await HrUser.findAll({ where, attributes: ['id', 'name'] });
+    let sent = 0;
+    for (const u of rows) {
+      try { await HrNotification.create({ userId: u.id, actorKind: 'hr', type: 'info', text: '📧 Please link your Gmail in the HRMS: go to My Profile → My Gmail → Connect Gmail, so you can send and read email from here.' }); sent++; } catch {}
+    }
+    res.json({ ok: true, sent });
+  } catch (e) { next(e); }
+});
+
 // The candidate's email conversation (searched in the shared mailbox by their
 // address). Returns normalised messages, newest last.
 router.get('/candidates/:id/emails', requireHrAccess, async (req, res, next) => {

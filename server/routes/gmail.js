@@ -112,12 +112,11 @@ router.get('/callback', async (req, res) => {
     <script>try{window.opener&&window.opener.postMessage({gmail:'${ok ? 'connected' : 'error'}'},'*')}catch(e){};setTimeout(()=>window.close(),1500)</script></body>`);
   try {
     if (error) {
-      // Google blocks personal accounts when the OAuth app is still in "Testing"
-      // mode or pending verification for the restricted Gmail scopes. Give a
-      // clear hint rather than a generic "cancelled".
+      // Most often the person stopped at Google's "app isn't verified" screen.
+      // Give plain, do-this-next guidance rather than admin jargon.
       const hint = String(error) === 'access_denied'
-        ? 'Google blocked this account. If this is a personal @gmail.com account, the CRM’s Google app must be published/verified, or the account added as a test user in Google Cloud. Ask your admin.'
-        : 'Connection cancelled.';
+        ? 'Not connected yet. If you saw a “Google hasn’t verified this app” screen, click “Advanced” then “Go to Qtonix (unsafe)” and Allow — it’s our own app and safe. Then try Connect again. If it still won’t continue, ask your admin to enable your account.'
+        : 'Connection cancelled. Click Connect Gmail to try again.';
       return done(hint, false);
     }
     const jwt = require('jsonwebtoken');
@@ -151,6 +150,19 @@ router.get('/callback', async (req, res) => {
       await s.save();
       return done(`Recruitment mailbox linked: ${email}.${calWarn}`, true);
     }
+    if (payload.hrEmployee) {
+      // Link a personal Gmail to an HR EMPLOYEE (HrUser). Token stored encrypted
+      // on the HrUser row; used to send/read from the employee's own mailbox.
+      const { HrUser } = require('../models');
+      const emp = await HrUser.findByPk(payload.hrUserId, { bypassDemoScope: true });
+      if (!emp) return done('Employee not found.', false);
+      emp.gmailRefreshToken = refreshToken; // encrypted by model hook
+      emp.gmailConnectedEmail = email;
+      emp.gmailConnectedAt = new Date();
+      await emp.save();
+      return done(`Gmail connected${email ? ` (${email})` : ''}.`, true);
+    }
+
     const user = await User.findByPk(payload.uid);
     if (!user) return done('User not found.', false);
 

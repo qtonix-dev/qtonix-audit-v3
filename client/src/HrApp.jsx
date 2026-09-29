@@ -10329,6 +10329,75 @@ function HrImageCropModal({ file, onCancel, onCropped }) {
   );
 }
 
+// Per-employee Gmail: link a personal Gmail so the employee can send/read
+// from their own inbox inside the HRMS. Uses the same OAuth popup handshake as
+// the recruitment mailbox. Not shown for the admin (they use the shared box).
+function MyGmailCard() {
+  const [st, setSt] = useState(null);
+  const load = () => hrApi('/my-gmail/status').then(setSt).catch(() => setSt({ available: false }));
+  useEffect(() => { load(); }, []);
+  const connect = async () => {
+    try {
+      const { url } = await hrApi('/my-gmail/connect');
+      const w = window.open(url, 'mygmail', 'width=520,height=640');
+      const onMsg = (e) => { if (e.data && e.data.gmail) { window.removeEventListener('message', onMsg); setTimeout(load, 800); try { w && w.close(); } catch {} } };
+      window.addEventListener('message', onMsg);
+      const poll = setInterval(() => { if (w && w.closed) { clearInterval(poll); setTimeout(load, 500); } }, 1200);
+    } catch (e) { toast(e.message); }
+  };
+  const disconnect = async () => {
+    if (!(await confirmDialog({ title: 'Unlink your Gmail?', message: 'You will no longer be able to send or read from your Gmail inside the HRMS.', confirmText: 'Unlink', danger: true }))) return;
+    try { await hrApi('/my-gmail/disconnect', { method: 'POST' }); load(); } catch (e) { toast(e.message); }
+  };
+  if (!st || st.available === false) return null; // admins / not applicable
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/70 p-6 mb-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-base font-extrabold text-[#050A1F] flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#EA4335" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 7 10-7"/></svg>
+            My Gmail
+          </div>
+          <p className="text-sm text-slate-500 mt-0.5">Link your Gmail to send and read email from your own inbox inside the HRMS.</p>
+        </div>
+        {st.connected
+          ? <span className="text-xs font-bold text-green-700 bg-green-50 border border-green-200 rounded-full px-3 py-1 whitespace-nowrap">✓ Connected</span>
+          : <button onClick={connect} disabled={!st.configured} className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 whitespace-nowrap" style={{ background: ORANGE }}>Connect Gmail</button>}
+      </div>
+
+      {!st.configured && !st.connected && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[13px] px-3 py-2 mt-3">Google isn’t set up yet. Ask an admin to add the app credentials in CRM Admin → API keys.</div>}
+
+      {/* Clear step-by-step instructions shown BEFORE connecting, so employees
+          aren't scared off by Google's normal "unverified app" screen. */}
+      {!st.connected && st.configured && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 mt-3">
+          <div className="text-[12px] font-extrabold text-[#050A1F] uppercase tracking-wide mb-2">How to connect — 3 steps</div>
+          <ol className="text-[13px] text-slate-600 space-y-2" style={{ listStyle: 'decimal', paddingLeft: 18 }}>
+            <li>Click <b>Connect Gmail</b> above. A Google sign-in window opens — choose your Gmail account.</li>
+            <li>You may see a screen that says <b>“Google hasn’t verified this app.”</b> This is normal and safe — it’s our own Qtonix app. Click <b>“Advanced”</b> at the bottom-left, then <b>“Go to Qtonix (unsafe)”</b>.</li>
+            <li>Tick the permission boxes and click <b>Continue / Allow</b>. The window closes and your Gmail shows as ✓ Connected here.</li>
+          </ol>
+          <div className="text-[12px] text-slate-400 mt-2.5 flex items-start gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginTop: 1, flex: 'none' }}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>The “unsafe” wording is just Google’s standard notice for company apps that aren’t publicly listed. Your email stays private and only you can use it inside the HRMS.</span>
+          </div>
+          <p className="text-[12px] text-amber-700 mt-2">Stuck on “access blocked / can’t continue”? Message your admin — they’ll enable your account and you can try again.</p>
+        </div>
+      )}
+
+      {st.connected && (
+        <div className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-4 py-3 mt-3">
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-green-700 truncate">{st.email}</div>
+            {st.connectedAt && <div className="text-xs text-slate-500">Linked {new Date(st.connectedAt).toLocaleDateString()}</div>}
+          </div>
+          <button onClick={disconnect} className="text-xs font-bold text-red-500 hover:text-red-600 whitespace-nowrap">Unlink</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MyProfilePage({ user, onUpdated }) {
   const [p, setP] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -10383,6 +10452,7 @@ function MyProfilePage({ user, onUpdated }) {
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-extrabold text-[#050A1F] mb-6">My Profile</h1>
+      <MyGmailCard />
       <div className="bg-white rounded-2xl border border-slate-200/70 p-6 space-y-5">
         {/* Avatar */}
         <div className="flex items-center gap-4">
@@ -11531,6 +11601,62 @@ function TvPollManager() {
   );
 }
 
+// Admin dashboard: track which employees have linked their personal Gmail and
+// nudge the ones who haven't. Google verification stays a manual, one-time
+// console step; this just chases down the per-employee linking.
+function GmailLinkAdmin() {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
+  const [dept, setDept] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => hrApi('/gmail-link/status').then(setData).catch((e) => toast(e.message));
+  useEffect(() => { load(); }, []);
+  const remind = async (ids) => {
+    setBusy(true);
+    try { const r = await hrApi('/gmail-link/remind', { method: 'POST', body: JSON.stringify(ids ? { ids } : {}) }); toast(`Reminder sent to ${r.sent} employee${r.sent !== 1 ? 's' : ''}`); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  if (!data) return <div className="text-slate-400 text-sm py-6">Loading…</div>;
+  const depts = [...new Set(data.employees.map((e) => e.department).filter(Boolean))].sort();
+  const rows = data.employees.filter((e) =>
+    (!q || `${e.name} ${e.email} ${e.connectedEmail || ''}`.toLowerCase().includes(q.toLowerCase())) &&
+    (!dept || e.department === dept));
+  return (
+    <div>
+      {!data.configured && <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2.5 mb-4">Google credentials aren’t set up yet, so employees can’t link Gmail. Set up the OAuth app first (Settings → API keys), then follow the setup guide.</div>}
+      <div className="grid grid-cols-3 gap-3 mb-5 max-w-xl">
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Employees</div><div className="text-[22px] font-extrabold text-[#050A1F]">{data.total}</div></div>
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Linked</div><div className="text-[22px] font-extrabold text-green-600">{data.linked}</div></div>
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3"><div className="text-[10px] uppercase font-bold text-slate-400">Pending</div><div className="text-[22px] font-extrabold" style={{ color: '#EA580C' }}>{data.pending}</div></div>
+      </div>
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]"><span className="absolute left-3 top-2.5 text-slate-400 text-sm">🔍</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email…" className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-[13px]" /></div>
+        <select value={dept} onChange={(e) => setDept(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-white"><option value="">All departments</option>{depts.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+        <button onClick={() => remind(null)} disabled={busy || data.pending === 0} className="rounded-lg px-4 py-2 text-[12.5px] font-bold text-white disabled:opacity-50" style={{ background: ORANGE }}>Remind all pending ({data.pending})</button>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
+        <table className="w-full text-[12.5px]">
+          <thead><tr className="bg-slate-50 text-[9.5px] uppercase text-slate-400 font-bold"><th className="text-left px-4 py-3">Employee</th><th className="text-left px-3 py-3">Department</th><th className="text-left px-3 py-3">Status</th><th className="text-left px-3 py-3">Linked Gmail</th><th className="text-right px-4 py-3">Action</th></tr></thead>
+          <tbody>
+            {rows.map((e) => (
+              <tr key={e.id} className="border-t border-slate-50" style={{ background: e.connected ? '#f0fdf4' : undefined }}>
+                <td className="px-4 py-2.5"><div className="font-bold text-[#050A1F]">{titleCase(e.name)}</div><div className="text-[11px] text-slate-400">{e.email}</div></td>
+                <td className="px-3 py-2.5 text-slate-600">{e.department || '—'}</td>
+                <td className="px-3 py-2.5">{e.connected ? <span className="text-green-600 font-bold text-[11px]">✓ Linked</span> : <span className="text-amber-600 font-bold text-[11px]">Not linked</span>}</td>
+                <td className="px-3 py-2.5 text-slate-500">{e.connectedEmail || '—'}{e.connectedAt ? <span className="text-[10px] text-slate-400 ml-1">· {new Date(e.connectedAt).toLocaleDateString()}</span> : ''}</td>
+                <td className="px-4 py-2.5 text-right">{!e.connected && <button onClick={() => remind([e.id])} disabled={busy} className="text-[11.5px] font-bold text-orange-600 hover:text-orange-700 disabled:opacity-50">Send reminder</button>}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No employees match.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11.5px] text-slate-400 mt-3">Reminders appear in the employee’s HRMS notifications. Employees link from My Profile → My Gmail. Personal @gmail.com accounts must be added as test users in Google Cloud — see the setup guide.</p>
+    </div>
+  );
+}
+
 function HrAdmin({ user, onOpenCandidate }) {
   const [tab, setTab] = useState('org');
   const [users, setUsers] = useState([]);
@@ -11605,7 +11731,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
   if (profileId) return (<div><button onClick={() => { setProfileId(null); load(); }} className="text-xs font-bold text-slate-400 mb-3">← Back to admin</button><ProfilePage me={user} targetId={profileId} /></div>);
 
-  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['projectflow', 'Project Flow'], ['emails', 'Email'], ['tv', 'TV Display'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
+  const TABS = [['org', 'Organization'], ['careers', 'Career Page'], ['projectflow', 'Project Flow'], ['emails', 'Email'], ['gmaillinks', 'Gmail Links'], ['tv', 'TV Display'], ['settings', 'Settings'], ['errors', 'Error Report'], ['logs', 'Log']];
   const [orgSub, setOrgSub] = useState('basic'); // basic | shifts | holidays | access
 
   return (
@@ -11790,6 +11916,7 @@ function HrAdmin({ user, onOpenCandidate }) {
 
       {/* SETTINGS TAB (auto-score + recruitment mailbox + API) */}
       {tab === 'emails' && <HrEmailsTab onOpenCandidate={onOpenCandidate} />}
+      {tab === 'gmaillinks' && <GmailLinkAdmin />}
       {tab === 'settings' && <HrSettingsTab isAdmin={!!user.isAdmin} setErr={setErr} />}
       {tab === 'errors' && <ErrorReportTab setErr={setErr} />}
       {tab === 'logs' && <HrLogsTab />}
@@ -12478,6 +12605,7 @@ export default function HrApp() {
   const navToExpense = (expenseId) => { setExpenseIntent(expenseId); setView('corehr_expenses'); setNavKey((k) => k + 1); };
   const [dashView, setDashView] = useState('hr'); // HR/Admin can flip to 'emp' to preview the employee dashboard
   const [showStickyNotes, setShowStickyNotes] = useState(false);
+  const [gmailNudgeDismissed, setGmailNudgeDismissed] = useState(false);
   // setView writes a clean URL under the base: /dashboard on the HRMS domain, or
   // /hr/dashboard elsewhere. Core HR as <base>/core-hr/<sub>.
   const setView = (v) => { setViewRaw(v); const target = `${HR_BASE}/${viewToSlug(v)}`; if (location.pathname !== target) navigate(target); };
@@ -12705,6 +12833,19 @@ export default function HrApp() {
           </nav>
         )}
       </header>
+      {/* Gmail-link nudge: shown to employees who haven't linked their Gmail. */}
+      {!isAdmin && user.gmailConnected === false && !gmailNudgeDismissed && effectiveView !== 'profile' && (
+        <div className="max-w-6xl mx-auto px-4 pt-4">
+          <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b45309" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 7 10-7"/></svg>
+            <span className="text-[13px] font-semibold text-amber-800">Link your Gmail so you can send and read email from the HRMS. It takes a minute — we’ll show you exactly what to do.</span>
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={() => { setView('profile'); setNavKey((k) => k + 1); }} className="rounded-lg px-3.5 py-1.5 text-[12.5px] font-bold text-white" style={{ background: ORANGE }}>Connect Gmail</button>
+              <button onClick={() => setGmailNudgeDismissed(true)} className="text-[12px] font-bold text-amber-600 px-2">Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
       {!isAdmin && <div className="max-w-6xl mx-auto px-4 pt-4"><HrSurveyGate /></div>}
       {/* Workspace (Task + Buzz) renders full-bleed so the chat fits the screen
           with no outer page padding forcing a scroll. */}
