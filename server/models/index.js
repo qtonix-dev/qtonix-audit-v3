@@ -896,7 +896,8 @@ const ScheduledEmail = sequelize.define(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     leadId: { type: DataTypes.INTEGER, allowNull: true }, // null = All Email (no lead)
-    userId: { type: DataTypes.INTEGER, allowNull: false }, // sender's mailbox
+    userId: { type: DataTypes.INTEGER, allowNull: false }, // sender's mailbox (User id, or HrUser id when senderKind='hr')
+    senderKind: { type: DataTypes.STRING(8), defaultValue: 'user' }, // 'user' (CRM) | 'hr' (HRMS employee)
     fromEmail: { type: DataTypes.STRING(255), defaultValue: '' },
     toEmail: { type: DataTypes.TEXT, allowNull: true },
     ccEmail: { type: DataTypes.TEXT, allowNull: true },

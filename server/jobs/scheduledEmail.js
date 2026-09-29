@@ -28,13 +28,27 @@ async function buildAttachments(list, lead, models) {
 }
 
 async function dispatchDue(models) {
-  const { ScheduledEmail, User, Lead, LeadEmail, Settings, Op } = models;
+  const { ScheduledEmail, User, HrUser, Lead, LeadEmail, Settings, Op } = models;
   const due = await ScheduledEmail.findAll({ where: { status: 'pending', sendAt: { [Op.lte]: new Date() } }, limit: 20 });
   if (due.length === 0) return { sent: 0 };
   const s = await Settings.findOne({ where: { singleton: 'settings' } });
   let sent = 0;
   for (const job of due) {
     try {
+      // HRMS employee scheduled send: resolve from HrUser, no CRM lead/tracking.
+      if (job.senderKind === 'hr') {
+        const emp = await HrUser.findByPk(job.userId, { bypassDemoScope: true });
+        if (!emp || !emp.gmailRefreshToken) { job.status = 'failed'; job.error = 'Sender mailbox not connected.'; await job.save(); continue; }
+        const atts = await buildAttachments(job.attachments, null, models);
+        const res = await gmail.sendMessage(s, emp.getGmailRefreshToken(), emp.gmailConnectedEmail, {
+          from: emp.name ? `${JSON.stringify(emp.name)} <${emp.gmailConnectedEmail}>` : emp.gmailConnectedEmail,
+          to: job.toEmail, cc: job.ccEmail, bcc: job.bccEmail,
+          subject: job.subject, bodyHtml: job.bodyHtml, threadId: job.threadId, inReplyTo: job.inReplyTo, attachments: atts,
+        });
+        job.status = 'sent'; job.sentMessageId = res.id; await job.save();
+        sent++;
+        continue;
+      }
       const sender = await User.findByPk(job.userId);
       if (!sender || !sender.gmailRefreshToken) { job.status = 'failed'; job.error = 'Sender mailbox not connected.'; await job.save(); continue; }
       const lead = job.leadId ? await Lead.findByPk(job.leadId) : null;

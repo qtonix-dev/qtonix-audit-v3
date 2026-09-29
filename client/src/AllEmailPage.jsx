@@ -98,8 +98,9 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
       // The Scheduled pseudo-folder lists pending scheduled emails (not Gmail
       // messages) so they can be cancelled or rescheduled.
       if (box === 'SCHEDULED' && !labelId) {
-        const rows = await api(`/gmail/scheduled${as ? `?as=${as}` : ''}`);
-        setScheduled(Array.isArray(rows) ? rows : []);
+        const rows = await api(`${base}/scheduled${as ? `?as=${as}` : ''}`);
+        // CRM returns an array; HR returns { scheduled: [...] }. Handle both.
+        setScheduled(Array.isArray(rows) ? rows : (rows && rows.scheduled) || []);
         setNextPage(null);
         return;
       }
@@ -236,7 +237,7 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
         <div className="flex-1 overflow-auto">
           {box === 'SCHEDULED' ? (
             <ScheduledList rows={scheduled} loading={loading}
-              onCancel={async (row) => { try { await api(`/gmail/scheduled/${row.id}/cancel`, { method: 'POST' }); setScheduled((s) => s.filter((x) => x.id !== row.id)); } catch (e) { setErr(e.message); } }}
+              onCancel={async (row) => { try { await api(`${base}/scheduled/${row.id}/cancel`, { method: 'POST' }); setScheduled((s) => s.filter((x) => x.id !== row.id)); } catch (e) { setErr(e.message); } }}
               onReschedule={(row) => setReschedule(row)} />
           ) : (
           <>
@@ -302,7 +303,7 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
         </div>
       </div>
 
-      {reschedule && <RescheduleModal row={reschedule} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadFolder(true); }} />}
+      {reschedule && <RescheduleModal row={reschedule} apiFn={api} base={base} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadFolder(true); }} />}
 
       {openThread && <AllEmailThread threadId={openThread.threadId} subject={openThread.subject} as={as} apiFn={api} base={base} onClose={() => setOpenThread(null)}
         onReply={(payload) => setComposer(payload)} />}
@@ -703,7 +704,8 @@ function ScheduledList({ rows, loading, onCancel, onReschedule }) {
 }
 
 // Reschedule a pending email to a new date/time.
-function RescheduleModal({ row, onClose, onSaved }) {
+function RescheduleModal({ row, apiFn, base = '/gmail', onClose, onSaved }) {
+  const api = apiFn || _crmApi;
   const toLocalInput = (iso) => { try { const d = new Date(iso); const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 16); } catch { return ''; } };
   const [when, setWhen] = useState(toLocalInput(row.sendAt));
   const [busy, setBusy] = useState(false);
@@ -712,7 +714,7 @@ function RescheduleModal({ row, onClose, onSaved }) {
     setBusy(true); setErr('');
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
-      await api(`/gmail/scheduled/${row.id}`, { method: 'PATCH', body: JSON.stringify({ sendAt: new Date(when).toISOString(), timezone: tz }) });
+      await api(`${base}/scheduled/${row.id}`, { method: 'PATCH', body: JSON.stringify({ sendAt: new Date(when).toISOString(), timezone: tz }) });
       onSaved();
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };

@@ -278,6 +278,198 @@ router.post('/gmail-link/remind', requireHrAccess, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===========================================================================
+// EMPLOYEE EMAIL CLIENT — powers the HRMS "Email" tab from the employee's own
+// linked Gmail. Mirrors the CRM /api/gmail/all/* endpoints (read, thread,
+// send, labels/tags, star, delete) + scheduled send, but scoped to the
+// current employee's own mailbox only (no browsing others, no CRM lead links
+// or open-tracking). The frontend mounts AllEmailPage with base '/mail'.
+// ===========================================================================
+
+// Resolve the current employee's own connected mailbox, or null.
+async function myMailbox(req) {
+  if (!req.hrActor || req.hrActor.kind !== 'hr') return null;
+  const emp = await HrUser.findByPk(req.hrActor.id, { bypassDemoScope: true });
+  if (!emp || !emp.gmailRefreshToken) return null;
+  const settings = await Settings.findOne({ where: { singleton: 'settings' } });
+  return { user: emp, token: emp.getGmailRefreshToken(), settings };
+}
+
+// List of mailboxes the viewer can browse — always just "Me" (own mailbox).
+router.get('/mail/all/mailboxes', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    const list = mb ? [{ value: String(mb.user.id), userId: mb.user.id, label: 'Me', email: mb.user.gmailConnectedEmail, signature: mb.user.emailSignature || '' }] : [];
+    res.json({ mailboxes: list, isAdmin: false, canSwitch: false });
+  } catch (e) { next(e); }
+});
+
+router.get('/mail/all/folder', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox. Connect Gmail in My Profile first.' });
+    const box = String(req.query.box || 'INBOX').toUpperCase();
+    const out = await gmail.listFolder(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
+      box, labelId: req.query.labelId || null, q: req.query.q || '',
+      max: Math.min(50, Number(req.query.max) || 25), pageToken: req.query.pageToken || null,
+    });
+    out.messages.forEach((m) => { m.leadId = null; }); // no CRM lead links here
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.get('/mail/all/thread/:threadId', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const msgs = await gmail.getThread(mb.settings, mb.token, mb.user.gmailConnectedEmail, req.params.threadId);
+    res.json({ messages: msgs });
+  } catch (e) { next(e); }
+});
+
+router.get('/mail/all/labels', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.json({ labels: [] });
+    const labels = await gmail.listLabels(mb.settings, mb.token);
+    res.json({ labels });
+  } catch (e) { next(e); }
+});
+
+router.post('/mail/all/labels', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const b = req.body || {};
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Label name is required.' });
+    const label = await gmail.createLabel(mb.settings, mb.token, String(b.name).trim(), b.color || null);
+    res.json(label);
+  } catch (e) { next(e); }
+});
+
+router.patch('/mail/all/labels/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const patch = {};
+    if (req.body.name !== undefined) patch.name = String(req.body.name).trim();
+    if (req.body.color !== undefined) patch.color = req.body.color;
+    const label = await gmail.updateLabel(mb.settings, mb.token, req.params.id, patch);
+    res.json(label);
+  } catch (e) { next(e); }
+});
+
+router.delete('/mail/all/labels/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.deleteLabel(mb.settings, mb.token, req.params.id);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.post('/mail/all/message/:gmailMessageId/labels', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.modifyMessageLabels(mb.settings, mb.token, req.params.gmailMessageId, { add: req.body.add || [], remove: req.body.remove || [] });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.post('/mail/all/message/:gmailMessageId/star', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.setStar(mb.settings, mb.token, req.params.gmailMessageId, !!req.body.starred);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/mail/all/message/:gmailMessageId', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    await gmail.trashMessage(mb.settings, mb.token, req.params.gmailMessageId);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Send / reply / forward — from the employee's own mailbox. Supports scheduled
+// send (b.sendAt) which is queued and fired by the shared dispatcher.
+router.post('/mail/all/send', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'Connect your Gmail first.' });
+    const b = req.body || {};
+    const to = b.to;
+    if (!to || (Array.isArray(to) && to.length === 0)) return res.status(400).json({ error: 'Add at least one recipient.' });
+    if (!b.subject || !b.body) return res.status(400).json({ error: 'Subject and message are both required.' });
+    const attachments = Array.isArray(b.attachments)
+      ? b.attachments.filter((a) => a && a.contentBase64).map((a) => ({ filename: a.filename || 'attachment', mimeType: a.mimeType || 'application/octet-stream', contentBase64: a.contentBase64 }))
+      : [];
+
+    // Scheduled send → queue with senderKind 'hr' so the dispatcher resolves
+    // the token from HrUser (not User).
+    if (b.sendAt) {
+      const { ScheduledEmail } = require('../models');
+      const when = new Date(b.sendAt);
+      if (isNaN(when.getTime()) || when.getTime() < Date.now() - 60000) return res.status(400).json({ error: 'Pick a valid future date and time.' });
+      const sched = await ScheduledEmail.create({
+        leadId: null, userId: mb.user.id, senderKind: 'hr', fromEmail: mb.user.gmailConnectedEmail,
+        toEmail: Array.isArray(to) ? to.join(', ') : to, ccEmail: b.cc || null, bccEmail: b.bcc || null,
+        subject: b.subject, bodyHtml: b.body, attachments: attachments.length ? attachments : null,
+        threadId: b.threadId || null, inReplyTo: b.inReplyTo || null,
+        timezone: b.timezone || 'Asia/Kolkata', sendAt: when,
+      });
+      return res.json({ ok: true, scheduled: true, id: sched.id, sendAt: when });
+    }
+
+    const sent = await gmail.sendMessage(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
+      from: mb.user.name ? `${JSON.stringify(mb.user.name)} <${mb.user.gmailConnectedEmail}>` : mb.user.gmailConnectedEmail,
+      to, cc: b.cc, bcc: b.bcc,
+      subject: b.subject, bodyHtml: b.body, threadId: b.threadId, inReplyTo: b.inReplyTo, attachments,
+    });
+    res.json({ ok: true, id: sent.id, threadId: sent.threadId });
+  } catch (e) { next(e); }
+});
+
+// Scheduled list / cancel / reschedule — the employee's own queued sends.
+router.get('/mail/scheduled', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.json({ scheduled: [] });
+    const { ScheduledEmail } = require('../models');
+    const rows = await ScheduledEmail.findAll({ where: { senderKind: 'hr', userId: mb.user.id, status: 'pending' }, order: [['sendAt', 'ASC']] });
+    res.json({ scheduled: rows.map((r) => r.toJSON()) });
+  } catch (e) { next(e); }
+});
+
+router.post('/mail/scheduled/:id/cancel', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const { ScheduledEmail } = require('../models');
+    const row = await ScheduledEmail.findByPk(Number(req.params.id));
+    if (!row || row.senderKind !== 'hr' || row.userId !== mb.user.id) return res.status(404).json({ error: 'Not found.' });
+    if (row.status === 'pending') { row.status = 'cancelled'; await row.save(); }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.patch('/mail/scheduled/:id', requireHrAccess, async (req, res, next) => {
+  try {
+    const mb = await myMailbox(req);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const { ScheduledEmail } = require('../models');
+    const row = await ScheduledEmail.findByPk(Number(req.params.id));
+    if (!row || row.senderKind !== 'hr' || row.userId !== mb.user.id) return res.status(404).json({ error: 'Not found.' });
+    if (req.body.sendAt) { const when = new Date(req.body.sendAt); if (isNaN(when.getTime()) || when.getTime() < Date.now() - 60000) return res.status(400).json({ error: 'Pick a valid future time.' }); row.sendAt = when; }
+    await row.save();
+    res.json(row.toJSON());
+  } catch (e) { next(e); }
+});
+
 // The candidate's email conversation (searched in the shared mailbox by their
 // address). Returns normalised messages, newest last.
 router.get('/candidates/:id/emails', requireHrAccess, async (req, res, next) => {

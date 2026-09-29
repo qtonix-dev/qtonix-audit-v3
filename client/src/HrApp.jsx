@@ -12565,7 +12565,7 @@ export default function HrApp() {
   const location = useLocation();
   // Derive the current view from the URL path (/hr/<view>) so refresh and deep
   // links keep the user on the same page. Falls back to dashboard.
-  const VALID_VIEWS = ['dashboard', 'recognition', 'rewards', 'tasks', 'recruitment', 'interview', 'email', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
+  const VALID_VIEWS = ['dashboard', 'recognition', 'rewards', 'tasks', 'recruitment', 'interview', 'email', 'myemail', 'employees', 'survey', 'profile', 'templates', 'signature', 'admin',
     'corehr_attendance', 'corehr_leave', 'corehr_payroll', 'corehr_expenses', 'corehr_stock', 'corehr_onboarding'];
   // Clean-URL slugs for the Core HR sub-pages: the internal view id keeps its
   // underscore (used all over the component tree), but the URL uses a tidy
@@ -12745,6 +12745,7 @@ export default function HrApp() {
     ...(!(isAdmin || isHrStaff || isHrManager) ? [{ id: 'rewards', label: 'My Rewards' }] : []),
     { id: 'interview', label: 'Interview' },
     ...((isScheduler || grant('email', 'read')) ? [{ id: 'email', label: 'Email' }] : []),
+    ...((!isAdmin && user.gmailConnected) ? [{ id: 'myemail', label: (isScheduler || grant('email', 'read')) ? 'My Email' : 'Email' }] : []),
     ...((isHrStaff || hasPanel || grant('recruitment', 'read')) ? [{ id: 'recruitment', label: 'Recruitment' }] : []),
     ...(coreHrChildren.length ? [{ id: 'corehr', label: 'Core HR', children: coreHrChildren }] : []),
     ...((isAdmin || user.hrManagerAll || user.hrManagerScope === 'all' || grant('survey', 'read')) ? [{ id: 'survey', label: 'Survey' }] : []),
@@ -12879,6 +12880,11 @@ export default function HrApp() {
         {effectiveView === 'interview' && <MyInterviews />}
         {effectiveView === 'email' && isScheduler && (
           <AllEmailPage user={user} apiFn={hrApi} base="" features={{ scheduled: false, templates: false, ai: true, leadLinks: false }} />
+        )}
+        {/* Employee's own personal Gmail inbox (base '/mail'). Core email +
+            scheduled send; no CRM lead-linking. */}
+        {effectiveView === 'myemail' && !isAdmin && user.gmailConnected && (
+          <AllEmailPage user={user} apiFn={hrApi} base="/mail" features={{ scheduled: true, templates: false, ai: false, leadLinks: false }} />
         )}
         {effectiveView === 'employees' && (
           profileTarget
