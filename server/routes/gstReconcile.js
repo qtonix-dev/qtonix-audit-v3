@@ -62,13 +62,22 @@ router.post('/save', async (req, res, next) => {
 // --- List saved months ------------------------------------------------------
 router.get('/list', async (req, res, next) => {
   try {
-    const rows = await GstReconciliation.findAll({ order: [['month', 'DESC']] });
-    // Light list (no heavy result payload).
+    const rows = await GstReconciliation.findAll({ order: [['month', 'ASC']] });
+    // Light list with grouped numbers so the dashboard can chart months without
+    // loading each full reconciliation payload.
     const items = rows.map((r) => {
-      const j = r.toJSON(); const t = (j.result && j.result.totals) || {};
-      return { _id: j._id, month: j.month, status: j.status, lastInv: j.lastInv,
+      const j = r.toJSON();
+      const g = j.result ? groupedTotals(j.result) : { kotak: {}, indian: {}, totalReceived: 0 };
+      const lineCount = (j.result && (j.result.lines || []).filter((l) => !l.excluded).length) || 0;
+      return {
+        _id: j._id, month: j.month, status: j.status, lastInv: j.lastInv,
         createdByName: j.createdByName, updatedAt: j.updatedAt,
-        paypalInr: t.paypalInr, stripeInr: t.stripeInr, pendingCount: t.pendingCount ?? t.unclassifiedCount };
+        totalReceived: g.totalReceived,
+        kotak: g.kotak, indian: g.indian,
+        paypalInr: g.indian.paypal || 0, stripeInr: g.kotak.stripe || 0,
+        wiseInr: g.kotak.wise || 0, inwardInr: g.kotak.inward || 0, otherInr: g.kotak.other || 0,
+        lineCount,
+      };
     });
     res.json({ items });
   } catch (e) { next(e); }

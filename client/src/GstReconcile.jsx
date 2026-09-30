@@ -173,6 +173,133 @@ function ManualForm({ pend, onAdd, onExclude }) {
   );
 }
 
+// ---- Monthly dashboard: graph of total received + per-merchant, and month cards ----
+const SEG = [
+  { key: 'paypalInr', label: 'PayPal', color: '#7c3aed' },
+  { key: 'stripeInr', label: 'Stripe', color: '#059669' },
+  { key: 'wiseInr', label: 'Wise', color: '#0284c7' },
+  { key: 'inwardInr', label: 'Inward', color: '#4338ca' },
+  { key: 'otherInr', label: 'Other', color: '#d97706' },
+];
+function MonthlyDashboard({ saved, loading, onOpen, onNew, onDelete }) {
+  const months = [...saved].sort((a, b) => (a.month < b.month ? -1 : 1));
+  const maxVal = Math.max(1, ...months.map((m) => Number(m.totalReceived) || 0));
+  const grand = months.reduce((s, m) => s + (Number(m.totalReceived) || 0), 0);
+
+  // chart geometry
+  const W = 720, H = 260, padL = 64, padB = 42, padT = 12, padR = 12;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const bw = months.length ? Math.min(64, plotW / months.length * 0.6) : 40;
+  const step = months.length ? plotW / months.length : plotW;
+  const yTicks = 4;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl bg-gradient-to-br from-[#050A1F] to-[#1a2547] text-white px-5 py-4 flex items-center justify-between">
+        <div>
+          <div className="text-lg font-extrabold">GST Reconciliation — Dashboard</div>
+          <div className="text-[12.5px] text-slate-300 mt-1">Every reconciled month is saved here. Click a month to open its full reconciliation, export, or edit.</div>
+        </div>
+        <button onClick={onNew} className="rounded-xl px-4 py-2.5 text-[13px] font-extrabold text-white shrink-0" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF8A3D)' }}>+ New month</button>
+      </div>
+
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-400 text-[13px]">Loading…</div>
+      ) : months.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+          <div className="text-[15px] font-bold text-slate-700">No months reconciled yet</div>
+          <div className="text-[12.5px] text-slate-500 mt-1 mb-4">Run your first month to start building the dashboard.</div>
+          <button onClick={onNew} className="rounded-xl px-5 py-2.5 text-[13px] font-extrabold text-white" style={{ background: 'linear-gradient(135deg,#FF6A00,#FF8A3D)' }}>+ New month</button>
+        </div>
+      ) : (
+        <>
+          {/* Top numbers */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Months tracked" value={months.length} tone="slate" />
+            <Stat label="Total received (all)" value={inr(grand)} tone="violet" />
+            <Stat label="Latest month" value={monthName(months[months.length - 1].month)} sub={inr(months[months.length - 1].totalReceived)} tone="green" />
+            <Stat label="Avg / month" value={inr(grand / months.length)} tone="amber" />
+          </div>
+
+          {/* Graph */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[14px] font-extrabold text-slate-800">Monthly received</div>
+              <div className="flex flex-wrap gap-3">
+                {SEG.map((s) => <span key={s.key} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} />{s.label}</span>)}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: Math.max(W, months.length * 90), maxWidth: '100%' }} role="img" aria-label="Monthly received by source">
+                {/* y grid + labels */}
+                {Array.from({ length: yTicks + 1 }).map((_, i) => {
+                  const val = (maxVal / yTicks) * i;
+                  const y = padT + plotH - (plotH * i) / yTicks;
+                  return (
+                    <g key={i}>
+                      <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#eef2f7" strokeWidth="1" />
+                      <text x={padL - 8} y={y + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{val >= 100000 ? '₹' + (val / 100000).toFixed(1) + 'L' : '₹' + Math.round(val / 1000) + 'k'}</text>
+                    </g>
+                  );
+                })}
+                {/* stacked bars */}
+                {months.map((m, i) => {
+                  const cx = padL + step * i + step / 2;
+                  let yTop = padT + plotH;
+                  const total = Number(m.totalReceived) || 0;
+                  return (
+                    <g key={m._id} style={{ cursor: 'pointer' }} onClick={() => onOpen(m._id)}>
+                      <title>{`${monthName(m.month)} — ${inr(m.totalReceived)}`}</title>
+                      {SEG.map((s) => {
+                        const v = Number(m[s.key]) || 0;
+                        if (v <= 0) return null;
+                        const h = (plotH * v) / maxVal;
+                        yTop -= h;
+                        return <rect key={s.key} x={cx - bw / 2} y={yTop} width={bw} height={Math.max(0, h)} fill={s.color} rx="1.5"><title>{`${s.label}: ${inr(v)}`}</title></rect>;
+                      })}
+                      <text x={cx} y={padT + plotH + 14} textAnchor="middle" fontSize="9.5" fontWeight="600" fill="#475569">{monthName(m.month)}</text>
+                      <text x={cx} y={padT + plotH + 26} textAnchor="middle" fontSize="8.5" fill="#94a3b8">{total >= 100000 ? '₹' + (total / 100000).toFixed(2) + 'L' : inr(total)}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1">Tap a bar to open that month.</div>
+          </div>
+
+          {/* Month cards */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[...months].reverse().map((m) => (
+              <div key={m._id} className="rounded-2xl border border-slate-200 bg-white p-4 hover:border-violet-300 hover:shadow-sm transition cursor-pointer group" onClick={() => onOpen(m._id)}>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-[15px] font-extrabold text-slate-800">{monthName(m.month)}</div>
+                    <div className="text-[11px] text-slate-400">{m.lineCount || 0} transactions · {m.createdByName || ''}</div>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); onDelete(m._id); }} className="text-[11px] font-bold text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100">Delete</button>
+                </div>
+                <div className="text-[22px] font-extrabold text-slate-900 mt-2">{inr(m.totalReceived)}</div>
+                <div className="mt-2 space-y-0.5">
+                  {SEG.map((s) => (Number(m[s.key]) > 0) && (
+                    <div key={s.key} className="flex items-center justify-between text-[11.5px]">
+                      <span className="inline-flex items-center gap-1.5 text-slate-500"><span className="w-2 h-2 rounded-sm" style={{ background: s.color }} />{s.label}</span>
+                      <span className="font-bold text-slate-700">{inr(m[s.key])}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Kotak {inr((m.kotak && m.kotak.total) || 0)} · Indian {inr((m.indian && m.indian.total) || 0)}</span>
+                  <span className="text-violet-600 font-bold group-hover:underline">Open →</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function GstReconcile() {
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() === 0 ? 12 : now.getMonth()).padStart(2, '0')}`);
@@ -185,10 +312,19 @@ export default function GstReconcile() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [saved, setSaved] = useState([]);
-  const [showSaved, setShowSaved] = useState(false);
+  const [mode, setMode] = useState('dashboard'); // dashboard | reconcile
+  const [loadingList, setLoadingList] = useState(true);
 
-  useEffect(() => { loadSaved(); }, []);
-  async function loadSaved() { try { const r = await api('/list'); setSaved(r.items || []); } catch { /* noop */ } }
+  useEffect(() => { loadSaved(true); }, []);
+  async function loadSaved(initial) {
+    try { const r = await api('/list'); setSaved(r.items || []); if (initial && !(r.items || []).length) setMode('reconcile'); }
+    catch { /* noop */ } finally { setLoadingList(false); }
+  }
+  function newMonth() {
+    setResult(null); setIndianBank(null); setKotak(null); setStripeCsv(null); setPaypalCsv(null); setFircs([]);
+    setMode('reconcile');
+  }
+  function backToDashboard() { setResult(null); setMode('dashboard'); loadSaved(); }
 
   async function run() {
     if (!indianBank && !kotak) { toast('Upload at least the Indian Bank or Kotak statement.', 'error'); return; }
@@ -221,7 +357,7 @@ export default function GstReconcile() {
     } catch (e) { toast(e.message, 'error'); }
   }
   async function save() {
-    try { await api('/save', { method: 'POST', body: JSON.stringify({ month, lastInv: lastInv.trim(), result: finalized() }) }); toast('Saved to CRM history.', 'success'); loadSaved(); }
+    try { await api('/save', { method: 'POST', body: JSON.stringify({ month, lastInv: lastInv.trim(), result: finalized() }) }); toast('Saved. It now appears on your dashboard.', 'success'); loadSaved(); }
     catch (e) { toast(e.message, 'error'); }
   }
   async function openSaved(id) {
@@ -230,7 +366,7 @@ export default function GstReconcile() {
       setMonth(it.month); setLastInv(it.lastInv || '');
       const res = it.result; (res.lines || []).forEach((l, i) => { if (!l._uid) l._uid = 'L' + i; });
       (res.pending || []).forEach((p, i) => { if (!p._uid) p._uid = 'P' + i; p.suggestMerchant = guessMerchant(p.desc); });
-      setResult(res); setShowSaved(false); toast(`Loaded ${monthName(it.month)}.`, 'success');
+      setResult(res); setMode('reconcile'); toast(`Loaded ${monthName(it.month)}.`, 'success');
     } catch (e) { toast(e.message, 'error'); }
   }
   async function deleteSaved(id) {
@@ -257,9 +393,16 @@ export default function GstReconcile() {
   const activeLines = view ? view.lines.filter((l) => !l.excluded) : [];
   const activePending = view ? (view.pending || []).filter((p) => !p.resolved && !p.excluded) : [];
 
+  // ---------------- Dashboard landing ----------------
+  if (mode === 'dashboard') {
+    return <MonthlyDashboard saved={saved} loading={loadingList} onOpen={openSaved} onNew={newMonth} onDelete={deleteSaved} />;
+  }
+
+  // ---------------- Reconcile (upload / results) ----------------
   return (
     <div className="space-y-5">
       <div className="rounded-2xl bg-gradient-to-br from-[#050A1F] to-[#1a2547] text-white px-5 py-4">
+        <button onClick={backToDashboard} className="text-[12px] font-bold text-violet-200 hover:text-white mb-2">← Back to dashboard</button>
         <div className="text-lg font-extrabold">PayPal, Stripe, Wise &amp; Other GST Reconciliation</div>
         <div className="text-[12.5px] text-slate-300 mt-1 leading-relaxed max-w-3xl">
           Pick a month and upload the statements. Every bank credit is read and shown in one date-ordered list with a running invoice number:
@@ -267,31 +410,7 @@ export default function GstReconcile() {
           another currency you confirm; and one combined “Other” line at the end (FD-maturity interest, small credits and any non-PayPal
           Indian Bank credit). Totals are grouped by bank. Export in your CA’s Excel format plus a full itemised PDF.
         </div>
-        <button onClick={() => setShowSaved((s) => !s)} className="mt-2 text-[12px] font-bold text-violet-200 hover:text-white underline underline-offset-2">
-          {showSaved ? 'Hide saved months' : `Saved months (${saved.length})`}
-        </button>
       </div>
-
-      {showSaved && (
-        <div className="rounded-xl border border-slate-200 bg-white p-3">
-          {saved.length === 0 ? <div className="text-[12.5px] text-slate-400 px-1 py-2">No saved months yet.</div> : (
-            <div className="divide-y divide-slate-100">
-              {saved.map((s) => (
-                <div key={s._id} className="flex items-center justify-between py-2 px-1">
-                  <div>
-                    <div className="text-[13px] font-bold text-slate-800">{monthName(s.month)}</div>
-                    <div className="text-[11px] text-slate-400">PayPal {inr(s.paypalInr)} · Stripe {inr(s.stripeInr)} · {s.pendingCount || 0} to review · {s.createdByName || ''}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => openSaved(s._id)} className="text-[11.5px] font-bold text-violet-600 hover:underline">Open</button>
-                    <button onClick={() => deleteSaved(s._id)} className="text-[11.5px] font-bold text-slate-400 hover:text-red-500">Delete</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Setup */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
