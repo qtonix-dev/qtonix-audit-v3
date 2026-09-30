@@ -9,6 +9,7 @@ import { CountryCombobox, PhoneField, Pagination, Icon, MailEditor } from './Lea
 import { formatPhone } from './countries.js';
 import Dashboard, { EmailDraftsPage } from './Dashboard.jsx';
 import TicketBookingAdmin from './TicketBooking.jsx';
+import GstReconcile from './GstReconcile.jsx';
 import StickyNotes from './StickyNotes.jsx';
 import Analytics from './Analytics.jsx';
 import Reviews from './Reviews.jsx';
@@ -966,7 +967,7 @@ function useGmail() {
 }
 
 // The circular avatar + name/designation + dropdown in the header.
-function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut, onTicketBooking }) {
+function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut, onTicketBooking, onGstReconcile }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -1005,6 +1006,12 @@ function UserMenu({ user, onEditProfile, onEmailSettings, onTemplates, onSignOut
             <button onClick={() => { setOpen(false); onTicketBooking(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left border-t border-slate-100 mt-1 pt-2.5">
               <span className="text-[15px] leading-none">🎟️</span>
               Ticket Booking
+            </button>
+          )}
+          {user && user.role === 'admin' && onGstReconcile && (
+            <button onClick={() => { setOpen(false); onGstReconcile(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#050A1F] hover:bg-slate-50 text-left">
+              <span className="text-[15px] leading-none">🧾</span>
+              GST Reconciliation
             </button>
           )}
           <button onClick={() => { setOpen(false); onSignOut(); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 text-left border-t border-slate-100 mt-1 pt-2.5">
@@ -1657,6 +1664,7 @@ export default function App() {
   const [showEmailSettings, setShowEmailSettings] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showTicketBooking, setShowTicketBooking] = useState(false);
+  const [showGstReconcile, setShowGstReconcile] = useState(false);
   const [showStickyNotes, setShowStickyNotes] = useState(false);
   const [view, setView] = useState(() => {
     try {
@@ -1986,7 +1994,7 @@ export default function App() {
             </nav>
           </div>
           <div className="flex items-center gap-3 ml-6 shrink-0">
-            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onTemplates={() => setShowTemplates(true)} onSignOut={signOut} onTicketBooking={() => setShowTicketBooking(true)} />
+            <UserMenu user={user} onEditProfile={() => setShowProfile(true)} onEmailSettings={() => setShowEmailSettings(true)} onTemplates={() => setShowTemplates(true)} onSignOut={signOut} onTicketBooking={() => setShowTicketBooking(true)} onGstReconcile={() => setShowGstReconcile(true)} />
             {/* Hamburger — mobile only. */}
             <button onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Menu"
               className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg text-white hover:bg-white/10">
@@ -2056,6 +2064,16 @@ export default function App() {
             <button onClick={() => setShowTicketBooking(false)} className="text-slate-300 hover:text-white text-sm font-bold flex items-center gap-1.5">✕ Close</button>
           </div>
           <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><TicketBookingAdmin /></div>
+        </div>
+      )}
+
+      {showGstReconcile && (
+        <div className="fixed inset-0 bg-slate-50 z-[120] overflow-auto">
+          <div className="bg-[#050A1F] text-white px-6 h-14 flex items-center justify-between sticky top-0 z-10">
+            <div className="flex items-center gap-3"><div className="text-lg font-extrabold">Qtonix<span className="text-[#FF6A00]">.</span></div><span className="text-slate-400 text-sm font-semibold">🧾 GST Reconciliation</span></div>
+            <button onClick={() => setShowGstReconcile(false)} className="text-slate-300 hover:text-white text-sm font-bold flex items-center gap-1.5">✕ Close</button>
+          </div>
+          <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><GstReconcile /></div>
         </div>
       )}
 

@@ -3046,11 +3046,29 @@ const TaskActivity = sequelize.define('TaskActivity', {
 }, { tableName: 'task_activities', indexes: [{ name: 'idx_task_activity_task', fields: ['taskId'] }] });
 TaskActivity.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// GST reconciliation — one saved monthly reconciliation of PayPal + Stripe inward
+// remittance (bank credits ↔ FIRC ↔ Stripe payouts). `result` holds the full,
+// admin-edited reconciliation JSON so a month can be reopened and exported later.
+const GstReconciliation = sequelize.define('GstReconciliation', {
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  month: { type: DataTypes.STRING(7), allowNull: false },       // "YYYY-MM"
+  lastInv: { type: DataTypes.STRING(60), allowNull: true },      // seed INV before this month
+  status: { type: DataTypes.STRING(12), defaultValue: 'final' }, // draft | final
+  result: { type: DataTypes.TEXT('long'), allowNull: false },    // full reconcile JSON (edited)
+  createdById: { type: DataTypes.INTEGER, allowNull: true },
+  createdByName: { type: DataTypes.STRING(160), allowNull: true },
+}, { tableName: 'gst_reconciliations', indexes: [{ fields: ['month'] }] });
+GstReconciliation.prototype.toJSON = function () {
+  const o = Object.assign({}, this.get()); o._id = o.id;
+  try { o.result = JSON.parse(o.result); } catch { o.result = null; }
+  return o;
+};
+
 module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
   User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
-  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote,
+  HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,
   ChatConversation, ChatMembership, ChatMessage, ChatTeam, ChatTeamMember,

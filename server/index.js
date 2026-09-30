@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Bump this on every release so /api/health reveals exactly what's deployed —
 // the quickest way to confirm a Railway rebuild actually shipped the new code.
-const APP_VERSION = 'v588';
+const APP_VERSION = 'v591';
 global.__APP_VERSION__ = APP_VERSION;
 
 const express = require('express');
@@ -156,6 +156,9 @@ app.use('/api/admin', admin);
     catch { return res.status(401).send('Unauthorized'); }
   }, tb.downloadPdf);
   app.use('/api/ticket-share', tb.pub); app.use('/api/ticket-portal', tb.cust); app.use('/api/ticket-booking', requireAuth, requireAdmin, tb); }
+// GST reconciliation (PayPal + Stripe inward remittance) — admin only.
+{ const { requireAuth, requireAdmin } = require('./middleware/auth');
+  app.use('/api/gst-reconcile', requireAuth, requireAdmin, require('./routes/gstReconcile')); }
 // Sticky Notes — CRM surface (role-based visibility via User.managerId).
 {
   const { requireAuth } = require('./middleware/auth');
