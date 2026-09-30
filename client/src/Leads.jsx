@@ -1930,7 +1930,14 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
   const openEdit = (section) => { setDraft({ ...lead }); setEditSection(section); };
   const saveEdit = async () => {
     try {
-      const updated = await api(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(draft) });
+      const payload = { ...draft };
+      // Releasing a lead requires a compulsory reason. Ask for it before saving.
+      if (draft.status === 'release' && lead.status !== 'release') {
+        const reason = await promptDialog({ title: 'Release this lead', message: 'Why are you releasing this lead? A reason is required.', placeholder: 'e.g. Wrong number / not interested / duplicate', confirmText: 'Release lead' });
+        if (!reason || !reason.trim()) { toast('A reason is required to release a lead.'); return; }
+        payload.releaseReason = reason.trim();
+      }
+      const updated = await api(`/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(payload) });
       setLead(updated); setEditSection(null);
     } catch (e) { toast(e.message); }
   };
@@ -5214,9 +5221,25 @@ function ReleasedLeads({ user, onOpen }) {
 
   return (
     <div>
-      <div className="mb-4">
-        <div className="text-lg font-extrabold text-[#050A1F]">♻️ Released leads</div>
-        <div className="text-xs text-slate-400">Leads handed back by agents. Reassign to put a lead back into someone's CRM, or delete it.</div>
+      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-lg font-extrabold text-[#050A1F]">♻️ Released leads</div>
+          <div className="text-xs text-slate-400">Leads handed back by agents. Reassign to put a lead back into someone's CRM, or delete it.</div>
+        </div>
+        {user.role === 'admin' && (
+          <button
+            onClick={async () => {
+              try {
+                const dry = await api('/leads/repair/unconverted-wins');
+                if (!dry.count) { toast('No missing sales found — all converted clients are showing.'); return; }
+                if (!(await confirmDialog({ title: `Restore ${dry.count} missing sale${dry.count === 1 ? '' : 's'}?`, message: `Found ${dry.count} lead(s) with a paid, won deal that aren't showing as Converted: ${dry.leads.map((x) => x.name).join(', ')}. Restore them to the Converted page?`, confirmText: 'Restore' }))) return;
+                const r = await api('/leads/repair/unconverted-wins', { method: 'POST', body: JSON.stringify({}) });
+                toast(`Restored ${r.fixed} sale${r.fixed === 1 ? '' : 's'} ✓`);
+              } catch (e) { toast(e.message); }
+            }}
+            title="Find & restore paid sales that dropped off the Converted page"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 whitespace-nowrap">🔧 Restore missing sales</button>
+        )}
       </div>
       {items.length === 0 ? (
         <div className="text-slate-300 text-sm py-12 text-center">No released leads right now.</div>
@@ -5229,6 +5252,7 @@ function ReleasedLeads({ user, onOpen }) {
                 <th className="text-left px-4 py-3">Contact</th>
                 <th className="text-left px-4 py-3">Source</th>
                 <th className="text-left px-4 py-3">Released from</th>
+                <th className="text-left px-4 py-3">Reason</th>
                 <th className="text-left px-4 py-3">Released</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -5246,6 +5270,7 @@ function ReleasedLeads({ user, onOpen }) {
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{l.releasedFrom || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 text-xs max-w-[220px]"><span title={l.releaseReason || ''}>{l.releaseReason || <span className="text-slate-300">—</span>}</span>{l.releasedByName ? <span className="block text-[10px] text-slate-400">by {l.releasedByName}</span> : null}</td>
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{l.releasedAt ? fmtDate(l.releasedAt) : '—'}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <button onClick={() => setAssign(l)} className="rounded border border-blue-200 px-2.5 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 mr-1">Reassign</button>
@@ -5618,21 +5643,6 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <option value="thisYear">This year</option>
             <option value="all">All time</option>
           </select>
-          {user.role === 'admin' && (
-            <button
-              onClick={async () => {
-                try {
-                  const dry = await api('/leads/repair/unconverted-wins');
-                  if (!dry.count) { toast('No missing sales found — all converted clients are showing.'); return; }
-                  if (!(await confirmDialog({ title: `Restore ${dry.count} missing sale${dry.count === 1 ? '' : 's'}?`, message: `Found ${dry.count} lead(s) with a paid, won deal that aren't showing as Converted: ${dry.leads.map((x) => x.name).join(', ')}. Restore them to the Converted page?`, confirmText: 'Restore' }))) return;
-                  const r = await api('/leads/repair/unconverted-wins', { method: 'POST', body: JSON.stringify({}) });
-                  toast(`Restored ${r.fixed} sale${r.fixed === 1 ? '' : 's'} ✓`);
-                  load();
-                } catch (e) { toast(e.message); }
-              }}
-              title="Find & restore paid sales that dropped off the Converted page"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 whitespace-nowrap">🔧 Restore missing sales</button>
-          )}
 
           {/* Cards read well for a handful of clients; the table scans faster
               once the list grows. Let people pick, and remember the choice.

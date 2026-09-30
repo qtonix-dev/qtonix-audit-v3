@@ -1887,7 +1887,8 @@ router.get('/released', requireAuth, async (req, res, next) => {
         _id: l.id, firstName: l.firstName, lastName: l.lastName, email: l.email,
         website: l.website, mobile: l.mobile, phone: l.phone, country: l.country,
         leadSource: l.leadSource, releasedFrom: l.ownerName, releasedFromId: l.ownerId,
-        releasedAt: l.updatedAt, createdAt: l.createdAt,
+        releasedAt: l.releasedAt || l.updatedAt, createdAt: l.createdAt,
+        releaseReason: l.releaseReason || '', releasedByName: l.releasedByName || '',
       })),
     });
   } catch (e) { next(e); }
@@ -2903,6 +2904,15 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
         if (Array.isArray(lead.deals) && lead.deals.length > 0) {
           return res.status(400).json({ error: 'This lead has deals attached and can’t be released. Remove the deals first, or keep the lead.' });
         }
+        // A release REASON is compulsory.
+        const reason = String((b.releaseReason || '')).trim();
+        if (!reason) {
+          return res.status(400).json({ error: 'A reason is required to release a lead. Please add a short reason.' });
+        }
+        lead.releaseReason = reason.slice(0, 500);
+        lead.releasedAt = new Date();
+        lead.releasedByName = author;
+        pushTimeline(lead, 'status', `Released — reason: ${reason.slice(0, 200)}`, author);
       }
       pushTimeline(lead, 'status', `Status changed to "${newStatus}"`, author);
       // Keep convertedAt in sync so the lead lands on the Converted tab.

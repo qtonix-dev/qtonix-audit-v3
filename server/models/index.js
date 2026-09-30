@@ -328,6 +328,10 @@ const Lead = sequelize.define(
 
     lastActivityAt: { type: DataTypes.DATE },
     convertedAt: { type: DataTypes.DATE },
+    // Release metadata — a reason is compulsory when releasing a lead.
+    releaseReason: { type: DataTypes.STRING(500), allowNull: true },
+    releasedAt: { type: DataTypes.DATE, allowNull: true },
+    releasedByName: { type: DataTypes.STRING(160), allowNull: true },
     // Set whenever ownership changes to a (new) user — powers "assigned today".
     assignedAt: { type: DataTypes.DATE },
     /**
