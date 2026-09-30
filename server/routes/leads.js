@@ -1911,15 +1911,64 @@ router.post('/:id/reassign', requireAuth, async (req, res, next) => {
     lead.ownerName = newOwner.name;
     lead.ownerTeam = newOwner.team || null;
     lead.ownerShift = newOwner.shift || null;
-    // Back to an active status so it shows in the new owner's CRM. Default to
-    // 'new' unless a specific active status was requested.
-    const restore = ['new', 'callback', 'contacted', 'interested', 'hot'].includes(status) ? status : 'new';
-    lead.status = restore;
+    // NEVER un-convert a converted client (or a lead carrying deals) on reassign
+    // — that would drop it off the Converted page and the recent-sale banner
+    // while the revenue stays on the lead. Only a clean, non-converted released
+    // lead gets restored to an active status.
+    const isConverted = lead.status === 'converted';
+    const hasDeals = Array.isArray(lead.deals) && lead.deals.length > 0;
+    let restore;
+    if (isConverted || hasDeals) {
+      restore = lead.status; // keep 'converted' (or whatever it is) intact
+    } else {
+      restore = ['new', 'callback', 'contacted', 'interested', 'hot'].includes(status) ? status : 'new';
+      lead.status = restore;
+    }
     const tl = Array.isArray(lead.timeline) ? lead.timeline : [];
-    tl.push({ type: 'status', text: `Reassigned to ${newOwner.name} (status: ${restore}) by ${req.user.name}`, time: new Date().toISOString(), author: req.user.name });
+    tl.push({ type: 'status', text: `Reassigned to ${newOwner.name}${isConverted || hasDeals ? ' (kept as ' + restore + ')' : ' (status: ' + restore + ')'} by ${req.user.name}`, time: new Date().toISOString(), author: req.user.name });
     lead.timeline = tl; lead.changed('timeline', true);
     await lead.save();
     res.json({ ok: true, ownerId: newOwner.id, ownerName: newOwner.name, status: restore });
+  } catch (e) { next(e); }
+});
+
+// Admin repair: find leads that HAVE a closed-won + paid deal but whose status
+// is not 'converted' (e.g. accidentally un-converted by an old reassign). These
+// vanish from the Converted page and the recent-sale banner while revenue stays
+// on the lead. Restores status='converted' so they reappear. Idempotent.
+// GET returns the affected leads (dry run); POST applies the fix.
+router.get('/repair/unconverted-wins', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const leads = await Lead.findAll({ where: { status: { [Op.ne]: 'converted' } }, limit: 5000 });
+    const affected = leads.filter((l) => (l.deals || []).some((d) => d && d.stage === 'closed_won' && (d.installments || []).some((it) => it && it.paid)));
+    res.json({ count: affected.length, leads: affected.map((l) => ({ id: l.id, name: `${l.firstName || ''} ${l.lastName || ''}`.trim() || l.company, owner: l.ownerName, status: l.status })) });
+  } catch (e) { next(e); }
+});
+router.post('/repair/unconverted-wins', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number) : null;
+    const leads = await Lead.findAll({ where: { status: { [Op.ne]: 'converted' } }, limit: 5000 });
+    let fixed = 0;
+    for (const l of leads) {
+      if (ids && !ids.includes(l.id)) continue;
+      const won = (l.deals || []).some((d) => d && d.stage === 'closed_won' && (d.installments || []).some((it) => it && it.paid));
+      if (!won) continue;
+      // Use the earliest won/paid time as convertedAt if we don't have one.
+      if (!l.convertedAt) {
+        let when = null;
+        for (const d of (l.deals || [])) { if (d && d.wonAt) { const t = new Date(d.wonAt).getTime(); if (!when || t < when) when = t; } }
+        l.convertedAt = when ? new Date(when) : new Date();
+      }
+      l.status = 'converted';
+      const tl = Array.isArray(l.timeline) ? l.timeline : [];
+      tl.push({ type: 'status', text: `Restored to Converted (had a paid won deal) by ${req.user.name}`, time: new Date().toISOString(), author: req.user.name });
+      l.timeline = tl; l.changed('timeline', true);
+      await l.save();
+      fixed++;
+    }
+    res.json({ ok: true, fixed });
   } catch (e) { next(e); }
 });
 

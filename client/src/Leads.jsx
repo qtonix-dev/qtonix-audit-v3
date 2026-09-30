@@ -5618,6 +5618,21 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             <option value="thisYear">This year</option>
             <option value="all">All time</option>
           </select>
+          {user.role === 'admin' && (
+            <button
+              onClick={async () => {
+                try {
+                  const dry = await api('/leads/repair/unconverted-wins');
+                  if (!dry.count) { toast('No missing sales found — all converted clients are showing.'); return; }
+                  if (!(await confirmDialog({ title: `Restore ${dry.count} missing sale${dry.count === 1 ? '' : 's'}?`, message: `Found ${dry.count} lead(s) with a paid, won deal that aren't showing as Converted: ${dry.leads.map((x) => x.name).join(', ')}. Restore them to the Converted page?`, confirmText: 'Restore' }))) return;
+                  const r = await api('/leads/repair/unconverted-wins', { method: 'POST', body: JSON.stringify({}) });
+                  toast(`Restored ${r.fixed} sale${r.fixed === 1 ? '' : 's'} ✓`);
+                  load();
+                } catch (e) { toast(e.message); }
+              }}
+              title="Find & restore paid sales that dropped off the Converted page"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 whitespace-nowrap">🔧 Restore missing sales</button>
+          )}
 
           {/* Cards read well for a handful of clients; the table scans faster
               once the list grows. Let people pick, and remember the choice.
