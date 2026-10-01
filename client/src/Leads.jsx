@@ -854,6 +854,10 @@ const Lu = {
   reset: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.4 2.6L3 8" /><path d="M3 3v5h5" /></svg>),
   edit: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></svg>),
   ext: (s = 11) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>),
+  grid: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>),
+  rows: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>),
+  dollar: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>),
+  clock: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>),
 };
 // A select wrapped with a custom chevron (reference-style dropdown).
 function CbSelect({ value, onChange, children, className = '' }) {
@@ -5404,10 +5408,10 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   return (
     <div>
       {(view === 'list' || view === 'pipeline' || view === 'converted' || view === 'released') && (
-        <div className="flex items-center justify-between mb-5 w-full flex-wrap gap-3" style={{ fontFamily: CB_FONT }}>
-          <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-2xl p-1.5 shadow-sm w-fit flex-wrap">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-sm mb-5 w-full" style={{ fontFamily: CB_FONT }}>
+          <nav className="flex flex-wrap items-center gap-1.5">
             {(() => {
-              const tabCls = (active) => `inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition ${active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`;
+              const tabCls = (active) => `inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition ${active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`;
               return (
                 <>
                   <button onClick={() => setView('list')} className={tabCls(view === 'list')}>📋 All leads</button>
@@ -5417,11 +5421,13 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
                 </>
               );
             })()}
+          </nav>
+          <div className="flex items-center gap-2 self-end md:self-auto">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Live Sync
+            </span>
           </div>
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-white border border-slate-200/80 text-slate-500 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: '0 0 0 3px rgba(16,185,129,.2)' }}></span> Live Sync
-          </span>
-        </div>
+        </header>
       )}
       {/* Lead managers coordinate intake only — the pipeline and converted views
           are outside their remit, so a stray deep link falls back to the list. */}
@@ -5464,11 +5470,14 @@ function ReleasedLeads({ user, onOpen }) {
   if (err) return <div className="text-red-500 text-sm py-6">{err}</div>;
 
   return (
-    <div>
-      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+    <div className="space-y-6" style={{ fontFamily: CB_FONT }}>
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <div className="text-lg font-extrabold text-[#050A1F]">♻️ Released leads</div>
-          <div className="text-xs text-slate-400">Leads handed back by agents. Reassign to put a lead back into someone's CRM, or delete it.</div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">♻️ Released leads</h1>
+            <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">{items.length} total</span>
+          </div>
+          <p className="text-slate-500 text-sm mt-1 max-w-3xl">Leads handed back by agents. Reassign to put a lead back into someone's CRM, or delete it.</p>
         </div>
         {user.role === 'admin' && (
           <button
@@ -5482,48 +5491,64 @@ function ReleasedLeads({ user, onOpen }) {
               } catch (e) { toast(e.message); }
             }}
             title="Find & restore paid sales that dropped off the Converted page"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 whitespace-nowrap">🔧 Restore missing sales</button>
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 whitespace-nowrap self-start md:self-auto">🔧 Restore missing sales</button>
         )}
       </div>
       {items.length === 0 ? (
-        <div className="text-slate-300 text-sm py-12 text-center">No released leads right now.</div>
+        <div className="bg-white rounded-2xl border border-slate-200/80 py-16 text-center">
+          <div className="text-4xl mb-2">♻️</div>
+          <p className="text-slate-800 font-semibold text-sm">No released leads right now</p>
+          <p className="text-slate-400 text-xs mt-1">Leads an agent hands back will appear here.</p>
+        </div>
       ) : (
-        <div className="rounded-xl border border-slate-100 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
-                <th className="text-left px-4 py-3">Lead</th>
-                <th className="text-left px-4 py-3">Contact</th>
-                <th className="text-left px-4 py-3">Source</th>
-                <th className="text-left px-4 py-3">Released from</th>
-                <th className="text-left px-4 py-3">Reason</th>
-                <th className="text-left px-4 py-3">Released</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((l) => (
-                <tr key={l._id} className="border-t border-slate-50 hover:bg-slate-50/40">
-                  <td className="px-4 py-3">
-                    <button onClick={() => onOpen(l._id)} className="font-bold text-[#050A1F] hover:text-[#FF4500] text-left">{`${l.firstName || ''} ${l.lastName || ''}`.trim() || '—'}</button>
-                    <div className="text-[11px] text-slate-400 truncate">{l.website || '—'}</div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">
-                    <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
-                    <div className="text-[11px] text-slate-400">{l.mobile || l.phone || ''}</div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">{l.releasedFrom || '—'}</td>
-                  <td className="px-4 py-3 text-slate-600 text-xs max-w-[220px]"><span title={l.releaseReason || ''}>{l.releaseReason || <span className="text-slate-300">—</span>}</span>{l.releasedByName ? <span className="block text-[10px] text-slate-400">by {l.releasedByName}</span> : null}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{l.releasedAt ? fmtDate(l.releasedAt) : '—'}</td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <button onClick={() => setAssign(l)} className="rounded border border-blue-200 px-2.5 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 mr-1">Reassign</button>
-                    <button onClick={() => doDelete(l)} disabled={busy === l._id} className="rounded border border-red-200 px-2.5 py-1 text-[10px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
-                  </td>
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4">Lead</th>
+                  <th className="py-3.5 px-4">Contact</th>
+                  <th className="py-3.5 px-4">Source</th>
+                  <th className="py-3.5 px-4">Released from</th>
+                  <th className="py-3.5 px-4">Reason</th>
+                  <th className="py-3.5 px-4">Released</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {items.map((l) => {
+                  const nm = `${l.firstName || ''} ${l.lastName || ''}`.trim();
+                  return (
+                    <tr key={l._id} onClick={() => onOpen(l._id)} className="hover:bg-slate-50/80 transition-colors cursor-pointer group">
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border border-black/5 bg-slate-100 text-slate-600">{(nm[0] || '?').toUpperCase()}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors truncate">{nm || '—'}</div>
+                            {l.website ? <a href={`https://${String(l.website).replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-slate-400 hover:text-emerald-600 truncate flex items-center gap-1 mt-0.5">{l.website} {Lu.ext(10)}</a> : <div className="text-xs text-slate-300 mt-0.5">—</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="space-y-0.5">
+                          <div className="text-[13px] text-slate-600 truncate max-w-[200px]">✉️ {l.email || '—'}</div>
+                          <div className="text-xs text-slate-400">📞 {l.mobile || l.phone || '—'}</div>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200/60 whitespace-nowrap">{l.leadSource || '—'}</span></td>
+                      <td className="py-3.5 px-4 text-slate-500 text-xs">{l.releasedFrom || '—'}</td>
+                      <td className="py-3.5 px-4 text-slate-600 text-xs max-w-[220px]"><span title={l.releaseReason || ''}>{l.releaseReason || <span className="text-slate-300">—</span>}</span>{l.releasedByName ? <span className="block text-[10px] text-slate-400">by {l.releasedByName}</span> : null}</td>
+                      <td className="py-3.5 px-4 text-slate-400 text-xs whitespace-nowrap">{l.releasedAt ? fmtDate(l.releasedAt) : '—'}</td>
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => setAssign(l)} className="rounded-lg border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 mr-1.5">Reassign</button>
+                        <button onClick={() => doDelete(l)} disabled={busy === l._id} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {assign && <ReassignModal lead={assign} owners={owners} onClose={() => setAssign(null)} onDone={() => { setAssign(null); load(); }} />}
@@ -5861,66 +5886,108 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
     if (period === 'all' || convertedInWindow(l)) acc.booked += s.booked;
     acc.collected += (period === 'all' ? s.collected : s.collectedInPeriod);
     if (period === 'all' || convertedInWindow(l)) acc.due += s.due;
+    acc.pendingCount += (s.pending ? s.pending.length : 0);
     return acc;
-  }, { booked: 0, collected: 0, due: 0 });
+  }, { booked: 0, collected: 0, due: 0, pendingCount: 0 });
+  // Share of booked revenue actually collected — shown as the badge on the
+  // Collected KPI box (reference design).
+  const collectedPct = totals.booked > 0 ? Math.round((totals.collected / totals.booked) * 100) : 0;
+  const outstandingPct = totals.booked > 0 ? Math.max(0, 100 - collectedPct) : 0;
 
   if (loading && !didLoad) return <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>;
 
   return (
-    <div>
-      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+    <div className="space-y-6" style={{ fontFamily: CB_FONT }}>
+      {/* Page header + controls toolbar */}
+      <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">Converted clients</h1>
-          <div className="text-sm text-slate-400">{pageInfo.total} client{pageInfo.total === 1 ? '' : 's'}{user.role === 'manager' ? ' in your team' : ''}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-orange-400" />
-            {loading && didLoad && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">…</span>}
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Converted Clients</h1>
+            <span className="bg-slate-200/70 text-slate-700 text-xs font-bold px-2.5 py-1 rounded-full">{pageInfo.total} total</span>
           </div>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600">
-            <option value="thisMonth">This month</option>
-            <option value="lastMonth">Last month</option>
-            <option value="last3">Last 3 months</option>
-            <option value="thisYear">This year</option>
-            <option value="all">All time</option>
-          </select>
+          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">Track revenue, pending installments, and client lifetime value.{user.role === 'manager' ? ' · your team' : ''}</p>
+        </div>
 
-          {/* Cards read well for a handful of clients; the table scans faster
-              once the list grows. Let people pick, and remember the choice.
-              Only admins get the Tables section — managers and converted-access
-              agents see the Boxes section alone. */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative flex-1 sm:flex-none min-w-[200px]">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{Lu.search(16)}</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client or domain..."
+              className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition placeholder:text-slate-400" />
+            {loading && didLoad && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">…</span>}
+          </div>
+          {/* Date range */}
+          <div className="relative">
+            <select value={period} onChange={(e) => setPeriod(e.target.value)}
+              className="appearance-none bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-xl pl-3 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition cursor-pointer">
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3">Last 3 months</option>
+              <option value="thisYear">This year</option>
+              <option value="all">All time</option>
+            </select>
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(16)}</span>
+          </div>
+
+          {/* View switcher (Boxes vs Table) — reference pill with icons. Admins
+              only; managers/converted-access agents see the Boxes section. */}
           {isAdmin && (
-            <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-              {[['cards', 'Boxes'], ['table', 'Table']].map(([id, label]) => (
-                <button key={id} type="button" onClick={() => pickView(id)}
-                  className={`px-3 py-2 text-xs font-bold transition-colors ${
-                    viewMode === id ? 'bg-[#050A1F] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
-                  }`}>{label}</button>
-              ))}
+            <div className="flex bg-slate-200/80 p-1 rounded-xl border border-slate-200">
+              <button type="button" onClick={() => pickView('cards')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition ${viewMode === 'cards' ? 'bg-white text-slate-900 font-semibold shadow-sm' : 'text-slate-600 font-medium hover:text-slate-900'}`}>
+                {Lu.grid(16)} Boxes
+              </button>
+              <button type="button" onClick={() => pickView('table')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition ${viewMode === 'table' ? 'bg-white text-slate-900 font-semibold shadow-sm' : 'text-slate-600 font-medium hover:text-slate-900'}`}>
+                {Lu.rows(16)} Table
+              </button>
             </div>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* Money summary */}
+      {/* Summary metrics (KPI boxes) — reference design */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-3 gap-3 mb-5">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total booked</div>
-            <div className="text-xl font-extrabold text-[#050A1F] mt-0.5">${totals.booked.toLocaleString()}</div>
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Total Booked */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-slate-500/5 rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Booked</span>
+              <span className="p-2 bg-slate-100 rounded-xl text-slate-600">{Lu.dollar(16)}</span>
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-slate-900 tracking-tight">${totals.booked.toLocaleString()}</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Across {pageInfo.total} closed account{pageInfo.total === 1 ? '' : 's'}</p>
           </div>
-          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-green-600">Collected</div>
-            <div className="text-xl font-extrabold text-green-700 mt-0.5">${totals.collected.toLocaleString()}</div>
+          {/* Collected */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-600">Collected</span>
+              <span className="p-2 bg-emerald-50 rounded-xl text-emerald-600">{Lu.checkCircle(16)}</span>
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-emerald-700 tracking-tight">${totals.collected.toLocaleString()}</span>
+              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">{collectedPct}%</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Cash received in bank</p>
           </div>
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Outstanding</div>
-            <div className="text-xl font-extrabold text-amber-700 mt-0.5">${totals.due.toLocaleString()}</div>
+          {/* Outstanding */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-600">Outstanding</span>
+              <span className="p-2 bg-amber-50 rounded-xl text-amber-600">{Lu.clock(16)}</span>
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-amber-700 tracking-tight">${totals.due.toLocaleString()}</span>
+              {totals.pendingCount > 0 && <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">{totals.pendingCount} pending</span>}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">{outstandingPct}% remaining collection</p>
           </div>
-        </div>
+        </section>
       )}
 
       {filtered.length === 0 ? (
@@ -5973,15 +6040,22 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
             return (
               <div key={l._id} onClick={() => onOpen(l._id, 'deals')}
                 className="bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer hover:shadow-md hover:border-green-200 transition shadow-sm">
-                <div className="flex items-start gap-3">
-                  <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center text-base font-extrabold shrink-0">
-                    {(fullName(l)[0] || '?').toUpperCase()}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-base border border-emerald-200/60 shrink-0">
+                      {(fullName(l)[0] || '?').toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-900 text-base leading-tight truncate">{fullName(l)}</h3>
+                      {l.website ? (
+                        <a href={`https://${String(l.website).replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-slate-400 hover:text-emerald-600 transition-colors flex items-center gap-1 truncate">
+                          {l.website.replace(/^https?:\/\//, '')} {Lu.ext(10)}
+                        </a>
+                      ) : <div className="text-xs text-slate-300">—</div>}
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-bold text-[#050A1F] truncate">{fullName(l)}</div>
-                    <div className="text-[11px] text-slate-400 truncate">{l.website ? l.website.replace(/^https?:\/\//, '') : '—'}</div>
-                  </div>
-                  <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-[9px] font-bold shrink-0">CLIENT</span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/50 uppercase tracking-wider shrink-0">CLIENT</span>
                 </div>
 
                 {/* Collected vs booked */}
@@ -6105,19 +6179,27 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
                   )}
                 </div>
 
-                {/* Deal counts + cross-sell prompt */}
-                <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-                  <span className="rounded-md bg-green-50 text-green-600 px-1.5 py-0.5 text-[10px] font-bold">{s.won.length} won</span>
-                  {s.open.length > 0 && <span className="rounded-md bg-blue-50 text-blue-600 px-1.5 py-0.5 text-[10px] font-bold">{s.open.length} open</span>}
-                  <span className="text-[10px] text-slate-400 ml-auto">{fmtDate(l.convertedAt)}</span>
+                {/* Won deals + converted date (reference tags strip) */}
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">🏆 {s.won.length} won</span>
+                  {s.open.length > 0 && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">{s.open.length} open</span>}
+                  <span className="text-[11px] text-slate-400 ml-auto">{fmtDate(l.convertedAt)}</span>
                 </div>
 
+                {/* Cross-sell banner — derived: shown when there's no open deal */}
                 {s.open.length === 0 && (
-                  <div className="mt-3 rounded-lg bg-purple-50 border border-purple-100 px-2.5 py-2 text-[11px] font-bold text-purple-600">
-                    ✨ Cross-sell opportunity — no open deal right now
+                  <div className="mt-3 bg-purple-50/70 border border-purple-100 rounded-xl px-3 py-2 text-xs text-purple-800 flex items-center gap-2">
+                    <span>🚀</span>
+                    <span className="font-medium">Cross-sell opportunity</span>
+                    <span className="text-purple-400 text-[10px] ml-auto">No open deal</span>
                   </div>
                 )}
-                <div className="text-[11px] text-slate-400 mt-2">Owner: <span className="font-semibold text-slate-500">{l.ownerName}</span></div>
+
+                {/* Owner footer */}
+                <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
+                  <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 text-[10px] font-bold flex items-center justify-center">{(l.ownerName || '?')[0]}</div>
+                  <span>Owner: <strong className="text-slate-700 font-semibold">{l.ownerName}</strong></span>
+                </div>
               </div>
             );
           })}
