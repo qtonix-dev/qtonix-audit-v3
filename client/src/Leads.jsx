@@ -1544,8 +1544,8 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
 
   const pickTemplate = (id) => {
     setTplId(id);
-    const t = templates.find((x) => String(x._id) === String(id));
-    if (t) { setSubject(t.subject || ''); setBody(t.bodyHtml || ''); }
+    const t = templates.find((x) => String(x._id) === String(id) || String(x.id) === String(id));
+    if (t) { setSubject(t.subject || ''); setBody(t.bodyHtml || t.body || ''); }
   };
 
   const overQuota = quota && leads.length > quota.remaining;
@@ -1553,7 +1553,10 @@ function BulkEmailModal({ user, leads, onClose, onSent }) {
 
   const send = async () => {
     setErr('');
-    if (!body.trim()) { setErr('Write an email body first.'); return; }
+    // Allow sending when a template is chosen even if the editor looks empty —
+    // the server falls back to the template's body. Only block when there's
+    // neither a typed body nor a selected template.
+    if (!body.trim() && !tplId) { setErr('Write an email body first, or pick a template.'); return; }
     if (mode === 'schedule' && !when) { setErr('Pick a date and time to schedule.'); return; }
     setBusy(true);
     try {
@@ -2825,24 +2828,27 @@ function ThreadPopup({ lead, thread, fromOptions, defaultFrom, defaultSignature,
             const k = keyOf(m, i);
             const isOpen = !!expanded[k];
             return (
-              <div key={k} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+              <div key={k} className={`py-3 ${i > 0 ? 'border-t border-slate-100' : ''} ${m.isDraft ? 'bg-amber-50/40 -mx-6 px-6 border-l-2 border-amber-300' : ''}`}>
                 {/* Header row: avatar | name+to | right meta */}
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.direction === 'outbound' ? '#FF6A0022' : '#6366F122', color: m.direction === 'outbound' ? '#FF4500' : '#4F46E5' }}>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ background: m.isDraft ? '#F59E0B22' : (m.direction === 'outbound' ? '#FF6A0022' : '#6366F122'), color: m.isDraft ? '#B45309' : (m.direction === 'outbound' ? '#FF4500' : '#4F46E5') }}>
                     {(m.fromName || m.fromEmail || '?').trim()[0]?.toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggle(k)}>
                     <div className="flex items-start justify-between gap-3">
                       {/* Left: name on top, "to me ▾" below */}
                       <div className="min-w-0">
-                        <div className="text-sm font-bold text-[#202124] truncate">{m.fromName || m.fromEmail}</div>
+                        <div className="text-sm font-bold text-[#202124] truncate flex items-center gap-2">
+                          {m.fromName || m.fromEmail}
+                          {m.isDraft && <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">Draft</span>}
+                        </div>
                         {isOpen ? (
                           <button onClick={(e) => { e.stopPropagation(); setShowTo((s) => ({ ...s, [k]: !s[k] })); }} className="text-xs text-slate-400 flex items-center gap-1 hover:text-slate-600">
-                            {m.direction === 'outbound' ? 'from me' : 'to me'}
+                            {m.isDraft ? 'unsent draft' : (m.direction === 'outbound' ? 'from me' : 'to me')}
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
                           </button>
                         ) : (
-                          <div className="text-xs text-slate-400 truncate">{m.snippet}</div>
+                          <div className="text-xs text-slate-400 truncate">{m.isDraft ? <span className="text-amber-600 font-semibold">Unsent draft · </span> : ''}{m.snippet}</div>
                         )}
                         {isOpen && showTo[k] && (
                           <div className="mt-1 text-[11px] text-slate-500 bg-slate-50 rounded-lg px-2.5 py-1.5 inline-block">

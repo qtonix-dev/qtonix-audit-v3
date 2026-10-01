@@ -849,6 +849,9 @@ const LeadEmail = sequelize.define(
     inlines: { type: DataTypes.JSON, allowNull: true }, // inline images [{contentId,filename,mimeType,attachmentId}]
     starred: { type: DataTypes.BOOLEAN, defaultValue: false },
     dismissedFromMissed: { type: DataTypes.BOOLEAN, defaultValue: false }, // admin cleared it from the dashboard
+    // A Gmail DRAFT (unsent). Drafts are never stored by the sync, but the flag
+    // exists so any that slip in can be excluded from sent-email counts.
+    isDraft: { type: DataTypes.BOOLEAN, defaultValue: false },
     sentAt: { type: DataTypes.DATE },
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },
   },

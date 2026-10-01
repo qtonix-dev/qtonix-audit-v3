@@ -954,7 +954,9 @@ router.get('/agent-activity', requireAuth, async (req, res, next) => {
 
     // Pull only the current month's rows (covers today/week/month buckets).
     const calls = await CallLog.findAll({ where: { startTime: { [Op.gte]: startOfMonth } }, attributes: ['agentId', 'direction', 'startTime'] });
-    const emails = await LeadEmail.findAll({ where: { direction: 'outbound', sentAt: { [Op.gte]: startOfMonth } }, attributes: ['userId', 'sentAt'] });
+    // Count genuinely-sent outbound emails only — never unsent drafts (which
+    // would otherwise inflate the per-agent "emails" figure).
+    const emails = await LeadEmail.findAll({ where: { direction: 'outbound', isDraft: { [Op.not]: true }, sentAt: { [Op.gte]: startOfMonth } }, attributes: ['userId', 'sentAt'] });
 
     const blank = () => ({ today: 0, week: 0, month: 0 });
     const stat = new Map();

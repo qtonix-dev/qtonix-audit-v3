@@ -38,6 +38,7 @@ async function syncOnce(models) {
       // Pull recent inbox + sent; match each against known leads.
       const msgs = await gmail.searchMessages(s, u.getGmailRefreshToken(), u.gmailConnectedEmail, 'in:inbox OR in:sent newer_than:14d', 40);
       for (const m of msgs) {
+        if (m.isDraft) continue; // never log unsent drafts as emails
         const counterparty = m.direction === 'outbound'
           ? gmail.parseAddress(m.toEmail).email
           : m.fromEmail;

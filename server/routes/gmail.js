@@ -770,6 +770,10 @@ router.get('/lead/:leadId', requireAuth, async (req, res, next) => {
         try {
           const msgs = await gmail.searchMessages(s, viewer.getGmailRefreshToken(), viewer.gmailConnectedEmail, q, 50);
           for (const m of msgs) {
+            // Unsent Gmail drafts match the lead's address too; they must never
+            // be stored as emails (they'd show in the chain as sent and inflate
+            // the sent/replied counts). They live in the composer, not the log.
+            if (m.isDraft) continue;
             const [row, created] = await LeadEmail.findOrCreate({
               where: { userId: viewer.id, gmailMessageId: m.gmailMessageId },
               defaults: { ...m, leadId: lead.id, userId: viewer.id },
@@ -1557,13 +1561,24 @@ router.post('/bulk/preview', requireAuth, async (req, res, next) => {
  */
 router.post('/bulk', requireAuth, async (req, res, next) => {
   try {
-    const { leadIds, templateId, subject, bodyHtml, sendAt, timezone, signatureId } = req.body || {};
+    const { leadIds, templateId, subject, sendAt, timezone, signatureId } = req.body || {};
+    let { bodyHtml } = req.body || {};
     if (!Array.isArray(leadIds) || leadIds.length === 0) return res.status(400).json({ error: 'Select at least one lead.' });
-    if (!bodyHtml || !String(bodyHtml).trim()) return res.status(400).json({ error: 'Email body is empty.' });
 
     // Sender must have Gmail connected.
     const me = await User.findByPk(req.user.id);
     if (!me.gmailRefreshToken || !me.gmailConnectedEmail) return res.status(400).json({ error: 'Connect your Gmail before sending bulk email.' });
+
+    // Body fallback: if the composer didn't send a body (e.g. the template's
+    // body didn't make it into the editor), fall back to the selected
+    // template's own body — mirroring how the subject already falls back to
+    // the template subject. This is what fixed "only the subject sends, body
+    // blank" when a template was picked from the dropdown.
+    if ((!bodyHtml || !String(bodyHtml).trim()) && templateId) {
+      const tplForBody = await EmailTemplate.findByPk(templateId);
+      if (tplForBody && tplForBody.bodyHtml && String(tplForBody.bodyHtml).trim()) bodyHtml = tplForBody.bodyHtml;
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) return res.status(400).json({ error: 'Email body is empty. Pick a template or type a message.' });
 
     // Enforce the daily cap.
     const used = await bulkUsedToday(req.user.id);

@@ -150,11 +150,18 @@ function normalizeMessage(msg, connectedEmail) {
   const messageIdHdr = headerVal(headers, 'Message-ID') || headerVal(headers, 'Message-Id');
   const { html, text, attachments, inlines } = extractBodies(msg.payload);
   const isOutbound = from.email && connectedEmail && from.email === String(connectedEmail).toLowerCase();
+  const labelIds = msg.labelIds || [];
+  // A Gmail DRAFT is an unsent message. It carries the DRAFT label and, like a
+  // sent message, is "from" the connected account — so we must flag it
+  // explicitly rather than let the From-address heuristic class it as sent.
+  const isDraft = labelIds.includes('DRAFT');
   return {
     gmailMessageId: msg.id,
     threadId: msg.threadId || '',
     rfcMessageId: messageIdHdr,
     direction: isOutbound ? 'outbound' : 'inbound',
+    isDraft,
+    labelIds,
     fromEmail: from.email,
     fromName: from.name,
     toEmail: to,
@@ -166,7 +173,7 @@ function normalizeMessage(msg, connectedEmail) {
     attachments,
     inlines: inlines || [],
     sentAt: dateHdr ? new Date(dateHdr) : new Date(Number(msg.internalDate) || Date.now()),
-    isRead: !(msg.labelIds || []).includes('UNREAD'),
+    isRead: !labelIds.includes('UNREAD'),
   };
 }
 
