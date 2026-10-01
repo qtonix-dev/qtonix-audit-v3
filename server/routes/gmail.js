@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const fs = require('fs');
 const crypto = require('crypto');
-const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BulkCampaign, BusinessBrief, Report, Settings, Op, recordApiCall } = require('../models');
+const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, BulkCampaign, BusinessBrief, Report, Settings, MailFolderCache, Op, recordApiCall } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
@@ -1764,23 +1764,76 @@ router.get('/all/mailboxes', requireAuth, async (req, res, next) => {
 
 /** GET /api/gmail/all/folder — live list of a Gmail folder/label.
  *  Query: box (INBOX|SENT|SPAM|TRASH|STARRED|ALL), labelId, q, pageToken, as. */
+// Tag each message with the CRM lead it belongs to (so the UI hides delete for
+// linked mail), then return the folder payload.
+async function tagLeadLinks(out) {
+  const ids = out.messages.map((m) => m.gmailMessageId);
+  const linked = ids.length ? await LeadEmail.findAll({ where: { gmailMessageId: { [Op.in]: ids } }, attributes: ['gmailMessageId', 'leadId'] }) : [];
+  const leadByMsg = new Map(linked.map((r) => [r.gmailMessageId, r.leadId]));
+  out.messages.forEach((m) => { m.leadId = leadByMsg.get(m.gmailMessageId) || null; });
+  return out;
+}
+// Live fetch of a folder page from Gmail, lead-tagged. Used directly for deep
+// pages/search and as the background refresher for the cached first page.
+async function fetchFolderLive(mb, { box, labelId, q, max, pageToken }) {
+  const out = await gmail.listFolder(mb.settings, mb.token, mb.user.gmailConnectedEmail, { box, labelId, q, max, pageToken });
+  return tagLeadLinks(out);
+}
+const MAIL_CACHE_FRESH_MS = 60 * 1000; // serve instantly if younger than this
+
 router.get('/all/folder', requireAuth, async (req, res, next) => {
   try {
     const viewer = await User.findByPk(req.user.id);
     const mb = await resolveBrowseMailbox(viewer, req.query.as);
     if (!mb) return res.status(400).json({ error: 'No connected mailbox. Connect Gmail in Email settings first.' });
     const box = String(req.query.box || 'INBOX').toUpperCase();
-    const out = await gmail.listFolder(mb.settings, mb.token, mb.user.gmailConnectedEmail, {
-      box, labelId: req.query.labelId || null, q: req.query.q || '',
-      max: Math.min(50, Number(req.query.max) || 25), pageToken: req.query.pageToken || null,
-    });
-    // Flag which messages are tied to a CRM lead (so the UI can hide delete for
-    // those). Match by our stored copies first (fast), else by counterparty.
-    const ids = out.messages.map((m) => m.gmailMessageId);
-    const linked = ids.length ? await LeadEmail.findAll({ where: { gmailMessageId: { [Op.in]: ids } }, attributes: ['gmailMessageId', 'leadId'] }) : [];
-    const leadByMsg = new Map(linked.map((r) => [r.gmailMessageId, r.leadId]));
-    out.messages.forEach((m) => { m.leadId = leadByMsg.get(m.gmailMessageId) || null; });
-    res.json(out);
+    const labelId = req.query.labelId || null;
+    const q = req.query.q || '';
+    const pageToken = req.query.pageToken || null;
+    const max = Math.min(50, Number(req.query.max) || 25);
+    const opts = { box, labelId, q, max, pageToken };
+
+    // Only the hot path — first page of a folder, no search — is cached. Deeper
+    // pages, searches, and an explicit Refresh always go live.
+    const forceLive = req.query.refresh === '1' || req.query.nocache === '1';
+    const cacheable = !pageToken && !q && !forceLive;
+    const cacheKey = `${req.user.id}|${req.query.as || ''}|${box}|${labelId || ''}`;
+    if (forceLive && !pageToken && !q) {
+      const fresh = await fetchFolderLive(mb, opts);
+      res.json(fresh);
+      try { await MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }); } catch { /* best-effort */ }
+      return;
+    }
+    if (!cacheable) {
+      return res.json(await fetchFolderLive(mb, opts));
+    }
+
+    let row = null;
+    try { row = await MailFolderCache.findOne({ where: { cacheKey } }); } catch { /* table may not exist yet */ }
+    const age = row && row.fetchedAt ? (Date.now() - new Date(row.fetchedAt).getTime()) : Infinity;
+
+    if (row && row.payload && age < MAIL_CACHE_FRESH_MS) {
+      // Fresh enough: serve instantly, refresh in the background for next time.
+      res.json({ ...row.payload, cached: true });
+      fetchFolderLive(mb, opts)
+        .then((fresh) => MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }))
+        .catch(() => {});
+      return;
+    }
+
+    // Stale or missing: if we have any cached copy, serve it immediately so the
+    // UI isn't blank, and refresh. Otherwise fetch live.
+    if (row && row.payload) {
+      res.json({ ...row.payload, cached: true, stale: true });
+      fetchFolderLive(mb, opts)
+        .then((fresh) => MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }))
+        .catch(() => {});
+      return;
+    }
+
+    const fresh = await fetchFolderLive(mb, opts);
+    res.json(fresh);
+    try { await MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }); } catch { /* best-effort */ }
   } catch (e) { next(e); }
 });
 
@@ -1853,6 +1906,38 @@ router.post('/all/message/:gmailMessageId/star', requireAuth, async (req, res, n
     if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
     await gmail.setStar(mb.settings, mb.token, req.params.gmailMessageId, !!req.body.starred);
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/gmail/all/message/:gmailMessageId/attachment/:attId?as=&name=
+ *  Download an attachment straight from the browsed mailbox by Gmail message
+ *  id (All-Mail rows have no CRM DB row to key off). */
+router.get('/all/message/:gmailMessageId/attachment/:attId', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, req.query.as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const data = await gmail.getAttachment(mb.settings, mb.token, req.params.gmailMessageId, req.params.attId);
+    const buf = Buffer.from(String(data).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const name = String(req.query.name || 'attachment').replace(/[^\w.\- ]/g, '_');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.send(buf);
+  } catch (e) { next(e); }
+});
+
+/** POST /api/gmail/all/message/:gmailMessageId/read — mark read/unread.
+ *  Body {read, as}. Adds or removes Gmail's UNREAD label. */
+router.post('/all/message/:gmailMessageId/read', requireAuth, async (req, res, next) => {
+  try {
+    const viewer = await User.findByPk(req.user.id);
+    const mb = await resolveBrowseMailbox(viewer, (req.body || {}).as);
+    if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
+    const read = req.body.read !== false; // default: mark read
+    await gmail.setRead(mb.settings, mb.token, req.params.gmailMessageId, read);
+    // Keep any stored CRM copy's read-state in sync so the lead view agrees.
+    try { await LeadEmail.update({ isRead: read }, { where: { gmailMessageId: req.params.gmailMessageId } }); } catch { /* best-effort */ }
+    res.json({ ok: true, read });
   } catch (e) { next(e); }
 });
 

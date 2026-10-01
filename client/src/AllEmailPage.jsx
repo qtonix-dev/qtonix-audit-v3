@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { confirmDialog, promptDialog } from './toast';
 import { api as _crmApi } from './App.jsx';
+import { API_BASE } from './config.js';
 import { MailEditor } from './Leads.jsx';
 
 // System folders shown in the left rail, in Gmail's order.
@@ -46,6 +47,58 @@ const fmtDate = (d) => {
   return sameDay ? dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
+const MAIL_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+
+// Clean lucide-style action icons for the row hover bar (each gets a tooltip).
+const MI = {
+  archive: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="5" rx="1" /><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9M10 13h4" /></svg>),
+  trash: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>),
+  tag: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1 0-2.8l7.2-7.2a2 2 0 0 1 1.4-.6H20a1 1 0 0 1 1 1v6.2a2 2 0 0 1-.4 1.2z" /><circle cx="16.5" cy="7.5" r="1.2" /></svg>),
+  markRead: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7l9 6 9-6M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7l9-4 9 4" /><circle cx="19" cy="6" r="3" fill="currentColor" stroke="none" /></svg>),
+  markUnread: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7l9 6 9-6M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7M3 7l9-4 9 4" /></svg>),
+  reply: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 17l-5-5 5-5M4 12h11a5 5 0 0 1 5 5v1" /></svg>),
+  edit: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></svg>),
+  star: (s = 16, filled) => (<svg width={s} height={s} viewBox="0 0 24 24" fill={filled ? '#FBBF24' : 'none'} stroke={filled ? '#FBBF24' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg>),
+};
+
+// Classify an attachment filename/mime into a coloured type chip.
+function attachKind(a) {
+  const name = String((a && (a.filename || a.name)) || '').toLowerCase();
+  const mime = String((a && a.mimeType) || '').toLowerCase();
+  const ext = (name.match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  if (ext === 'pdf' || mime.includes('pdf')) return { label: 'PDF', bg: '#fef2f2', fg: '#b91c1c', bd: '#fecaca' };
+  if (['doc', 'docx'].includes(ext) || mime.includes('word')) return { label: ext.toUpperCase() || 'DOC', bg: '#eff6ff', fg: '#1e40af', bd: '#bfdbfe' };
+  if (['xls', 'xlsx', 'csv'].includes(ext) || mime.includes('sheet') || mime.includes('excel')) return { label: ext.toUpperCase() || 'XLS', bg: '#f0fdf4', fg: '#15803d', bd: '#bbf7d0' };
+  if (['zip', 'rar', '7z', 'gz', 'tar'].includes(ext) || mime.includes('zip') || mime.includes('compressed')) return { label: ext.toUpperCase() || 'ZIP', bg: '#fffbeb', fg: '#92400e', bd: '#fde68a' };
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext) || mime.startsWith('image/')) return { label: 'IMG', bg: '#faf5ff', fg: '#7e22ce', bd: '#e9d5ff' };
+  if (ext === 'txt' || mime.includes('text/plain')) return { label: 'TXT', bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' };
+  return { label: (ext || 'FILE').toUpperCase().slice(0, 4), bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' };
+}
+// Row-level attachment chips. Each is clickable to download (via the message's
+// attachment endpoint) when an attachmentId + message id are available.
+function AttachmentChips({ atts, downloadHref }) {
+  const list = (atts || []).filter(Boolean).slice(0, 3);
+  if (list.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {list.map((a, i) => {
+        const k = attachKind(a);
+        const href = downloadHref ? downloadHref(a) : null;
+        const chip = (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border" style={{ background: k.bg, color: k.fg, borderColor: k.bd }} title={(a.filename || a.name) || k.label}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>
+            {k.label}
+          </span>
+        );
+        return href
+          ? <a key={i} href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{chip}</a>
+          : <span key={i}>{chip}</span>;
+      })}
+      {(atts || []).length > 3 && <span className="text-[10px] text-slate-400 font-semibold">+{atts.length - 3}</span>}
+    </span>
+  );
+}
+
 // `apiFn`/`base` let this component power both the CRM All-Email view
 // (apiFn=api, base='/gmail') and the HRMS Email tab (apiFn=hrApi, base='').
 // `features` toggles CRM-only bits (scheduled sends, label CRUD, lead links).
@@ -64,6 +117,10 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
   const [labels, setLabels] = useState([]);
   const [messages, setMessages] = useState([]);
   const [nextPage, setNextPage] = useState(null);
+  // Page-token stack for prev/next pagination (Gmail uses opaque cursors, not
+  // page numbers). pageStack holds the tokens that opened each prior page.
+  const [pageStack, setPageStack] = useState([]);
+  const [pageNum, setPageNum] = useState(1);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
@@ -109,13 +166,39 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
       if (labelId) params.set('labelId', labelId);
       if (q) params.set('q', q);
       if (as) params.set('as', as);
-      if (!reset && nextPage) params.set('pageToken', nextPage);
+      // `reset` can be:
+      //   'force'  → first page, bypass the server cache (Refresh button)
+      //   a token  → load that specific page
+      //   true     → first page (from cache if fresh)
+      //   false    → append next page (legacy, unused with numbered pages)
+      const isForce = reset === 'force';
+      const token = (!isForce && typeof reset === 'string') ? reset : (!reset && nextPage ? nextPage : null);
+      if (token) params.set('pageToken', token);
+      if (isForce) params.set('refresh', '1');
       const d = await api(`${base}/all/folder?${params.toString()}`);
-      setMessages((prev) => reset ? (d.messages || []) : [...prev, ...(d.messages || [])]);
+      // Pages replace the list (Gmail-style numbered pages), not append.
+      setMessages(d.messages || []);
       setNextPage(d.nextPageToken || null);
+      if (reset === true || isForce) { setPageStack([]); setPageNum(1); }
     } catch (e) { setErr(e.message); if (/connected mailbox/i.test(e.message)) setNotConnected(true); }
     finally { setLoading(false); }
   }, [box, labelId, q, as, nextPage]);
+
+  // Numbered pagination over Gmail's opaque cursors.
+  const goNextPage = () => {
+    if (!nextPage) return;
+    setPageStack((s) => [...s, nextPage]);
+    setPageNum((n) => n + 1);
+    loadFolder(nextPage);
+  };
+  const goPrevPage = () => {
+    if (pageNum <= 1) return;
+    const stack = pageStack.slice(0, -1);
+    const prevToken = stack.length ? stack[stack.length - 1] : null;
+    setPageStack(stack);
+    setPageNum((n) => Math.max(1, n - 1));
+    loadFolder(prevToken || true);
+  };
 
   useEffect(() => { loadMailboxes(); }, [loadMailboxes]);
   useEffect(() => { loadLabels(); }, [loadLabels]);
@@ -165,6 +248,20 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
     setConfirmDel(null);
   };
 
+  // Mark a message read: optimistic in the list (clears the dot + bold right
+  // away — the bug was the dot persisting after opening), then persist to Gmail.
+  const markRead = async (msg, read = true) => {
+    if (msg.isRead === read) return;
+    setMessages((prev) => prev.map((m) => m.gmailMessageId === msg.gmailMessageId ? { ...m, isRead: read } : m));
+    try { await api(`${base}/all/message/${msg.gmailMessageId}/read`, { method: 'POST', body: JSON.stringify({ read, as }) }); }
+    catch { /* best-effort; UI already updated */ }
+  };
+  // Open a message: clear unread first, then show the thread.
+  const openMessage = (m) => { if (!m.isRead) markRead(m, true); setOpenThread({ threadId: m.threadId, subject: m.subject }); };
+  const replyToMessage = (m) => {
+    setComposer({ mode: 'reply', to: [m.direction === 'outbound' ? (m.toEmail || '') : (m.fromEmail || '')].filter(Boolean), cc: [], bcc: [], subject: m.subject ? (/^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`) : '', body: '', threadId: m.threadId, inReplyTo: m.rfcMessageId || null });
+  };
+
   if (notConnected) {
     return (
       <div className="max-w-xl mx-auto text-center py-20">
@@ -178,11 +275,11 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
   const labelById = Object.fromEntries(labels.map((l) => [l.id, l]));
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-140px)]" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
+    <div className="flex gap-4 h-[calc(100vh-140px)]" style={{ fontFamily: MAIL_FONT }}>
       {/* Left rail */}
       <div className="w-56 flex-shrink-0 flex flex-col">
         <button onClick={() => setComposer({ mode: 'new', to: [], cc: [], bcc: [], subject: '', body: '', threadId: null, inReplyTo: null })}
-          className="mb-3 inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold text-white shadow-sm" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
+          className="mb-3 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm active:scale-95 transition" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           Compose
         </button>
@@ -223,13 +320,16 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
       </div>
 
       {/* Message list */}
-      <div className="flex-1 bg-white rounded-2xl border border-slate-100 flex flex-col min-w-0">
+      <div className="flex-1 bg-white rounded-2xl border border-slate-200/80 shadow-sm flex flex-col min-w-0">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 flex-shrink-0">
           <div className="relative flex-1">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg></span>
             <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && loadFolder(true)}
-              placeholder="Search mail…" className="w-full rounded-lg bg-slate-100 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-300" />
+              placeholder="Search mail…" className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" />
           </div>
-          <button onClick={() => loadFolder(true)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">Refresh</button>
+          <button onClick={() => loadFolder('force')} title="Refresh" className="w-9 h-9 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center justify-center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.5 9a9 9 0 0 1 14.8-3.4L23 10M1 14l4.7 4.4A9 9 0 0 0 20.5 15" /></svg>
+          </button>
         </div>
 
         {err && <div className="mx-4 mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{err}</div>}
@@ -243,64 +343,88 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
           <>
           {loading && messages.length === 0 && <div className="text-slate-400 text-sm py-16 text-center">Loading…</div>}
           {!loading && messages.length === 0 && <div className="text-slate-400 text-sm py-16 text-center">No emails in this folder.</div>}
-          {messages.map((m) => (
+          {messages.map((m) => {
+            const downloadHref = (a) => a.attachmentId ? `${API_BASE}/api/gmail/all/message/${m.gmailMessageId}/attachment/${a.attachmentId}?name=${encodeURIComponent(a.filename || 'attachment')}${as ? `&as=${as}` : ''}` : null;
+            const senderText = m.direction === 'outbound' ? `To: ${m.toEmail || '—'}` : (m.fromName || m.fromEmail);
+            return (
             <div key={m.gmailMessageId}
-              onClick={() => setOpenThread({ threadId: m.threadId, subject: m.subject })}
-              className={`flex items-center gap-3 px-4 py-2.5 border-b border-slate-50 cursor-pointer hover:bg-slate-50 ${!m.isRead ? 'bg-blue-50/30' : ''}`}>
-              <button onClick={(e) => { e.stopPropagation(); toggleStar(m); }} title="Star" className="flex-shrink-0 text-slate-300 hover:text-amber-400">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill={m.starred ? '#FBBF24' : 'none'} stroke={m.starred ? '#FBBF24' : 'currentColor'} strokeWidth="1.6"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z" /></svg>
+              onClick={() => openMessage(m)}
+              className={`group grid items-center gap-x-3 px-3 h-[46px] border-b border-slate-100 cursor-pointer hover:bg-slate-50 hover:shadow-[inset_0_0_0_1px_#eef2f7] transition-colors ${!m.isRead ? 'bg-white' : 'bg-white'}`}
+              style={{ gridTemplateColumns: '18px 16px 190px 1fr auto' }}>
+              {/* star */}
+              <button onClick={(e) => { e.stopPropagation(); toggleStar(m); }} title={m.starred ? 'Unstar' : 'Star'} className="text-slate-300 hover:text-amber-400 flex items-center justify-center">
+                {MI.star(16, m.starred)}
               </button>
-              <div className={`w-44 truncate text-sm flex-shrink-0 ${!m.isRead ? 'font-bold text-[#050A1F]' : 'text-slate-600'}`}>
-                {m.direction === 'outbound' ? `To: ${m.toEmail || '—'}` : (m.fromName || m.fromEmail)}
-              </div>
-              <div className="flex-1 min-w-0 flex items-center gap-2">
-                <span className={`text-sm truncate ${!m.isRead ? 'font-semibold text-[#050A1F]' : 'text-slate-500'}`}>{m.subject || '(no subject)'}</span>
-                <span className="text-xs text-slate-400 truncate">— {m.snippet}</span>
+              {/* unread dot */}
+              <span className="flex items-center justify-center">{!m.isRead && <span className="w-[9px] h-[9px] rounded-full bg-orange-500" />}</span>
+              {/* sender */}
+              <span className={`truncate text-sm ${!m.isRead ? 'font-bold text-slate-900' : 'text-slate-600'}`}>
+                {senderText}
+                {m.isDraft && <span className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[8px] font-extrabold uppercase bg-amber-100 text-amber-700 border border-amber-200 align-middle">Draft</span>}
+              </span>
+              {/* subject + snippet */}
+              <span className="min-w-0 truncate flex items-center gap-1.5">
+                <span className={`text-sm ${!m.isRead ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{m.subject || '(no subject)'}</span>
+                <span className="text-sm text-slate-400 truncate">— {m.snippet}</span>
                 {(m.labelIds || []).filter((id) => labelById[id]).map((id) => (
                   <span key={id} className="text-[9px] font-bold rounded px-1.5 py-0.5 flex-shrink-0" style={{ background: (labelById[id].color && labelById[id].color.backgroundColor) || '#e2e8f0', color: (labelById[id].color && labelById[id].color.textColor) || '#334155' }}>{labelById[id].name}</span>
                 ))}
-              </div>
-              {m.hasAttachments && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-slate-400 flex-shrink-0"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg>}
-              <span className="text-xs text-slate-400 w-16 text-right flex-shrink-0">{fmtDate(m.sentAt)}</span>
-              {/* Label + delete actions */}
-              <div className="relative flex items-center gap-1 flex-shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); setLabelMenuFor(labelMenuFor === m.gmailMessageId ? null : m.gmailMessageId); }} title="Label" className="text-slate-300 hover:text-slate-600 p-1">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-6.2-6.2a2 2 0 0 1 0-2.8l7.2-7.2a2 2 0 0 1 1.4-.6H20a1 1 0 0 1 1 1v6.2a2 2 0 0 1-.4 1.2z" /><circle cx="16.5" cy="7.5" r="1" /></svg>
-                </button>
-                {labelMenuFor === m.gmailMessageId && (
-                  <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-7 w-48 bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50 max-h-56 overflow-auto">
-                    <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase">Apply label</div>
-                    {labels.length === 0 && <div className="px-3 py-1.5 text-xs text-slate-400">Create a label first.</div>}
-                    {labels.map((l) => {
-                      const has = (m.labelIds || []).includes(l.id);
-                      return (
-                        <button key={l.id} onClick={() => applyLabel(m, l.id, has)} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50 text-left">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ background: (l.color && l.color.backgroundColor) || '#94a3b8' }} />
-                          <span className="flex-1 truncate">{l.name}</span>
-                          {has && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a765" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {!m.leadId ? (
-                  <button onClick={(e) => { e.stopPropagation(); deleteMessage(m); }} title="Delete" className="text-slate-300 hover:text-red-500 p-1">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>
-                  </button>
-                ) : (
-                  <span title="Linked to a lead" className="text-slate-300 p-1"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></span>
-                )}
+              </span>
+              {/* right side: meta (hidden on hover) OR actions (shown on hover) */}
+              <div className="flex items-center justify-end">
+                <div className="flex items-center gap-2 group-hover:hidden">
+                  <AttachmentChips atts={m.attachments} downloadHref={downloadHref} />
+                  <span className="text-xs text-slate-400 w-14 text-right">{fmtDate(m.sentAt)}</span>
+                </div>
+                <div className="hidden group-hover:flex items-center gap-0.5 relative">
+                  <button onClick={(e) => { e.stopPropagation(); markRead(m, !m.isRead); }} title={m.isRead ? 'Mark as unread' : 'Mark as read'} className="w-8 h-8 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex items-center justify-center">{m.isRead ? MI.markUnread(16) : MI.markRead(16)}</button>
+                  <button onClick={(e) => { e.stopPropagation(); replyToMessage(m); }} title="Reply" className="w-8 h-8 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex items-center justify-center">{MI.reply(16)}</button>
+                  {feat.labels && (
+                    <button onClick={(e) => { e.stopPropagation(); setLabelMenuFor(labelMenuFor === m.gmailMessageId ? null : m.gmailMessageId); }} title="Label" className="w-8 h-8 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex items-center justify-center">{MI.tag(16)}</button>
+                  )}
+                  {!m.leadId ? (
+                    <button onClick={(e) => { e.stopPropagation(); deleteMessage(m); }} title="Delete" className="w-8 h-8 rounded-lg text-slate-500 hover:bg-red-100 hover:text-red-600 flex items-center justify-center">{MI.trash(16)}</button>
+                  ) : (
+                    <span title="Linked to a lead — manage it from the lead" className="w-8 h-8 rounded-lg text-slate-300 flex items-center justify-center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg></span>
+                  )}
+                  {labelMenuFor === m.gmailMessageId && (
+                    <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-9 w-48 bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50 max-h-56 overflow-auto">
+                      <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase">Apply label</div>
+                      {labels.length === 0 && <div className="px-3 py-1.5 text-xs text-slate-400">Create a label first.</div>}
+                      {labels.map((l) => {
+                        const has = (m.labelIds || []).includes(l.id);
+                        return (
+                          <button key={l.id} onClick={() => applyLabel(m, l.id, has)} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50 text-left">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: (l.color && l.color.backgroundColor) || '#94a3b8' }} />
+                            <span className="flex-1 truncate">{l.name}</span>
+                            {has && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a765" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          ))}
-          {nextPage && (
-            <div className="text-center py-3">
-              <button onClick={() => loadFolder(false)} disabled={loading} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">{loading ? 'Loading…' : 'Load more'}</button>
-            </div>
-          )}
+            );
+          })}
           </>
           )}
         </div>
+        {/* Pagination footer */}
+        {box !== 'SCHEDULED' && messages.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100 flex-shrink-0 text-xs text-slate-500">
+            <span>Page {pageNum}{messages.length ? ` · ${messages.length} shown` : ''}</span>
+            <div className="flex items-center gap-1.5">
+              <button onClick={goPrevPage} disabled={pageNum <= 1 || loading} className="w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center" title="Previous page">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+              </button>
+              <button onClick={goNextPage} disabled={!nextPage || loading} className="w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center" title="Next page">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {reschedule && <RescheduleModal row={reschedule} apiFn={api} base={base} onClose={() => setReschedule(null)} onSaved={() => { setReschedule(null); loadFolder(true); }} />}

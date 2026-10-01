@@ -1017,6 +1017,20 @@ const EmailTemplate = sequelize.define(
 );
 EmailTemplate.prototype.toJSON = function () { const o = Object.assign({}, this.get()); o._id = o.id; return o; };
 
+// Cache of an All-Mail folder page (the serialized list the UI shows), so
+// opening a folder renders instantly from our DB while a background refresh
+// pulls the latest from Gmail. Keyed per viewer + mailbox + folder.
+const MailFolderCache = sequelize.define(
+  'MailFolderCache',
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    cacheKey: { type: DataTypes.STRING(255), allowNull: false, unique: true }, // userId|as|box|labelId
+    payload: { type: DataTypes.JSON, allowNull: true }, // { messages, nextPageToken }
+    fetchedAt: { type: DataTypes.DATE, allowNull: false },
+  },
+  { tableName: 'mail_folder_cache', indexes: [{ name: 'idx_mailcache_key', fields: ['cacheKey'] }] }
+);
+
 // Open tracking: one row per sent email carrying a unique pixel token. When the
 // recipient's client loads the pixel, we stamp firstOpenAt/opens. A background
 // job flags rows unopened after 24h so the agent can follow up.
@@ -3070,7 +3084,7 @@ GstReconciliation.prototype.toJSON = function () {
 module.exports = {
   sequelize, Sequelize, Op,
   runWithDemoScope, currentDemoScope, hasDemoContext,
-  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog,
+  User, Report, Lead, Settings, AuditLog, ApiUsage, CallLog, BulkCampaign, CallIntent, recordApiCall, Review, BusinessBrief, MonthlyTarget, LeadEmail, HrEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate, EmailOpen, CrmEmailLog, MailFolderCache,
   HrUser, HrBranch, HrDepartment, HrShift, HrHoliday, HrJobPost, HrCandidate, HrNotification, HrAnnouncement, HrFeedback, HrVendor, HrExpense, HrOnboarding, HrOnboardingTask, HrAttendance, BiometricImport, AttendanceFlag, AiOverviewReport, PushSubscription, Payslip, PayrollConfig, HrLeave, HrLateCheck, HrSurvey, HrSurveyResponse, HrDirectorProfile, HrDailyTask, HrChecklistItem, HrDailyReport, HrDayNote, HrTeamReview, CrmSurvey, CrmSurveyResponse, TicketBooking, TicketCustomer, StickyNote, GstReconciliation,
   Project, ProjectMember, ProjectTemplate, ProjectStep, ProjectCycle, ProjectDeliverable, ProjectCredential, ProjectPlan, TaskFlow, TaskFlowRun,
   RewardRule, RewardLedger, RewardWallet, RewardBudget, RewardApproval, HelpingRecommendation, Innovation, RewardCatalogueItem, Redemption,

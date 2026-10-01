@@ -1,7 +1,27 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { toast, confirmDialog, promptDialog } from './toast';
 import { api } from './App.jsx';
-import { PhoneField, Pagination } from './Leads.jsx';
+import { PhoneField, Pagination, CountryCombobox } from './Leads.jsx';
+
+const BRIEF_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+// Favicon via Google's service, with a graceful fallback to a letter tile.
+function faviconUrl(domain) {
+  const d = String(domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+  return d ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64` : '';
+}
+function Favicon({ domain, name }) {
+  const [failed, setFailed] = useState(false);
+  const url = faviconUrl(domain);
+  const letter = (String(name || domain || '?').trim()[0] || '?').toUpperCase();
+  if (!url || failed) {
+    return <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border border-black/5 bg-slate-100 text-slate-600">{letter}</div>;
+  }
+  return (
+    <div className="w-9 h-9 rounded-xl shrink-0 border border-slate-200 bg-white flex items-center justify-center overflow-hidden">
+      <img src={url} alt="" width="20" height="20" onError={() => setFailed(true)} />
+    </div>
+  );
+}
 
 // A phone stored as only a dial code (e.g. "+1") with no digits shows as a dash.
 function phoneOrDash(phone) {
@@ -22,6 +42,9 @@ function phoneOrDash(phone) {
  */
 export default function AiBriefPage({ user }) {
   const [form, setForm] = useState({ website: '', customerName: '', phone: '' });
+  // The contact's country drives the phone dial code. Default to India (the
+  // team's base) rather than the US, so agents aren't stuck on +1.
+  const [country, setCountry] = useState('India');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [active, setActive] = useState(null); // the brief row currently shown
@@ -40,9 +63,13 @@ export default function AiBriefPage({ user }) {
   const run = async () => {
     if (!form.website.trim()) { setError('Enter a website or domain.'); return; }
     if (!form.customerName.trim()) { setError('Enter the customer name.'); return; }
-    // A phone that's only a dial code (e.g. "+1") with no digits counts as empty.
-    const hasNumber = /\d/.test(String(form.phone || '').replace(/^\+\d{1,3}/, ''));
-    const cleanPhone = hasNumber ? form.phone : '';
+    // Phone validation: strip the dial code, then require a real number. A
+    // single stray digit like "1" (the bug agents hit) is rejected — a valid
+    // phone number is at least 7 digits.
+    const digits = String(form.phone || '').replace(/^\+\d{1,3}/, '').replace(/\D/g, '');
+    if (!digits) { setError('Enter a phone number.'); return; }
+    if (digits.length < 7) { setError('Enter a valid phone number (at least 7 digits).'); return; }
+    const cleanPhone = form.phone;
     setRunning(true); setError('');
     try {
       const r = await api('/briefs', { method: 'POST', body: JSON.stringify({ ...form, phone: cleanPhone }) });
@@ -69,11 +96,27 @@ export default function AiBriefPage({ user }) {
   const inp = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-  // Distinct agents present in the list, for the agent filter.
+  // Distinct agents present in the list, for the agent filter — only agents who
+  // have actually run a brief appear here.
   const agents = useMemo(() => {
     const seen = new Map();
     (list || []).forEach((r) => { if (r.agentName && !seen.has(r.agentName)) seen.set(r.agentName, r.agentName); });
     return Array.from(seen.values()).sort();
+  }, [list]);
+
+  // KPI counts: total, today, this month.
+  const stats = useMemo(() => {
+    const rows = list || [];
+    const now = new Date();
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    let today = 0, month = 0;
+    rows.forEach((r) => {
+      const d = new Date(r.createdAt);
+      if (d >= startToday) today++;
+      if (d >= startMonth) month++;
+    });
+    return { total: rows.length, today, month };
   }, [list]);
 
   // Apply search + agent + date-range filters.
@@ -92,42 +135,80 @@ export default function AiBriefPage({ user }) {
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">AI Brief</h1>
-        <div className="text-sm text-slate-400">Look up any business before a cold call — what they do, what to pitch, and how to open.</div>
+    <div className="space-y-6" style={{ fontFamily: BRIEF_FONT }}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">AI Brief</h1>
+            {list && <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">{stats.total} run</span>}
+          </div>
+          <p className="text-slate-500 text-sm mt-1">Look up any business before a cold call — what they do, what to pitch, and how to open.</p>
+        </div>
+      </div>
+
+      {/* KPI strip */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-slate-500/5 rounded-bl-full pointer-events-none"></div>
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider text-slate-400">Total briefs</span><span className="p-2 bg-slate-100 rounded-xl text-slate-600 text-sm">▦</span></div>
+          <div className="text-3xl font-extrabold text-slate-900 tracking-tight mt-2">{stats.total}</div>
+          <p className="text-xs text-slate-400 mt-2">All-time lookups</p>
+        </div>
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-bl-full pointer-events-none"></div>
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider text-orange-600">Today</span><span className="p-2 bg-orange-50 rounded-xl text-orange-600 text-sm">☀️</span></div>
+          <div className="text-3xl font-extrabold text-orange-700 tracking-tight mt-2">{stats.today}</div>
+          <p className="text-xs text-slate-400 mt-2">Briefs run today</p>
+        </div>
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-bl-full pointer-events-none"></div>
+          <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider text-blue-600">This month</span><span className="p-2 bg-blue-50 rounded-xl text-blue-600 text-sm">▲</span></div>
+          <div className="text-3xl font-extrabold text-blue-700 tracking-tight mt-2">{stats.month}</div>
+          <p className="text-xs text-slate-400 mt-2">Briefs this month</p>
+        </div>
       </div>
 
       {/* Run form */}
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          <div className="md:col-span-4">
             <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Website / domain</label>
             <input className={`${inp} mt-1`} value={form.website} placeholder="example.com"
               onChange={(e) => setForm({ ...form, website: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && run()} />
           </div>
-          <div>
+          <div className="md:col-span-3">
             <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Customer name</label>
             <input className={`${inp} mt-1`} value={form.customerName} placeholder="Business or contact"
               onChange={(e) => setForm({ ...form, customerName: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && run()} />
           </div>
-          <div>
+          <div className="md:col-span-2">
+            <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Country</label>
+            <div className="mt-1">
+              <CountryCombobox value={country} onChange={setCountry} className={inp} />
+            </div>
+          </div>
+          <div className="md:col-span-3">
             <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Phone</label>
             <div className="mt-1">
-              <PhoneField value={form.phone} country="United States"
+              <PhoneField value={form.phone} country={country}
                 onChange={(v) => setForm({ ...form, phone: v })}
                 className={inp} placeholder="number" />
             </div>
           </div>
         </div>
-        {error && <div className="text-xs text-red-600 mt-2">{error}</div>}
+        {error && (
+          <div className="text-xs text-red-600 mt-2.5 flex items-center gap-1.5">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+            {error}
+          </div>
+        )}
         <button onClick={run} disabled={running}
-          className="mt-3 rounded-lg px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50"
-          style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-          {running ? 'Reading the website…' : 'Run brief'}
+          className="mt-3 inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 shadow-sm active:scale-95 transition"
+          style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>
+          {running ? 'Reading the website…' : '▶ Run AI brief'}
         </button>
         <div className="text-[11px] text-slate-400 mt-2">
-          If this domain has been looked up before, you’ll get the saved brief instantly.
+          Pick the contact's country first — the dial code fills in automatically. If this domain has been looked up before, you'll get the saved brief instantly.
         </div>
       </div>
 
@@ -135,69 +216,73 @@ export default function AiBriefPage({ user }) {
       {active && <BriefModal brief={active} onClose={() => setActive(null)} />}
 
       {/* Listing */}
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
         <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-          <div className="text-sm font-bold text-[#050A1F]">Brief history {list ? `(${filtered.length})` : ''}</div>
-        </div>
-
-        {/* Search + agent + date-range filters */}
-        <div className="flex items-end gap-2 flex-wrap mb-3">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search domain, customer, phone…"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}
-            className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
-            <option value="">All agents</option>
-            {agents.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
-          <div className="flex items-center gap-1">
-            <div className="flex flex-col">
-              <label className="text-[9px] font-bold uppercase text-slate-400">From</label>
-              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          <div className="text-[15px] font-bold text-slate-900">Brief history {list ? <span className="text-slate-400 font-medium">({filtered.length})</span> : ''}</div>
+          {/* Search + agent + date-range filters */}
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+              </span>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search briefs…"
+                className="bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" />
             </div>
-            <div className="flex flex-col">
-              <label className="text-[9px] font-bold uppercase text-slate-400">To</label>
-              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
-                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            <div className="relative">
+              <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}
+                className="appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-sm font-medium rounded-xl py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer">
+                <option value="">All agents</option>
+                {agents.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg></span>
             </div>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} title="From"
+              className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" />
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} title="To"
+              className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" />
+            {(q || agentFilter || fromDate || toDate) && (
+              <button onClick={() => { setQ(''); setAgentFilter(''); setFromDate(''); setToDate(''); }}
+                className="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">Clear</button>
+            )}
           </div>
-          {(q || agentFilter || fromDate || toDate) && (
-            <button onClick={() => { setQ(''); setAgentFilter(''); setFromDate(''); setToDate(''); }}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 hover:border-slate-300">Clear</button>
-          )}
         </div>
 
         {!list ? (
-          <div className="text-slate-400 text-sm py-6 text-center">Loading…</div>
+          <div className="text-slate-400 text-sm py-10 text-center">Loading…</div>
         ) : filtered.length === 0 ? (
-          <div className="text-slate-300 text-sm py-6 text-center">{(list.length === 0) ? 'No briefs yet. Run one above.' : 'No briefs match these filters.'}</div>
+          <div className="text-slate-400 text-sm py-12 text-center">{(list.length === 0) ? 'No briefs yet. Run one above.' : 'No briefs match these filters.'}</div>
         ) : (
           <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="text-[10px] uppercase text-slate-400 border-b border-slate-100">
-                  <th className="text-left py-2 px-2">Date</th>
-                  <th className="text-left py-2 px-2">Domain</th>
-                  <th className="text-left py-2 px-2">Customer</th>
-                  <th className="text-left py-2 px-2">Phone</th>
-                  <th className="text-left py-2 px-2">Agent</th>
-                  <th className="text-right py-2 px-2"></th>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3 px-4">Business</th>
+                  <th className="py-3 px-4">Contact</th>
+                  <th className="py-3 px-4">Agent</th>
+                  <th className="py-3 px-4">Run</th>
+                  <th className="py-3 px-4 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-100 text-sm">
                 {pageRows.map((r) => (
-                  <tr key={r._id} onClick={() => view(r._id)}
-                    className="border-b border-slate-50 cursor-pointer hover:bg-orange-50/40">
-                    <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{fmtDate(r.createdAt)}</td>
-                    <td className="py-2 px-2 font-bold text-[#050A1F]">{r.domain}{r.cached && <span className="ml-1 text-[9px] font-bold text-slate-400">cached</span>}</td>
-                    <td className="py-2 px-2 text-slate-600">{r.customerName}</td>
-                    <td className="py-2 px-2 text-slate-500">{phoneOrDash(r.phone)}</td>
-                    <td className="py-2 px-2 text-slate-500">{r.agentName}</td>
-                    <td className="py-2 px-2 text-right whitespace-nowrap">
-                      <button onClick={(e) => { e.stopPropagation(); view(r._id); }} className="text-[11px] font-bold text-[#FF4500] hover:underline">View</button>
+                  <tr key={r._id} onClick={() => view(r._id)} className="hover:bg-slate-50/80 transition-colors cursor-pointer group">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <Favicon domain={r.domain} name={r.customerName || r.domain} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 text-sm group-hover:text-orange-600 transition-colors truncate">{r.customerName || r.domain}{r.cached && <span className="ml-1.5 text-[9px] font-bold text-slate-400 uppercase">cached</span>}</div>
+                          <div className="text-xs text-slate-400 truncate">{r.domain}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4"><div className="text-[13px] text-slate-600">{r.customerName || '—'}</div><div className="text-xs text-slate-400">{phoneOrDash(r.phone)}</div></td>
+                    <td className="py-3 px-4 text-[13px] text-slate-600">{r.agentName}</td>
+                    <td className="py-3 px-4 text-xs text-slate-500 whitespace-nowrap">{fmtDate(r.createdAt)}</td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <button onClick={(e) => { e.stopPropagation(); view(r._id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-bold text-slate-600 hover:border-orange-300 hover:text-orange-600">View</button>
                       {user.role === 'admin' && (
-                        <button onClick={(e) => del(r._id, e)} className="ml-3 text-[11px] font-bold text-red-500 hover:underline">Delete</button>
+                        <button onClick={(e) => del(r._id, e)} className="ml-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-bold text-red-600 hover:bg-red-50">Delete</button>
                       )}
                     </td>
                   </tr>

@@ -83,6 +83,10 @@ router.post('/', requireAuth, async (req, res, next) => {
     const phone = String(b.phone || '').trim().slice(0, 60);
     if (!customerName) return res.status(400).json({ error: 'Enter the customer name.' });
     if (!phone) return res.status(400).json({ error: 'Enter the phone number.' });
+    // Validate the phone has a real number, not a stray digit like "1". Strip
+    // the leading dial code, then require at least 7 digits.
+    const phoneDigits = phone.replace(/^\+\d{1,3}/, '').replace(/\D/g, '');
+    if (phoneDigits.length < 7) return res.status(400).json({ error: 'Enter a valid phone number (at least 7 digits).' });
 
     const me = await User.findByPk(req.user.id);
 

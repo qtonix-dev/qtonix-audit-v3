@@ -8,7 +8,25 @@
 
 const cheerio = require('cheerio');
 
-const UA = 'Mozilla/5.0 (compatible; QtonixAudit/1.0; +https://www.qtonix.com/bot)';
+// A real Chrome User-Agent + the headers a browser actually sends. The old
+// "QtonixAudit" bot UA was being blocked by Cloudflare's bot protection, which
+// returned a challenge page instead of the site's HTML and made briefs/reports
+// fail. A browser-like fingerprint gets through the vast majority of the time.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const BROWSER_HEADERS = {
+  'User-Agent': UA,
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Sec-Ch-Ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"Windows"',
+};
 const AI_BOTS = ['gptbot', 'claudebot', 'perplexitybot', 'google-extended', 'ccbot', 'anthropic-ai'];
 
 function normaliseUrl(input) {
@@ -24,11 +42,51 @@ async function fetchWithTimeout(url, ms = 20000, opts = {}) {
     return await fetch(url, {
       ...opts,
       signal: ctrl.signal,
-      headers: { 'User-Agent': UA, ...(opts.headers || {}) },
+      headers: { ...BROWSER_HEADERS, ...(opts.headers || {}) },
       redirect: 'follow',
     });
   } finally {
     clearTimeout(t);
+  }
+}
+
+// Does this response/body look like a Cloudflare (or similar) bot challenge
+// rather than the real page? 403/503 with a challenge marker, or a tiny body
+// that's just the "checking your browser" interstitial.
+function looksLikeChallenge(status, html) {
+  if (status === 403 || status === 503 || status === 429) return true;
+  const h = String(html || '').toLowerCase();
+  if (h.length < 3000 && (
+    h.includes('cf-browser-verification') ||
+    h.includes('checking your browser') ||
+    h.includes('cf-challenge') ||
+    h.includes('just a moment') ||
+    h.includes('attention required') ||
+    h.includes('enable javascript and cookies to continue')
+  )) return true;
+  return false;
+}
+
+// Last-resort reader fallback for pages behind a bot wall. r.jina.ai renders
+// the page server-side and returns clean readable text/markdown. We wrap it in
+// a minimal HTML shell so the rest of the crawler (cheerio) can parse it.
+// Best-effort: any failure returns null and the caller keeps the original.
+// NOTE: this makes an outbound call to r.jina.ai; it works in production.
+async function fetchViaReader(targetUrl, ms = 25000) {
+  try {
+    const res = await fetchWithTimeout(`https://r.jina.ai/${targetUrl}`, ms, {
+      headers: { 'X-Return-Format': 'html', 'Accept': 'text/html,text/plain,*/*' },
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text || text.length < 200) return null;
+    // If it already looks like HTML, use as-is; otherwise wrap the text so
+    // cheerio has a <body> to read.
+    const isHtml = /<html|<body|<div|<p[\s>]/i.test(text);
+    const html = isHtml ? text : `<!doctype html><html><head></head><body><main>${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</main></body></html>`;
+    return html;
+  } catch {
+    return null;
   }
 }
 
@@ -39,7 +97,15 @@ async function crawlHomepage(website) {
 
   const res = await fetchWithTimeout(url.toString(), 25000);
   const responseMs = Date.now() - started;
-  const html = await res.text();
+  let html = await res.text();
+  // Cloudflare / bot-wall fallback: if the direct fetch came back as a
+  // challenge page, re-read the page through the reader proxy so the brief
+  // still has real content to work with.
+  let readerUsed = false;
+  if (looksLikeChallenge(res.status, html)) {
+    const viaReader = await fetchViaReader(url.toString());
+    if (viaReader) { html = viaReader; readerUsed = true; }
+  }
   const $ = cheerio.load(html);
 
   // Strip non-content nodes before counting words, or nav/footer inflate it.
@@ -137,6 +203,7 @@ async function crawlHomepage(website) {
   return {
     finalUrl: res.url,
     statusCode: res.status,
+    readerFallbackUsed: readerUsed,
     https: res.url.startsWith('https://'),
     responseMs,
     // Raw markup, used by the AI business brief to extract NAP and social

@@ -266,11 +266,36 @@ router.get('/', requireAuth, async (req, res, next) => {
       limit: Number(limit),
       include: [{ model: User, as: 'agent', attributes: ['name', 'email'] }],
     });
-    res.json({ items, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
+
+    // KPI stats across ALL of this viewer's reports (not just the current page
+    // or search filter): total, completed, this-month, and average score.
+    // Scoped by the same role visibility (`scopeWhere`), ignoring status/q.
+    const scopeWhere = req.user.role === 'admin' ? {} : { agentId: req.user.id };
+    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0, 0, 0, 0);
+    let stats = { total: 0, completed: 0, thisMonth: 0, avgScore: null };
+    try {
+      const [allCount, completedCount, monthCount, scoreRows] = await Promise.all([
+        Report.count({ where: scopeWhere }),
+        Report.count({ where: { ...scopeWhere, status: 'complete' } }),
+        Report.count({ where: { ...scopeWhere, createdAt: { [Op.gte]: startOfMonth } } }),
+        Report.findAll({ where: { ...scopeWhere, status: 'complete' }, attributes: ['scores'], raw: true }),
+      ]);
+      const scoreVals = (scoreRows || [])
+        .map((r) => {
+          const s = r.scores && typeof r.scores === 'string' ? safeJson(r.scores) : r.scores;
+          return s && typeof s.overall === 'number' ? s.overall : null;
+        })
+        .filter((v) => v != null);
+      const avg = scoreVals.length ? Math.round(scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length) : null;
+      stats = { total: allCount, completed: completedCount, thisMonth: monthCount, avgScore: avg };
+    } catch { /* stats are best-effort; the list still returns */ }
+
+    res.json({ items, total, page: Number(page), pages: Math.ceil(total / Number(limit)), stats });
   } catch (e) {
     next(e);
   }
 });
+function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
 
 /** GET /api/reports/:id — single report. */
 router.get('/:id', requireAuth, async (req, res, next) => {

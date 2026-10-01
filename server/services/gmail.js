@@ -312,6 +312,13 @@ async function markRead(settings, refreshToken, gmailMessageId) {
   await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody: { removeLabelIds: ['UNREAD'] } });
 }
 
+/** Mark a message read or unread (add/remove the UNREAD label). */
+async function setRead(settings, refreshToken, gmailMessageId, read) {
+  const gmail = gmailFor(settings, refreshToken);
+  const requestBody = read ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] };
+  await gmail.users.messages.modify({ userId: 'me', id: gmailMessageId, requestBody });
+}
+
 /**
  * List messages in a Gmail folder/label. `box` maps to a system label
  * (INBOX/SENT/SPAM/TRASH/STARRED) or a custom label id. Supports an optional
@@ -334,15 +341,30 @@ async function listFolder(settings, refreshToken, connectedEmail, { box = 'INBOX
   const out = [];
   for (const id of ids) {
     try {
-      // metadata format is much lighter than full — good for a list.
-      const meta = await gmail.users.messages.get({ userId: 'me', id, format: 'metadata', metadataHeaders: ['From', 'To', 'Subject', 'Date'] });
+      // Full format so we can read the real attachment parts (filename, type,
+      // size, attachmentId) for the per-type chips + download in the list.
+      const meta = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
       const m = meta.data;
       const headers = (m.payload && m.payload.headers) || [];
       const from = parseAddress(headerVal(headers, 'From'));
       const isOutbound = from.email && connectedEmail && from.email === String(connectedEmail).toLowerCase();
+      // Walk the MIME tree and collect genuine file attachments (a part with a
+      // filename and an attachmentId). Inline images are skipped.
+      const attachments = [];
+      const walkParts = (part) => {
+        if (!part) return;
+        const fn = part.filename;
+        const body = part.body || {};
+        if (fn && body.attachmentId) {
+          attachments.push({ filename: fn, mimeType: part.mimeType || '', size: body.size || 0, attachmentId: body.attachmentId });
+        }
+        (part.parts || []).forEach(walkParts);
+      };
+      walkParts(m.payload);
       out.push({
         gmailMessageId: m.id,
         threadId: m.threadId || '',
+        rfcMessageId: headerVal(headers, 'Message-ID') || headerVal(headers, 'Message-Id') || '',
         fromEmail: from.email, fromName: from.name,
         toEmail: headerVal(headers, 'To'),
         subject: headerVal(headers, 'Subject'),
@@ -350,9 +372,11 @@ async function listFolder(settings, refreshToken, connectedEmail, { box = 'INBOX
         sentAt: new Date(Number(m.internalDate) || Date.now()),
         isRead: !(m.labelIds || []).includes('UNREAD'),
         starred: (m.labelIds || []).includes('STARRED'),
+        isDraft: (m.labelIds || []).includes('DRAFT'),
         labelIds: m.labelIds || [],
         direction: isOutbound ? 'outbound' : 'inbound',
-        hasAttachments: /attachment/i.test(JSON.stringify(m.payload && m.payload.parts || [])) || false,
+        attachments,
+        hasAttachments: attachments.length > 0,
       });
     } catch (e) { /* skip individual failures */ }
   }
@@ -496,7 +520,7 @@ async function deleteCalendarEvent(settings, refreshToken, eventId) {
 
 module.exports = {
   SCOPES, isConfigured, redirectUri, hasValidBaseUrl, authUrl, exchangeCode,
-  searchMessages, sendMessage, getThread, getAttachment, markRead, parseAddress, buildRaw,
+  searchMessages, sendMessage, getThread, getAttachment, markRead, setRead, parseAddress, buildRaw,
   listFolder, listLabels, createLabel, updateLabel, deleteLabel, modifyMessageLabels, trashMessage, setStar,
   createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, calendarErrorMessage, buildIcsInvite, oauthClient, gmailFor,
 };

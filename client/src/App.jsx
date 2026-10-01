@@ -773,6 +773,26 @@ function LinkToLeadModal({ report, onClose, onLinked }) {
   );
 }
 
+// Favicon for a business domain, falling back to a letter tile (never a broken
+// image). Google's favicon service returns a generic globe for unknown domains,
+// so onError swaps to the initial.
+function ReportFavicon({ domain, name }) {
+  const [failed, setFailed] = React.useState(false);
+  const d = String(domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+  const url = d ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64` : '';
+  const letter = (String(name || domain || '?').trim()[0] || '?').toUpperCase();
+  if (!url || failed) {
+    return <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border border-black/5 bg-slate-100 text-slate-600">{letter}</div>;
+  }
+  return (
+    <div className="w-9 h-9 rounded-xl shrink-0 border border-slate-200 bg-white flex items-center justify-center overflow-hidden">
+      <img src={url} alt="" width="20" height="20" onError={() => setFailed(true)} />
+    </div>
+  );
+}
+
+const REPORT_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+
 function ReportList({ isAdmin, onOpen, onNewReport }) {
   const [data, setData] = useState({ items: [], total: 0, pages: 1 });
   const [q, setQ] = useState(() => {
@@ -812,99 +832,130 @@ function ReportList({ isAdmin, onOpen, onNewReport }) {
     URL.revokeObjectURL(url);
   };
 
+  const st = data.stats || {};
+  const scoreColor = (v) => v >= 65 ? '#16A34A' : v >= 45 ? '#E58A24' : '#E5484D';
+  const statusPill = (status) => {
+    const map = {
+      complete: { bg: '#d1fae5', fg: '#065f46', bd: '#a7f3d0', label: 'Complete' },
+      processing: { bg: '#fef3c7', fg: '#92400e', bd: '#fde68a', label: 'Processing' },
+      queued: { bg: '#e0e7ff', fg: '#3730a3', bd: '#c7d2fe', label: 'Queued' },
+      failed: { bg: '#fee2e2', fg: '#991b1b', bd: '#fecaca', label: 'Failed' },
+    };
+    const m = map[status] || { bg: '#f1f5f9', fg: '#334155', bd: '#e2e8f0', label: status };
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap" style={{ background: m.bg, color: m.fg, border: `1px solid ${m.bd}` }}>{m.label}</span>;
+  };
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-5">
+    <div className="space-y-6" style={{ fontFamily: REPORT_FONT }}>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F] tracking-tight">
-            {isAdmin ? 'All reports' : 'Your reports'}
-          </h1>
-          <p className="text-sm text-slate-500 mt-0.5">{data.total} total</p>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{isAdmin ? 'All reports' : 'Your reports'}</h1>
+            <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">{st.total ?? data.total} total</span>
+          </div>
+          <p className="text-slate-500 text-sm mt-1">Site-analysis reports run for prospects and clients.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Search business or domain…"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
-          />
-          <button onClick={onNewReport} className="rounded-lg px-4 py-2 text-sm font-bold text-white whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>▶ Run new report</button>
+        <div className="flex items-center gap-2.5">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg></span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search business or domain…"
+              className="bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" />
+          </div>
+          <button onClick={onNewReport} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white whitespace-nowrap shadow-sm active:scale-95 transition" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>▶ Run new report</button>
         </div>
       </div>
 
-      {loading && <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Loading…</div>}
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { t: 'Total reports', v: st.total ?? data.total ?? 0, f: 'All-time', c: '#64748b', chip: '▦', tc: '#475569', cbg: '#f1f5f9' },
+          { t: 'Completed', v: st.completed ?? 0, f: 'Ready to send', c: '#16a34a', chip: '✓', tc: '#16a34a', cbg: '#f0fdf4' },
+          { t: 'This month', v: st.thisMonth ?? 0, f: 'Run this month', c: '#f97316', chip: '▲', tc: '#c2410c', cbg: '#fff7ed' },
+          { t: 'Avg score', v: st.avgScore != null ? st.avgScore : '—', f: 'Across completed', c: '#2563eb', chip: '◎', tc: '#2563eb', cbg: '#eff6ff' },
+        ].map((k) => (
+          <div key={k.t} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: k.c + '0d' }}></div>
+            <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider" style={{ color: k.tc }}>{k.t}</span><span className="p-2 rounded-xl text-sm" style={{ background: k.cbg, color: k.tc }}>{k.chip}</span></div>
+            <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: k.tc }}>{k.v}</div>
+            <p className="text-xs text-slate-400 mt-2">{k.f}</p>
+          </div>
+        ))}
+      </div>
+
+      {loading && <div className="bg-white rounded-2xl border border-slate-200/80 p-10 text-center text-slate-400 text-sm">Loading…</div>}
       {!loading && !data.items.length && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-          <p className="text-slate-500 text-sm font-medium">No reports yet</p>
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center">
+          <p className="text-slate-800 font-semibold text-sm">No reports yet</p>
           <p className="text-slate-400 text-xs mt-1">Run your first analysis to see it here.</p>
         </div>
       )}
 
-      <div className="space-y-3">
-        {data.items.map((r) => {
-          return (
-            <div key={r._id} className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center gap-4">
-                <div className="text-center shrink-0">
-                  <div className="text-2xl font-extrabold leading-none" style={{ color: r.scores && r.scores.overall >= 65 ? '#16A34A' : r.scores && r.scores.overall >= 45 ? '#E58A24' : '#E5484D' }}>{r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
-                  <div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div>
-                </div>
-                <div className="min-w-0">
-                  <div className="font-bold text-sm text-[#050A1F] truncate">{r.businessName} <span className="text-slate-400 font-normal">— {r.customerName}</span></div>
-                  <div className="text-xs text-slate-500 mt-0.5">{r.domain}</div>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <span className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleDateString('en-GB')}</span>
-                    {isAdmin && <span className="text-[10px] text-slate-400">· {r.agentName}</span>}
-                    <StatusPill status={r.status} />
-                    {(r.services || []).map((s) => <span key={s} className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-orange-50 text-[#FF4500]">{s}</span>)}
-                    {r.leadId ? <span className="text-[10px] text-slate-400">· Linked to a lead</span>
-                      : <span className="text-[10px] font-bold text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">⚠ Not linked to a lead</span>}
-                  </div>
-                </div>
-
-                {/* Actions sit on the same row, pushed right, so the card stays
-                    one compact line instead of growing an extra button row. */}
-                <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                  {r.status === 'complete' && (
-                    <>
-                      <button onClick={() => onOpen(r)} title="View report"
-                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300 hover:bg-slate-50 inline-flex items-center gap-1.5">
-                        <Icon.Eye size={14} /> <span className="hidden sm:inline">View</span>
-                      </button>
-                      <button onClick={() => download(r._id, r.businessName)} title="Download PDF"
-                        className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5"
-                        style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>
-                        <Icon.Download size={14} /> <span className="hidden sm:inline">PDF</span>
-                      </button>
-                    </>
-                  )}
-                  {r.status === 'failed' && (
-                    <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} title="Retry this report"
-                      className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5">
-                      <Icon.Refresh size={14} /> <span className="hidden sm:inline">Retry</span>
-                    </button>
-                  )}
-                  {!r.leadId && r.status === 'complete' && (
-                    <button onClick={() => setLinkReport(r)} title="Link this report to a lead"
-                      className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-600 hover:bg-amber-50 inline-flex items-center gap-1.5">
-                      🔗 <span className="hidden sm:inline">Link</span>
-                    </button>
-                  )}
-                  {isAdmin && (
-                    <button onClick={async () => {
-                      if (!(await confirmDialog({ title: `Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.` }))) return;
-                      try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); }
-                    }} title="Delete report"
-                      className="rounded-lg border border-slate-200 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-colors">
-                      <Icon.Trash size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
+      {!loading && data.items.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4 w-16 text-center">Score</th>
+                  <th className="py-3.5 px-4">Business</th>
+                  {isAdmin && <th className="py-3.5 px-4">Agent</th>}
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4">Run</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {data.items.map((r) => (
+                  <tr key={r._id} className="hover:bg-slate-50/80 transition-colors group">
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="text-xl font-extrabold leading-none" style={{ color: r.scores && r.scores.overall != null ? scoreColor(r.scores.overall) : '#cbd5e1' }}>{r.scores && r.scores.overall != null ? r.scores.overall : '—'}</div>
+                      <div className="text-[8px] text-slate-400 font-bold tracking-wider mt-0.5">SCORE</div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <ReportFavicon domain={r.domain} name={r.businessName} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 text-sm truncate">{r.businessName} {r.customerName && <span className="text-slate-400 font-normal">— {r.customerName}</span>}</div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-xs text-slate-400 truncate">{r.domain}</span>
+                            {(r.services || []).slice(0, 3).map((s) => <span key={s} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-50 text-orange-600">{s}</span>)}
+                            {!r.leadId && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-100">⚠ Not linked</span>}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    {isAdmin && <td className="py-3.5 px-4 text-[13px] text-slate-600 whitespace-nowrap">{r.agentName}</td>}
+                    <td className="py-3.5 px-4">{statusPill(r.status)}</td>
+                    <td className="py-3.5 px-4 text-xs text-slate-500 whitespace-nowrap">{new Date(r.createdAt).toLocaleDateString('en-GB')}</td>
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5">
+                        {r.status === 'complete' && (
+                          <>
+                            <button onClick={() => onOpen(r)} title="View report" className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300 hover:bg-slate-50 inline-flex items-center gap-1.5"><Icon.Eye size={14} /> <span className="hidden sm:inline">View</span></button>
+                            <button onClick={() => download(r._id, r.businessName)} title="Download PDF" className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white inline-flex items-center gap-1.5" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}><Icon.Download size={14} /> <span className="hidden sm:inline">PDF</span></button>
+                          </>
+                        )}
+                        {r.status === 'failed' && (
+                          <button onClick={async () => { await api(`/reports/${r._id}/retry`, { method: 'POST' }); load(); }} title="Retry this report" className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5"><Icon.Refresh size={14} /> <span className="hidden sm:inline">Retry</span></button>
+                        )}
+                        {!r.leadId && r.status === 'complete' && (
+                          <button onClick={() => setLinkReport(r)} title="Link this report to a lead" className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-bold text-amber-600 hover:bg-amber-50 inline-flex items-center gap-1.5">🔗 <span className="hidden sm:inline">Link</span></button>
+                        )}
+                        {isAdmin && (
+                          <button onClick={async () => {
+                            if (!(await confirmDialog({ title: `Permanently delete the report for ${r.businessName}?\n\nThis cannot be undone.` }))) return;
+                            try { await api(`/reports/${r._id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message); }
+                          }} title="Delete report" className="rounded-lg border border-slate-200 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-colors"><Icon.Trash size={14} /></button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <Pagination page={page} pages={data.pages || 1} total={data.total || 0} perPage={perPage}
         onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="reports" />
