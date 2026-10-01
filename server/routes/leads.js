@@ -1895,6 +1895,35 @@ router.get('/released', requireAuth, async (req, res, next) => {
 });
 
 /**
+ * GET /api/leads/callback-stats — the four KPI numbers for the Call Backs page,
+ * computed server-side (page-independent) and scoped to the viewer's visibility:
+ *   total              — call-back prospects visible to the viewer
+ *   overdue            — callbackAt in the past
+ *   today              — callbackAt falls on today
+ *   transferredThisWeek— prospects promoted to a worked lead in the last 7 days
+ * Declared before '/:id' so the literal path isn't swallowed as an id.
+ */
+router.get('/callback-stats', requireAuth, async (req, res, next) => {
+  try {
+    const base = await visibilityWhere(req.user);
+    const now = new Date();
+    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(startOfToday.getTime() + 86400000);
+    const weekAgo = new Date(now.getTime() - 7 * 86400000);
+
+    const [total, overdue, today, transferredThisWeek] = await Promise.all([
+      Lead.count({ where: { ...base, status: 'callback' } }),
+      Lead.count({ where: { ...base, status: 'callback', callbackAt: { [Op.lt]: now } } }),
+      Lead.count({ where: { ...base, status: 'callback', callbackAt: { [Op.gte]: startOfToday, [Op.lt]: endOfToday } } }),
+      // Promoted out of the callback stage recently: carries a transferredAt and
+      // is no longer a callback/converted/released record.
+      Lead.count({ where: { ...base, transferredAt: { [Op.gte]: weekAgo }, status: { [Op.notIn]: ['callback', 'converted', 'release'] } } }),
+    ]);
+    res.json({ total, overdue, today, transferredThisWeek });
+  } catch (e) { next(e); }
+});
+
+/**
  * POST /api/leads/:id/reassign — hand a released lead to a new owner. The lead
  * returns to an active status and re-enters that owner's CRM. Admin/LM only.
  */
