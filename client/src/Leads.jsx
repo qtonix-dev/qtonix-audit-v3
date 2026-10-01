@@ -465,6 +465,47 @@ function statusMeta(config, id) {
   return s || { id, label: id, color: '#64748B' };
 }
 
+// Soft pastel status pill (reference design): a light tinted background, a dark
+// readable text colour, and a mid-tone border, all derived from the status's
+// base hex. Replaces the old flat sm.color+opacity look.
+function _hexToRgb(hex) {
+  const h = String(hex || '#64748B').replace('#', '');
+  const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.padEnd(6, '0');
+  return { r: parseInt(n.slice(0, 2), 16), g: parseInt(n.slice(2, 4), 16), b: parseInt(n.slice(4, 6), 16) };
+}
+function _mix(hex, withHex, t) { // t=0 → hex, t=1 → withHex
+  const a = _hexToRgb(hex), b = _hexToRgb(withHex);
+  const m = (x, y) => Math.round(x + (y - x) * t);
+  return `rgb(${m(a.r, b.r)}, ${m(a.g, b.g)}, ${m(a.b, b.b)})`;
+}
+function softPill(hex) {
+  return {
+    background: _mix(hex, '#ffffff', 0.86), // light tint
+    color: _mix(hex, '#000000', 0.35),      // darker, readable text
+    border: `1px solid ${_mix(hex, '#ffffff', 0.68)}`,
+  };
+}
+// Deterministic coloured owner avatar (reference design) — each owner keeps a
+// consistent colour across the app, picked from a fixed pastel palette.
+const OWNER_AV_PALETTE = [
+  ['#f3e8ff', '#7e22ce'], // purple
+  ['#fce7f3', '#9d174d'], // pink
+  ['#ccfbf1', '#115e59'], // teal
+  ['#e0e7ff', '#3730a3'], // indigo
+  ['#fef3c7', '#92400e'], // amber
+  ['#dbeafe', '#1e40af'], // blue
+  ['#dcfce7', '#166534'], // green
+  ['#ffedd5', '#9a3412'], // orange
+  ['#cffafe', '#155e75'], // cyan
+  ['#fae8ff', '#86198f'], // fuchsia
+];
+function ownerAvatarColor(name) {
+  const s = String(name || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return OWNER_AV_PALETTE[h % OWNER_AV_PALETTE.length];
+}
+
 // ---- Lead list -------------------------------------------------------------
 // Shared pager: page buttons plus a per-page selector (10/20/50/100).
 export function Pagination({ page, pages, total, perPage, onPage, onPerPage, label = 'items' }) {
@@ -1042,7 +1083,7 @@ function CallBacksView(p) {
                       </td>
                       <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: ownerAvatarColor(l.ownerName)[0], color: ownerAvatarColor(l.ownerName)[1] }}>{(l.ownerName || '?')[0]}</div>
                           <span className="text-[13px] font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
                         </div>
                       </td>
@@ -1416,10 +1457,10 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
                         </div>
                       </td>
                       <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200/60 whitespace-nowrap">{l.leadSource || 'Pre-Sales'}</span></td>
-                      <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap" style={{ background: sm.color + '22', color: sm.color, border: `1px solid ${sm.color}44` }}>{sm.label}</span></td>
+                      <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap" style={softPill(sm.color)}>{sm.label}</span></td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: ownerAvatarColor(l.ownerName)[0], color: ownerAvatarColor(l.ownerName)[1] }}>{(l.ownerName || '?')[0]}</div>
                           <span className="text-[13px] font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
                         </div>
                       </td>
@@ -2240,7 +2281,7 @@ export function LeadDetail({ user, leadId, onBack, initialTab, initialCompose, i
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-2xl font-extrabold text-[#050A1F]">{fullName(lead)}</h1>
                 <button onClick={() => openEdit('status')} title="Click to change status"
-                  className="rounded-full px-3 py-1 text-[11px] font-bold text-white hover:opacity-90 cursor-pointer" style={{ background: sm.color }}>{sm.label} ▾</button>
+                  className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold hover:opacity-90 cursor-pointer" style={softPill(sm.color)}>{sm.label} ▾</button>
                 {(lead.tags || []).map((t) => (
                   <button key={t} onClick={() => openEdit('tags')} title="Click to edit tags"
                     className="rounded-full bg-orange-50 text-[#FF4500] px-2.5 py-0.5 text-[11px] font-bold hover:bg-orange-100 cursor-pointer">{t}</button>
@@ -6197,7 +6238,7 @@ function ConvertedLeads({ user, onOpen, thisMonthOnly }) {
 
                 {/* Owner footer */}
                 <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
-                  <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 text-[10px] font-bold flex items-center justify-center">{(l.ownerName || '?')[0]}</div>
+                  <div className="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: ownerAvatarColor(l.ownerName)[0], color: ownerAvatarColor(l.ownerName)[1] }}>{(l.ownerName || '?')[0]}</div>
                   <span>Owner: <strong className="text-slate-700 font-semibold">{l.ownerName}</strong></span>
                 </div>
               </div>
