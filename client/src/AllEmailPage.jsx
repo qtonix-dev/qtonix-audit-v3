@@ -373,7 +373,9 @@ export default function AllEmailPage({ user, apiFn, base = '/gmail', features })
               {/* right side: meta (hidden on hover) OR actions (shown on hover) */}
               <div className="flex items-center justify-end">
                 <div className="flex items-center gap-2 group-hover:hidden">
-                  <AttachmentChips atts={m.attachments} downloadHref={downloadHref} />
+                  {(m.attachments && m.attachments.length > 0)
+                    ? <AttachmentChips atts={m.attachments} downloadHref={downloadHref} />
+                    : (m.hasAttachments && <span className="text-slate-400" title="Has attachment — open to view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" /></svg></span>)}
                   <span className="text-xs text-slate-400 w-14 text-right">{fmtDate(m.sentAt)}</span>
                 </div>
                 <div className="hidden group-hover:flex items-center gap-0.5 relative">
@@ -544,12 +546,23 @@ function AllEmailThread({ threadId, subject, as, apiFn, base = '/gmail', onClose
                     <div className="text-sm text-slate-700 prose prose-sm max-w-none break-words overflow-x-auto" dangerouslySetInnerHTML={{ __html: m.bodyHtml || `<div style="white-space:pre-wrap">${(m.bodyText || m.snippet || '').replace(/</g, '&lt;')}</div>` }} />
                     {(m.attachments || []).length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-3">
-                        {m.attachments.map((a, ai) => (
-                          <span key={ai} className="inline-flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-                            {a.filename}
-                          </span>
-                        ))}
+                        {m.attachments.map((a, ai) => {
+                          const k = attachKind(a);
+                          const href = a.attachmentId ? `${API_BASE}/api/gmail/all/message/${m.gmailMessageId}/attachment/${a.attachmentId}?name=${encodeURIComponent(a.filename || 'attachment')}${as ? `&as=${as}` : ''}` : null;
+                          const inner = (
+                            <span className="inline-flex items-center gap-2 border rounded-lg px-2.5 py-1.5 text-xs font-medium hover:shadow-sm transition" style={{ background: k.bg, color: k.fg, borderColor: k.bd }}>
+                              <span className="inline-flex items-center gap-1 font-bold">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                                {k.label}
+                              </span>
+                              <span className="truncate max-w-[180px]" style={{ color: '#475569' }}>{a.filename}</span>
+                              {href && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>}
+                            </span>
+                          );
+                          return href
+                            ? <a key={ai} href={href} target="_blank" rel="noreferrer" title={`Download ${a.filename}`}>{inner}</a>
+                            : <span key={ai} title={a.filename}>{inner}</span>;
+                        })}
                       </div>
                     )}
                   </div>

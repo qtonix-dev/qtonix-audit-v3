@@ -5,6 +5,20 @@ const { User, Lead, LeadEmail, ScheduledEmail, Mailbox, Signature, EmailTemplate
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const gmail = require('../services/gmail');
 
+// Translate a Gmail API error into a friendly, actionable message — above all
+// the per-minute quota error, which otherwise surfaces as a wall of Google
+// jargon to the agent. Returns a new Error carrying an HTTP status.
+function friendlyGmailError(e) {
+  const msg = String((e && e.message) || '');
+  const code = e && (e.code || (e.response && e.response.status));
+  if (/quota|rate limit|usage limit|userRateLimitExceeded|Units per/i.test(msg) || code === 429) {
+    const err = new Error('Gmail is busy right now (rate limit reached). Please wait a few seconds and try again.');
+    err.status = 429;
+    return err;
+  }
+  return e;
+}
+
 // Validate an IANA timezone string; fall back to IST if it's missing or the JS
 // runtime doesn't recognise it (prevents "Invalid time zone specified" crashes
 // when scheduling emails).
@@ -1834,7 +1848,7 @@ router.get('/all/folder', requireAuth, async (req, res, next) => {
     const fresh = await fetchFolderLive(mb, opts);
     res.json(fresh);
     try { await MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }); } catch { /* best-effort */ }
-  } catch (e) { next(e); }
+  } catch (e) { next(friendlyGmailError(e)); }
 });
 
 /** GET /api/gmail/all/labels — the mailbox's Gmail labels. */
@@ -1965,7 +1979,7 @@ router.get('/all/thread/:threadId', requireAuth, async (req, res, next) => {
     if (!mb) return res.status(400).json({ error: 'No connected mailbox.' });
     const msgs = await gmail.getThread(mb.settings, mb.token, mb.user.gmailConnectedEmail, req.params.threadId);
     res.json({ messages: msgs });
-  } catch (e) { next(e); }
+  } catch (e) { next(friendlyGmailError(e)); }
 });
 
 /** POST /api/gmail/all/send — send a new mail / reply / forward directly from

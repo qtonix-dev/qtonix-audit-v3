@@ -341,26 +341,26 @@ async function listFolder(settings, refreshToken, connectedEmail, { box = 'INBOX
   const out = [];
   for (const id of ids) {
     try {
-      // Full format so we can read the real attachment parts (filename, type,
-      // size, attachmentId) for the per-type chips + download in the list.
-      const meta = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
+      // Metadata format is the cheap one (~1 Gmail quota unit vs ~5 for 'full').
+      // We request the Content-Type header too, which tells us whether the
+      // message is multipart/has an attachment — enough to show the paperclip
+      // indicator in the list without paying to download every full message.
+      // The full per-attachment detail (filename/type/download) loads when the
+      // email is opened (the thread fetch).
+      const meta = await gmail.users.messages.get({
+        userId: 'me', id, format: 'metadata',
+        metadataHeaders: ['From', 'To', 'Subject', 'Date', 'Message-ID', 'Content-Type'],
+      });
       const m = meta.data;
       const headers = (m.payload && m.payload.headers) || [];
       const from = parseAddress(headerVal(headers, 'From'));
       const isOutbound = from.email && connectedEmail && from.email === String(connectedEmail).toLowerCase();
-      // Walk the MIME tree and collect genuine file attachments (a part with a
-      // filename and an attachmentId). Inline images are skipped.
-      const attachments = [];
-      const walkParts = (part) => {
-        if (!part) return;
-        const fn = part.filename;
-        const body = part.body || {};
-        if (fn && body.attachmentId) {
-          attachments.push({ filename: fn, mimeType: part.mimeType || '', size: body.size || 0, attachmentId: body.attachmentId });
-        }
-        (part.parts || []).forEach(walkParts);
-      };
-      walkParts(m.payload);
+      // Attachment hint: a multipart/mixed message, or a filename appearing in
+      // the payload parts metadata, signals an attachment. Best-effort — the
+      // real list is fetched on open.
+      const contentType = headerVal(headers, 'Content-Type') || '';
+      const partsStr = JSON.stringify(m.payload && m.payload.parts || []);
+      const hasAttachments = /multipart\/mixed/i.test(contentType) || /"filename":"[^"]+"/.test(partsStr);
       out.push({
         gmailMessageId: m.id,
         threadId: m.threadId || '',
@@ -375,8 +375,8 @@ async function listFolder(settings, refreshToken, connectedEmail, { box = 'INBOX
         isDraft: (m.labelIds || []).includes('DRAFT'),
         labelIds: m.labelIds || [],
         direction: isOutbound ? 'outbound' : 'inbound',
-        attachments,
-        hasAttachments: attachments.length > 0,
+        attachments: [],
+        hasAttachments,
       });
     } catch (e) { /* skip individual failures */ }
   }
