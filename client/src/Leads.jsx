@@ -851,12 +851,24 @@ const Lu = {
   plus: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>),
   filter: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" /></svg>),
   trash: (s = 15) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>),
+  reset: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.4 2.6L3 8" /><path d="M3 3v5h5" /></svg>),
+  edit: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></svg>),
+  ext: (s = 11) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>),
 };
 // A select wrapped with a custom chevron (reference-style dropdown).
 function CbSelect({ value, onChange, children, className = '' }) {
   return (
     <div className="relative">
       <select value={value} onChange={onChange} className={`appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer ${className}`}>{children}</select>
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(14)}</span>
+    </div>
+  );
+}
+// Emerald-accent variant used on the Leads page filter bar.
+function EmSelect({ value, onChange, children, className = '' }) {
+  return (
+    <div className="relative">
+      <select value={value} onChange={onChange} className={`appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-sm font-medium rounded-xl py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer ${className}`}>{children}</select>
       <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(14)}</span>
     </div>
   );
@@ -882,7 +894,7 @@ function CallBacksView(p) {
     q, setQ, load, onNew, onOpen, dateRange, setDateRange, dateField, setDateField,
     callbackSort, setCallbackSort, ownerFilter, setOwnerFilter, countryFilter, setCountryFilter,
     activitySort, setActivitySort, setImporting, exportCsv, exporting, setTransferFor, copyText,
-    page, setPage, perPage, setPerPage, pageInfo, importing, transferFor,
+    resetFilters, cbOwners, page, setPage, perPage, setPerPage, pageInfo, importing, transferFor,
   } = p;
   const total = cbStats ? cbStats.total : items.length;
   const inputCls = 'bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition';
@@ -946,7 +958,8 @@ function CallBacksView(p) {
             {user.role !== 'agent' && (
               <CbSelect value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
                 <option value="">All owners</option>
-                {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                {/* Only agents who currently have call-backs. */}
+                {(cbOwners || []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </CbSelect>
             )}
             <div className="w-[170px] hidden lg:flex items-center gap-1">
@@ -955,7 +968,7 @@ function CallBacksView(p) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={load} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl inline-flex items-center gap-1.5">{Lu.filter(14)} Filter</button>
+            <button onClick={resetFilters} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl inline-flex items-center gap-1.5">{Lu.reset(14)} Reset filters</button>
             {user.role === 'admin' && (
               <>
                 <button onClick={() => setImporting(true)} title="Import call backs from CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center">{Lu.upload(16)}</button>
@@ -1000,9 +1013,9 @@ function CallBacksView(p) {
                     <tr key={l._id} onClick={() => onOpen(l)} className="hover:bg-orange-50/40 transition-colors cursor-pointer group">
                       <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: sm.color + '1a', color: sm.color }}>{(fullName(l)[0] || '?').toUpperCase()}</div>
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border border-black/5" style={{ background: sm.color + '1f', color: sm.color }}>{(fullName(l)[0] || '?').toUpperCase()}</div>
                           <div className="min-w-0">
-                            <div className="font-semibold text-slate-900 flex items-center gap-1.5 group-hover:text-orange-600 transition-colors">
+                            <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5 group-hover:text-orange-600 transition-colors">
                               <span className="truncate">{fullName(l)}</span>
                               {openDeals.length > 0 && <span title={`${openDeals.length} open deal(s)`} className="text-[11px]">💰</span>}
                               {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱{stale.days}d</span>}
@@ -1010,23 +1023,23 @@ function CallBacksView(p) {
                               {draftState(l) === 'pending' && <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700">DRAFT DUE</span>}
                               {l.reminderRequestedAt && !l.firstReplyDoneAt && <span title={`Draft requested by ${l.reminderRequestedBy}`} className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700">REMINDED</span>}
                             </div>
-                            {l.website ? <a href={`https://${String(l.website).replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-slate-400 hover:text-slate-600 truncate block mt-0.5">{l.website}</a> : <div className="text-xs text-slate-300 mt-0.5">—</div>}
+                            {l.website ? <a href={`https://${String(l.website).replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-slate-400 hover:text-orange-600 truncate flex items-center gap-1 mt-0.5">{l.website} {Lu.ext(10)}</a> : <div className="text-xs text-slate-300 mt-0.5">—</div>}
                           </div>
                         </div>
                       </td>
                       <td className="py-4 px-4 sm:px-5">
                         <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                            <span className="truncate max-w-[190px]">{l.email || '—'}</span>
+                          <div className="flex items-center gap-1.5 text-[13px] text-slate-600">
+                            <span className="truncate max-w-[200px]">✉️ {l.email || '—'}</span>
                             {l.email && <button onClick={(e) => { e.stopPropagation(); copyText(l.email); }} title="Copy email" className="text-slate-300 hover:text-slate-600 p-0.5">{Lu.copy(12)}</button>}
                           </div>
-                          <div className="text-[11px] text-slate-500">{(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : ''}</div>
+                          <div className="text-xs text-slate-400 flex items-center gap-1">📞 {(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : '—'}</div>
                         </div>
                       </td>
                       <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
-                          <span className="text-xs font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
+                          <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
+                          <span className="text-[13px] font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
                         </div>
                       </td>
                       <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
@@ -1036,9 +1049,12 @@ function CallBacksView(p) {
                       </td>
                       <td className="py-4 px-4 sm:px-5 text-xs text-slate-500 whitespace-nowrap">{fmtAddedShort(l.createdAt)}</td>
                       <td className="py-4 px-4 sm:px-5 text-right">
-                        <button title="Transfer this prospect to an agent or manager" onClick={(e) => { e.stopPropagation(); setTransferFor(l); }} className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-xl shadow-sm transition active:scale-95 whitespace-nowrap">
-                          {Lu.arrowRight(13)} Transfer
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button title="Open / edit" onClick={(e) => { e.stopPropagation(); onOpen(l); }} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors">{Lu.edit(16)}</button>
+                          <button title="Transfer this prospect to an agent or manager" onClick={(e) => { e.stopPropagation(); setTransferFor(l); }} className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-xl shadow-sm transition active:scale-95 whitespace-nowrap">
+                            {Lu.arrowRight(13)} Transfer
+                          </button>
+                        </div>
                       </td>
                       {user.role === 'admin' && (
                         <td className="py-4 px-3 text-right">
@@ -1163,9 +1179,21 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage, dateRange, dateField]);
-  // Any filter change should send the user back to the first page.
-  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [statusFilter, ownerFilter, countryFilter, untouchedFilter, dateRange, dateField]);
+  // Instant filtering: search is debounced so typing doesn't fire a request per
+  // keystroke; selects apply on change. `debouncedQ` is what actually drives load.
+  const [debouncedQ, setDebouncedQ] = useState(q);
+  useEffect(() => { const t = setTimeout(() => setDebouncedQ(q), 300); return () => clearTimeout(t); }, [q]);
+
+  // Load whenever any filter, the page, or page size changes — no "apply" button.
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [untouchedFilter, page, perPage, dateRange, dateField, debouncedQ, statusFilter, ownerFilter, countryFilter]);
+  // Any filter change (not paging) sends the user back to the first page.
+  useEffect(() => { setPage(1); /* eslint-disable-next-line */ }, [debouncedQ, statusFilter, ownerFilter, countryFilter, untouchedFilter, dateRange, dateField]);
+
+  // Reset clears every filter at once (replaces the old "Filter" apply button).
+  const resetFilters = () => {
+    setQ(''); setDebouncedQ(''); setStatusFilter(''); setOwnerFilter(''); setCountryFilter('');
+    setDateRange('all'); setDateField('created'); setPage(1);
+  };
 
   // Call Backs are ordered by the scheduled callback time by default, or by the
   // date the callback was added when the user flips the toggle. Other lists keep
@@ -1211,298 +1239,216 @@ export function LeadsList({ user, onOpen, onNew, untouchedFilter, onClearUntouch
         countryFilter={countryFilter} setCountryFilter={setCountryFilter}
         activitySort={activitySort} setActivitySort={setActivitySort}
         setImporting={setImporting} exportCsv={exportCsv} exporting={exporting}
-        setTransferFor={setTransferFor} copyText={copyText}
+        setTransferFor={setTransferFor} copyText={copyText} resetFilters={resetFilters}
+        cbOwners={(cbStats && cbStats.owners) || []}
         page={page} setPage={setPage} perPage={perPage} setPerPage={setPerPage} pageInfo={pageInfo}
         importing={importing} transferFor={transferFor}
       />
     );
   }
 
+  // ─── Leads list (restyled to the reference) ──────────────────────────────
+  const canImportExport = user.role === 'admin' || user.role === 'leadmanager';
+  const allChecked = displayItems.length > 0 && displayItems.every((l) => selectedIds.has(l._id));
+  const removeLeadRow = async (l, e) => {
+    e.stopPropagation();
+    if (!(await confirmDialog({ title: `Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.` }))) return;
+    try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
+  };
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+    <div className="space-y-6" style={{ fontFamily: CB_FONT }}>
+      {/* Title */}
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">{isProspect ? 'Call Backs' : 'Leads'}</h1>
-          {isProspect && (
-            <div className="text-sm text-slate-400 mt-0.5">
-              Call-backs scheduled during cold calling. Transfer one to an agent or manager to promote it to a lead.
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Leads</h1>
+            <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">{pageInfo.total || items.length} total</span>
+          </div>
+          <p className="text-slate-500 text-sm mt-1 max-w-3xl">Manage inbound contacts, track pre-sales outreach, and assign deal owners.{user.role !== 'admin' ? ' · your visibility' : ''}</p>
           {untouchedFilter && (
-            <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-red-50 text-red-600 px-3 py-1 text-xs font-bold">
+            <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-red-50 text-red-600 px-3 py-1 text-xs font-bold">
               Showing leads untouched for {untouchedFilter}+ days
               <button onClick={onClearUntouched} className="hover:text-red-800">✕ clear</button>
             </div>
           )}
-          <div className="text-sm text-slate-400">{items.length} total{user.role !== 'admin' ? ' · your visibility' : ''}</div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Compact date filter: range dropdown + a small Created/Activity
-              toggle. flex-wrap keeps the bar from breaking on narrow screens. */}
-          <div className="inline-flex items-center rounded-lg border border-slate-300 overflow-hidden">
-            <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="px-2.5 py-2 text-sm border-0 focus:outline-none bg-white">
-              <option value="all">Any date</option>
-              <option value="today">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="7d">Last 7 days</option>
-              <option value="month">This month</option>
-              <option value="lastmonth">Last month</option>
-            </select>
-            {dateRange !== 'all' && (
-              <div className="inline-flex items-center bg-slate-100 text-[10px] font-bold border-l border-slate-200">
-                <button onClick={() => setDateField('created')} className={`px-2 py-2 ${dateField === 'created' ? 'bg-white text-[#050A1F]' : 'text-slate-400'}`} title="Filter by created date">Created</button>
-                <button onClick={() => setDateField('activity')} className={`px-2 py-2 ${dateField === 'activity' ? 'bg-white text-[#050A1F]' : 'text-slate-400'}`} title="Filter by last activity">Activity</button>
-              </div>
-            )}
-          </div>
-          <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()}
-            placeholder="Search name, email, website…"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-60 focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          {/* Call-back sort toggle: scheduled time vs added date. */}
-          {isProspect && (
-            <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 text-xs font-bold">
-              <button onClick={() => setCallbackSort('callbackTime')}
-                className={`px-2.5 py-1.5 rounded-md ${callbackSort === 'callbackTime' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>By callback time</button>
-              <button onClick={() => setCallbackSort('addedDate')}
-                className={`px-2.5 py-1.5 rounded-md ${callbackSort === 'addedDate' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>By added date</button>
+        <button onClick={onNew} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-medium rounded-xl shadow-sm transition active:scale-95 self-start md:self-auto" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>
+          {Lu.plus(16)} New lead
+        </button>
+      </div>
+
+      {/* Filter bar (emerald accent, instant) */}
+      <div className="bg-white rounded-2xl p-3 border border-slate-200/80 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[260px]">
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{Lu.search(16)}</span>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, website…" className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" />
             </div>
-          )}
-          {/* Call-backs are all one status, so a status filter is pointless. */}
-          {!isProspect && (
-            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); }}
-              className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
+            <div className="inline-flex items-center rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
+              <div className="relative">
+                <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="appearance-none bg-transparent text-slate-700 text-sm font-medium py-2 pl-3 pr-8 focus:outline-none cursor-pointer">
+                  <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">Last 7 days</option><option value="month">This month</option><option value="lastmonth">Last month</option>
+                </select>
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(14)}</span>
+              </div>
+              {dateRange !== 'all' && (
+                <div className="inline-flex items-center bg-slate-100 text-[10px] font-bold border-l border-slate-200">
+                  <button onClick={() => setDateField('created')} className={`px-2 py-2 ${dateField === 'created' ? 'bg-white text-slate-900' : 'text-slate-400'}`}>Created</button>
+                  <button onClick={() => setDateField('activity')} className={`px-2 py-2 ${dateField === 'activity' ? 'bg-white text-slate-900' : 'text-slate-400'}`}>Activity</button>
+                </div>
+              )}
+            </div>
+            <EmSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
-              {(config.leadStatuses || [])
-                // Converted has its own dedicated page — never a filter here, for
-                // anyone. Callback is its own tab too.
-                .filter((s) => s.id !== 'converted' && s.id !== 'callback')
-                .map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-          )}
-          {/* Agents only ever see their own leads, so an owner filter would
-              offer a single pointless choice. */}
-          {user.role !== 'agent' && (
-            <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}
-              className="rounded-lg border border-slate-300 px-2.5 py-2 text-sm">
-              <option value="">All owners</option>
-              {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          )}
-          <div className="w-[170px] flex items-center gap-1">
-            <FilterCombobox
-              value={countryFilter}
-              onChange={(v) => setCountryFilter(v)}
-              options={countryList}
-              placeholder="All countries"
-              className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-            {countryFilter && (
-              <button onClick={() => setCountryFilter('')} title="Clear country"
-                className="text-slate-400 hover:text-red-500 px-1 text-sm">✕</button>
+              {(config.leadStatuses || []).filter((s) => s.id !== 'converted' && s.id !== 'callback').map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </EmSelect>
+            {user.role !== 'agent' && (
+              <EmSelect value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
+                <option value="">All owners</option>
+                {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </EmSelect>
+            )}
+            <div className="w-[170px] hidden lg:flex items-center gap-1">
+              <FilterCombobox value={countryFilter} onChange={(v) => setCountryFilter(v)} options={countryList} placeholder="All countries" className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+              {countryFilter && <button onClick={() => setCountryFilter('')} className="text-slate-400 hover:text-red-500 px-1 text-sm">✕</button>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={resetFilters} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl inline-flex items-center gap-1.5">{Lu.reset(14)} Clear Filters</button>
+            {canImportExport && (
+              <>
+                <button onClick={() => setImporting(true)} title="Import leads from CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center">{Lu.upload(16)}</button>
+                <button onClick={exportCsv} disabled={exporting} title="Export leads as CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center disabled:opacity-50">{Lu.download(16)}</button>
+              </>
             )}
           </div>
-          <button onClick={load} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600">Filter</button>
-          {/* Getting leads in and out of the system belongs to admins and lead
-              managers. Sellers work the leads they're given. On the Call Backs
-              list, only admins get import/export. */}
-          {((isProspect && user.role === 'admin') || (!isProspect && (user.role === 'admin' || user.role === 'leadmanager'))) && (
-            <>
-              <button onClick={() => setImporting(true)} title="Import leads from CSV"
-                className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50"><Icon.Upload size={16} /></button>
-              <button onClick={exportCsv} disabled={exporting}
-                title={user.role === 'leadmanager' ? 'Download the leads you entered' : 'Download leads as CSV'}
-                className="rounded-lg border border-slate-200 w-9 h-9 flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"><Icon.Download size={16} /></button>
-            </>
-          )}
-          {/* Bulk email: appears once one or more leads are ticked. */}
-          {!isProspect && selectedIds.size > 0 && (
-            <button onClick={() => setBulkOpen(true)} title="Send bulk email to selected leads"
-              className="rounded-lg px-3 py-2 text-sm font-bold text-white inline-flex items-center gap-1.5" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
-              <Icon.Mail size={15} /> Email ({selectedIds.size})
-            </button>
-          )}
-          <button onClick={onNew} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ background: 'linear-gradient(90deg,#FF6A00,#FF4500)' }}>+ {isProspect ? 'New call back' : 'New lead'}</button>
         </div>
       </div>
 
+      {/* Bulk action banner (dark) — appears when rows are ticked */}
+      {selectedIds.size > 0 && (
+        <div className="bg-slate-900 text-white rounded-2xl px-4 py-3 flex items-center justify-between gap-4 shadow-lg">
+          <div className="text-sm font-medium flex items-center gap-2.5">
+            <span className="bg-emerald-500 text-slate-900 font-bold px-2 py-0.5 rounded-full text-xs">{selectedIds.size}</span> leads selected
+          </div>
+          <button onClick={() => setBulkOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-white text-sm font-semibold rounded-lg" style={{ background: 'linear-gradient(90deg,#2563EB,#1D4ED8)' }}>
+            <Icon.Mail size={14} /> Email ({selectedIds.size})
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
       {loading ? (
-        <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>
+        <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-200/80">Loading…</div>
       ) : items.length === 0 ? (
-        <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-100">
+        <div className="bg-white rounded-2xl border border-slate-200/80 py-16 text-center">
           <div className="text-4xl mb-2">📇</div>
-          No leads yet. Click “New lead” to add one.
+          <p className="text-slate-800 font-semibold text-sm">No leads found</p>
+          <p className="text-slate-400 text-xs mt-1">Try adjusting your filters, or add one with “New lead”.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-100">
-                {!isProspect && (
-                  <th className="px-3 py-3 w-9">
-                    <input type="checkbox"
-                      checked={displayItems.length > 0 && displayItems.every((l) => selectedIds.has(l._id))}
-                      onChange={(e) => {
-                        const next = new Set(selectedIds);
-                        if (e.target.checked) displayItems.forEach((l) => next.add(l._id));
-                        else displayItems.forEach((l) => next.delete(l._id));
-                        setSelectedIds(next);
-                      }} />
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4 w-10 text-center">
+                    <input type="checkbox" className="w-4 h-4 rounded border-slate-300 accent-emerald-600 cursor-pointer" checked={allChecked}
+                      onChange={(e) => { const next = new Set(selectedIds); if (e.target.checked) displayItems.forEach((l) => next.add(l._id)); else displayItems.forEach((l) => next.delete(l._id)); setSelectedIds(next); }} />
                   </th>
-                )}
-                <th className="text-left px-4 py-3">Lead</th>
-                <th className="text-left px-4 py-3">Contact</th>
-                {!isProspect && <th className="text-left px-4 py-3" style={{ minWidth: 140 }}>Source</th>}
-                {!isProspect && <th className="text-left px-4 py-3" style={{ minWidth: 130 }}>Status</th>}
-                <th className="text-left px-4 py-3">Owner</th>
-                {isProspect && <th className="text-left px-4 py-3">Call back due</th>}
-                {isProspect && <th className="text-left px-4 py-3">Added</th>}
-                <th className="text-left px-4 py-3">
-                  <button onClick={() => setActivitySort((s) => (s === 'desc' ? 'asc' : 'desc'))}
-                    className="inline-flex items-center gap-1 font-bold uppercase tracking-wider text-[10px] text-slate-400 hover:text-slate-600">
-                    Last activity
-                    <span className="flex flex-col leading-none text-[8px]">
-                      <span className={activitySort === 'asc' ? 'text-[#FF4500]' : 'text-slate-300'}>▲</span>
-                      <span className={activitySort === 'desc' ? 'text-[#FF4500]' : 'text-slate-300'}>▼</span>
-                    </span>
-                  </button>
-                </th>
-                {isProspect && <th className="px-4 py-3 text-right">Action</th>}
-                {user.role === 'leadmanager' && !isProspect && <th className="px-4 py-3 text-right">Draft</th>}
-                {user.role === 'admin' && <th className="px-4 py-3"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {displayItems.map((l) => {
-                const sm = statusMeta(config, l.status);
-                const stale = staleness(l);
-                const deals = l.deals || [];
-                const openDeals = deals.filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
-                const wonDeals = deals.filter((d) => d.stage === 'closed_won');
-                return (
-                  <tr key={l._id} onClick={() => onOpen(l)} className="border-t border-slate-50 hover:bg-orange-50/30 cursor-pointer transition-colors">
-                    {!isProspect && (
-                      <td className="px-3 py-3 w-9" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selectedIds.has(l._id)}
-                          onChange={(e) => {
-                            const next = new Set(selectedIds);
-                            if (e.target.checked) next.add(l._id); else next.delete(l._id);
-                            setSelectedIds(next);
-                          }} />
+                  <th className="py-3.5 px-4">Lead</th>
+                  <th className="py-3.5 px-4">Contact</th>
+                  <th className="py-3.5 px-4">Source</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4">Owner</th>
+                  <th className="py-3.5 px-4">
+                    <button onClick={() => setActivitySort((s) => (s === 'desc' ? 'asc' : 'desc'))} className="inline-flex items-center gap-1 font-bold uppercase tracking-wider text-[11px] text-slate-500 hover:text-slate-700">
+                      Last Activity
+                      <span className="flex flex-col leading-none text-[8px]">
+                        <span className={activitySort === 'asc' ? 'text-emerald-500' : 'text-slate-300'}>▲</span>
+                        <span className={activitySort === 'desc' ? 'text-emerald-500' : 'text-slate-300'}>▼</span>
+                      </span>
+                    </button>
+                  </th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {displayItems.map((l) => {
+                  const sm = statusMeta(config, l.status);
+                  const stale = staleness(l);
+                  const openDeals = (l.deals || []).filter((d) => d.stage !== 'closed_won' && d.stage !== 'closed_lost');
+                  return (
+                    <tr key={l._id} onClick={() => onOpen(l)} className="hover:bg-slate-50/80 transition-colors cursor-pointer group">
+                      <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" className="w-4 h-4 rounded border-slate-300 accent-emerald-600 cursor-pointer" checked={selectedIds.has(l._id)}
+                          onChange={(e) => { const next = new Set(selectedIds); if (e.target.checked) next.add(l._id); else next.delete(l._id); setSelectedIds(next); }} />
                       </td>
-                    )}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style={{ background: sm.color + '1a', color: sm.color }}>
-                          {(fullName(l)[0] || '?').toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-[#050A1F] flex items-center gap-1.5">
-                            <span className="truncate">{fullName(l)}</span>
-                            {openDeals.length > 0 && <span title={`${openDeals.length} open deal(s)`} className="text-[10px]">💰</span>}
-                            {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱{stale.days}d</span>}
-                            {/* Pre-sales first-reply state, so the list shows
-                                who is waiting on what without opening a lead. */}
-                            {draftState(l) === 'overdue' && (
-                              <span title="First reply is more than 24 hours overdue"
-                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600">DRAFT OVERDUE</span>
-                            )}
-                            {draftState(l) === 'pending' && (
-                              <span title="First reply still outstanding"
-                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700">DRAFT DUE</span>
-                            )}
-                            {l.reminderRequestedAt && !l.firstReplyDoneAt && (
-                              <span title={`Draft requested by ${l.reminderRequestedBy}`}
-                                className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700">REMINDED</span>
-                            )}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 border border-black/5" style={{ background: sm.color + '1f', color: sm.color }}>{(fullName(l)[0] || '?').toUpperCase()}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5 group-hover:text-emerald-600 transition-colors">
+                              <span className="truncate">{fullName(l)}</span>
+                              {openDeals.length > 0 && <span title={`${openDeals.length} open deal(s)`} className="text-[10px]">💰</span>}
+                              {stale && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${stale.level === 'red' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⏱{stale.days}d</span>}
+                              {draftState(l) === 'overdue' && <span title="First reply is more than 24 hours overdue" className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600">DRAFT OVERDUE</span>}
+                              {draftState(l) === 'pending' && <span title="First reply still outstanding" className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700">DRAFT DUE</span>}
+                              {l.reminderRequestedAt && !l.firstReplyDoneAt && <span title={`Draft requested by ${l.reminderRequestedBy}`} className="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700">REMINDED</span>}
+                            </div>
+                            {l.website ? <a href={`https://${String(l.website).replace(/^https?:\/\//, '')}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-slate-400 hover:text-emerald-600 truncate flex items-center gap-1 mt-0.5">{l.website} {Lu.ext(10)}</a> : <div className="text-xs text-slate-300 mt-0.5">—</div>}
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate">{l.website || '—'}</div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">
-                      <div className="text-xs truncate max-w-[180px]">{l.email || '—'}</div>
-                      <div className="text-[11px] text-slate-400">{(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : ''}</div>
-                    </td>
-                    {!isProspect && <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{l.leadSource || '—'}</td>}
-                    {!isProspect && <td className="px-4 py-3"><span className="inline-block rounded-full px-2.5 py-1 text-[10px] font-bold text-white whitespace-nowrap" style={{ background: sm.color }}>{sm.label}</span></td>}
-                    <td className="px-4 py-3 text-slate-500 text-xs">{l.ownerName}</td>
-                    {isProspect && (
-                      <td className="px-4 py-3 text-xs whitespace-nowrap">
-                        {l.callbackAt ? (
-                          <span className={`${callbackTone(l.callbackAt)} whitespace-nowrap`}>
-                            {fmtDate(l.callbackAt)} · {callbackCountdown(l.callbackAt)}
-                          </span>
-                        ) : <span className="text-slate-300">—</span>}
                       </td>
-                    )}
-                    {isProspect && (
-                      <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(l.createdAt)}</td>
-                    )}
-                    <td className={`px-4 py-3 text-xs ${stale ? (stale.level === 'red' ? 'text-red-500 font-semibold' : 'text-amber-600') : 'text-slate-400'}`}>{fmtDate(l.lastActivityAt)}</td>
-                    {/* Transfer promotes a prospect to a worked lead. Only the
-                        owner, a manager over them, or admin can transfer. */}
-                    {isProspect && (
-                      <td className="px-4 py-3 text-right">
-                        <button title="Transfer this prospect to an agent or manager"
-                          onClick={(e) => { e.stopPropagation(); setTransferFor(l); }}
-                          className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-white whitespace-nowrap"
-                          style={{ background: 'linear-gradient(90deg,#8B5CF6,#7C3AED)' }}>
-                          → Transfer
-                        </button>
+                      <td className="py-3.5 px-4">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-[13px] text-slate-600">
+                            <span className="truncate max-w-[210px]">✉️ {l.email || '—'}</span>
+                            {l.email && <button onClick={(e) => { e.stopPropagation(); copyText(l.email); }} title="Copy email" className="text-slate-300 hover:text-slate-600 p-0.5">{Lu.copy(12)}</button>}
+                          </div>
+                          <div className="text-xs text-slate-400 flex items-center gap-1">📞 {(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : '—'}</div>
+                        </div>
                       </td>
-                    )}
-                    {/* Lead managers chase the first-reply draft from here. */}
-                    {user.role === 'leadmanager' && !isProspect && (
-                      <td className="px-4 py-3 text-right">
-                        {draftState(l) && !l.reminderRequestedAt && (
-                          <button title="Ask the owner for the first-reply draft"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                await api(`/leads/${l._id}/request-reminder`, { method: 'POST', body: JSON.stringify({}) });
-                                load();
-                              } catch (err) { toast(err.message); }
-                            }}
-                            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:border-orange-300 hover:text-[#FF4500] whitespace-nowrap">
-                            Request draft
-                          </button>
-                        )}
-                        {l.reminderRequestedAt && !l.firstReplyDoneAt && (
-                          <span className="text-[10px] font-bold text-purple-600">Requested</span>
-                        )}
+                      <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200/60 whitespace-nowrap">{l.leadSource || 'Pre-Sales'}</span></td>
+                      <td className="py-3.5 px-4"><span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap" style={{ background: sm.color + '22', color: sm.color, border: `1px solid ${sm.color}44` }}>{sm.label}</span></td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
+                          <span className="text-[13px] font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
+                        </div>
                       </td>
-                    )}
-                    {user.role === 'admin' && (
-                      <td className="px-4 py-3 text-right">
-                        <button title="Delete lead" onClick={async (e) => {
-                          e.stopPropagation();
-                          if (!(await confirmDialog({ title: `Permanently delete ${fullName(l)}?\n\nThis removes the lead and all its notes, activities and deals. This cannot be undone.` }))) return;
-                          try { await api(`/leads/${l._id}`, { method: 'DELETE' }); load(); } catch (err) { toast(err.message); }
-                        }} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>
+                      <td className={`py-3.5 px-4 text-xs whitespace-nowrap ${stale ? (stale.level === 'red' ? 'text-rose-600 font-semibold' : 'text-amber-600') : 'text-slate-500'}`}>{fmtDate(l.lastActivityAt)}</td>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button title="Open / edit" onClick={(e) => { e.stopPropagation(); onOpen(l); }} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors">{Lu.edit(16)}</button>
+                          {user.role === 'leadmanager' && draftState(l) && !l.reminderRequestedAt && (
+                            <button title="Ask the owner for the first-reply draft" onClick={async (e) => { e.stopPropagation(); try { await api(`/leads/${l._id}/request-reminder`, { method: 'POST', body: JSON.stringify({}) }); load(); } catch (err) { toast(err.message); } }} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:border-emerald-300 hover:text-emerald-600 whitespace-nowrap">Request draft</button>
+                          )}
+                          {user.role === 'leadmanager' && l.reminderRequestedAt && !l.firstReplyDoneAt && <span className="text-[10px] font-bold text-purple-600 px-1">Requested</span>}
+                          {user.role === 'admin' && (
+                            <button title="Delete lead" onClick={(e) => removeLeadRow(l, e)} className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors">{Lu.trash(16)}</button>
+                          )}
+                        </div>
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {!loading && items.length > 0 && (
-        <Pagination page={page} pages={pageInfo.pages} total={pageInfo.total} perPage={perPage}
-          onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="leads" />
+        <Pagination page={page} pages={pageInfo.pages} total={pageInfo.total} perPage={perPage} onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} label="leads" />
       )}
       {importing && <CsvImportModal onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
       {transferFor && (
-        <TransferModal lead={transferFor} owners={owners} user={user}
-          onClose={() => setTransferFor(null)}
-          onDone={() => { setTransferFor(null); load(); }} />
+        <TransferModal lead={transferFor} owners={owners} user={user} onClose={() => setTransferFor(null)} onDone={() => { setTransferFor(null); load(); }} />
       )}
       {bulkOpen && (
-        <BulkEmailModal
-          user={user}
-          leads={items.filter((l) => selectedIds.has(l._id))}
-          onClose={() => setBulkOpen(false)}
-          onSent={() => { setBulkOpen(false); setSelectedIds(new Set()); }} />
+        <BulkEmailModal user={user} leads={items.filter((l) => selectedIds.has(l._id))} onClose={() => setBulkOpen(false)} onSent={() => { setBulkOpen(false); setSelectedIds(new Set()); }} />
       )}
     </div>
   );
@@ -5458,17 +5404,23 @@ export default function Leads({ user, initialView, initialUntouched, initialLead
   return (
     <div>
       {(view === 'list' || view === 'pipeline' || view === 'converted' || view === 'released') && (
-        <div className="flex items-center justify-between mb-5 w-full flex-wrap gap-2">
-          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-            <button onClick={() => setView('list')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📋 All leads</button>
-            {user.role !== 'leadmanager' && <button onClick={() => setView('pipeline')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'pipeline' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>📊 Deals pipeline</button>}
-            {canSeeConverted && <button onClick={() => setView('converted')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'converted' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>✅ Converted</button>}
+        <div className="flex items-center justify-between mb-5 w-full flex-wrap gap-3" style={{ fontFamily: CB_FONT }}>
+          <div className="flex items-center gap-1 bg-white border border-slate-200/80 rounded-2xl p-1.5 shadow-sm w-fit flex-wrap">
+            {(() => {
+              const tabCls = (active) => `inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition ${active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`;
+              return (
+                <>
+                  <button onClick={() => setView('list')} className={tabCls(view === 'list')}>📋 All leads</button>
+                  {user.role !== 'leadmanager' && <button onClick={() => setView('pipeline')} className={tabCls(view === 'pipeline')}>📊 Deals pipeline</button>}
+                  {canSeeConverted && <button onClick={() => setView('converted')} className={tabCls(view === 'converted')}>✅ Converted</button>}
+                  {canSeeReleased && <button onClick={() => setView('released')} className={tabCls(view === 'released')}>♻️ Released leads</button>}
+                </>
+              );
+            })()}
           </div>
-          {canSeeReleased && (
-            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-              <button onClick={() => setView('released')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${view === 'released' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>♻️ Released leads</button>
-            </div>
-          )}
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-white border border-slate-200/80 text-slate-500 shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: '0 0 0 3px rgba(16,185,129,.2)' }}></span> Live Sync
+          </span>
         </div>
       )}
       {/* Lead managers coordinate intake only — the pipeline and converted views

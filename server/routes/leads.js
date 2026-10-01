@@ -1911,15 +1911,22 @@ router.get('/callback-stats', requireAuth, async (req, res, next) => {
     const endOfToday = new Date(startOfToday.getTime() + 86400000);
     const weekAgo = new Date(now.getTime() - 7 * 86400000);
 
-    const [total, overdue, today, transferredThisWeek] = await Promise.all([
+    const [total, overdue, today, transferredThisWeek, ownerRows] = await Promise.all([
       Lead.count({ where: { ...base, status: 'callback' } }),
       Lead.count({ where: { ...base, status: 'callback', callbackAt: { [Op.lt]: now } } }),
       Lead.count({ where: { ...base, status: 'callback', callbackAt: { [Op.gte]: startOfToday, [Op.lt]: endOfToday } } }),
       // Promoted out of the callback stage recently: carries a transferredAt and
       // is no longer a callback/converted/released record.
       Lead.count({ where: { ...base, transferredAt: { [Op.gte]: weekAgo }, status: { [Op.notIn]: ['callback', 'converted', 'release'] } } }),
+      // Distinct owners who currently have call-backs — the Call Backs owner
+      // filter lists only these, not every assignable agent.
+      Lead.findAll({ where: { ...base, status: 'callback' }, attributes: ['ownerId', 'ownerName'], group: ['ownerId', 'ownerName'], raw: true }),
     ]);
-    res.json({ total, overdue, today, transferredThisWeek });
+    const owners = (ownerRows || [])
+      .filter((o) => o.ownerId != null)
+      .map((o) => ({ id: o.ownerId, name: o.ownerName || 'Unknown' }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    res.json({ total, overdue, today, transferredThisWeek, owners });
   } catch (e) { next(e); }
 });
 
