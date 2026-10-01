@@ -421,6 +421,23 @@ function callbackTone(at) {
   if (ms < 24 * 3600000) return 'text-amber-600 font-semibold';
   return 'text-slate-600';
 }
+// Call Backs page compact date formats.
+const _ord = (d) => { const s = ['th', 'st', 'nd', 'rd'], v = d % 100; return d + (s[(v - 20) % 10] || s[v] || s[0]); };
+const _mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// "6th Aug - 18:00"
+function fmtCbDue(at) {
+  if (!at) return '—';
+  const d = new Date(at);
+  const hh = String(d.getHours()).padStart(2, '0'); const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${_ord(d.getDate())} ${_mon[d.getMonth()]} - ${hh}:${mm}`;
+}
+// "27 Aug 22:44"  (no year)
+function fmtAddedShort(at) {
+  if (!at) return '—';
+  const d = new Date(at);
+  const hh = String(d.getHours()).padStart(2, '0'); const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${String(d.getDate()).padStart(2, '0')} ${_mon[d.getMonth()]} ${hh}:${mm}`;
+}
 // Display names in Title Case ("aa"/"AA" -> "Aa") without mutating stored data.
 // Splits on spaces and hyphens so "mary-jane o'neil" -> "Mary-Jane O'neil".
 export function titleCase(s) {
@@ -812,7 +829,38 @@ function draftState(l) {
 // ─── Call Backs page (restyled) ─────────────────────────────────────────────
 // A dedicated, redesigned view for the cold-calling call-back prospects. Shares
 // LeadsList's state and handlers (passed as props) and the module-level helpers;
-// only the markup/styling differs. Accent is Tailwind orange-500 (#f97316).
+// only the markup/styling differs. Accent is Tailwind orange-500 (#f97316), font
+// is Inter to match the reference design.
+const CB_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+// Lucide-style inline icons (match the reference HTML).
+const Lu = {
+  phoneCall: (s = 24) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.05 2a9 9 0 0 1 8 7.94M14.05 6A5 5 0 0 1 18 10" /><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" /></svg>),
+  alarm: (s = 24) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2 2M5 3 2 6M22 6l-3-3M6.38 18.7 4 21M17.64 18.67 20 21" /></svg>),
+  calendar: (s = 24) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>),
+  userCheck: (s = 24) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="m16 11 2 2 4-4" /></svg>),
+  chevronDown: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>),
+  arrowRight: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>),
+  search: (s = 15) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>),
+  copy: (s = 12) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>),
+  phone: (s = 12) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" /></svg>),
+  alertCircle: (s = 13) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>),
+  checkCircle: (s = 13) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="m9 11 3 3L22 4" /></svg>),
+  trendUp: (s = 13) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 6l-9.5 9.5-5-5L1 18" /><path d="M17 6h6v6" /></svg>),
+  upload: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>),
+  download: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>),
+  plus: (s = 16) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>),
+  filter: (s = 14) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" /></svg>),
+  trash: (s = 15) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>),
+};
+// A select wrapped with a custom chevron (reference-style dropdown).
+function CbSelect({ value, onChange, children, className = '' }) {
+  return (
+    <div className="relative">
+      <select value={value} onChange={onChange} className={`appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl py-2 pl-3 pr-8 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer ${className}`}>{children}</select>
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(14)}</span>
+    </div>
+  );
+}
 function CbKpi({ label, value, foot, footColor, tone, icon }) {
   const iconBg = { slate: 'bg-slate-100 text-slate-600', rose: 'bg-rose-50 text-rose-600', emerald: 'bg-emerald-50 text-emerald-600', indigo: 'bg-indigo-50 text-indigo-600' }[tone] || 'bg-slate-100 text-slate-600';
   const numColor = tone === 'rose' ? 'text-rose-600' : 'text-slate-900';
@@ -846,27 +894,27 @@ function CallBacksView(p) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" style={{ fontFamily: CB_FONT }}>
       {/* Title */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Call Backs</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Call Backs</h1>
             <span className="bg-orange-100 text-orange-700 font-semibold text-xs px-2.5 py-1 rounded-full border border-orange-200">{total} total</span>
           </div>
           <p className="text-slate-500 text-sm mt-1 max-w-3xl">Call-backs scheduled during cold calling. Transfer one to an agent or manager to promote it to a lead.{user.role !== 'admin' ? ' · your visibility' : ''}</p>
         </div>
-        <button onClick={onNew} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-semibold rounded-xl shadow-sm transition active:scale-95 self-start md:self-auto" style={{ background: 'linear-gradient(90deg,#f97316,#fb9a3c)' }}>
-          <Icon.Plus size={16} /> New call back
+        <button onClick={onNew} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-medium rounded-xl shadow-sm transition active:scale-95 self-start md:self-auto" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>
+          {Lu.plus(16)} New call back
         </button>
       </div>
 
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <CbKpi label="Total Call Backs" value={cbStats ? cbStats.total : '—'} foot="Scheduled list" tone="slate" icon={<Icon.Phone size={24} />} />
-        <CbKpi label="Overdue" value={cbStats ? cbStats.overdue : '—'} foot={<><Icon.Clock size={13} /> Requires action</>} footColor="text-rose-600/80" tone="rose" icon={<Icon.Clock size={24} />} />
-        <CbKpi label="Scheduled Today" value={cbStats ? cbStats.today : '—'} foot={<><Icon.Check size={13} /> On track</>} footColor="text-emerald-600" tone="emerald" icon={<Icon.Calendar size={24} />} />
-        <CbKpi label="Transferred This Week" value={cbStats ? cbStats.transferredThisWeek : '—'} foot="promoted to leads" footColor="text-indigo-600" tone="indigo" icon={<Icon.Check size={24} />} />
+        <CbKpi label="Total Call Backs" value={cbStats ? cbStats.total : '—'} foot="Scheduled list" tone="slate" icon={Lu.phoneCall(24)} />
+        <CbKpi label="Overdue" value={cbStats ? cbStats.overdue : '—'} foot={<>{Lu.alertCircle(13)} Requires action</>} footColor="text-rose-600/80" tone="rose" icon={Lu.alarm(24)} />
+        <CbKpi label="Scheduled Today" value={cbStats ? cbStats.today : '—'} foot={<>{Lu.checkCircle(13)} On track</>} footColor="text-emerald-600" tone="emerald" icon={Lu.calendar(24)} />
+        <CbKpi label="Transferred This Week" value={cbStats ? cbStats.transferredThisWeek : '—'} foot={<>{Lu.trendUp(13)} promoted to leads</>} footColor="text-indigo-600" tone="indigo" icon={Lu.userCheck(24)} />
       </div>
 
       {/* Filter bar */}
@@ -874,9 +922,12 @@ function CallBacksView(p) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[260px]">
             <div className="inline-flex items-center rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
-              <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="appearance-none bg-transparent text-slate-700 text-xs font-medium py-2 pl-3 pr-6 focus:outline-none cursor-pointer">
-                <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">Last 7 days</option><option value="month">This month</option><option value="lastmonth">Last month</option>
-              </select>
+              <div className="relative">
+                <select value={dateRange} onChange={(e) => setDateRange(e.target.value)} className="appearance-none bg-transparent text-slate-700 text-xs font-medium py-2 pl-3 pr-8 focus:outline-none cursor-pointer">
+                  <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">Last 7 days</option><option value="month">This month</option><option value="lastmonth">Last month</option>
+                </select>
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">{Lu.chevronDown(14)}</span>
+              </div>
               {dateRange !== 'all' && (
                 <div className="inline-flex items-center bg-slate-100 text-[10px] font-bold border-l border-slate-200">
                   <button onClick={() => setDateField('created')} className={`px-2 py-2 ${dateField === 'created' ? 'bg-white text-slate-900' : 'text-slate-400'}`}>Created</button>
@@ -884,8 +935,8 @@ function CallBacksView(p) {
                 </div>
               )}
             </div>
-            <div className="relative flex-1 min-w-[190px] max-w-xs">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon.Search size={15} /></span>
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{Lu.search(15)}</span>
               <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} placeholder="Search name, email, website…" className={`${inputCls} w-full pl-8 pr-3 py-2`} />
             </div>
             <div className="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200 text-xs font-medium">
@@ -893,22 +944,22 @@ function CallBacksView(p) {
               <button onClick={() => setCallbackSort('addedDate')} className={`px-3 py-1.5 rounded-lg transition ${callbackSort === 'addedDate' ? 'bg-white shadow-sm text-slate-900 font-semibold' : 'text-slate-500'}`}>By added date</button>
             </div>
             {user.role !== 'agent' && (
-              <select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} className={`${inputCls} py-2 px-3 cursor-pointer`}>
+              <CbSelect value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
                 <option value="">All owners</option>
                 {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
+              </CbSelect>
             )}
-            <div className="w-[160px] hidden lg:flex items-center gap-1">
-              <FilterCombobox value={countryFilter} onChange={(v) => setCountryFilter(v)} options={countryList} placeholder="All countries" className={`${inputCls} w-full py-2 px-3`} />
+            <div className="w-[170px] hidden lg:flex items-center gap-1">
+              <FilterCombobox value={countryFilter} onChange={(v) => setCountryFilter(v)} options={countryList} placeholder="All countries" className={`${inputCls} w-full py-2 pl-3 pr-8`} />
               {countryFilter && <button onClick={() => setCountryFilter('')} className="text-slate-400 hover:text-red-500 px-1 text-sm">✕</button>}
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={load} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl inline-flex items-center gap-1.5"><Icon.Refresh size={14} /> Filter</button>
+            <button onClick={load} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl inline-flex items-center gap-1.5">{Lu.filter(14)} Filter</button>
             {user.role === 'admin' && (
               <>
-                <button onClick={() => setImporting(true)} title="Import call backs from CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center"><Icon.Upload size={16} /></button>
-                <button onClick={exportCsv} disabled={exporting} title="Export CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center disabled:opacity-50"><Icon.Download size={16} /></button>
+                <button onClick={() => setImporting(true)} title="Import call backs from CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center">{Lu.upload(16)}</button>
+                <button onClick={exportCsv} disabled={exporting} title="Export CSV" className="w-9 h-9 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center disabled:opacity-50">{Lu.download(16)}</button>
               </>
             )}
           </div>
@@ -920,32 +971,23 @@ function CallBacksView(p) {
         <div className="text-slate-400 text-sm py-16 text-center bg-white rounded-2xl border border-slate-200/80">Loading…</div>
       ) : items.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200/80 py-14 text-center">
-          <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3"><Icon.Phone size={22} /></div>
+          <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">{Lu.phoneCall(22)}</div>
           <p className="text-slate-800 font-semibold text-sm">No call backs found</p>
           <p className="text-slate-400 text-xs mt-1">Try adjusting your filters, or add one with “New call back”.</p>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[980px]">
+            <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3.5 px-6">Lead</th>
-                  <th className="py-3.5 px-6">Contact</th>
-                  <th className="py-3.5 px-6">Owner</th>
-                  <th className="py-3.5 px-6">Call Back Due</th>
-                  <th className="py-3.5 px-6">Added</th>
-                  <th className="py-3.5 px-6">
-                    <button onClick={() => setActivitySort((s) => (s === 'desc' ? 'asc' : 'desc'))} className="inline-flex items-center gap-1 font-bold uppercase tracking-wider text-[11px] text-slate-400 hover:text-slate-600">
-                      Last Activity
-                      <span className="flex flex-col leading-none text-[8px]">
-                        <span className={activitySort === 'asc' ? 'text-orange-500' : 'text-slate-300'}>▲</span>
-                        <span className={activitySort === 'desc' ? 'text-orange-500' : 'text-slate-300'}>▼</span>
-                      </span>
-                    </button>
-                  </th>
-                  <th className="py-3.5 px-6 text-right">Action</th>
-                  {user.role === 'admin' && <th className="py-3.5 px-4"></th>}
+                  <th className="py-3.5 px-4 sm:px-5">Lead</th>
+                  <th className="py-3.5 px-4 sm:px-5">Contact</th>
+                  <th className="py-3.5 px-4 sm:px-5">Owner</th>
+                  <th className="py-3.5 px-4 sm:px-5">Call Back Due</th>
+                  <th className="py-3.5 px-4 sm:px-5">Added</th>
+                  <th className="py-3.5 px-4 sm:px-5 text-right">Action</th>
+                  {user.role === 'admin' && <th className="py-3.5 px-3 w-10"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -956,7 +998,7 @@ function CallBacksView(p) {
                   const over = l.callbackAt && new Date(l.callbackAt).getTime() < Date.now();
                   return (
                     <tr key={l._id} onClick={() => onOpen(l)} className="hover:bg-orange-50/40 transition-colors cursor-pointer group">
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: sm.color + '1a', color: sm.color }}>{(fullName(l)[0] || '?').toUpperCase()}</div>
                           <div className="min-w-0">
@@ -972,39 +1014,35 @@ function CallBacksView(p) {
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-5">
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                            <span className="truncate max-w-[200px]">{l.email || '—'}</span>
-                            {l.email && <button onClick={(e) => { e.stopPropagation(); copyText(l.email); }} title="Copy email" className="text-slate-300 hover:text-slate-600 p-0.5"><Icon.Note size={12} /></button>}
+                            <span className="truncate max-w-[190px]">{l.email || '—'}</span>
+                            {l.email && <button onClick={(e) => { e.stopPropagation(); copyText(l.email); }} title="Copy email" className="text-slate-300 hover:text-slate-600 p-0.5">{Lu.copy(12)}</button>}
                           </div>
                           <div className="text-[11px] text-slate-500">{(l.mobile || l.phone) ? <PhoneText number={l.mobile || l.phone} leadId={l._id} /> : ''}</div>
                         </div>
                       </td>
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold">{(l.ownerName || '?')[0]}</div>
-                          <span className="text-xs font-medium text-slate-700">{l.ownerName}</span>
+                          <span className="text-xs font-medium text-slate-700 whitespace-nowrap">{l.ownerName}</span>
                         </div>
                       </td>
-                      <td className="py-4 px-6 whitespace-nowrap">
-                        {l.callbackAt ? (
-                          <div className="text-xs">
-                            <span className={`block font-medium ${callbackTone(l.callbackAt)}`}>{fmtDate(l.callbackAt)}</span>
-                            <span className={`text-[11px] font-semibold ${over ? 'text-rose-500' : 'text-emerald-600'}`}>• {callbackCountdown(l.callbackAt)}</span>
-                          </div>
-                        ) : <span className="text-slate-300 text-xs">—</span>}
+                      <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
+                        {l.callbackAt
+                          ? <span className={`text-xs font-medium ${callbackTone(l.callbackAt)}`}>{fmtCbDue(l.callbackAt)}</span>
+                          : <span className="text-slate-300 text-xs">—</span>}
                       </td>
-                      <td className="py-4 px-6 text-xs text-slate-500 whitespace-nowrap">{fmtDate(l.createdAt)}</td>
-                      <td className={`py-4 px-6 text-xs whitespace-nowrap ${stale ? (stale.level === 'red' ? 'text-rose-600 font-semibold' : 'text-amber-600') : 'text-slate-500'}`}>{fmtDate(l.lastActivityAt)}</td>
-                      <td className="py-4 px-6 text-right">
-                        <button title="Transfer this prospect to an agent or manager" onClick={(e) => { e.stopPropagation(); setTransferFor(l); }} className="inline-flex items-center gap-1 px-3 py-1.5 text-white text-[11px] font-semibold rounded-xl shadow-sm active:scale-95 whitespace-nowrap" style={{ background: 'linear-gradient(90deg,#8B5CF6,#7C3AED)' }}>
-                          <Icon.Check size={13} /> Transfer
+                      <td className="py-4 px-4 sm:px-5 text-xs text-slate-500 whitespace-nowrap">{fmtAddedShort(l.createdAt)}</td>
+                      <td className="py-4 px-4 sm:px-5 text-right">
+                        <button title="Transfer this prospect to an agent or manager" onClick={(e) => { e.stopPropagation(); setTransferFor(l); }} className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-xl shadow-sm transition active:scale-95 whitespace-nowrap">
+                          {Lu.arrowRight(13)} Transfer
                         </button>
                       </td>
                       {user.role === 'admin' && (
-                        <td className="py-4 px-4 text-right">
-                          <button title="Delete call back" onClick={(e) => removeLead(l, e)} className="text-slate-300 hover:text-red-500"><Icon.Trash size={15} /></button>
+                        <td className="py-4 px-3 text-right">
+                          <button title="Delete call back" onClick={(e) => removeLead(l, e)} className="text-slate-300 hover:text-red-500">{Lu.trash(15)}</button>
                         </td>
                       )}
                     </tr>

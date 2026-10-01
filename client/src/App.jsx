@@ -1922,7 +1922,7 @@ export default function App() {
         </div>
       )}
       <header className="bg-[#050A1F] border-b border-white/10">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-6 min-w-0">
             <div className="flex items-center gap-3 shrink-0">
               <div className="text-lg font-extrabold text-white tracking-tight">
@@ -2063,7 +2063,7 @@ export default function App() {
             <div className="flex items-center gap-3"><div className="text-lg font-extrabold">Qtonix<span className="text-[#FF6A00]">.</span></div><span className="text-slate-400 text-sm font-semibold">🎟️ Ticket Booking</span></div>
             <button onClick={() => setShowTicketBooking(false)} className="text-slate-300 hover:text-white text-sm font-bold flex items-center gap-1.5">✕ Close</button>
           </div>
-          <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><TicketBookingAdmin /></div>
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><TicketBookingAdmin /></div>
         </div>
       )}
 
@@ -2073,11 +2073,11 @@ export default function App() {
             <div className="flex items-center gap-3"><div className="text-lg font-extrabold">Qtonix<span className="text-[#FF6A00]">.</span></div><span className="text-slate-400 text-sm font-semibold">🧾 GST Reconciliation</span></div>
             <button onClick={() => setShowGstReconcile(false)} className="text-slate-300 hover:text-white text-sm font-bold flex items-center gap-1.5">✕ Close</button>
           </div>
-          <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><GstReconcile /></div>
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6"><GstReconcile /></div>
         </div>
       )}
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         {view === 'dashboard' && dashMode === 'analytics' && isManagerOrAdmin && (
           <Analytics user={user} mode={dashMode} onModeChange={setDashMode} />
         )}
