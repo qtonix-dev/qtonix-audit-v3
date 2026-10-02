@@ -66,8 +66,11 @@ const apiRaw = async (path, opts = {}) => {
   return text;
 };
 
-// ---- UI atoms (mirror the sandbox) ----
-const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent';
+// ---- UI atoms (CRM design language: Inter, rounded-xl, orange focus) ----
+const ADMIN_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+const inputCls = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition';
+// Shared white rounded card wrapper for settings sections.
+const cardCls = 'bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5';
 
 // Read an image file and downscale to a small square JPEG data URL (so avatars
 // stay tiny in the DB). Returns a base64 data URL string.
@@ -116,14 +119,14 @@ function IndiaPhone({ value, onChange }) {
 }
 const input = inputCls;
 const Btn = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md', title }) => {
-  const sz = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-5 py-2.5 text-sm';
-  const base = `rounded-lg font-bold transition disabled:opacity-40 ${sz} ${className}`;
-  if (variant === 'primary') return <button title={title} onClick={onClick} disabled={disabled} className={base + ' text-white'} style={{ background: `linear-gradient(90deg,${C.orange},${C.orangeDeep})` }}>{children}</button>;
+  const sz = size === 'sm' ? 'px-3.5 py-2 text-xs' : 'px-5 py-2.5 text-sm';
+  const base = `rounded-xl font-semibold transition disabled:opacity-40 active:scale-95 inline-flex items-center justify-center gap-2 ${sz} ${className}`;
+  if (variant === 'primary') return <button title={title} onClick={onClick} disabled={disabled} className={base + ' text-white shadow-sm'} style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>{children}</button>;
   if (variant === 'dark') return <button title={title} onClick={onClick} disabled={disabled} className={base + ' text-white'} style={{ background: C.navy }}>{children}</button>;
-  return <button title={title} onClick={onClick} disabled={disabled} className={base + ' border border-slate-300 text-slate-600 hover:border-slate-400 bg-white'}>{children}</button>;
+  return <button title={title} onClick={onClick} disabled={disabled} className={base + ' border border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'}>{children}</button>;
 };
 const Field = ({ label, hint, children }) => (
-  <div><label className="block text-xs font-semibold text-slate-600 mb-1.5">{label}</label>{children}{hint && <p className="text-[11px] text-slate-400 mt-1">{hint}</p>}</div>
+  <div><label className="block text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">{label}</label>{children}{hint && <p className="text-[11px] text-slate-400 mt-1">{hint}</p>}</div>
 );
 const Note = ({ tone = 'info', children }) => {
   const t = { info: 'bg-blue-50 border-blue-200 text-blue-800', warn: 'bg-amber-50 border-amber-200 text-amber-900', bad: 'bg-red-50 border-red-200 text-red-700', good: 'bg-green-50 border-green-200 text-green-700' }[tone];
@@ -154,11 +157,11 @@ function ReportSettings({ settings, setSettings, say, reload }) {
     <div>
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
         <button onClick={() => setSub('branding')}
-          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'branding' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Branding</button>
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'branding' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>Branding</button>
         <button onClick={() => setSub('pricing')}
-          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'pricing' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Pricing</button>
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'pricing' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>Pricing</button>
         <button onClick={() => setSub('limits')}
-          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'limits' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Report limits</button>
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'limits' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>Report limits</button>
       </div>
       {sub === 'branding' ? <Branding settings={settings} setSettings={setSettings} say={say} reload={reload} />
         : sub === 'pricing' ? <PricingEditor settings={settings} setSettings={setSettings} say={say} />
@@ -612,9 +615,9 @@ function TargetsAndIncentive({ say, settings, setSettings }) {
     <div>
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-5">
         <button onClick={() => setSub('targets')}
-          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'targets' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Targets</button>
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'targets' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>Targets</button>
         <button onClick={() => setSub('incentive')}
-          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'incentive' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>💰 Incentive</button>
+          className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === 'incentive' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>💰 Incentive</button>
       </div>
       {sub === 'targets' ? <MonthlyTargets say={say} /> : <IncentiveSettings say={say} />}
     </div>
@@ -1052,7 +1055,7 @@ function ApiKeys({ settings, setSettings, say }) {
 
   const [sub, setSub] = useState('api');
   const SubBtn = ({ id, label }) => (
-    <button onClick={() => setSub(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>{label}</button>
+    <button onClick={() => setSub(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${sub === id ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>{label}</button>
   );
 
   return (
@@ -1705,8 +1708,8 @@ function Users({ me, say }) {
         <p className="text-sm text-slate-500">{users.filter((u) => u.active).length} active · {users.length} total</p>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-            <button onClick={() => setUview('list')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'list' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>List</button>
-            <button onClick={() => setUview('org')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'org' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Org chart</button>
+            <button onClick={() => setUview('list')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'list' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>List</button>
+            <button onClick={() => setUview('org')} className={`px-3 py-1 rounded-md text-xs font-bold ${uview === 'org' ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>Org chart</button>
           </div>
           <Btn onClick={() => { setShow(!show); setErr(''); }}>{show ? 'Cancel' : '+ Add user'}</Btn>
         </div>
@@ -2743,7 +2746,7 @@ function ActivityLog() {
       {/* Separate CRM vs HRMS activity. */}
       <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1 mb-4">
         {[['crm', 'Sales CRM'], ['hrms', 'HRMS'], ['all', 'All']].map(([id, label]) => (
-          <button key={id} onClick={() => setSource(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${source === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>
+          <button key={id} onClick={() => setSource(id)} className={`px-4 py-1.5 rounded-md text-xs font-bold ${source === id ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm' : 'text-slate-500'}`}>
             {label}{id !== 'all' && counts[id] != null ? ` (${counts[id]})` : ''}
           </button>
         ))}
@@ -2837,26 +2840,34 @@ export default function Admin() {
   const showSave = tab !== 'users' && tab !== 'crm' && tab !== 'tv' && tab !== 'log' && tab !== 'targets' && tab !== 'survey' && tab !== 'emails' && tab !== 'domains';
 
   return (
-    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
-      <header style={{ background: C.navy }}>
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: ADMIN_FONT }}>
+      <header className="bg-white border-b border-slate-200/80">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="text-lg font-extrabold text-white tracking-tight">Qtonix<span style={{ color: C.orange }}>.</span> <span className="ml-2 text-[10px] font-bold text-slate-400 tracking-[2px]">ADMIN</span></div>
-          <a href="/" className="text-xs font-bold text-slate-400 hover:text-white">← Back to app</a>
+          <div className="text-lg font-bold tracking-tight text-slate-900">Qtonix<span style={{ color: C.orange }}>.</span> <span className="ml-2 text-[10px] font-bold text-slate-400 tracking-[2px]">ADMIN</span></div>
+          <a href="/" className="text-xs font-semibold text-slate-500 hover:text-slate-800">← Back to app</a>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-7">
-        <h1 className="text-2xl font-extrabold tracking-tight mb-4" style={{ color: C.navy }}>Admin</h1>
-
-        {msg && <div className={`mb-4 rounded-lg px-4 py-3 text-sm ${msg.bad ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-green-50 border border-green-200 text-green-700'}`}>{msg.text}</div>}
-
-        <div className="flex gap-1 mb-5 border-b border-slate-200 flex-wrap items-center justify-between">
-          <div className="flex gap-1 flex-wrap">
-            {tabs.map(([id, l]) => (
-              <button key={id} onClick={() => setTab(id)} className="px-4 py-2 text-xs font-bold border-b-2 transition" style={{ borderColor: tab === id ? C.orange : 'transparent', color: tab === id ? C.navy : '#94A3B8' }}>{l}</button>
-            ))}
+      <main className="max-w-7xl mx-auto px-6 py-7 space-y-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Admin</h1>
+              <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">Settings</span>
+            </div>
+            <p className="text-slate-500 text-sm mt-1">Configure the CRM, HRMS, users, targets and integrations.</p>
           </div>
-          {showSave && <Btn onClick={save} disabled={saving} size="sm">{saving ? 'Saving…' : 'Save changes'}</Btn>}
+          {showSave && <Btn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Btn>}
+        </div>
+
+        {msg && <div className={`rounded-xl px-4 py-3 text-sm ${msg.bad ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-700'}`}>{msg.text}</div>}
+
+        {/* Underline tab bar */}
+        <div className="flex gap-1 border-b border-slate-200 flex-wrap overflow-x-auto">
+          {tabs.map(([id, l]) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap ${tab === id ? 'border-orange-500 text-orange-600 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{l}</button>
+          ))}
         </div>
 
         {tab === 'report' && <ReportSettings settings={settings} setSettings={setSettings} say={say} reload={load} />}

@@ -5,6 +5,19 @@ import { api } from './App.jsx';
 const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+const RV_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+// Segmented pill tab bar matching the Leads/Converted design (orange active).
+function RvTabs({ tabs, value, onChange }) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-white border border-slate-200/80 rounded-2xl p-1.5 shadow-sm flex-wrap">
+      {tabs.map(([id, label]) => (
+        <button key={id} onClick={() => onChange(id)}
+          className={`px-3.5 py-2 rounded-xl text-sm font-medium transition ${value === id ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'}`}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
 function Avatar({ name, src, size = 40 }) {
   const [broken, setBroken] = useState(false);
   if (src && !broken) return <img src={src} alt={name} onError={() => setBroken(true)} className="rounded-full object-cover" style={{ width: size, height: size }} />;
@@ -738,42 +751,42 @@ export default function Reviews({ user }) {
     const rows = byBand(band);
     if (rows.length === 0) return null;
     return (
-      <div className="mb-5">
-        <div className="flex items-center gap-2 mb-2">
+      <div>
+        <div className="flex items-center gap-2 mb-3">
           <span className="text-base">{meta.icon}</span>
-          <h2 className="text-sm font-extrabold text-[#050A1F]">{meta.label}</h2>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600">{meta.label}</h2>
           <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: meta.color + '1a', color: meta.color }}>{rows.length}</span>
           <span className="text-[11px] text-slate-400 hidden sm:inline">· {meta.blurb}</span>
         </div>
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {rows.map((a) => {
             const done = a.review && a.review.feedback;
             return (
               <div key={a.agentId} onClick={() => setActive(a)}
-                className={`rounded-xl border ${meta.border} bg-white p-4 cursor-pointer hover:shadow-md transition`}>
+                className="rounded-2xl border border-slate-200/80 bg-white p-4 cursor-pointer hover:shadow-md hover:border-orange-200 transition shadow-sm group">
                 <div className="flex items-center gap-3">
                   <Avatar name={a.name} src={a.avatar} size={40} />
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-sm text-[#050A1F] truncate">{a.name}</div>
+                    <div className="font-bold text-sm text-slate-900 truncate group-hover:text-orange-600 transition-colors">{a.name}</div>
                     <div className="text-[11px] text-slate-400">{a.team} · {a.shift}</div>
                   </div>
                   {done
-                    ? <span className="text-[9px] font-bold rounded px-1.5 py-0.5 bg-green-100 text-green-700">REVIEWED</span>
-                    : <span className="text-[9px] font-bold rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">PENDING</span>}
+                    ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">Reviewed</span>
+                    : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">Pending</span>}
                 </div>
                 <div className="mt-3">
                   <div className="flex items-end justify-between">
-                    <span className="text-sm font-extrabold text-[#050A1F]">{usd(a.salesUsd)}{a.salesTarget > 0 && <span className="text-slate-300 font-normal"> / {usd(a.salesTarget)}</span>}</span>
+                    <span className="text-base font-extrabold text-slate-900">{usd(a.salesUsd)}{a.salesTarget > 0 && <span className="text-slate-300 font-normal text-sm"> / {usd(a.salesTarget)}</span>}</span>
                     {a.pct !== null && <span className="text-xs font-bold" style={{ color: meta.color }}>{a.pct}%</span>}
                   </div>
                   {a.salesTarget > 0 && (
-                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
+                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden mt-1.5">
                       <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.min(100, a.pct))}%`, background: meta.color }} />
                     </div>
                   )}
-                  <div className="text-[10px] text-slate-400 mt-1.5">
+                  <div className="text-[11px] text-slate-400 mt-2">
                     {a.leadsGenerated} leads · {a.conversions} converted
-                    {a.review && a.review.needsHr && <span className="ml-1 font-bold text-red-500">· HR flagged</span>}
+                    {a.review && a.review.needsHr && <span className="ml-1 font-bold text-rose-500">· HR flagged</span>}
                   </div>
                 </div>
               </div>
@@ -784,42 +797,55 @@ export default function Reviews({ user }) {
     );
   };
 
+  const periodLabel = (monthOptions().find((m) => m.key === period) || {}).label || '';
   return (
-    <div>
-      <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
+    <div className="space-y-6" style={{ fontFamily: RV_FONT }}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">Team reviews</h1>
-          <div className="text-sm text-slate-400">
-            {agents.length} team member{agents.length === 1 ? '' : 's'} · {reviewed} reviewed
-            {hrFlagged > 0 && <span className="text-red-500 font-semibold"> · {hrFlagged} flagged for HR</span>}
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Team Reviews</h1>
+            <span className="bg-slate-200/70 text-slate-700 font-bold text-xs px-2.5 py-1 rounded-full">{periodLabel}</span>
           </div>
+          <p className="text-slate-500 text-sm mt-1">
+            {agents.length} team member{agents.length === 1 ? '' : 's'} · {reviewed} reviewed
+            {hrFlagged > 0 && <span className="text-rose-600 font-semibold"> · {hrFlagged} flagged for HR</span>}
+          </p>
         </div>
-        <select value={period} onChange={(e) => setPeriod(e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600">
-          {monthOptions().map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-        </select>
+        <div className="relative">
+          <select value={period} onChange={(e) => setPeriod(e.target.value)}
+            className="appearance-none bg-white border border-slate-200 text-slate-700 font-medium text-sm rounded-xl pl-3 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer">
+            {monthOptions().map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg></span>
+        </div>
       </div>
 
-      {/* Admin: choose the division (Sales vs Pre-Sales), then within Sales
-          switch between agent 1-to-1s and manager reviews. Pre-Sales mirrors the
-          lead-manager view (pre-sales agents only). */}
-      {isAdmin && (
-        <div className="flex flex-wrap items-center gap-3 mb-5">
-          <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-            <button onClick={() => { setDivision('sales'); }}
-              className={`px-4 py-1.5 rounded-md text-xs font-bold ${division === 'sales' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Sales</button>
-            <button onClick={() => { setDivision('presales'); setTab('agents'); }}
-              className={`px-4 py-1.5 rounded-md text-xs font-bold ${division === 'presales' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Pre-Sales</button>
-          </div>
-          {division === 'sales' && (
-            <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-              <button onClick={() => setTab('agents')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'agents' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Agent reviews</button>
-              <button onClick={() => setTab('managers')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'managers' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>Manager reviews</button>
-              <button onClick={() => setTab('incentives')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold ${tab === 'incentives' ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500'}`}>💰 Incentives</button>
+      {/* KPI strip (Converted-page style) */}
+      {!(isAdmin && division === 'sales' && (tab === 'managers' || tab === 'incentives')) && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { t: 'Team size', v: agents.length, f: 'Active members', c: '#64748b', tc: '#475569', cbg: '#f1f5f9', chip: '👥' },
+            { t: 'Reviewed', v: reviewed, f: 'This month', c: '#16a34a', tc: '#16a34a', cbg: '#f0fdf4', chip: '📝' },
+            { t: 'Pending', v: Math.max(0, agents.length - reviewed), f: 'Awaiting review', c: '#f97316', tc: '#c2410c', cbg: '#fff7ed', chip: '⏳' },
+            { t: 'HR flagged', v: hrFlagged, f: 'Needs HR', c: '#e11d48', tc: '#be123c', cbg: '#fff1f2', chip: '🚩' },
+          ].map((k) => (
+            <div key={k.t} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: k.c + '0d' }}></div>
+              <div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wider" style={{ color: k.tc }}>{k.t}</span><span className="p-2 rounded-xl text-sm" style={{ background: k.cbg }}>{k.chip}</span></div>
+              <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: k.tc }}>{k.v}</div>
+              <p className="text-xs text-slate-400 mt-2">{k.f}</p>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Admin: division (Sales vs Pre-Sales) + the Sales sub-tabs. */}
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-3">
+          <RvTabs tabs={[['sales', 'Sales'], ['presales', 'Pre-Sales']]} value={division}
+            onChange={(d) => { setDivision(d); if (d === 'presales') setTab('agents'); }} />
+          {division === 'sales' && (
+            <RvTabs tabs={[['agents', '👥 Agent reviews'], ['managers', '🧑‍💼 Manager reviews'], ['incentives', '💰 Incentives']]} value={tab} onChange={setTab} />
           )}
           {division === 'presales' && (
             <span className="text-xs text-slate-400 font-semibold">Pre-sales team monthly reviews</span>
@@ -865,13 +891,13 @@ export default function Reviews({ user }) {
           No agents to review{user.role === 'manager' ? ' in your groups' : ''} for this period.
         </div>
       ) : (
-        <>
+        <div className="space-y-6">
           <Section band="danger" />
           <Section band="attention" />
           <Section band="top" />
           <Section band="ok" />
           <Section band="unrated" />
-        </>
+        </div>
       )}
 
       {active && <ReviewModal agent={active} period={period} onClose={() => setActive(null)} onSaved={() => { setActive(null); load(); }} />}
