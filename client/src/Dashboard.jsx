@@ -18,6 +18,29 @@ const usd = (n) => `$${Number(n || 0).toLocaleString()}`;
 const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`);
 const initials = (name) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
+const DB_FONT = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+// Small uppercase section label that groups the dashboard into readable blocks.
+function SectionLabel({ children, right }) {
+  return (
+    <div className="flex items-center justify-between gap-3 mt-2 mb-1">
+      <h2 className="text-[11px] font-bold uppercase tracking-[0.07em] text-slate-500">{children}</h2>
+      {right}
+    </div>
+  );
+}
+// Card header: bold title + muted subtitle, used across the dashboard cards.
+function CardHead({ title, sub, right }) {
+  return (
+    <div className="flex items-start justify-between gap-3 mb-3">
+      <div>
+        <div className="text-[15px] font-bold text-slate-900">{title}</div>
+        {sub && <div className="text-xs text-slate-400 mt-0.5">{sub}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
 // Small empty-state line used inside the email activity tabs.
 function Empty({ text }) {
   return <div className="text-[11px] text-slate-400 text-center py-6">{text}</div>;
@@ -62,33 +85,33 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
   const done = has && pct >= 100;
   const zero = achieved === 0;
   return (
-    <div className={`rounded-2xl border p-4 ${onClick ? 'cursor-pointer hover:shadow-md transition' : ''}`}
-      style={{ borderColor: accent + '33', background: accent + '0a' }} onClick={onClick}>
-      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="text-2xl font-extrabold mt-1" style={{ color: accent }}>
-        {fmt(achieved)}{has && <span className="text-slate-300 text-lg"> / {fmt(target)}</span>}
+    <div className={`relative overflow-hidden bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 ${onClick ? 'cursor-pointer hover:shadow-md transition' : ''}`} onClick={onClick}>
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: accent + '0d' }}></div>
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: accent }}>{label}</span>
+      </div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: accent }}>
+        {fmt(achieved)}{has && <span className="text-slate-300 text-lg font-semibold"> / {fmt(target)}</span>}
         {has && <span className="text-sm font-bold text-slate-400 ml-1.5">({pct}%)</span>}
       </div>
       {has && (
         <>
-          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-2">
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden mt-2.5">
             <div className="h-full rounded-full" style={{ width: `${Math.max(3, pct)}%`, background: done ? '#16A34A' : near ? '#F59E0B' : accent }} />
           </div>
-          <div className={`text-[11px] font-bold mt-1.5 ${done ? 'text-green-600' : near ? 'text-amber-600' : 'text-slate-500'}`}>
+          <div className={`text-[11px] font-semibold mt-2 ${done ? 'text-emerald-600' : near ? 'text-amber-600' : 'text-slate-500'}`}>
             {done ? '🎉 Target achieved!' : zero ? (motivational || 'Let’s get the first one today! 💪')
               : remainingLabel ? `${fmt(remaining)} to achieve your target`
               : near ? `🔥 ${fmt(remaining)} more to go!` : `${fmt(remaining)} to go`}
           </div>
         </>
       )}
-      {!has && <div className="text-[11px] text-slate-400 mt-1.5">No target set</div>}
-      {/* Admin-only: separates what the team brought in from admin-owned deals,
-          so house/test accounts don't get mistaken for team performance. */}
+      {!has && <div className="text-[11px] text-slate-400 mt-2">No target set</div>}
       {splitNote && (
-        <div className="mt-2 pt-2 border-t border-slate-200/70 grid grid-cols-2 gap-2">
+        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2">
           <div>
             <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Agents &amp; managers</div>
-            <div className="text-sm font-extrabold text-[#050A1F]">{splitNote.team}</div>
+            <div className="text-sm font-extrabold text-slate-900">{splitNote.team}</div>
           </div>
           <div>
             <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Admin-owned</div>
@@ -97,21 +120,21 @@ function GoalStat({ label, achieved, target, unit, accent, onClick, cta, motivat
           </div>
         </div>
       )}
-      {awaitingNote && <div className="text-[11px] font-semibold text-amber-600 mt-1">⏳ {awaitingNote} won — counts once collected</div>}
+      {awaitingNote && <div className="text-[11px] font-semibold text-amber-600 mt-1.5">⏳ {awaitingNote} won — counts once collected</div>}
       {pipelineNote && <div className="text-[11px] font-semibold text-indigo-500 mt-1">💼 {pipelineNote} in pipeline</div>}
-      {cta && <div className="text-xs font-bold mt-2" style={{ color: accent }}>{cta} →</div>}
+      {cta && <div className="text-xs font-bold mt-2.5" style={{ color: accent }}>{cta} →</div>}
     </div>
   );
 }
 
 function PlainStat({ label, value, sub, accent, onClick, cta }) {
   return (
-    <div className={`rounded-2xl border p-4 ${onClick ? 'cursor-pointer hover:shadow-md transition' : ''}`}
-      style={{ borderColor: accent + '33', background: accent + '0a' }} onClick={onClick}>
-      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="text-2xl font-extrabold mt-1" style={{ color: accent }}>{value}</div>
-      {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
-      {cta && <div className="text-xs font-bold mt-2" style={{ color: accent }}>{cta} →</div>}
+    <div className={`relative overflow-hidden bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5 ${onClick ? 'cursor-pointer hover:shadow-md transition' : ''}`} onClick={onClick}>
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: accent + '0d' }}></div>
+      <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: accent }}>{label}</span>
+      <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: accent }}>{value}</div>
+      {sub && <div className="text-xs text-slate-400 mt-2">{sub}</div>}
+      {cta && <div className="text-xs font-bold mt-2.5" style={{ color: accent }}>{cta} →</div>}
     </div>
   );
 }
@@ -199,54 +222,27 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
   );
 }
 
-// Daily lead volume for the current month (line + area).
+// Daily lead volume for the current month — STACKED BARS in one indigo family
+// (pre-sales / cold-calling / transferred), with a hover tooltip. One hue keeps
+// it calm; three shades separate the sources.
 function LeadDailyChart({ daily }) {
+  const [hover, setHover] = useState(null); // index of hovered day
   if (!daily || daily.length === 0) return null;
-  const W = 560, H = 140, padL = 28, padB = 18;
-  const max = Math.max(1, ...daily.map((d) => d.total));
-  const stepX = (W - padL - 8) / Math.max(1, daily.length - 1);
-  const x = (i) => padL + i * stepX;
-  const y = (v) => H - padB - (v / max) * (H - padB - 10);
-  const line = daily.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.total).toFixed(1)}`).join(' ');
-  const area = `${line} L${x(daily.length - 1).toFixed(1)},${H - padB} L${x(0).toFixed(1)},${H - padB} Z`;
+  const W = 560, H = 150, padL = 26, padB = 20, padT = 10;
+  // Darkest → lightest, matching the lead-trend line colours.
+  const series = [
+    { key: 'presales', color: '#4338CA', label: 'Pre-sales' },
+    { key: 'cold', color: '#818CF8', label: 'Cold-calling' },
+    { key: 'transferred', color: '#C7D2FE', label: 'Transferred' },
+  ];
+  const stackTotal = (d) => series.reduce((s, ser) => s + (d[ser.key] || 0), 0);
+  const max = Math.max(1, ...daily.map(stackTotal));
+  const slot = (W - padL - 8) / daily.length;
+  const barW = Math.max(2, Math.min(12, slot - 2));
+  const y = (v) => H - padB - (v / max) * (H - padB - padT);
   const today = new Date().getDate();
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }}>
-      {[0, 0.5, 1].map((g) => (
-        <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#e2e8f0" strokeWidth="1" />
-      ))}
-      <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
-      <text x={4} y={y(0) + 4} fontSize="8" fill="#94a3b8">0</text>
-      <path d={area} fill="url(#leadArea)" opacity="0.35" />
-      <path d={line} fill="none" stroke="#0891B2" strokeWidth="2" strokeLinejoin="round" />
-      {daily.map((d, i) => (d.day === today ? <circle key={i} cx={x(i)} cy={y(d.total)} r="3.5" fill="#0891B2" /> : null))}
-      {daily.map((d, i) => (d.day % 5 === 0 || d.day === 1 ? (
-        <text key={`t${i}`} x={x(i)} y={H - 4} textAnchor="middle" fontSize="8" fill="#94a3b8">{d.day}</text>
-      ) : null))}
-      <defs>
-        <linearGradient id="leadArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0891B2" /><stop offset="100%" stopColor="#0891B2" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
-
-// 6-month grouped bars: total / cold calling / pre-sales.
-function LeadMonthlyChart({ monthly }) {
-  if (!monthly || monthly.length === 0) return null;
-  const W = 560, H = 150, padL = 26, padB = 26;
-  const max = Math.max(1, ...monthly.map((m) => m.total));
-  const groupW = (W - padL - 8) / monthly.length;
-  const barW = Math.min(14, (groupW - 12) / 3);
-  const y = (v) => H - padB - (v / max) * (H - padB - 12);
-  const series = [
-    { key: 'total', color: '#0891B2', label: 'Total' },
-    { key: 'cold', color: '#FF6A00', label: 'Cold calling' },
-    { key: 'presales', color: '#7C3AED', label: 'Pre-sales' },
-  ];
-  return (
-    <div>
+    <div className="relative">
       <div className="flex items-center gap-3 mb-1 flex-wrap">
         {series.map((s) => (
           <span key={s.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
@@ -254,31 +250,113 @@ function LeadMonthlyChart({ monthly }) {
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
         {[0, 0.5, 1].map((g) => (
-          <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#e2e8f0" strokeWidth="1" />
+          <line key={g} x1={padL} x2={W - 8} y1={y(max * g)} y2={y(max * g)} stroke="#eef2f7" strokeWidth="1" />
         ))}
         <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
-        {monthly.map((m, i) => {
-          const gx = padL + i * groupW + 6;
+        <text x={4} y={y(0) + 4} fontSize="8" fill="#94a3b8">0</text>
+        {daily.map((d, i) => {
+          const cx = padL + i * slot + slot / 2;
+          const bx = cx - barW / 2;
+          let yCursor = H - padB;
+          const isToday = d.day === today;
           return (
-            <g key={i}>
+            <g key={i} onMouseEnter={() => setHover(i)} style={{ cursor: 'pointer' }}>
+              {/* hover hit area */}
+              <rect x={cx - slot / 2} y={0} width={slot} height={H - padB} fill="transparent" />
               {series.map((s, si) => {
-                const v = m[s.key] || 0;
-                const bx = gx + si * (barW + 3);
-                const bh = Math.max(0, H - padB - y(v));
-                return (
-                  <g key={s.key}>
-                    <rect x={bx} y={y(v)} width={barW} height={bh} rx="2.5" fill={s.color} />
-                    {v > 0 && <text x={bx + barW / 2} y={y(v) - 3} textAnchor="middle" fontSize="7.5" fontWeight="bold" fill="#050A1F">{v}</text>}
-                  </g>
-                );
+                const v = d[s.key] || 0;
+                if (v <= 0) return null;
+                const h = (v / max) * (H - padB - padT);
+                yCursor -= h;
+                return <rect key={s.key} x={bx} y={yCursor} width={barW} height={h}
+                  rx={si === 0 ? 2.5 : 0} fill={s.color} opacity={hover != null && hover !== i ? 0.5 : 1} />;
               })}
-              <text x={gx + (barW * 3 + 6) / 2} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.month}</text>
+              {(d.day % 5 === 0 || d.day === 1) && <text x={cx} y={H - 6} textAnchor="middle" fontSize="8" fill={isToday ? '#4338CA' : '#94a3b8'} fontWeight={isToday ? 'bold' : 'normal'}>{d.day}</text>}
             </g>
           );
         })}
       </svg>
+      {hover != null && (
+        <div className="absolute pointer-events-none z-20" style={{ left: `${((padL + hover * slot + slot / 2) / W) * 100}%`, top: 24, transform: 'translate(-50%, 0)' }}>
+          <div className="rounded-lg bg-[#0A0E28] text-white px-2.5 py-1.5 shadow-lg whitespace-nowrap">
+            <div className="text-[10px] font-bold text-slate-300">Day {daily[hover].day} · {stackTotal(daily[hover])} total</div>
+            {series.map((s) => (
+              <div key={s.key} className="flex items-center gap-1.5 text-[11px] font-semibold">
+                <span className="w-2 h-2 rounded-sm" style={{ background: s.color }} />{s.label}: <b>{daily[hover][s.key] || 0}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 6-month lead trend: three LINES (pre-sales / cold-calling / transferred) in a
+// single indigo hue (dark → light), with a hover tooltip showing that month's
+// values. One colour family keeps it calm; line weight + dot pick out the hovered
+// month.
+function LeadMonthlyChart({ monthly }) {
+  const [hover, setHover] = useState(null); // index of hovered month
+  if (!monthly || monthly.length === 0) return null;
+  const W = 540, H = 160, padL = 26, padB = 26, padT = 10;
+  // Indigo family, darkest → lightest.
+  const series = [
+    { key: 'presales', color: '#3730A3', label: 'Pre-sales' },
+    { key: 'cold', color: '#818CF8', label: 'Cold-calling' },
+    { key: 'transferred', color: '#C7D2FE', label: 'Transferred' },
+  ];
+  const max = Math.max(1, ...monthly.flatMap((m) => series.map((s) => m[s.key] || 0)));
+  const stepX = (W - padL - 10) / Math.max(1, monthly.length - 1);
+  const x = (i) => padL + i * stepX;
+  const y = (v) => H - padB - (v / max) * (H - padB - padT);
+  const pathFor = (key) => monthly.map((m, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(m[key] || 0).toFixed(1)}`).join(' ');
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-3 mb-1 flex-wrap">
+        {series.map((s) => (
+          <span key={s.key} className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} />{s.label}
+          </span>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 420 }} onMouseLeave={() => setHover(null)}>
+        {[0, 0.5, 1].map((g) => (
+          <line key={g} x1={padL} x2={W - 10} y1={y(max * g)} y2={y(max * g)} stroke="#eef2f7" strokeWidth="1" />
+        ))}
+        <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
+        <text x={4} y={y(0) + 4} fontSize="8" fill="#94a3b8">0</text>
+        {hover != null && <line x1={x(hover)} x2={x(hover)} y1={padT} y2={H - padB} stroke="#cbd5e1" strokeDasharray="3 3" />}
+        {series.map((s) => (
+          <path key={s.key} d={pathFor(s.key)} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        ))}
+        {/* dots on hovered month */}
+        {hover != null && series.map((s) => (
+          <circle key={s.key} cx={x(hover)} cy={y(monthly[hover][s.key] || 0)} r="3.5" fill={s.color} />
+        ))}
+        {/* x labels + invisible hover columns */}
+        {monthly.map((m, i) => (
+          <g key={i}>
+            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.month}</text>
+            <rect x={x(i) - stepX / 2} y={0} width={stepX} height={H - padB} fill="transparent"
+              onMouseEnter={() => setHover(i)} style={{ cursor: 'pointer' }} />
+          </g>
+        ))}
+      </svg>
+      {hover != null && (
+        <div className="absolute pointer-events-none z-20" style={{ left: `${(x(hover) / W) * 100}%`, top: 24, transform: 'translate(-50%, 0)' }}>
+          <div className="rounded-lg bg-[#0A0E28] text-white px-2.5 py-1.5 shadow-lg whitespace-nowrap">
+            <div className="text-[10px] font-bold text-slate-300">{monthly[hover].month} {monthly[hover].year || ''}</div>
+            {series.map((s) => (
+              <div key={s.key} className="flex items-center gap-1.5 text-[11px] font-semibold">
+                <span className="w-2 h-2 rounded-sm" style={{ background: s.color }} />{s.label}: <b>{monthly[hover][s.key] || 0}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -333,9 +411,11 @@ function TrendChart({ trend }) {
   const [hover, setHover] = useState(null); // { x, y, label, color, amount, month }
   if (!trend || trend.length === 0) return null;
   const W = 520, H = 150, pad = 26;
-  // Segment palette. Admin segments are colored from a fixed palette by order.
-  const TEAM_NEW = '#0EA5E9', TEAM_CROSS = '#7DC5E8';
-  const ADMIN_COLORS = ['#8B5CF6', '#F59E0B', '#EC4899', '#14B8A6', '#6366F1'];
+  // Google-blue family. Team fresh is the deepest blue, cross a lighter blue;
+  // admin-owned segments use progressively lighter blue tints so the whole
+  // chart stays one hue while still telling fresh / cross / admin apart.
+  const TEAM_NEW = '#1A73E8', TEAM_CROSS = '#5B9BF5';
+  const ADMIN_COLORS = ['#A8C7F9', '#C6DAFC', '#8AB4F8', '#D2E3FC', '#669DF6'];
   // Collect the distinct admin names across the trend (stable order).
   const adminNames = [];
   trend.forEach((t) => (t.adminSegments || []).forEach((a) => { if (!adminNames.includes(a.name)) adminNames.push(a.name); }));
@@ -362,8 +442,8 @@ function TrendChart({ trend }) {
             // Build the stack: team new, team cross, then each admin. Each seg
             // carries a label + amount for the hover tooltip.
             const segs = [
-              { v: t.teamNewUsd || 0, c: TEAM_NEW, label: 'Team New sales' },
-              { v: t.teamCrossUsd || 0, c: TEAM_CROSS, label: 'Team Cross sales' },
+              { v: t.teamNewUsd || 0, c: TEAM_NEW, label: 'Team fresh sales' },
+              { v: t.teamCrossUsd || 0, c: TEAM_CROSS, label: 'Team cross sales' },
               ...(t.adminSegments || []).map((a) => ({ v: a.amount || 0, c: adminColor[a.name], label: `Admin — ${a.name}` })),
             ].filter((s) => s.v > 0);
             let yCursor = H; // bottom baseline
@@ -402,8 +482,8 @@ function TrendChart({ trend }) {
         )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
-        <LegendDot color={TEAM_NEW} label="Team New sales" />
-        <LegendDot color={TEAM_CROSS} label="Team Cross sales" />
+        <LegendDot color={TEAM_NEW} label="Team fresh" />
+        <LegendDot color={TEAM_CROSS} label="Team cross" />
         {adminNames.map((n) => <LegendDot key={n} color={adminColor[n]} label={`Admin — ${n}`} />)}
       </div>
     </div>
@@ -456,7 +536,7 @@ function ManagerReviewReminder({ info, onGoReviews, onLater }) {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
       <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
         <div className="text-2xl mb-1">📋</div>
-        <div className="text-lg font-extrabold text-[#050A1F]">Time to review your team</div>
+        <div className="text-lg font-bold text-slate-900">Time to review your team</div>
         <p className="text-sm text-slate-500 mt-1">
           It's review time for <b>{monthLabel}</b>. Please complete a review for each of your agents.
         </p>
@@ -491,6 +571,99 @@ export default function Dashboard(props) {
   // so neither dashboard's hooks run for the other role.
   if (props.user.role === 'leadmanager') return <LeadManagerDashboard user={props.user} onViewToday={props.onViewToday} />;
   return <SalesDashboard {...props} />;
+}
+
+// ---------------------------------------------------------------------------
+// v604 redesign — presentation helpers for the new dashboard layout.
+// ---------------------------------------------------------------------------
+const deltaStr = (n, { pct = false, unit = '' } = {}) => {
+  if (n == null) return null;
+  const arrow = n > 0 ? '▲' : n < 0 ? '▼' : '•';
+  const cls = n > 0 ? 'text-green-600' : n < 0 ? 'text-red-500' : 'text-slate-400';
+  const val = pct ? `${Math.abs(n)}%` : `${Math.abs(n)}${unit}`;
+  return <span className={`font-semibold ${cls}`}>{arrow} {val}</span>;
+};
+
+// Dark hero band with month-over-month headline figures.
+function DashHero({ greeting, name, scopeLabel, deltas }) {
+  const d = deltas || {};
+  return (
+    <div className="relative overflow-hidden rounded-3xl p-6 sm:p-7 text-white"
+      style={{ background: 'radial-gradient(900px 300px at 85% -40%, #fb923c55, transparent), linear-gradient(120deg,#0b1020,#111a33)' }}>
+      <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full" style={{ background: '#f9731622' }} />
+      <div className="relative">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{greeting}, {name} 👋</h1>
+        <div className="text-slate-300 text-sm mt-1">{scopeLabel}</div>
+        <div className="flex flex-wrap gap-x-8 gap-y-4 mt-5">
+          <div className="min-w-[110px]">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Collected</div>
+            <div className="text-2xl font-extrabold mt-0.5">{usd(d.collectedThisMonthUsd || 0)}</div>
+            <div className="text-[11px] mt-0.5">{deltaStr(d.collectedDeltaPct, { pct: true }) || <span className="text-slate-400">vs last month</span>} <span className="text-slate-400">vs last mo</span></div>
+          </div>
+          <div className="min-w-[90px]">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Converted</div>
+            <div className="text-2xl font-extrabold mt-0.5">{d.convertedThisMonth || 0}</div>
+            <div className="text-[11px] mt-0.5">{deltaStr(d.convertedDelta) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+          </div>
+          <div className="min-w-[90px]">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Leads</div>
+            <div className="text-2xl font-extrabold mt-0.5">{d.leadsThisMonth || 0}</div>
+            <div className="text-[11px] mt-0.5">{deltaStr(d.leadsDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// KPI box with corner wash, icon chip, big number, optional progress bar.
+function KpiBox({ icon, iconBg, iconColor, label, value, foot, footColor, pct, barColor }) {
+  return (
+    <div className="relative overflow-hidden bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
+      <span className="absolute right-3.5 top-3.5 w-8 h-8 rounded-[10px] flex items-center justify-center text-base" style={{ background: iconBg, color: iconColor }}>{icon}</span>
+      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-[25px] leading-none font-extrabold tracking-tight text-slate-900 mt-2">{value}</div>
+      {pct != null && (
+        <div className="h-[7px] rounded-full bg-slate-100 overflow-hidden mt-2.5">
+          <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, pct))}%`, background: barColor || '#16a34a' }} />
+        </div>
+      )}
+      {foot && <div className="text-[11.5px] font-semibold mt-1.5" style={{ color: footColor || '#94a3b8' }}>{foot}</div>}
+    </div>
+  );
+}
+
+// Today's-pulse tile: quiet slate background so it doesn't fight the KPI row.
+function PulseTile({ icon, iconColor, value, label, delta }) {
+  return (
+    <div className="flex items-center gap-3 rounded-[13px] border border-slate-200/70 p-3" style={{ background: 'linear-gradient(135deg,#f8fafc,#f1f5f9)' }}>
+      <span className="w-9 h-9 rounded-[11px] bg-white flex items-center justify-center text-[17px] shrink-0" style={{ boxShadow: `0 1px 3px ${iconColor}22`, color: iconColor }}>{icon}</span>
+      <div className="min-w-0">
+        <div className="text-xl font-extrabold text-slate-900 leading-none">{value}</div>
+        <div className="text-[10.5px] text-slate-400 font-semibold mt-0.5">{label}</div>
+        {delta != null && <div className="text-[10px] font-bold mt-0.5">{deltaStr(delta)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// One Recognition card.
+function RecognitionBox({ emoji, kicker, kColor, borderColor, bg, avBg, avColor, name, sub, src, logo }) {
+  if (!name) return null;
+  return (
+    <div className="relative overflow-hidden rounded-2xl p-4 border" style={{ borderColor, background: bg }}>
+      <div className="text-[10px] font-extrabold uppercase tracking-wide" style={{ color: kColor }}>{emoji} {kicker}</div>
+      <div className="flex items-center gap-3 mt-2.5">
+        {src !== undefined
+          ? <Avatar name={name} src={src} logo={logo} size={40} />
+          : <div className="w-10 h-10 rounded-[13px] flex items-center justify-center font-bold text-[15px]" style={{ background: avBg, color: avColor }}>{initials(name)}</div>}
+        <div className="min-w-0">
+          <div className="text-base font-extrabold text-slate-900 truncate">{name}</div>
+          <div className="text-[11px] text-slate-500 truncate">{sub}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onViewToday, onGoReviews, mode = 'overview', onModeChange }) {
@@ -577,9 +750,16 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
   const withTarget = board.filter((b) => b.salesTarget > 0);
   const firstToTarget = withTarget.find((b) => b.hitTarget);
   const greeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
+  // v604 redesign payloads (all role-scoped by the backend).
+  const pulse = data.pulse || {};
+  const deltas = data.deltas || {};
+  const rates = data.rates || {};
+  const recognition = data.recognition || {};
+  const nudges = data.dealsNeedingNudge || [];
+  const scopeLabel = isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.';
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6" style={{ fontFamily: DB_FONT }}>
       {/* Full-screen sales race (gamified leaderboard). */}
       {showRace && <SalesRace onClose={() => setShowRace(false)} />}
 
@@ -597,19 +777,14 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           birthdays / work + wedding anniversaries, 10s per slide. */}
       <CelebrationSlider wins={wins} celebrations={celebrations} user={user} />
 
-      {/* Greeting, with the view switcher on the right. Managers and admins can
-          flip between the operational overview and the analytics view; agents
-          only ever see the overview, so the switcher is hidden for them. */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-extrabold text-[#050A1F]">{greeting}, {user.name.split(' ')[0]} 👋</h1>
-          <div className="text-sm text-slate-400">{isAdmin ? 'Company-wide performance this month.' : isManager ? "Your team's performance this month." : 'Your performance this month.'}</div>
-        </div>
+      {/* HERO — dark band with month-over-month deltas + view switcher. */}
+      <div className="relative">
+        <DashHero greeting={greeting} name={user.name.split(' ')[0]} scopeLabel={scopeLabel} deltas={deltas} />
         {(isAdmin || isManager) && onModeChange && (
-          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 shrink-0">
+          <div className="absolute right-5 top-5 inline-flex items-center gap-1 bg-white/10 border border-white/20 rounded-2xl p-1.5 backdrop-blur-sm">
             {[['overview', 'Overview'], ['analytics', 'Analytics']].map(([id, label]) => (
               <button key={id} onClick={() => onModeChange(id)}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${mode === id ? 'bg-white shadow text-[#050A1F]' : 'text-slate-500 hover:text-slate-700'}`}>
+                className={`px-4 py-1.5 rounded-xl text-sm font-medium transition ${mode === id ? 'bg-white text-slate-900 font-semibold' : 'text-slate-200 hover:text-white'}`}>
                 {label}
               </button>
             ))}
@@ -617,28 +792,45 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         )}
       </div>
 
-      {/* Celebrations are now shown in the CelebrationSlider above. */}
-
-
-      {/* ROW 1 — Sales vs target + Converted, 50/50 */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <GoalStat
-          label={isAdmin ? 'Sales this month · company target' : isManager ? 'Sales this month · team target' : 'Sales this month · your target'}
-          achieved={m.scopeAchieved} target={m.scopeTarget} accent="#16A34A"
-          motivational="No sales collected yet — the first one is waiting! 🚀"
-          remainingLabel
-          splitNote={isAdmin && m.teamSalesUsd != null ? { team: usd(m.teamSalesUsd), admin: usd(m.adminSalesUsd || 0) } : null}
-          pipelineNote={m.pipelineUsd > 0 ? usd(m.pipelineUsd) : null} />
-        <PlainStat label="Converted this month" value={m.convertedThisMonth}
-          sub={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross sales` : 'No sales collected yet'}
-          accent="#059669" onClick={isAdmin || isManager ? onViewConverted : undefined} cta={isAdmin || isManager ? 'View converted clients' : undefined} />
+      {/* KPI GRID — Sales vs target · Converted · Conversion rate · Collection rate */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiBox icon="💰" iconBg="#f0fdf4" iconColor="#16a34a"
+          label={isAdmin ? 'Sales · company target' : isManager ? 'Sales · team target' : 'Sales · your target'}
+          value={usd(m.scopeAchieved)}
+          pct={m.scopePct != null ? m.scopePct : 0}
+          barColor="#16a34a"
+          foot={m.scopeTarget > 0 ? `${usd(m.scopeRemaining)} to go · ${m.scopePct}%` : 'No target set'}
+          footColor={m.scopeTarget > 0 ? '#c2410c' : '#94a3b8'} />
+        <KpiBox icon="✓" iconBg="#ecfdf5" iconColor="#059669"
+          label="Converted this month" value={m.convertedThisMonth}
+          foot={m.newSalesCount + m.crossSalesCount > 0 ? `${m.newSalesCount} new · ${m.crossSalesCount} cross-sell` : 'No sales collected yet'} />
+        <KpiBox icon="🎯" iconBg="#eff6ff" iconColor="#2563eb"
+          label="Conversion rate" value={rates.conversionRate != null ? `${rates.conversionRate}%` : '—'}
+          pct={rates.conversionRate != null ? rates.conversionRate : 0} barColor="#2563eb"
+          foot={<>{deltaStr(rates.conversionDeltaPts, { unit: 'pts' })} {rates.conversionDenom ? <span className="text-slate-400">· {rates.conversionNum} of {rates.conversionDenom}</span> : null}</>} />
+        <KpiBox icon="🏦" iconBg="#f0fdf4" iconColor="#16a34a"
+          label="Collection rate" value={rates.collectionRate != null ? `${rates.collectionRate}%` : '—'}
+          pct={rates.collectionRate != null ? rates.collectionRate : 0} barColor="#16a34a"
+          foot={`${usd(rates.collectedUsd || 0)} collected · ${usd(rates.awaitingUsd || 0)} awaiting`} />
       </div>
 
-      {/* Missed commitments — scheduled calls and tasks that went past their
+      {/* TODAY — pulse + what needs action, in ONE section. */}
+      <SectionLabel right={<span className="text-[11px] text-slate-400">pulse &amp; what needs action</span>}>Today</SectionLabel>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-5 space-y-4">
+        {/* Pulse row — quiet tiles so the KPI boxes above stay dominant. */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <PulseTile icon="📞" iconColor="#2563eb" value={(pulse.calls && pulse.calls.today) || 0} label="Calls made" delta={pulse.calls && pulse.calls.delta} />
+          <PulseTile icon="✉️" iconColor="#c2410c" value={(pulse.emails && pulse.emails.today) || 0} label="Emails sent" delta={pulse.emails && pulse.emails.delta} />
+          <PulseTile icon="📥" iconColor="#16a34a" value={(pulse.newLeads && pulse.newLeads.today) || 0} label="New leads" delta={pulse.newLeads && pulse.newLeads.delta} />
+          <PulseTile icon="🔀" iconColor="#7c3aed" value={(pulse.transfers && pulse.transfers.today) || 0} label="Call transfers" delta={pulse.transfers && pulse.transfers.delta} />
+        </div>
+        {/* Attention row: Missed commitments + Email activity, side by side. */}
+        <div className="grid md:grid-cols-2 gap-4 items-start">
+        {/* Missed commitments — scheduled calls and tasks that went past their
           agreed time without being completed. Surfaced prominently because a
           missed call is a lead going cold. */}
-      {missed && missed.stillOpen > 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+      {missed && missed.stillOpen > 0 ? (
+        <div className="rounded-xl border border-red-200 bg-red-50/60 p-4">
           <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wide text-red-700">
@@ -678,6 +870,12 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             ))}
           </div>
         </div>
+      ) : (
+        <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-4 flex flex-col items-center justify-center text-center min-h-[120px]">
+          <div className="text-2xl mb-1">✅</div>
+          <div className="text-sm font-bold text-slate-600">No missed commitments</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">All scheduled calls and tasks are on track.</div>
+        </div>
       )}
 
       {/* Unified email notifications: New (inbound awaiting reply, incl. >24h
@@ -689,7 +887,13 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         const notOpenItems = (unopened && unopened.items) || [];
         const openItems = (openedRecently && openedRecently.items) || [];
         const anythingAtAll = newItems.length + notOpenItems.length + openItems.length > 0;
-        if (!anythingAtAll) return null;
+        if (!anythingAtAll) return (
+          <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-4 flex flex-col items-center justify-center text-center min-h-[120px]">
+            <div className="text-2xl mb-1">✉️</div>
+            <div className="text-sm font-bold text-slate-600">Email activity</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">No new, unopened or recently-opened emails.</div>
+          </div>
+        );
         const tabs = [
           { id: 'new', label: 'New email', count: newItems.length, color: '#2563EB', bg: 'bg-blue-50', border: 'border-blue-200', dot: '#2563EB' },
           { id: 'notopen', label: 'Not opened', count: notOpenItems.length, color: '#D97706', bg: 'bg-amber-50', border: 'border-amber-200', dot: '#D97706' },
@@ -697,7 +901,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         ];
         const active = tabs.find((t) => t.id === emailTab) || tabs[0];
         return (
-          <div className={`rounded-2xl border ${active.border} bg-white p-4`}>
+          <div className="rounded-xl border border-slate-200/70 bg-white p-4">
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mr-1">✉️ Email activity</span>
               {tabs.map((t) => {
@@ -763,6 +967,8 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           </div>
         );
       })()}
+        </div>{/* end attention grid */}
+      </div>{/* end combined Today card */}
 
       {missedModal && (
         <MissedCommitmentsModal
@@ -776,6 +982,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
+      <SectionLabel>Lead generation</SectionLabel>
       {/* ROW 2 — Lead generation + sales split + collections */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {me && me.leadGenTarget > 0 ? (
@@ -842,8 +1049,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           accent="#DC2626" onOpenLead={(id) => onViewToday(id)} onSeeAll={() => onViewUntouched(3)} seeAllLabel="View all untouched" />
       </div>
 
-      {/* ROW 4 — Top performer + top team */}
-      <div className="grid md:grid-cols-2 gap-4">
+      <SectionLabel>Recognition</SectionLabel>
+      {/* ROW 4 — Top performer + top team + most conversions + most transferred */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
           <div className="text-[11px] font-bold uppercase tracking-wide text-amber-600">🏆 Top performer of the month</div>
           {topPerformer && topPerformer.salesUsd > 0 ? (
@@ -892,32 +1100,79 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             </>
           ) : <div className="text-sm text-slate-400 mt-2">No team sales yet this month.</div>}
         </div>
+        {/* Most conversions this month */}
+        {recognition.mostConversions ? (
+          <RecognitionBox emoji="🎯" kicker="Most conversions" kColor="#15803d"
+            borderColor="#bbf7d0" bg="linear-gradient(135deg,#f0fdf4,#ecfdf5)"
+            name={recognition.mostConversions.name} src={recognition.mostConversions.avatar} logo={user && user.companyLogo}
+            sub={`${recognition.mostConversions.conversions} client${recognition.mostConversions.conversions === 1 ? '' : 's'} converted`} />
+        ) : (
+          <div className="rounded-2xl border border-green-100 bg-green-50/40 p-5 flex items-center"><div className="text-[11px] font-extrabold uppercase tracking-wide text-green-700">🎯 Most conversions<div className="text-xs font-normal text-slate-400 mt-2 normal-case">No conversions yet this month.</div></div></div>
+        )}
+        {/* Most transferred this month */}
+        {recognition.mostTransferred ? (
+          <RecognitionBox emoji="🔀" kicker="Most transferred" kColor="#7c3aed"
+            borderColor="#ddd6fe" bg="linear-gradient(135deg,#f5f3ff,#faf5ff)"
+            name={recognition.mostTransferred.name} src={recognition.mostTransferred.avatar} logo={user && user.companyLogo}
+            sub={`${recognition.mostTransferred.count} call-back${recognition.mostTransferred.count === 1 ? '' : 's'} transferred`} />
+        ) : (
+          <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-5 flex items-center"><div className="text-[11px] font-extrabold uppercase tracking-wide text-violet-700">🔀 Most transferred<div className="text-xs font-normal text-slate-400 mt-2 normal-case">No transfers yet this month.</div></div></div>
+        )}
       </div>
 
+      <SectionLabel>Performance</SectionLabel>
       {/* ROW 5 — Left: Sales trend + Sales funnel. Right: leaderboard (full height). */}
       <div className="grid lg:grid-cols-2 gap-4 items-start">
         <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-100 p-5">
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-extrabold text-[#050A1F]">Sales trend</h2>
+              <h2 className="text-[15px] font-bold text-slate-900">Sales trend</h2>
               <span className="text-xs text-slate-400">{isAdmin ? 'Company' : isManager ? 'Your team' : 'You'} · 6 months</span>
             </div>
             <TrendChart trend={data.trend} />
           </div>
-          {data.funnel && (
-            <div className="bg-white rounded-2xl border border-slate-100 p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-base font-extrabold text-[#050A1F]">Sales funnel overview</h2>
-                <span className="text-xs text-slate-400">Deals by stage</span>
+          {/* Deals needing a nudge — closing soon, or no activity in 7+ days. */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-[15px] font-bold text-slate-900">🎯 Deals needing a nudge</h2>
+                <div className="text-xs text-slate-400 mt-0.5">Closing soon, or no activity in 7+ days</div>
               </div>
-              <SalesFunnel funnel={data.funnel} />
+              {nudges.length > 0 && <span className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-orange-50 text-orange-700 ring-1 ring-orange-200">{nudges.length} flagged</span>}
             </div>
-          )}
+            {nudges.length === 0 ? (
+              <div className="text-slate-300 text-sm py-6 text-center">Nothing needs chasing right now. 🎉</div>
+            ) : (
+              <div className="space-y-1 max-h-72 overflow-auto">
+                {nudges.map((d) => {
+                  const closing = d.reason === 'closing';
+                  return (
+                    <div key={`${d.leadId}_${d.dealName}`} onClick={() => onViewToday && onViewToday(d.leadId)}
+                      className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-slate-50 cursor-pointer">
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0"
+                        style={{ background: closing ? '#fef3c7' : '#fee2e2', color: closing ? '#92400e' : '#991b1b' }}>{initials(d.client)}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-bold text-slate-900 truncate">{d.client}{d.amountUsd > 0 ? ` · ${usd(d.amountUsd)}` : ''}</div>
+                        <div className="text-[11px] text-slate-400 truncate">
+                          {d.dealName ? `${d.dealName} · ` : ''}{closing ? `closes ${d.closeDate}` : `quiet ${d.quietDays}d`}{(isAdmin || isManager) && d.ownerName ? ` · ${d.ownerName}` : ''}
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[10px] font-bold rounded-full px-2 py-0.5 border"
+                        style={closing ? { background: '#fffbeb', color: '#b45309', borderColor: '#fde68a' } : { background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' }}>
+                        {closing ? 'Closing soon' : 'Stuck'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Sales leaderboard</h2>
-            <button onClick={() => setShowRace(true)} className="text-xs font-bold text-[#FF4500] hover:underline flex items-center gap-1">🏁 Race view</button>
+            <h2 className="text-[15px] font-bold text-slate-900">Sales leaderboard</h2>
+            <button onClick={() => setShowRace(true)} title="Open the full-screen sales race"
+              className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white shadow-sm active:scale-95 transition" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>🏁 Race view</button>
           </div>
           {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No agents yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
         </div>
@@ -925,16 +1180,16 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* ROW 6 — Lead trends: daily this month + 6-month grouped */}
       <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Leads this month</h2>
-            <span className="text-xs text-slate-400">Day by day</span>
+            <h2 className="text-[15px] font-bold text-slate-900">Leads this month</h2>
+            <span className="text-xs text-slate-400">Daily · by source</span>
           </div>
           <LeadDailyChart daily={data.leadDaily} />
         </div>
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Lead trend</h2>
+            <h2 className="text-[15px] font-bold text-slate-900">Lead trend</h2>
             <span className="text-xs text-slate-400">Last 6 months</span>
           </div>
           <LeadMonthlyChart monthly={data.leadMonthly} />
@@ -949,9 +1204,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
       {/* ROW 9 — Transfer leaderboard */}
       {transferBoard.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-100 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-extrabold text-[#050A1F]">Call transfers today</h2>
+            <h2 className="text-[15px] font-bold text-slate-900">Call transfers today</h2>
             <span className="text-xs text-slate-400">Prospects promoted to leads today</span>
           </div>
           <div className="space-y-2">
@@ -984,7 +1239,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           transfer board. Admin-owned leads are kept out of the leaderboard and
           company math; shown here for manual reconciliation. */}
       {isAdmin && data.adminOwnLeads && (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="text-sm font-bold text-[#050A1F] mb-3">My Leads</div>
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl bg-slate-50 p-4">
@@ -1014,7 +1269,7 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-lg font-extrabold text-[#050A1F]">Payments awaiting collection</h3>
+                <h3 className="text-lg font-bold text-slate-900">Payments awaiting collection</h3>
                 <div className="text-xs text-slate-400">{awaiting.length} pending · {usd(m.awaitingUsd)} total</div>
               </div>
               <button onClick={() => setShowAwaiting(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
@@ -1070,19 +1325,20 @@ function LeadManagerDashboard({ user, onViewToday }) {
   const maxMonth = Math.max(1, ...data.teamLeaderboard.map((t) => t.month));
 
   const Stat = ({ label, value, sub, accent }) => (
-    <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
-      <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="text-3xl font-extrabold mt-1" style={{ color: accent || '#050A1F' }}>{value}</div>
-      {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+    <div className="relative overflow-hidden bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none" style={{ background: (accent || '#64748b') + '0d' }}></div>
+      <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: accent || '#64748b' }}>{label}</div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2" style={{ color: accent || '#0f172a' }}>{value}</div>
+      {sub && <div className="text-xs text-slate-400 mt-2">{sub}</div>}
     </div>
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6" style={{ fontFamily: DB_FONT }}>
       <DashboardGmailNotice />
       <div>
-        <h1 className="text-2xl font-extrabold text-[#050A1F]">Welcome, {user.name.split(' ')[0]}</h1>
-        <div className="text-sm text-slate-400">Lead intake and pre-sales team performance.</div>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Welcome, {user.name.split(' ')[0]}</h1>
+        <div className="text-sm text-slate-500 mt-1">Lead intake and pre-sales team performance.</div>
       </div>
 
       {/* Blocks 1, 2 + throughput */}
@@ -1095,7 +1351,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
 
       <div className="grid lg:grid-cols-2 gap-5">
         {/* Block 3: today's / recent leads */}
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="text-sm font-bold text-[#050A1F] mb-3">Recently added leads</div>
           {data.recentLeads.length === 0 ? (
             <div className="text-slate-300 text-sm py-6 text-center">No leads entered yet.</div>
@@ -1118,7 +1374,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
         </div>
 
         {/* Block 4: 1st drafts received */}
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-bold text-[#050A1F]">1st drafts received</div>
             {data.recentDrafts.length > 0 && (
@@ -1145,7 +1401,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
       </div>
 
       {/* Block 7: daily lead-gen trend */}
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
         <div className="text-sm font-bold text-[#050A1F] mb-3">Lead trends · this month</div>
         {m.teamMonth === 0 ? (
           <div className="text-slate-300 text-sm py-8 text-center">No pre-sales leads generated yet this month.</div>
@@ -1169,7 +1425,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
 
       <div className="grid lg:grid-cols-2 gap-5">
         {/* Block 5: leads assigned per owner, today and this month. */}
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="text-sm font-bold text-[#050A1F] mb-3">Leads assigned</div>
           {data.assignmentTable.length === 0 ? (
             <div className="text-slate-300 text-sm py-6 text-center">Nothing assigned yet.</div>
@@ -1196,7 +1452,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
         </div>
 
         {/* Blocks 6 + 8: team performance and leaderboard */}
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="flex items-baseline justify-between mb-3">
             <div className="text-sm font-bold text-[#050A1F]">Pre-sales team · this month</div>
             {m.teamMonthlyTarget > 0 && (
@@ -1240,7 +1496,7 @@ function LeadManagerDashboard({ user, onViewToday }) {
           share of the month's team total. Gives the lead manager the detail
           behind the leaderboard bars. */}
       {data.teamConfigured > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
           <div className="text-sm font-bold text-[#050A1F] mb-3">Team member breakdown</div>
           <table className="w-full text-xs">
             <thead>
@@ -1301,7 +1557,7 @@ function PresalesTeamBlocks({ pt }) {
   const teamPct = pt.teamMonthlyTarget > 0 ? Math.min(100, Math.round((pt.teamMonth / pt.teamMonthlyTarget) * 100)) : 0;
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
         <div className="flex items-baseline justify-between mb-3">
           <div className="text-sm font-bold text-[#050A1F]">Lead Assigned · Pre-sales team · this month</div>
           {pt.teamMonthlyTarget > 0 && (
@@ -1335,7 +1591,7 @@ function PresalesTeamBlocks({ pt }) {
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
         <div className="text-sm font-bold text-[#050A1F] mb-1">Pre-sales Team member breakdown</div>
         <div className="text-[11px] text-slate-400 mb-3">Quality = leads this month that are not Not-interested, Cold or Released. Converted = leads this month that became clients.</div>
         <div className="overflow-x-auto">
@@ -1411,7 +1667,7 @@ function DraftsReceivedModal({ onClose, onOpen }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
-          <div className="text-base font-extrabold text-[#050A1F]">All drafts received</div>
+          <div className="text-[15px] font-bold text-slate-900">All drafts received</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
         <div className="px-6 py-4">
@@ -1624,7 +1880,7 @@ export function EmailDraftsPage({ user, onOpenLead }) {
   const pageRows = rows.slice((page - 1) * perPage, page * perPage);
 
   const Box = ({ label, value, accent }) => (
-    <div className="bg-white rounded-2xl border border-slate-200/70 p-4">
+    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4">
       <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
       <div className="text-2xl font-extrabold mt-1" style={{ color: accent || '#050A1F' }}>{value}</div>
     </div>
@@ -1681,7 +1937,7 @@ export function EmailDraftsPage({ user, onOpenLead }) {
         <div className="text-xs text-slate-400 ml-auto self-center">{rows.length} shown</div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200/70 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
         {rows.length === 0 ? (
           <div className="text-slate-300 text-sm py-8 text-center">{allRows.length === 0 ? `No ${tab === 'first' ? 'first replies' : 'reminders'} submitted yet.` : 'No rows match these filters.'}</div>
         ) : (
@@ -1789,7 +2045,7 @@ function LeadPeekModal({ row, onClose, onMore }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <div className="text-base font-extrabold text-[#050A1F] mb-3">{row.name || '(no name)'}</div>
+        <div className="text-[15px] font-bold text-slate-900 mb-3">{row.name || '(no name)'}</div>
         <div className="space-y-0.5">
           <Item k="Owner" v={row.ownerName} />
           <Item k="Website" v={row.website} />
@@ -1824,7 +2080,7 @@ function MissedCommitmentsModal({ items, byOwner, initialOwnerId, isAdmin, onDis
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()} style={{ fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
           <div>
-            <div className="text-base font-extrabold text-[#050A1F]">⚠️ Missed commitments</div>
+            <div className="text-[15px] font-bold text-slate-900">⚠️ Missed commitments</div>
             <div className="text-[11px] text-slate-400">{filtered.length} open · scheduled calls, tasks and unsubmitted drafts past due</div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>

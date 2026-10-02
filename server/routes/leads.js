@@ -1050,11 +1050,11 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     //    generated (handled separately, since it carries transferredAt).
     const isAssignedSource = (s) => /pre[\s-]?sales|referral|partner|inbound/i.test(String(s || ''));
     const isGeneratedSource = (s) => /cold[\s-]?call|ads?\s*&?\s*marketing|marketing/i.test(String(s || ''));
-    let leadsGeneratedMonthTotal = 0, leadsPresalesMonth = 0, leadsColdMonth = 0;
+    let leadsGeneratedMonthTotal = 0, leadsPresalesMonth = 0, leadsColdMonth = 0, leadsTransferredMonth = 0;
     let leadsAssignedMonthTotal = 0;
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const leadDaily = Array.from({ length: daysInMonth }, (_, i) => ({
-      day: i + 1, total: 0, presales: 0, cold: 0,
+      day: i + 1, total: 0, presales: 0, cold: 0, transferred: 0,
     }));
     const leadMonthly = [];
     for (let i = 5; i >= 0; i--) {
@@ -1062,7 +1062,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       leadMonthly.push({
         month: ms.toLocaleString('en-US', { month: 'short' }), year: ms.getFullYear(),
         start: ms, end: new Date(now.getFullYear(), now.getMonth() - i + 1, 1),
-        total: 0, presales: 0, cold: 0,
+        total: 0, presales: 0, cold: 0, transferred: 0,
       });
     }
 
@@ -1083,16 +1083,22 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
 
       const pres = isPresales(l.leadSource) || isPresales(l.generatedBy);
       const cold = isColdCall(l.leadSource) || isColdCall(l.generatedBy);
+      // A "transferred" lead for the lead-generation split is one promoted from a
+      // call-back to a worked lead (it carries transferredAt). This is a third
+      // generation source alongside pre-sales and cold-calling.
+      const transferredSrc = !!l.transferredAt;
 
       if (genAtMonth && genAtMonth >= startOfMonth) {
         leadsGeneratedMonthTotal++;
         if (pres) leadsPresalesMonth++;
         if (cold) leadsColdMonth++;
+        if (transferredSrc) leadsTransferredMonth++;
         const dIdx = genAtMonth.getDate() - 1;
         if (leadDaily[dIdx]) {
           leadDaily[dIdx].total++;
           if (pres) leadDaily[dIdx].presales++;
           if (cold) leadDaily[dIdx].cold++;
+          if (transferredSrc) leadDaily[dIdx].transferred++;
         }
       }
       if (created) {
@@ -1101,6 +1107,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
             b.total++;
             if (pres) b.presales++;
             if (cold) b.cold++;
+            if (transferredSrc) b.transferred++;
             break;
           }
         }
@@ -1730,10 +1737,212 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       }
     }
 
+    // ------------------------------------------------------------------
+    // v604 dashboard-redesign additions. Everything below is computed from the
+    // SAME viewer-scoped data as the figures above, so admin / manager / agent
+    // each see only what they're entitled to:
+    //   • admin   → company-wide (scoped leads = all)
+    //   • manager → their team's leads + activity
+    //   • agent   → their own leads + activity
+    // ------------------------------------------------------------------
+    const { CallLog, LeadEmail } = require('../models');
+    // Yesterday's business-day window and last month's window, for deltas.
+    const startOfYesterday = new Date(bnd.startOfDayMs - 24 * 60 * 60 * 1000);
+    const lastMonthB = SP.monthBoundaries(now.getTime(), cutoff, 1);
+    const lastMonthStart = new Date(lastMonthB.startMs);
+    const lastMonthEnd = new Date(lastMonthB.endMs);
+
+    // Owner ids this viewer is entitled to see activity for. Derived from the
+    // same `inScope` test the leaderboard uses, so it's identical role scoping.
+    const scopeUserIds = owners.filter((u) => inScope(u)).map((u) => u.id);
+    const scopeIdSet = new Set(scopeUserIds);
+
+    // --- Today's pulse: calls & emails (today + yesterday), scoped. ---
+    let callsToday = 0, callsYday = 0, emailsToday = 0, emailsYday = 0;
+    try {
+      const calls = await CallLog.findAll({ where: { startTime: { [Op.gte]: startOfYesterday } }, attributes: ['agentId', 'startTime'] });
+      calls.forEach((c) => {
+        if (!scopeIdSet.has(c.agentId)) return;
+        const t = new Date(c.startTime);
+        if (t >= startOfDay) callsToday++;
+        else if (t >= startOfYesterday) callsYday++;
+      });
+      const emails = await LeadEmail.findAll({ where: { direction: 'outbound', isDraft: { [Op.not]: true }, sentAt: { [Op.gte]: startOfYesterday } }, attributes: ['userId', 'sentAt'] });
+      emails.forEach((e) => {
+        if (!scopeIdSet.has(e.userId)) return;
+        const t = new Date(e.sentAt);
+        if (t >= startOfDay) emailsToday++;
+        else if (t >= startOfYesterday) emailsYday++;
+      });
+    } catch (e) { /* activity is best-effort; tiles fall back to 0 */ }
+
+    // --- Today's pulse: new leads today vs yesterday, and transfers today vs
+    // yesterday — all from the scoped `leads` set. ---
+    let newLeadsToday = 0, newLeadsYday = 0, transfersToday = 0, transfersYday = 0;
+    for (const l of leads) {
+      const genAt = l.generatedAt ? new Date(l.generatedAt) : (l.createdAt ? new Date(l.createdAt) : null);
+      if (genAt) {
+        if (genAt >= startOfDay) newLeadsToday++;
+        else if (genAt >= startOfYesterday) newLeadsYday++;
+      }
+      if (l.transferredAt) {
+        const t = new Date(l.transferredAt);
+        if (t >= startOfDay) transfersToday++;
+        else if (t >= startOfYesterday) transfersYday++;
+      }
+    }
+
+    // --- Hero / KPI deltas: last-month collected sales, converted count, and
+    // leads generated — within scope — so month-over-month arrows are real. ---
+    let lastMonthSalesUsd = 0, lastMonthConverted = 0, lastMonthLeads = 0;
+    for (const l of leads) {
+      // Converted last month
+      if (l.status === 'converted' && l.convertedAt) {
+        const cAt = new Date(l.convertedAt);
+        if (!Number.isNaN(cAt.getTime()) && cAt >= lastMonthStart && cAt < lastMonthEnd) lastMonthConverted++;
+      }
+      // Leads generated last month
+      const genAtM = l.generatedAt ? new Date(l.generatedAt) : (l.createdAt ? new Date(l.createdAt) : null);
+      if (genAtM && genAtM >= lastMonthStart && genAtM < lastMonthEnd) lastMonthLeads++;
+      // Collected last month (skip admin-owned for non-admin viewers, same as
+      // the current-month figure).
+      if (isAdminOwned(l.ownerId)) continue;
+      const wonDeals = (l.deals || []).filter((d) => d.stage === 'closed_won');
+      wonDeals.forEach((d) => {
+        const insts = (d.installments || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+        insts.forEach((it) => {
+          if (!it.paid || !it.paidDate) return;
+          if (it.recurring && Number(it.seq || 0) > 1) return;
+          const pd = new Date(SP.saleMs(it, d));
+          if (pd >= lastMonthStart && pd < lastMonthEnd) lastMonthSalesUsd += toUsd(it.amount, d.currency);
+        });
+      });
+    }
+    // For an admin viewer the "collected" headline figure is team sales (admin-
+    // owned excluded), so compare last month on the same basis. Non-admins
+    // already exclude admin-owned above, so salesThisMonthUsd is the right base.
+    const collectedThisMonth = viewerIsAdmin ? teamSalesUsd : salesThisMonthUsd;
+
+    // --- Conversion rate (this month vs last month). Worked leads = leads that
+    // reached a real working status this month (we approximate with all scoped
+    // leads generated this month as the denominator for a stable rate). ---
+    const convDenomThisMonth = leadsGeneratedMonthTotal;
+    const conversionRate = convDenomThisMonth > 0 ? (convertedThisMonth / convDenomThisMonth) * 100 : null;
+    const convDenomLastMonth = lastMonthLeads;
+    const conversionRateLast = convDenomLastMonth > 0 ? (lastMonthConverted / convDenomLastMonth) * 100 : null;
+
+    // --- Collection rate = collected / (collected + awaiting), within scope. ---
+    const collBase = viewerIsAdmin ? teamSalesUsd : salesThisMonthUsd;
+    const collAwaiting = viewerIsAdmin ? teamAwaitingUsd : awaitingUsd;
+    const collectionRate = (collBase + collAwaiting) > 0 ? (collBase / (collBase + collAwaiting)) * 100 : null;
+
+    // --- Most-transferred person THIS MONTH (for the Recognition box). Built
+    // from the scoped leads' transferredBy, counting transfers dated this
+    // month. Agents only see their own scope, so this is role-correct. ---
+    const transferMonthBy = {};
+    for (const l of leads) {
+      if (l.transferredAt && l.transferredById) {
+        const t = new Date(l.transferredAt);
+        if (t >= startOfMonth) {
+          transferMonthBy[l.transferredById] = transferMonthBy[l.transferredById]
+            || { ownerId: l.transferredById, name: l.transferredByName || nameById[l.transferredById] || 'Unknown', count: 0 };
+          transferMonthBy[l.transferredById].count++;
+        }
+      }
+    }
+    const mostTransferred = Object.values(transferMonthBy).sort((a, b) => b.count - a.count)[0] || null;
+    if (mostTransferred) mostTransferred.avatar = avatarById[mostTransferred.ownerId] || null;
+
+    // --- Most conversions THIS MONTH (for the Recognition box). From the
+    // company leaderboard when available (company-wide, like top performer),
+    // else from the scoped byOwner tally. ---
+    const convSource = (companyLeaderboard && companyLeaderboard.length)
+      ? companyLeaderboard.filter((o) => o.role !== 'admin' || viewerIsAdmin)
+      : Object.values(byOwner);
+    const mostConversions = convSource
+      .filter((o) => (o.conversions || 0) > 0)
+      .sort((a, b) => (b.conversions || 0) - (a.conversions || 0))[0] || null;
+
+    // --- Deals needing a nudge: open deals that are either closing within 5
+    // days or have had no activity on the lead for 7+ days. Scoped. ---
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const fiveDaysAhead = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dealsNeedingNudge = [];
+    for (const l of leads) {
+      if (l.status === 'callback' || l.status === 'converted' || l.status === 'lost') continue;
+      if (isAdminOwned(l.ownerId)) continue;
+      const lastAct = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
+      for (const d of (l.deals || [])) {
+        if (d.stage === 'closed_won' || d.stage === 'closed_lost') continue;
+        const closeDate = d.expectedClose || null;
+        const closingSoon = closeDate && closeDate >= todayStr && new Date(closeDate) <= fiveDaysAhead;
+        const stale = lastAct && lastAct < sevenDaysAgo && !hasPendingFutureActivity(l);
+        if (!closingSoon && !stale) continue;
+        const quietDays = lastAct ? Math.floor((Date.now() - lastAct.getTime()) / (24 * 60 * 60 * 1000)) : null;
+        dealsNeedingNudge.push({
+          leadId: l.id,
+          client: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
+          dealName: d.name || '', amountUsd: Math.round(toUsd(d.amount, d.currency)),
+          stage: d.stage, closeDate: closeDate || null,
+          ownerName: l.ownerName,
+          reason: closingSoon ? 'closing' : 'stale',
+          quietDays,
+        });
+      }
+    }
+    // Closing-soon first, then the stalest; cap the list.
+    dealsNeedingNudge.sort((a, b) => {
+      if (a.reason !== b.reason) return a.reason === 'closing' ? -1 : 1;
+      if (a.reason === 'closing') return String(a.closeDate).localeCompare(String(b.closeDate));
+      return (b.quietDays || 0) - (a.quietDays || 0);
+    });
+    const dealsNeedingNudgeList = dealsNeedingNudge.slice(0, 10);
+
+    const pct1 = (v) => (v === null || v === undefined) ? null : Math.round(v * 10) / 10;
+
     res.json({
       role: req.user.role,
+      // v604: today's pulse, hero/KPI deltas, rates, recognition extras,
+      // deals-needing-a-nudge. All role-scoped (see block above).
+      pulse: {
+        calls: { today: callsToday, yesterday: callsYday, delta: callsToday - callsYday },
+        emails: { today: emailsToday, yesterday: emailsYday, delta: emailsToday - emailsYday },
+        newLeads: { today: newLeadsToday, yesterday: newLeadsYday, delta: newLeadsToday - newLeadsYday },
+        transfers: { today: transfersToday, yesterday: transfersYday, delta: transfersToday - transfersYday },
+      },
+      deltas: {
+        collectedThisMonthUsd: Math.round(collectedThisMonth),
+        collectedLastMonthUsd: Math.round(lastMonthSalesUsd),
+        collectedDeltaPct: lastMonthSalesUsd > 0
+          ? Math.round(((collectedThisMonth - lastMonthSalesUsd) / lastMonthSalesUsd) * 100) : null,
+        convertedThisMonth, convertedLastMonth: lastMonthConverted,
+        convertedDelta: convertedThisMonth - lastMonthConverted,
+        leadsThisMonth: leadsGeneratedMonthTotal, leadsLastMonth: lastMonthLeads,
+        leadsDeltaPct: lastMonthLeads > 0
+          ? Math.round(((leadsGeneratedMonthTotal - lastMonthLeads) / lastMonthLeads) * 100) : null,
+      },
+      rates: {
+        conversionRate: pct1(conversionRate),
+        conversionRateLast: pct1(conversionRateLast),
+        conversionDeltaPts: (conversionRate !== null && conversionRateLast !== null)
+          ? pct1(conversionRate - conversionRateLast) : null,
+        conversionNum: convertedThisMonth, conversionDenom: convDenomThisMonth,
+        collectionRate: pct1(collectionRate),
+        collectedUsd: Math.round(collBase), awaitingUsd: Math.round(collAwaiting),
+      },
+      recognition: {
+        mostConversions: mostConversions ? {
+          ownerId: mostConversions.ownerId, name: mostConversions.name,
+          conversions: mostConversions.conversions || 0,
+          avatar: avatarById[mostConversions.ownerId] || null,
+        } : null,
+        mostTransferred: mostTransferred || null,
+      },
+      dealsNeedingNudge: dealsNeedingNudgeList,
       metrics: {
         totalLeads, generatedToday, assignedToday, untouched,
+        leadsTransferredMonth,
         salesThisMonthUsd: Math.round(salesThisMonthUsd), convertedThisMonth,
         pipelineUsd: Math.round(pipelineUsd),
         awaitingUsd: Math.round(awaitingUsd),
@@ -1806,7 +2015,7 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       dueToday: awaitingList.filter((a) => a.dueDate === new Date().toISOString().slice(0, 10))
         .sort((a, b) => String(a.ownerName).localeCompare(String(b.ownerName))),
       leadDaily,
-      leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold })),
+      leadMonthly: leadMonthly.map((b) => ({ month: b.month, year: b.year, total: b.total, presales: b.presales, cold: b.cold, transferred: b.transferred })),
     });
   } catch (e) { next(e); }
 });
