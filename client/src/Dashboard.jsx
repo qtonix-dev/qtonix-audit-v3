@@ -1083,9 +1083,10 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
-      {/* INTAKE — today's leads + untouched 3+ days (only). */}
+      {/* INTAKE — today's leads + untouched 3+ days (only). items-start so each
+          card is only as tall as its own content (no stretched blank space). */}
       <SectionLabel>Intake</SectionLabel>
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid md:grid-cols-2 gap-4 items-start">
         {(() => {
           const todayItems = [...(lists.generatedToday || []), ...(lists.assignedToday || [])];
           const hasToday = todayItems.length > 0;
@@ -1163,18 +1164,26 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             </>
           ) : <div className="text-sm text-slate-400 mt-2">No team sales yet this month.</div>}
         </div>
-        {/* Most conversions this month */}
-        {/* Most conversions — the new conversions done this month (count). */}
-        <div className="relative overflow-hidden rounded-2xl p-4 border" style={{ borderColor: '#bbf7d0', background: 'linear-gradient(135deg,#f0fdf4,#ecfdf5)' }}>
-          <div className="text-[10px] font-extrabold uppercase tracking-wide" style={{ color: '#15803d' }}>🎯 Most conversions</div>
-          <div className="flex items-center gap-3 mt-2.5">
-            <div className="w-10 h-10 rounded-[13px] flex items-center justify-center text-[18px]" style={{ background: '#ccfbf1', color: '#115e59' }}>✓</div>
-            <div className="min-w-0">
-              <div className="text-2xl font-extrabold text-slate-900 leading-none">{m.convertedThisMonth || 0}</div>
-              <div className="text-[11px] text-slate-500 mt-1">new conversion{(m.convertedThisMonth || 0) === 1 ? '' : 's'} this month</div>
+        {/* Most conversions — the new conversions done this month (count). When
+            there are none, show the same muted empty state as the sibling boxes
+            so the four cards read consistently. */}
+        {(m.convertedThisMonth || 0) > 0 ? (
+          <div className="relative overflow-hidden rounded-2xl p-5 border" style={{ borderColor: '#bbf7d0', background: 'linear-gradient(135deg,#f0fdf4,#ecfdf5)' }}>
+            <div className="text-[11px] font-extrabold uppercase tracking-wide" style={{ color: '#15803d' }}>🎯 Most conversions</div>
+            <div className="flex items-center gap-3 mt-2">
+              <div className="w-10 h-10 rounded-[13px] flex items-center justify-center text-[18px]" style={{ background: '#ccfbf1', color: '#115e59' }}>✓</div>
+              <div className="min-w-0">
+                <div className="text-2xl font-extrabold text-slate-900 leading-none">{m.convertedThisMonth}</div>
+                <div className="text-[11px] text-slate-500 mt-1">new conversion{m.convertedThisMonth === 1 ? '' : 's'} this month</div>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-2xl border border-green-100 bg-green-50/40 p-5">
+            <div className="text-[11px] font-extrabold uppercase tracking-wide text-green-700">🎯 Most conversions</div>
+            <div className="text-sm text-slate-400 mt-2">No conversions yet this month.</div>
+          </div>
+        )}
         {/* Most transferred this month */}
         {recognition.mostTransferred ? (
           <RecognitionBox emoji="🔀" kicker="Most transferred" kColor="#7c3aed"
