@@ -1758,6 +1758,9 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
     const lastMonthB = SP.monthBoundaries(now.getTime(), cutoff, 1);
     const lastMonthStart = new Date(lastMonthB.startMs);
     const lastMonthEnd = new Date(lastMonthB.endMs);
+    // Calendar day-of-month in IST (UTC+5:30) — drives the "compare from the
+    // 15th" rule for the hero deltas.
+    const istDayOfMonth = new Date(now.getTime() + 5.5 * 60 * 60 * 1000).getUTCDate();
 
     // Owner ids this viewer is entitled to see activity for. Derived from the
     // same `inScope` test the leaderboard uses, so it's identical role scoping.
@@ -1870,41 +1873,44 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
       .filter((o) => (o.conversions || 0) > 0)
       .sort((a, b) => (b.conversions || 0) - (a.conversions || 0))[0] || null;
 
-    // --- Deals needing a nudge: open deals that are either closing within 5
-    // days or have had no activity on the lead for 7+ days. Scoped. ---
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const fiveDaysAhead = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    // --- Deals needing a nudge: EVERY open deal (not won/lost), with how long
+    // it has sat unchanged. "Unchanged" = days since the most recent of the
+    // deal's own last change (updatedAt / wonAt / createdAt) and the lead's last
+    // activity (call/email/note) — whichever happened more recently. Scoped;
+    // admin-owned excluded for non-admin viewers. Stalest first. ---
+    const DAY_MS = 24 * 60 * 60 * 1000;
     const todayStr = new Date().toISOString().slice(0, 10);
     const dealsNeedingNudge = [];
     for (const l of leads) {
       if (l.status === 'callback' || l.status === 'converted' || l.status === 'lost') continue;
       if (isAdminOwned(l.ownerId)) continue;
-      const lastAct = l.lastActivityAt ? new Date(l.lastActivityAt) : null;
+      const leadActMs = l.lastActivityAt ? new Date(l.lastActivityAt).getTime() : 0;
       for (const d of (l.deals || [])) {
         if (d.stage === 'closed_won' || d.stage === 'closed_lost') continue;
+        // Deal's own last-change timestamp: prefer updatedAt, then wonAt, then
+        // createdAt (legacy deals may carry only some of these).
+        const dealChangeMs = Math.max(
+          d.updatedAt ? new Date(d.updatedAt).getTime() : 0,
+          d.wonAt ? new Date(d.wonAt).getTime() : 0,
+          d.createdAt ? new Date(d.createdAt).getTime() : 0,
+        );
+        // Most recent of deal-change and lead-activity = last time anything moved.
+        const lastChangeMs = Math.max(dealChangeMs, leadActMs);
+        const unchangedDays = lastChangeMs > 0 ? Math.floor((Date.now() - lastChangeMs) / DAY_MS) : null;
         const closeDate = d.expectedClose || null;
-        const closingSoon = closeDate && closeDate >= todayStr && new Date(closeDate) <= fiveDaysAhead;
-        const stale = lastAct && lastAct < sevenDaysAgo && !hasPendingFutureActivity(l);
-        if (!closingSoon && !stale) continue;
-        const quietDays = lastAct ? Math.floor((Date.now() - lastAct.getTime()) / (24 * 60 * 60 * 1000)) : null;
         dealsNeedingNudge.push({
           leadId: l.id,
           client: `${l.firstName || ''} ${l.lastName || ''}`.trim() || '(no name)',
           dealName: d.name || '', amountUsd: Math.round(toUsd(d.amount, d.currency)),
-          stage: d.stage, closeDate: closeDate || null,
+          stage: d.stage, stageLabel: d.stageLabel || d.stage || '', closeDate: closeDate || null,
           ownerName: l.ownerName,
-          reason: closingSoon ? 'closing' : 'stale',
-          quietDays,
+          unchangedDays,
         });
       }
     }
-    // Closing-soon first, then the stalest; cap the list.
-    dealsNeedingNudge.sort((a, b) => {
-      if (a.reason !== b.reason) return a.reason === 'closing' ? -1 : 1;
-      if (a.reason === 'closing') return String(a.closeDate).localeCompare(String(b.closeDate));
-      return (b.quietDays || 0) - (a.quietDays || 0);
-    });
-    const dealsNeedingNudgeList = dealsNeedingNudge.slice(0, 10);
+    // Stalest first (longest unchanged at the top); unknown ages last.
+    dealsNeedingNudge.sort((a, b) => (b.unchangedDays == null ? -1 : b.unchangedDays) - (a.unchangedDays == null ? -1 : a.unchangedDays));
+    const dealsNeedingNudgeList = dealsNeedingNudge.slice(0, 50);
 
     const pct1 = (v) => (v === null || v === undefined) ? null : Math.round(v * 10) / 10;
 
@@ -1919,6 +1925,10 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         transfers: { today: transfersToday, yesterday: transfersYday, delta: transfersToday - transfersYday },
       },
       deltas: {
+        // Before the 15th of the month (IST), month-over-month comparisons are
+        // noisy (too little of the month elapsed), so the UI shows "this month so
+        // far" instead of a vs-last-month delta. From the 15th on, compare.
+        compareLastMonth: istDayOfMonth >= 15,
         collectedThisMonthUsd: Math.round(collectedThisMonth),
         collectedLastMonthUsd: Math.round(lastMonthSalesUsd),
         collectedDeltaPct: lastMonthSalesUsd > 0
@@ -3506,6 +3516,9 @@ router.patch('/:id/deals/:dealId', requireAuth, async (req, res, next) => {
     if (!deal) return res.status(404).json({ error: 'Deal not found.' });
     const b = req.body || {};
     const before = deal.stage;
+    // Stamp the deal's own last-change time so the dashboard "unchanged for N
+    // days" age is accurate for deal edits (not just lead activity).
+    deal.updatedAt = new Date().toISOString();
     const isYmd2 = (v) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return false; const d = new Date(`${v}T00:00:00Z`); return !Number.isNaN(d.getTime()) && String(v) === d.toISOString().slice(0, 10); };
     for (const f of ['name', 'stage', 'currency', 'expectedClose', 'service', 'remark', 'planType', 'planDuration']) if (b[f] !== undefined) deal[f] = String(b[f]).slice(0, 2000);
     if (b.expectedClose !== undefined && b.expectedClose !== '' && !isYmd2(b.expectedClose)) return res.status(400).json({ error: 'Invalid expectedClose. Use a valid YYYY-MM-DD date.' });

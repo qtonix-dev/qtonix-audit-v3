@@ -188,7 +188,7 @@ function LeadMiniList({ title, count, target, items, accent, onOpenLead, onSeeAl
       {items.length === 0 ? (
         <div className="text-slate-300 text-sm py-6 text-center">Nothing here yet.</div>
       ) : (
-        <div className="divide-y divide-slate-50 overflow-auto" style={{ minHeight: 250, maxHeight: 250 }}>
+        <div className="divide-y divide-slate-50 overflow-y-auto overflow-x-hidden" style={{ maxHeight: 250 }}>
           {emptyHint && <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-1">{emptyHint}</div>}
           {items.map((l) => {
             const today = isTodayIso(l.at);
@@ -594,6 +594,8 @@ const deltaStr = (n, { pct = false, unit = '' } = {}) => {
 // Dark hero band with month-over-month headline figures.
 function DashHero({ greeting, name, scopeLabel, deltas }) {
   const d = deltas || {};
+  const cmp = !!d.compareLastMonth; // before the 15th this is false → "this month so far"
+  const soFar = <span className="text-slate-400">this month so far</span>;
   return (
     <div className="relative overflow-hidden rounded-3xl p-6 sm:p-7 text-white"
       style={{ background: 'radial-gradient(900px 300px at 85% -40%, #fb923c55, transparent), linear-gradient(120deg,#0b1020,#111a33)' }}>
@@ -605,7 +607,7 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
           <div className="min-w-[108px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Collected</div>
             <div className="text-2xl font-extrabold mt-0.5">{usd(d.collectedThisMonthUsd || 0)}</div>
-            <div className="text-[11px] mt-0.5">{deltaStr(d.collectedDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+            <div className="text-[11px] mt-0.5">{cmp ? <>{deltaStr(d.collectedDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></> : soFar}</div>
           </div>
           <div className="min-w-[108px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Target</div>
@@ -615,12 +617,12 @@ function DashHero({ greeting, name, scopeLabel, deltas }) {
           <div className="min-w-[88px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Converted</div>
             <div className="text-2xl font-extrabold mt-0.5">{d.convertedThisMonth || 0}</div>
-            <div className="text-[11px] mt-0.5">{deltaStr(d.convertedDelta) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+            <div className="text-[11px] mt-0.5">{cmp ? <>{deltaStr(d.convertedDelta) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></> : soFar}</div>
           </div>
           <div className="min-w-[88px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Leads</div>
             <div className="text-2xl font-extrabold mt-0.5">{d.leadsThisMonth || 0}</div>
-            <div className="text-[11px] mt-0.5">{deltaStr(d.leadsDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></div>
+            <div className="text-[11px] mt-0.5">{cmp ? <>{deltaStr(d.leadsDeltaPct, { pct: true }) || <span className="text-slate-400">—</span>} <span className="text-slate-400">vs last mo</span></> : soFar}</div>
           </div>
           <div className="min-w-[88px]">
             <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Pipeline</div>
@@ -849,14 +851,22 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
           missed call is a lead going cold. */}
       {missed && missed.stillOpen > 0 ? (
         <div className="rounded-xl border border-slate-200/70 bg-white p-4">
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <div>
+          {/* Header: title on the left; overdue count + View all grouped on the
+              right with clear spacing so they never overlap. */}
+          <div className="flex items-start justify-between gap-3 mb-2.5">
+            <div className="min-w-0">
               <div className="text-[14px] font-bold text-slate-900">⚠️ Missed commitments</div>
               <div className="text-[11px] text-slate-400">Calls &amp; tasks past their agreed time</div>
             </div>
-            <span className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-red-50 text-red-700 ring-1 ring-red-200">{missed.stillOpen} overdue</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-red-50 text-red-700 ring-1 ring-red-200 whitespace-nowrap">{missed.stillOpen} overdue</span>
+              {(isAdmin || isManager) && (
+                <button onClick={() => setMissedModal({ ownerId: null })}
+                  className="text-[11px] font-bold text-orange-700 bg-orange-50 ring-1 ring-orange-200 rounded-full px-2.5 py-0.5 hover:bg-orange-100 whitespace-nowrap">View all →</button>
+              )}
+            </div>
           </div>
-          {/* Top filter tabs: All + per-owner, plus View all (admins & managers). */}
+          {/* Per-owner filter tabs (its own row, so nothing crowds the header). */}
           {(isAdmin || isManager) && missed.byOwner.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
               <button onClick={() => setMissedFilter(null)}
@@ -867,11 +877,9 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                   {o.ownerName} · {o.missed}
                 </button>
               ))}
-              <button onClick={() => setMissedModal({ ownerId: null })}
-                className="ml-auto rounded-full px-2.5 py-1 text-[10px] font-bold text-orange-700 bg-orange-50 ring-1 ring-orange-200 hover:bg-orange-100">View all →</button>
             </div>
           )}
-          <div className="space-y-1.5 max-h-56 overflow-auto">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden">
             {missed.items
               .filter((i) => !i.resolved)
               .filter((i) => missedFilter == null || i.ownerId === missedFilter)
@@ -881,9 +889,11 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
                 <div className="min-w-0 flex-1 cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId)}>
                   <div className="text-[13px] font-bold text-slate-900 truncate">{i.kind === 'call' ? 'Call' : i.kind === 'draft' ? 'Draft' : 'Task'} · {i.leadName}</div>
                   <div className="text-[11px] text-slate-400 truncate">
-                    {i.title ? `${i.title} · ` : ''}{i.hoursLate}h overdue{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}
+                    {i.title ? i.title : (i.kind === 'call' ? 'Scheduled call' : 'Task')}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}
                   </div>
                 </div>
+                {/* Overdue time is its own always-visible chip (never hidden). */}
+                <span className="shrink-0 text-[11px] font-extrabold text-red-600 bg-red-50 rounded-md px-2 py-1 whitespace-nowrap">{i.hoursLate}h late</span>
                 <button onClick={() => onViewToday && onViewToday(i.leadId)}
                   className="shrink-0 rounded-lg bg-slate-900 text-white px-3 py-1.5 text-[11px] font-bold hover:bg-slate-700 transition">Open</button>
                 {user.role === 'admin' && (
@@ -944,21 +954,23 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               })}
             </div>
 
-            <div className="space-y-1 max-h-52 overflow-auto">
+            <div className="space-y-1.5 max-h-60 overflow-y-auto overflow-x-hidden">
               {emailTab === 'new' && (newItems.length === 0
                 ? <Empty text="No new emails awaiting a reply." />
                 : newItems.slice(0, 12).map((i) => {
                     const overdue = (emailReplies.missed || []).some((x) => x.emailId === i.emailId);
+                    const who = i.leadName || i.fromName || i.fromEmail || 'Unknown';
                     return (
-                      <div key={i.emailId} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] hover:bg-blue-50 group cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })}>
-                        <span>{overdue ? '⚠️' : '✉️'}</span>
-                        <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName}</span>
-                        <span className="text-slate-500 truncate flex-1">{i.fromName || i.fromEmail ? `${i.fromName || i.fromEmail}: ` : ''}{i.subject || i.snippet}</span>
-                        {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                        <span className={`font-bold shrink-0 ${overdue ? 'text-red-600' : 'text-blue-600'}`}>{fmtAge(i.ageMs)}</span>
+                      <div key={i.emailId} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })}>
+                        <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={overdue ? { background: '#fee2e2', color: '#991b1b' } : { background: '#dbeafe', color: '#1e40af' }}>{initials(who)}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
+                          <div className="text-[11px] text-slate-400 truncate">{i.subject || i.snippet || '(no subject)'}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                        </div>
+                        <span className={`shrink-0 text-[11px] font-extrabold rounded-md px-2 py-1 whitespace-nowrap ${overdue ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50'}`}>{fmtAge(i.ageMs)}</span>
                         {user.role === 'admin' && overdue && (
                           <button title="Dismiss" onClick={async (e) => { e.stopPropagation(); try { await api(`/gmail/awaiting-reply/${i.emailId}/dismiss`, { method: 'POST' }); setEmailReplies((prev) => prev ? { ...prev, missed: prev.missed.filter((x) => x.emailId !== i.emailId) } : prev); } catch { /* */ } }}
-                            className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button>
+                            className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-600">×</button>
                         )}
                       </div>
                     );
@@ -966,27 +978,35 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
 
               {emailTab === 'notopen' && (notOpenItems.length === 0
                 ? <Empty text="Every sent email has been opened. 🎉" />
-                : notOpenItems.slice(0, 12).map((i) => (
-                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
-                      <span>📭</span>
-                      <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
-                      <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}</span>
-                      {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                      <span className="font-bold text-amber-600 shrink-0">{fmtAge(i.ageMs)}</span>
+                : notOpenItems.slice(0, 12).map((i) => {
+                    const who = i.leadName || i.toEmail || 'Unknown';
+                    return (
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-3 rounded-lg px-2 py-2 transition-colors ${i.leadId ? 'cursor-pointer hover:bg-slate-50' : ''}`}>
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#ffedd5', color: '#9a3412' }}>{initials(who)}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
+                        <div className="text-[11px] text-slate-400 truncate">{i.subject || '(no subject)'}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-extrabold text-amber-600 bg-amber-50 rounded-md px-2 py-1 whitespace-nowrap">{fmtAge(i.ageMs)}</span>
                     </div>
-                  )))}
+                    );
+                  }))}
 
               {emailTab === 'open' && (openItems.length === 0
                 ? <Empty text="No opens in the last 24 hours yet." />
-                : openItems.slice(0, 12).map((i) => (
-                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-[11px] ${i.leadId ? 'cursor-pointer hover:bg-green-50' : ''}`}>
-                      <span>{i.clicked ? '🔗' : '📖'}</span>
-                      <span className="font-bold text-[#050A1F] truncate max-w-[150px]">{i.leadName || i.toEmail}</span>
-                      <span className="text-slate-500 truncate flex-1">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}</span>
-                      {i.ownerName && <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">{i.ownerName}</span>}
-                      <span className="font-bold text-green-600 shrink-0">{fmtAge(i.ageMs)}</span>
+                : openItems.slice(0, 12).map((i) => {
+                    const who = i.leadName || i.toEmail || 'Unknown';
+                    return (
+                    <div key={i.id} onClick={() => i.leadId && onViewToday && onViewToday(i.leadId, { tab: 'email', compose: true })} className={`flex items-center gap-3 rounded-lg px-2 py-2 transition-colors ${i.leadId ? 'cursor-pointer hover:bg-slate-50' : ''}`}>
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0" style={{ background: '#dcfce7', color: '#15803d' }}>{initials(who)}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-bold text-slate-900 truncate">{who}</div>
+                        <div className="text-[11px] text-slate-400 truncate">{i.subject || '(no subject)'}{i.opens > 1 ? ` · ${i.opens}×` : ''}{i.clicked ? ' · clicked' : ''}{(isAdmin || isManager) && i.ownerName ? ` · ${i.ownerName}` : ''}</div>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-extrabold text-green-600 bg-green-50 rounded-md px-2 py-1 whitespace-nowrap">{fmtAge(i.ageMs)}</span>
                     </div>
-                  )))}
+                    );
+                  }))}
             </div>
           </div>
         );
@@ -1120,35 +1140,39 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
             </div>
             <TrendChart trend={data.trend} />
           </div>
-          {/* Deals needing a nudge — closing soon, or no activity in 7+ days. */}
+          {/* Deals needing a nudge — EVERY open deal, newest-unchanged last, with
+              how long it's sat unchanged (deal edit or lead activity). */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h2 className="text-[15px] font-bold text-slate-900">🎯 Deals needing a nudge</h2>
-                <div className="text-xs text-slate-400 mt-0.5">Closing soon, or no activity in 7+ days</div>
+                <div className="text-xs text-slate-400 mt-0.5">Open deals · how long each has been unchanged</div>
               </div>
-              {nudges.length > 0 && <span className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-orange-50 text-orange-700 ring-1 ring-orange-200">{nudges.length} flagged</span>}
+              {nudges.length > 0 && <span className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-0.5 bg-orange-50 text-orange-700 ring-1 ring-orange-200">{nudges.length} open</span>}
             </div>
             {nudges.length === 0 ? (
-              <div className="text-slate-300 text-sm py-6 text-center">Nothing needs chasing right now. 🎉</div>
+              <div className="text-slate-300 text-sm py-6 text-center">No open deals right now. 🎉</div>
             ) : (
-              <div className="space-y-1 max-h-72 overflow-auto">
+              <div className="space-y-1.5 max-h-72 overflow-y-auto overflow-x-hidden">
                 {nudges.map((d) => {
-                  const closing = d.reason === 'closing';
+                  // Colour the age chip by how stale: >14d red, >7d amber, else slate.
+                  const days = d.unchangedDays;
+                  const chip = days == null ? { bg: '#f1f5f9', fg: '#64748b', txt: '—' }
+                    : days > 14 ? { bg: '#fef2f2', fg: '#b91c1c', txt: `${days}d` }
+                    : days > 7 ? { bg: '#fffbeb', fg: '#b45309', txt: `${days}d` }
+                    : { bg: '#f1f5f9', fg: '#475569', txt: `${days}d` };
                   return (
                     <div key={`${d.leadId}_${d.dealName}`} onClick={() => onViewToday && onViewToday(d.leadId)}
-                      className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-slate-50 cursor-pointer">
-                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0"
-                        style={{ background: closing ? '#fef3c7' : '#fee2e2', color: closing ? '#92400e' : '#991b1b' }}>{initials(d.client)}</div>
+                      className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 cursor-pointer">
+                      <div className="w-8 h-8 rounded-[10px] flex items-center justify-center font-bold text-[12px] shrink-0 bg-slate-100 text-slate-600">{initials(d.client)}</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-bold text-slate-900 truncate">{d.client}{d.amountUsd > 0 ? ` · ${usd(d.amountUsd)}` : ''}</div>
                         <div className="text-[11px] text-slate-400 truncate">
-                          {d.dealName ? `${d.dealName} · ` : ''}{closing ? `closes ${d.closeDate}` : `quiet ${d.quietDays}d`}{(isAdmin || isManager) && d.ownerName ? ` · ${d.ownerName}` : ''}
+                          {d.dealName ? `${d.dealName} · ` : ''}{d.stageLabel || d.stage}{(isAdmin || isManager) && d.ownerName ? ` · ${d.ownerName}` : ''}
                         </div>
                       </div>
-                      <span className="shrink-0 text-[10px] font-bold rounded-full px-2 py-0.5 border"
-                        style={closing ? { background: '#fffbeb', color: '#b45309', borderColor: '#fde68a' } : { background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' }}>
-                        {closing ? 'Closing soon' : 'Stuck'}
+                      <span className="shrink-0 text-[11px] font-extrabold rounded-md px-2 py-1 whitespace-nowrap" style={{ background: chip.bg, color: chip.fg }} title="Unchanged for">
+                        {chip.txt === '—' ? '—' : `${chip.txt} idle`}
                       </span>
                     </div>
                   );
