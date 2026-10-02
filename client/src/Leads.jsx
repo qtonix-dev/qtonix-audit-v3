@@ -918,17 +918,25 @@ function EmSelect({ value, onChange, children, className = '' }) {
     </div>
   );
 }
+// KPI box in the Converted-page style: a faint tinted corner wash, an icon chip
+// top-right, a big number, and a footer line. Tone sets the accent colour.
 function CbKpi({ label, value, foot, footColor, tone, icon }) {
-  const iconBg = { slate: 'bg-slate-100 text-slate-600', rose: 'bg-rose-50 text-rose-600', emerald: 'bg-emerald-50 text-emerald-600', indigo: 'bg-indigo-50 text-indigo-600' }[tone] || 'bg-slate-100 text-slate-600';
-  const numColor = tone === 'rose' ? 'text-rose-600' : 'text-slate-900';
+  const t = {
+    slate: { corner: '#64748b0d', chip: 'bg-slate-100 text-slate-600', label: 'text-slate-400', num: 'text-slate-900' },
+    rose: { corner: '#f43f5e0d', chip: 'bg-rose-50 text-rose-600', label: 'text-rose-600', num: 'text-rose-700' },
+    emerald: { corner: '#10b9810d', chip: 'bg-emerald-50 text-emerald-600', label: 'text-emerald-600', num: 'text-emerald-700' },
+    indigo: { corner: '#6366f10d', chip: 'bg-indigo-50 text-indigo-600', label: 'text-indigo-600', num: 'text-indigo-700' },
+    orange: { corner: '#f973160d', chip: 'bg-orange-50 text-orange-600', label: 'text-orange-600', num: 'text-orange-700' },
+  }[tone] || { corner: '#64748b0d', chip: 'bg-slate-100 text-slate-600', label: 'text-slate-400', num: 'text-slate-900' };
   return (
-    <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm flex items-center justify-between">
-      <div>
-        <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">{label}</p>
-        <h3 className={`text-2xl font-bold mt-1 ${numColor}`}>{value}</h3>
-        {foot && <span className={`text-[11px] font-medium mt-0.5 flex items-center gap-1 ${footColor || 'text-slate-500'}`}>{foot}</span>}
+    <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-full pointer-events-none group-hover:scale-110 transition-transform" style={{ background: t.corner }}></div>
+      <div className="flex items-center justify-between">
+        <span className={`text-xs font-bold uppercase tracking-wider ${t.label}`}>{label}</span>
+        <span className={`p-2 rounded-xl ${t.chip}`}>{icon}</span>
       </div>
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${iconBg}`}>{icon}</div>
+      <div className={`text-3xl font-extrabold tracking-tight mt-2 ${t.num}`}>{value}</div>
+      {foot && <p className={`text-xs mt-2 flex items-center gap-1 ${footColor || 'text-slate-400'}`}>{foot}</p>}
     </div>
   );
 }
@@ -968,10 +976,10 @@ function CallBacksView(p) {
 
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <CbKpi label="Total Call Backs" value={cbStats ? cbStats.total : '—'} foot="Scheduled list" tone="slate" icon={Lu.phoneCall(24)} />
-        <CbKpi label="Overdue" value={cbStats ? cbStats.overdue : '—'} foot={<>{Lu.alertCircle(13)} Requires action</>} footColor="text-rose-600/80" tone="rose" icon={Lu.alarm(24)} />
-        <CbKpi label="Scheduled Today" value={cbStats ? cbStats.today : '—'} foot={<>{Lu.checkCircle(13)} On track</>} footColor="text-emerald-600" tone="emerald" icon={Lu.calendar(24)} />
-        <CbKpi label="Transferred This Week" value={cbStats ? cbStats.transferredThisWeek : '—'} foot={<>{Lu.trendUp(13)} promoted to leads</>} footColor="text-indigo-600" tone="indigo" icon={Lu.userCheck(24)} />
+        <CbKpi label="Total Call Backs" value={cbStats ? cbStats.total : '—'} foot="Scheduled list" tone="slate" icon={Lu.phoneCall(16)} />
+        <CbKpi label="Overdue" value={cbStats ? cbStats.overdue : '—'} foot={<>{Lu.alertCircle(12)} Requires action</>} footColor="text-rose-600/80" tone="rose" icon={Lu.alarm(16)} />
+        <CbKpi label="Scheduled Today" value={cbStats ? cbStats.today : '—'} foot={<>{Lu.checkCircle(12)} On track</>} footColor="text-emerald-600" tone="emerald" icon={Lu.calendar(16)} />
+        <CbKpi label="Transferred This Week" value={cbStats ? cbStats.transferredThisWeek : '—'} foot={<>{Lu.trendUp(12)} promoted to leads</>} footColor="text-indigo-600" tone="indigo" icon={Lu.userCheck(16)} />
       </div>
 
       {/* Filter bar */}

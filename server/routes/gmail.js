@@ -1794,6 +1794,13 @@ async function fetchFolderLive(mb, { box, labelId, q, max, pageToken }) {
   return tagLeadLinks(out);
 }
 const MAIL_CACHE_FRESH_MS = 60 * 1000; // serve instantly if younger than this
+// Guard so a stale-cache folder is only being refreshed by one request at a
+// time (rapid repeat opens shouldn't each fire their own Gmail refetch).
+const _refreshing = new Map(); // cacheKey -> timestamp
+const REFRESH_GUARD_MS = 30 * 1000;
+function recentlyRefreshing(key) { const t = _refreshing.get(key); return t && (Date.now() - t) < REFRESH_GUARD_MS; }
+function markRefreshing(key) { _refreshing.set(key, Date.now()); }
+function clearRefreshing(key) { _refreshing.delete(key); }
 
 router.get('/all/folder', requireAuth, async (req, res, next) => {
   try {
@@ -1827,21 +1834,24 @@ router.get('/all/folder', requireAuth, async (req, res, next) => {
     const age = row && row.fetchedAt ? (Date.now() - new Date(row.fetchedAt).getTime()) : Infinity;
 
     if (row && row.payload && age < MAIL_CACHE_FRESH_MS) {
-      // Fresh enough: serve instantly, refresh in the background for next time.
-      res.json({ ...row.payload, cached: true });
-      fetchFolderLive(mb, opts)
-        .then((fresh) => MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }))
-        .catch(() => {});
-      return;
+      // Fresh enough: serve instantly from the cache and do NOTHING else — no
+      // background refetch. (Refreshing on every fresh hit silently burned a
+      // folder's worth of Gmail quota per view and tripped the rate limit.)
+      return res.json({ ...row.payload, cached: true });
     }
 
-    // Stale or missing: if we have any cached copy, serve it immediately so the
-    // UI isn't blank, and refresh. Otherwise fetch live.
+    // Stale cache: serve it immediately so the UI isn't blank, then refresh
+    // ONCE in the background. A short guard window stops rapid repeat opens
+    // from each kicking off their own refresh.
     if (row && row.payload) {
       res.json({ ...row.payload, cached: true, stale: true });
-      fetchFolderLive(mb, opts)
-        .then((fresh) => MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }))
-        .catch(() => {});
+      if (!recentlyRefreshing(cacheKey)) {
+        markRefreshing(cacheKey);
+        fetchFolderLive(mb, opts)
+          .then((fresh) => MailFolderCache.upsert({ cacheKey, payload: fresh, fetchedAt: new Date() }))
+          .catch(() => {})
+          .finally(() => clearRefreshing(cacheKey));
+      }
       return;
     }
 
