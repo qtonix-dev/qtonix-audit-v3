@@ -298,21 +298,23 @@ function LeadDailyChart({ daily }) {
 // single indigo hue (dark → light), with a hover tooltip showing that month's
 // values. One colour family keeps it calm; line weight + dot pick out the hovered
 // month.
+// 6-month lead trend — STACKED BARS (pre-sales / cold-calling / transferred) in
+// one indigo family, matching the "Leads this month" chart, with a tooltip.
 function LeadMonthlyChart({ monthly }) {
   const [hover, setHover] = useState(null); // index of hovered month
   if (!monthly || monthly.length === 0) return null;
-  const W = 540, H = 160, padL = 26, padB = 26, padT = 10;
-  // Indigo family, darkest → lightest.
+  const W = 540, H = 160, padL = 26, padB = 26, padT = 12;
+  // Indigo family, darkest → lightest (same hue as Leads-this-month).
   const series = [
-    { key: 'presales', color: '#3730A3', label: 'Pre-sales' },
+    { key: 'presales', color: '#4338CA', label: 'Pre-sales' },
     { key: 'cold', color: '#818CF8', label: 'Cold-calling' },
     { key: 'transferred', color: '#C7D2FE', label: 'Transferred' },
   ];
-  const max = Math.max(1, ...monthly.flatMap((m) => series.map((s) => m[s.key] || 0)));
-  const stepX = (W - padL - 10) / Math.max(1, monthly.length - 1);
-  const x = (i) => padL + i * stepX;
+  const stackTotal = (m) => series.reduce((s, ser) => s + (m[ser.key] || 0), 0);
+  const max = Math.max(1, ...monthly.map(stackTotal));
+  const slot = (W - padL - 10) / monthly.length;
+  const barW = Math.min(34, slot - 14);
   const y = (v) => H - padB - (v / max) * (H - padB - padT);
-  const pathFor = (key) => monthly.map((m, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(m[key] || 0).toFixed(1)}`).join(' ');
   return (
     <div className="relative">
       <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -328,27 +330,32 @@ function LeadMonthlyChart({ monthly }) {
         ))}
         <text x={4} y={y(max) + 4} fontSize="8" fill="#94a3b8">{max}</text>
         <text x={4} y={y(0) + 4} fontSize="8" fill="#94a3b8">0</text>
-        {hover != null && <line x1={x(hover)} x2={x(hover)} y1={padT} y2={H - padB} stroke="#cbd5e1" strokeDasharray="3 3" />}
-        {series.map((s) => (
-          <path key={s.key} d={pathFor(s.key)} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-        ))}
-        {/* dots on hovered month */}
-        {hover != null && series.map((s) => (
-          <circle key={s.key} cx={x(hover)} cy={y(monthly[hover][s.key] || 0)} r="3.5" fill={s.color} />
-        ))}
-        {/* x labels + invisible hover columns */}
-        {monthly.map((m, i) => (
-          <g key={i}>
-            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.month}</text>
-            <rect x={x(i) - stepX / 2} y={0} width={stepX} height={H - padB} fill="transparent"
-              onMouseEnter={() => setHover(i)} style={{ cursor: 'pointer' }} />
-          </g>
-        ))}
+        {monthly.map((m, i) => {
+          const cx = padL + i * slot + slot / 2;
+          const bx = cx - barW / 2;
+          const total = stackTotal(m);
+          let yCursor = H - padB;
+          return (
+            <g key={i} onMouseEnter={() => setHover(i)} style={{ cursor: 'pointer' }}>
+              <rect x={cx - slot / 2} y={0} width={slot} height={H - padB} fill="transparent" />
+              {series.map((s, si) => {
+                const v = m[s.key] || 0;
+                if (v <= 0) return null;
+                const h = (v / max) * (H - padB - padT);
+                yCursor -= h;
+                return <rect key={s.key} x={bx} y={yCursor} width={barW} height={h}
+                  rx={si === 0 ? 3 : 0} fill={s.color} opacity={hover != null && hover !== i ? 0.5 : 1} />;
+              })}
+              {total > 0 && <text x={cx} y={y(total) - 4} textAnchor="middle" fontSize="8.5" fontWeight="bold" fill="#050A1F">{total}</text>}
+              <text x={cx} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.month}</text>
+            </g>
+          );
+        })}
       </svg>
       {hover != null && (
-        <div className="absolute pointer-events-none z-20" style={{ left: `${(x(hover) / W) * 100}%`, top: 24, transform: 'translate(-50%, 0)' }}>
+        <div className="absolute pointer-events-none z-20" style={{ left: `${((padL + hover * slot + slot / 2) / W) * 100}%`, top: 24, transform: 'translate(-50%, 0)' }}>
           <div className="rounded-lg bg-[#0A0E28] text-white px-2.5 py-1.5 shadow-lg whitespace-nowrap">
-            <div className="text-[10px] font-bold text-slate-300">{monthly[hover].month} {monthly[hover].year || ''}</div>
+            <div className="text-[10px] font-bold text-slate-300">{monthly[hover].month} {monthly[hover].year || ''} · {stackTotal(monthly[hover])} total</div>
             {series.map((s) => (
               <div key={s.key} className="flex items-center gap-1.5 text-[11px] font-semibold">
                 <span className="w-2 h-2 rounded-sm" style={{ background: s.color }} />{s.label}: <b>{monthly[hover][s.key] || 0}</b>
@@ -982,8 +989,29 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
         />
       )}
 
-      <SectionLabel>Lead generation</SectionLabel>
-      {/* ROW 2 — Lead generation + sales split + collections */}
+      <SectionLabel right={<span className="text-[11px] text-slate-400">by source</span>}>Lead generation</SectionLabel>
+      {/* Lead generation — Leads this month (stacked bars) + Lead trend (stacked
+          bars), split by pre-sales / cold-calling / transferred. */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[15px] font-bold text-slate-900">Leads this month</h2>
+            <span className="text-xs text-slate-400">Daily · by source</span>
+          </div>
+          <LeadDailyChart daily={data.leadDaily} />
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[15px] font-bold text-slate-900">Lead trend</h2>
+            <span className="text-xs text-slate-400">Last 6 months · by source</span>
+          </div>
+          <LeadMonthlyChart monthly={data.leadMonthly} />
+        </div>
+      </div>
+
+      {/* Pipeline & intake — the sales split, collections, and today's lead
+          mini-lists (kept from the operational dashboard). */}
+      <SectionLabel>Pipeline &amp; intake</SectionLabel>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {me && me.leadGenTarget > 0 ? (
           <GoalStat label="Leads generated" achieved={me.leadsGeneratedMonth} target={me.leadGenTarget} unit="#"
@@ -1175,24 +1203,6 @@ function SalesDashboard({ user, onViewUntouched, onGoLeads, onViewConverted, onV
               className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white shadow-sm active:scale-95 transition" style={{ background: 'linear-gradient(to right,#f97316,#f59e0b)' }}>🏁 Race view</button>
           </div>
           {board.length === 0 ? <div className="text-slate-300 text-sm py-8 text-center">No agents yet.</div> : <Leaderboard board={board} user={user} maxSales={maxSales} />}
-        </div>
-      </div>
-
-      {/* ROW 6 — Lead trends: daily this month + 6-month grouped */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[15px] font-bold text-slate-900">Leads this month</h2>
-            <span className="text-xs text-slate-400">Daily · by source</span>
-          </div>
-          <LeadDailyChart daily={data.leadDaily} />
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[15px] font-bold text-slate-900">Lead trend</h2>
-            <span className="text-xs text-slate-400">Last 6 months</span>
-          </div>
-          <LeadMonthlyChart monthly={data.leadMonthly} />
         </div>
       </div>
 
